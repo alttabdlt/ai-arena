@@ -1,0 +1,11 @@
+{
+  "network": "hyperevm-testnet",
+  "chainId": 998,
+  "deploymentDate": "2025-07-16",
+  "contracts": {
+    "GraduationController": "0x578dA0744Df7FeFAf4806cCbD1017569B537C45d",
+    "BondingCurveFactory": "0xb35B3D03385698eD0B02Ba26fEA8342f3B499A1A"
+  },
+  "deployer": "0x2487155dF829977813Ea9b4F992C229F86D4f16a",
+  "treasury": "0x64c1b470c71749FcF9889717f2e762EB9f0F38d3"
+}

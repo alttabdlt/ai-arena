@@ -1,0 +1,210 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String           @id @default(cuid())
+  address         String           @unique
+  kycTier         Int              @default(0)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  
+  bots            Bot[]
+  transactions    Transaction[]
+  comments        Comment[]
+  likes           Like[]
+  followers       Follow[]         @relation("follower")
+  following       Follow[]         @relation("following")
+  achievements    UserAchievement[]
+  
+  @@index([address])
+}
+
+model Bot {
+  id              String           @id @default(cuid())
+  address         String           @unique
+  name            String
+  description     String
+  imageUrl        String?
+  tags            String[]
+  strategy        Json?
+  creatorAddress  String
+  creator         User             @relation(fields: [creatorAddress], references: [address])
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  
+  bondingCurve    BondingCurve?
+  comments        Comment[]
+  likes           Like[]
+  tournaments     TournamentParticipant[]
+  
+  @@index([creatorAddress])
+  @@index([createdAt])
+}
+
+model BondingCurve {
+  id              String           @id @default(cuid())
+  botId           String           @unique
+  bot             Bot              @relation(fields: [botId], references: [id])
+  currentSupply   Decimal          @db.Decimal(78, 0)
+  currentPrice    Decimal          @db.Decimal(78, 18)
+  marketCap       Decimal          @db.Decimal(78, 18)
+  volume24h       Decimal          @db.Decimal(78, 18)
+  holders         Int              @default(0)
+  graduated       Boolean          @default(false)
+  graduatedAt     DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  
+  transactions    Transaction[]
+  
+  @@index([graduated])
+  @@index([marketCap])
+  @@index([volume24h])
+}
+
+model Transaction {
+  id              String           @id @default(cuid())
+  type            TransactionType
+  userAddress     String
+  user            User             @relation(fields: [userAddress], references: [address])
+  bondingCurveId  String
+  bondingCurve    BondingCurve     @relation(fields: [bondingCurveId], references: [id])
+  amount          Decimal          @db.Decimal(78, 18)
+  price           Decimal          @db.Decimal(78, 18)
+  totalCost       Decimal          @db.Decimal(78, 18)
+  txHash          String           @unique
+  createdAt       DateTime         @default(now())
+  
+  @@index([userAddress])
+  @@index([bondingCurveId])
+  @@index([createdAt])
+}
+
+model Tournament {
+  id              String           @id @default(cuid())
+  name            String
+  type            TournamentType
+  status          TournamentStatus @default(UPCOMING)
+  entryFee        Decimal          @db.Decimal(78, 18)
+  prizePool       Decimal          @db.Decimal(78, 18)
+  startTime       DateTime
+  endTime         DateTime
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  
+  participants    TournamentParticipant[]
+  
+  @@index([type])
+  @@index([status])
+  @@index([startTime])
+}
+
+model TournamentParticipant {
+  id              String           @id @default(cuid())
+  tournamentId    String
+  tournament      Tournament       @relation(fields: [tournamentId], references: [id])
+  botId           String
+  bot             Bot              @relation(fields: [botId], references: [id])
+  score           Float            @default(0)
+  rank            Int?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  
+  @@unique([tournamentId, botId])
+  @@index([tournamentId])
+  @@index([botId])
+}
+
+model Comment {
+  id              String           @id @default(cuid())
+  content         String
+  userAddress     String
+  user            User             @relation(fields: [userAddress], references: [address])
+  botId           String
+  bot             Bot              @relation(fields: [botId], references: [id])
+  createdAt       DateTime         @default(now())
+  
+  @@index([botId])
+  @@index([userAddress])
+}
+
+model Like {
+  id              String           @id @default(cuid())
+  userAddress     String
+  user            User             @relation(fields: [userAddress], references: [address])
+  botId           String
+  bot             Bot              @relation(fields: [botId], references: [id])
+  createdAt       DateTime         @default(now())
+  
+  @@unique([userAddress, botId])
+  @@index([botId])
+}
+
+model Follow {
+  id              String           @id @default(cuid())
+  followerAddress String
+  follower        User             @relation("follower", fields: [followerAddress], references: [address])
+  followingAddress String
+  following       User             @relation("following", fields: [followingAddress], references: [address])
+  createdAt       DateTime         @default(now())
+  
+  @@unique([followerAddress, followingAddress])
+  @@index([followerAddress])
+  @@index([followingAddress])
+}
+
+model Achievement {
+  id              String           @id @default(cuid())
+  name            String           @unique
+  description     String
+  imageUrl        String?
+  rarity          AchievementRarity
+  createdAt       DateTime         @default(now())
+  
+  users           UserAchievement[]
+}
+
+model UserAchievement {
+  id              String           @id @default(cuid())
+  userAddress     String
+  user            User             @relation(fields: [userAddress], references: [address])
+  achievementId   String
+  achievement     Achievement      @relation(fields: [achievementId], references: [id])
+  unlockedAt      DateTime         @default(now())
+  
+  @@unique([userAddress, achievementId])
+  @@index([userAddress])
+}
+
+enum TransactionType {
+  BUY
+  SELL
+}
+
+enum TournamentType {
+  ROOKIE
+  PRO
+  CHAMPIONSHIP
+}
+
+enum TournamentStatus {
+  UPCOMING
+  LIVE
+  COMPLETED
+}
+
+enum AchievementRarity {
+  COMMON
+  RARE
+  EPIC
+  LEGENDARY
+}

@@ -1,0 +1,207 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* PokerBots Arena Gaming Design System */
+
+@layer base {
+  :root {
+    /* Gaming Background - Deep space theme */
+    --background: 222 22% 8%;
+    --foreground: 210 40% 95%;
+
+    /* Cards with subtle gaming glow */
+    --card: 222 20% 12%;
+    --card-foreground: 210 40% 95%;
+
+    /* Popover styling */
+    --popover: 222 20% 12%;
+    --popover-foreground: 210 40% 95%;
+
+    /* Primary - Electric Blue */
+    --primary: 218 100% 60%;
+    --primary-foreground: 222 22% 8%;
+    --primary-glow: 218 100% 70%;
+
+    /* Secondary - Purple Accent */
+    --secondary: 270 60% 25%;
+    --secondary-foreground: 210 40% 95%;
+
+    /* Muted elements */
+    --muted: 222 15% 18%;
+    --muted-foreground: 215 15% 65%;
+
+    /* Accent - Gold for wins/highlights */
+    --accent: 45 100% 60%;
+    --accent-foreground: 222 22% 8%;
+
+    /* Destructive - Red for losses */
+    --destructive: 0 70% 55%;
+    --destructive-foreground: 210 40% 95%;
+
+    /* Success - Green for wins */
+    --success: 120 60% 50%;
+    --success-foreground: 222 22% 8%;
+
+    /* Warning - Orange for pending */
+    --warning: 35 100% 60%;
+    --warning-foreground: 222 22% 8%;
+
+    /* Borders and inputs */
+    --border: 222 15% 20%;
+    --input: 222 15% 20%;
+    --ring: 218 100% 60%;
+
+    --radius: 0.75rem;
+
+    /* Gaming gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--primary-glow)));
+    --gradient-secondary: linear-gradient(135deg, hsl(var(--secondary)), hsl(var(--accent)));
+    --gradient-gaming: linear-gradient(135deg, hsl(218 100% 60%), hsl(270 60% 50%), hsl(45 100% 60%));
+    --gradient-card: linear-gradient(135deg, hsl(var(--card)), hsl(222 20% 15%));
+
+    /* Gaming shadows and glows */
+    --shadow-gaming: 0 10px 30px -10px hsl(var(--primary) / 0.3);
+    --shadow-card: 0 8px 25px -5px hsl(222 22% 5% / 0.4);
+    --glow-primary: 0 0 20px hsl(var(--primary) / 0.5);
+    --glow-accent: 0 0 15px hsl(var(--accent) / 0.4);
+
+    /* Animations */
+    --transition-gaming: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-glow: box-shadow 0.3s ease;
+
+    /* Sidebar */
+    --sidebar-background: 222 20% 10%;
+    --sidebar-foreground: 210 40% 90%;
+    --sidebar-primary: 218 100% 60%;
+    --sidebar-primary-foreground: 222 22% 8%;
+    --sidebar-accent: 222 15% 18%;
+    --sidebar-accent-foreground: 210 40% 90%;
+    --sidebar-border: 222 15% 20%;
+    --sidebar-ring: 218 100% 60%;
+  }
+
+  .dark {
+    --background: 222.2 84% 4.9%;
+    --foreground: 210 40% 98%;
+
+    --card: 222.2 84% 4.9%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 222.2 84% 4.9%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 210 40% 98%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 217.2 32.6% 17.5%;
+    --muted-foreground: 215 20.2% 65.1%;
+
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 212.7 26.8% 83.9%;
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@layer components {
+  /* Gaming Button Variants */
+  .btn-gaming {
+    @apply bg-gradient-to-r from-primary to-primary-glow text-primary-foreground 
+           border-0 shadow-lg hover:shadow-[var(--glow-primary)] 
+           transition-[var(--transition-glow)] font-semibold;
+  }
+  
+  .btn-accent {
+    @apply bg-gradient-to-r from-accent to-warning text-accent-foreground 
+           border-0 shadow-lg hover:shadow-[var(--glow-accent)] 
+           transition-[var(--transition-glow)] font-semibold;
+  }
+
+  /* Gaming Card Styles */
+  .card-gaming {
+    @apply bg-gradient-to-br from-card to-[hsl(222_20%_15%)] 
+           border-border shadow-[var(--shadow-card)] 
+           backdrop-blur-sm;
+  }
+
+  /* Glow Effects */
+  .glow-primary {
+    @apply shadow-[var(--glow-primary)];
+  }
+  
+  .glow-accent {
+    @apply shadow-[var(--glow-accent)];
+  }
+
+  /* Live Indicator */
+  .live-indicator {
+    @apply relative;
+  }
+  
+  .live-indicator::before {
+    content: '';
+    @apply absolute -inset-1 bg-gradient-to-r from-destructive to-warning 
+           rounded-full blur-sm opacity-75 animate-pulse;
+  }
+
+  /* Status Badges */
+  .status-live {
+    @apply bg-destructive text-destructive-foreground animate-pulse;
+  }
+  
+  .status-upcoming {
+    @apply bg-warning text-warning-foreground;
+  }
+  
+  .status-completed {
+    @apply bg-success text-success-foreground;
+  }
+
+  /* Poker Table Styles */
+  .poker-felt {
+    @apply bg-gradient-radial from-emerald-800 to-emerald-900;
+  }
+}
+
+/* Poker game animations */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out;
+}

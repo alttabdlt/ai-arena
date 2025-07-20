@@ -5,10 +5,88 @@
 **Core Mechanic**: Deploy bots with custom prompts, auto-match for tournaments  
 **Revenue Model**: Deployment fees + spectator betting  
 **Status**: Core engine complete, need deployment infrastructure  
+**Timeline**: 16 weeks (expanded from 12 to include foundation)
 
 ---
 
-## **Phase 1: Bot Deployment System (Week 1-2)**
+## **⚠️ Technical Prerequisites**
+
+### **Current State vs Required State**
+- **Game Engine**: Client-side (browser) → Server-side (authoritative)
+- **Authentication**: None → Wallet connection + JWT sessions
+- **Game Storage**: Memory only → PostgreSQL persistence
+- **AI Prompts**: Hardcoded → Custom 1000-char injection
+- **Matchmaking**: Manual → Automated queue system
+
+### **Critical Infrastructure Gaps**
+1. Server-side poker engine (currently browser-based)
+2. Game state persistence (currently memory only)
+3. Authentication system (wallet connection commented out)
+4. Custom prompt injection (AI uses hardcoded prompts)
+5. Queue infrastructure (no Redis/Bull setup)
+6. Payment processing (no Web3 integration)
+
+---
+
+## **Phase 0: Foundation Infrastructure (Week 1-4)**
+
+### **Server-Side Game Engine**
+- [ ] Create `ServerPokerEngine` class in backend
+- [ ] Port poker logic from client to server
+- [ ] Add authoritative state validation
+- [ ] Implement anti-cheat measures
+- [ ] Create game state serialization
+- [ ] Add crash recovery system
+- [ ] Test concurrent game execution
+
+### **Authentication System**
+- [ ] Install and configure RainbowKit
+- [ ] Set up wallet connection flow
+- [ ] Implement JWT token generation
+- [ ] Create session management with Redis
+- [ ] Add role-based access (USER, DEVELOPER, ADMIN)
+- [ ] Build auth middleware for GraphQL
+- [ ] Create user profile on first connect
+
+### **Game Persistence Layer**
+- [ ] Add `Match` table to database schema
+- [ ] Create `GameState` JSON storage structure
+- [ ] Add `Decision` table for AI history
+- [ ] Implement match result processing
+- [ ] Create replay data structure
+- [ ] Add hand history tracking
+- [ ] Build match query API
+
+### **Custom Prompt System**
+- [ ] Modify `AIService.getPokerDecision()` signature
+- [ ] Add prompt parameter to AI methods
+- [ ] Create prompt injection into AI context
+- [ ] Add prompt validation and sanitization
+- [ ] Test prompt influence on decisions
+- [ ] Add prompt character limit enforcement
+- [ ] Create prompt preview system
+
+### **Queue Infrastructure**
+- [ ] Install and configure Redis
+- [ ] Set up Bull queue system
+- [ ] Create `QueueService` class
+- [ ] Add queue monitoring dashboard
+- [ ] Implement queue position tracking
+- [ ] Create matchmaking worker process
+- [ ] Add queue expiration logic
+
+### **WebSocket Enhancement**
+- [ ] Upgrade WebSocket for game streaming
+- [ ] Add room-based game isolation
+- [ ] Implement spectator channels
+- [ ] Create real-time queue updates
+- [ ] Add connection recovery
+- [ ] Build presence tracking
+- [ ] Test concurrent connections
+
+---
+
+## **Phase 1: Bot Deployment System (Week 5-6)**
 
 ### **Database Setup**
 - [ ] Remove all bonding curve tables from schema
@@ -47,7 +125,7 @@
 
 ---
 
-## **Phase 2: Queue & Matchmaking (Week 3-4)**
+## **Phase 2: Queue & Matchmaking (Week 7-8)**
 
 ### **Queue Management**
 - [ ] Create queue service class
@@ -87,7 +165,7 @@
 
 ---
 
-## **Phase 3: Competition Features (Week 5-6)**
+## **Phase 3: Competition Features (Week 9-10)**
 
 ### **Bot Profile Pages**
 - [ ] Create `/bot/:id` route
@@ -127,7 +205,7 @@
 
 ---
 
-## **Phase 4: Platform Polish (Week 7-8)**
+## **Phase 4: Platform Polish (Week 11-12)**
 
 ### **Admin Dashboard**
 - [ ] Create `/admin` protected route
@@ -167,7 +245,7 @@
 
 ---
 
-## **Phase 5: Enhanced Features (Week 9-10)**
+## **Phase 5: Enhanced Features (Week 13-14)**
 
 ### **Premium Features**
 - [ ] Create premium tier system
@@ -207,7 +285,7 @@
 
 ---
 
-## **Phase 6: Launch Preparation (Week 11-12)**
+## **Phase 6: Launch Preparation (Week 15-16)**
 
 ### **Security & Compliance**
 - [ ] Implement rate limiting
@@ -271,6 +349,17 @@ interface BotPrompt {
   validatedAt: Date;     // Admin approval timestamp
   flags: string[];       // profanity, aggressive, etc.
 }
+
+// AI Service Modification
+async getPokerDecision(botId: string, gameState: PokerGameState) {
+  const bot = await prisma.bot.findUnique({ where: { id: botId }});
+  const enhancedPrompt = {
+    gameState: gameState,
+    botStrategy: bot.prompt, // Custom 1000-char strategy
+    instructions: "You are playing poker. " + bot.prompt
+  };
+  // Send to AI with custom personality
+}
 ```
 
 ### **Revenue Projections**
@@ -281,5 +370,89 @@ interface BotPrompt {
 
 ---
 
+## **Infrastructure Architecture**
+
+### **Server-Side Game Engine**
+```typescript
+// Move from client to server
+class ServerPokerEngine {
+  private gameState: AuthoritativeGameState;
+  private stateValidator: StateValidator;
+  private persistenceLayer: GamePersistence;
+  
+  async processAction(action: PlayerAction): Promise<GameUpdate> {
+    // Validate action legality
+    // Update authoritative state
+    // Persist to database
+    // Broadcast via WebSocket
+  }
+}
+```
+
+### **Authentication Flow**
+```
+User → Connect Wallet → Sign Message → Generate JWT → 
+Create Session → Store in Redis → Attach to Requests
+```
+
+### **Game Persistence Schema**
+```typescript
+model Match {
+  id            String   @id
+  status        MatchStatus
+  participants  Json     // Bot IDs and positions
+  gameHistory   Json     // Complete state history
+  decisions     Json     // All AI decisions
+  result        Json     // Final rankings
+  replayUrl     String?  // S3 presigned URL
+  createdAt     DateTime
+  completedAt   DateTime?
+}
+
+model AIDecision {
+  id          String   @id
+  matchId     String
+  botId       String
+  handNumber  Int
+  decision    Json     // Action, reasoning, timing
+  gameState   Json     // State at decision time
+  timestamp   DateTime
+}
+```
+
+### **Queue Architecture**
+```
+Bot Deployment → Redis Queue → Bull Processor → 
+Matchmaking Algorithm → Create Match → Start Game
+```
+
+### **Deployment Stack**
+- **Frontend**: Vercel (Next.js)
+- **Backend**: Railway/Fly.io (Node.js)
+- **Database**: Supabase (PostgreSQL)
+- **Cache**: Upstash (Redis)
+- **Queue**: Railway (Bull)
+- **Storage**: Cloudflare R2 (Replays)
+- **WebSocket**: Railway (Socket.io)
+
+### **Security Considerations**
+```typescript
+// Current Issues
+- Client-side game state (manipulatable)
+- No API rate limiting (expensive AI calls)
+- No prompt validation (malicious content)
+- No anti-Sybil measures (spam bots)
+
+// Required Security
+- Server authoritative state
+- API rate limits per wallet
+- Prompt content filtering
+- Bot deployment limits
+- Transaction verification
+- Admin approval for prompts
+```
+
+---
+
 *Last Updated: December 2024  
-Version: 3.0 - Simplified Deployment Model*
+Version: 3.1 - Foundation Infrastructure Added*

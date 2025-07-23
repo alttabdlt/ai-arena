@@ -9,16 +9,11 @@ import { PubSub } from 'graphql-subscriptions';
  */
 export class HyperEvmPoller {
   private provider: ethers.JsonRpcProvider;
-  private prisma: PrismaClient;
-  private redis: Redis;
-  private pubsub: PubSub;
   private lastBlock: number = 0;
-  private pollInterval: NodeJS.Timer | null = null;
+  private pollInterval: NodeJS.Timeout | null = null;
 
-  constructor(prisma: PrismaClient, redis: Redis, pubsub: PubSub) {
-    this.prisma = prisma;
-    this.redis = redis;
-    this.pubsub = pubsub;
+  constructor(_prisma: PrismaClient, _redis: Redis, _pubsub: PubSub) {
+    // These dependencies will be used when transaction parsing is implemented
     this.provider = new ethers.JsonRpcProvider(process.env.HYPEREVM_RPC_URL);
   }
 

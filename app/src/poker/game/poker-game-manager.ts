@@ -220,8 +220,8 @@ export class PokerGameManager {
   }
 
   startNewHand(): void {
-    // Check if we've reached max hands
-    if (this.currentHandNumber >= this.config.maxHands) {
+    // Check if we've reached max hands (skip check if infinite hands mode)
+    if (this.config.maxHands !== -1 && this.currentHandNumber >= this.config.maxHands) {
       this.handleGameFinish();
       return;
     }

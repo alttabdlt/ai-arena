@@ -2,7 +2,22 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import * as React from 'react';
-import * as Recharts from 'recharts';
+import { 
+  ResponsiveContainer, 
+  AreaChart, 
+  CartesianGrid, 
+  XAxis as RechartsXAxis, 
+  YAxis as RechartsYAxis, 
+  Tooltip, 
+  Area, 
+  PieChart, 
+  Pie, 
+  Cell, 
+  LineChart, 
+  Line, 
+  BarChart, 
+  Bar 
+} from 'recharts';
 import { 
   TrendingUp, 
   Target, 
@@ -123,26 +138,26 @@ export function AnalyticsDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <Recharts.ResponsiveContainer width="100%" height={300}>
-              <Recharts.AreaChart data={performanceData}>
-                <Recharts.CartesianGrid strokeDasharray="3 3" />
-                <Recharts.XAxis dataKey="date" />
-                <Recharts.YAxis />
-                <Recharts.Tooltip 
+            <ResponsiveContainer width="100%" height={300}>
+              <AreaChart data={performanceData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <RechartsXAxis dataKey="date" />
+                <RechartsYAxis />
+                <Tooltip 
                   formatter={(value, name) => [
                     name === 'profit' ? `$${value}` : `${value}%`,
                     name === 'profit' ? 'Profit' : 'Win Rate'
                   ]}
                 />
-                <Recharts.Area 
+                <Area 
                   type="monotone" 
                   dataKey="wins" 
                   stackId="1" 
                   stroke="hsl(var(--primary))" 
                   fill="hsl(var(--primary) / 0.6)" 
                 />
-              </Recharts.AreaChart>
-            </Recharts.ResponsiveContainer>
+              </AreaChart>
+            </ResponsiveContainer>
           </CardContent>
         </Card>
 
@@ -155,9 +170,9 @@ export function AnalyticsDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <Recharts.ResponsiveContainer width="100%" height={300}>
-              <Recharts.PieChart>
-                <Recharts.Pie
+            <ResponsiveContainer width="100%" height={300}>
+              <PieChart>
+                <Pie
                   data={botTypeData}
                   cx="50%"
                   cy="50%"
@@ -166,12 +181,12 @@ export function AnalyticsDashboard() {
                   label={({ name, value }) => `${name}: ${value}%`}
                 >
                   {botTypeData.map((entry, index) => (
-                    <Recharts.Cell key={`cell-${index}`} fill={entry.color} />
+                    <Cell key={`cell-${index}`} fill={entry.color} />
                   ))}
-                </Recharts.Pie>
-                <Recharts.Tooltip />
-              </Recharts.PieChart>
-            </Recharts.ResponsiveContainer>
+                </Pie>
+                <Tooltip />
+              </PieChart>
+            </ResponsiveContainer>
           </CardContent>
         </Card>
 
@@ -184,21 +199,21 @@ export function AnalyticsDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <Recharts.ResponsiveContainer width="100%" height={300}>
-              <Recharts.LineChart data={performanceData}>
-                <Recharts.CartesianGrid strokeDasharray="3 3" />
-                <Recharts.XAxis dataKey="date" />
-                <Recharts.YAxis />
-                <Recharts.Tooltip formatter={(value) => [`$${value}`, 'Profit']} />
-                <Recharts.Line 
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={performanceData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <RechartsXAxis dataKey="date" />
+                <RechartsYAxis />
+                <Tooltip formatter={(value) => [`$${value}`, 'Profit']} />
+                <Line 
                   type="monotone" 
                   dataKey="profit" 
                   stroke="hsl(var(--success))" 
                   strokeWidth={3}
                   dot={{ fill: 'hsl(var(--success))', strokeWidth: 2, r: 4 }}
                 />
-              </Recharts.LineChart>
-            </Recharts.ResponsiveContainer>
+              </LineChart>
+            </ResponsiveContainer>
           </CardContent>
         </Card>
 
@@ -211,19 +226,19 @@ export function AnalyticsDashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <Recharts.ResponsiveContainer width="100%" height={300}>
-              <Recharts.BarChart data={dailyActivity}>
-                <Recharts.CartesianGrid strokeDasharray="3 3" />
-                <Recharts.XAxis dataKey="hour" />
-                <Recharts.YAxis />
-                <Recharts.Tooltip formatter={(value) => [`${value}`, 'Games Played']} />
-                <Recharts.Bar 
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={dailyActivity}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <RechartsXAxis dataKey="hour" />
+                <RechartsYAxis />
+                <Tooltip formatter={(value) => [`${value}`, 'Games Played']} />
+                <Bar 
                   dataKey="games" 
                   fill="hsl(var(--chart-1))" 
                   radius={[4, 4, 0, 0]}
                 />
-              </Recharts.BarChart>
-            </Recharts.ResponsiveContainer>
+              </BarChart>
+            </ResponsiveContainer>
           </CardContent>
         </Card>
       </div>

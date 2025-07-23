@@ -11,12 +11,12 @@ import cors from 'cors';
 import { typeDefs } from './graphql/schema';
 import { resolvers } from './graphql/resolvers';
 import { createContext } from './config/context';
-import { setupWebSocketServer } from './websocket/server';
+// import { setupWebSocketServer } from './websocket/server';
 import { PrismaClient } from '@prisma/client';
 import Redis from 'ioredis';
-import { ContractService } from './services/contractService';
-import { PriceService } from './services/priceService';
-import { EventListener } from './services/eventListener';
+import { QueueService } from './services/queueService';
+import { TransactionService } from './services/transactionService';
+import { logWalletConfig } from './config/wallets';
 import { PubSub } from 'graphql-subscriptions';
 
 const prisma = new PrismaClient();
@@ -30,7 +30,7 @@ const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
 });
 
 // Handle Redis errors silently
-redis.on('error', (err) => {
+redis.on('error', (err: any) => {
   if (err.code === 'ECONNREFUSED') {
     console.log('⚠️  Redis not available - caching disabled');
   }
@@ -39,15 +39,14 @@ redis.on('error', (err) => {
 const pubsub = new PubSub();
 
 // Initialize services
-const contractService = new ContractService(prisma, redis);
-const priceService = new PriceService();
-const eventListener = new EventListener(prisma, redis, pubsub);
+const queueService = new QueueService(prisma, redis);
+const transactionService = new TransactionService(prisma);
 
 async function startServer() {
   const app = express();
   const httpServer = createServer(app);
   const PORT = process.env.PORT || 4000;
-  const WS_PORT = process.env.WS_PORT || 4001;
+  // const WS_PORT = process.env.WS_PORT || 4001;
 
   // Global middleware
   app.use(express.json({ limit: '10mb' }));
@@ -67,7 +66,7 @@ async function startServer() {
   const gqlWsServer = makeServer({
     schema,
     context: async (ctx) => {
-      return createContext({ prisma, redis, connection: ctx });
+      return createContext({ prisma, redis, connection: ctx, pubsub });
     },
   });
 
@@ -121,11 +120,11 @@ async function startServer() {
       credentials: true,
     }),
     expressMiddleware(apolloServer, {
-      context: async ({ req }) => createContext({ req, prisma, redis }),
-    })
+      context: async ({ req }) => createContext({ req: req as any, prisma, redis, pubsub }),
+    }) as any
   );
 
-  app.get('/health', (req, res) => {
+  app.get('/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
@@ -143,19 +142,24 @@ async function startServer() {
       // Redis not available, already logged
     }
     
-    // Start blockchain event listeners
-    // NOTE: HyperEVM doesn't support eth_newFilter, so event listeners are disabled for now
-    // TODO: Implement polling-based event monitoring for HyperEVM
-    if (false && process.env.BONDING_CURVE_FACTORY_ADDRESS && process.env.GRADUATION_CONTROLLER_ADDRESS) {
-      await eventListener.startListening();
-      console.log('📡 Blockchain event listeners started');
-    } else {
-      console.log('⚠️  Event listeners disabled (HyperEVM doesn\'t support filters)');
-    }
+    // Start queue matchmaking service
+    queueService.startMatchmaking();
+    console.log('🎮 Queue matchmaking service started');
+    
+    // Start transaction monitoring
+    transactionService.startMonitoring();
+    console.log('💰 Transaction monitoring service started');
+    
+    // Log wallet configuration
+    logWalletConfig();
   });
 
   process.on('SIGTERM', async () => {
     console.log('SIGTERM signal received: closing HTTP server');
+    
+    // Stop services
+    queueService.stopMatchmaking();
+    
     httpServer.close();
     await prisma.$disconnect();
     

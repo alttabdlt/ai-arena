@@ -242,8 +242,9 @@ export class AIService {
     botId: string,
     gameState: PokerGameState,
     playerState: PlayerState,
-    opponents: number,
-    model: 'gpt-4o' | 'deepseek-chat' | 'claude-3-5-sonnet' | 'claude-3-opus'
+    _opponents: number,
+    model: 'gpt-4o' | 'deepseek-chat' | 'claude-3-5-sonnet' | 'claude-3-opus',
+    customPrompt?: string
   ): Promise<AIPokerDecision> {
     console.log(`🤖 AI Decision Request - Bot: ${botId}, Model: ${model}`);
     
@@ -262,10 +263,13 @@ export class AIService {
       });
     }
     
-    // Use neutral prompt for all models
-    const prompt = this.buildNeutralPokerPrompt(gameState, playerState);
+    // Use custom prompt for test bots, otherwise use neutral prompt
+    const isTestBot = botId.startsWith('test-bot-');
+    const prompt = isTestBot && customPrompt 
+      ? this.buildTestBotPrompt(gameState, playerState, customPrompt)
+      : this.buildNeutralPokerPrompt(gameState, playerState);
     
-    console.log(`📏 Neutral prompt length: ${prompt.length} characters`);
+    console.log(`📏 ${isTestBot ? 'Test bot' : 'Neutral'} prompt length: ${prompt.length} characters`);
 
     try {
       let decision: AIPokerDecision;
@@ -303,6 +307,28 @@ export class AIService {
       });
       console.log('⚠️  Falling back to programmatic logic');
       return this.getFallbackDecision(gameState, playerState);
+    }
+  }
+
+  private buildTestBotPrompt(
+    gameState: PokerGameState,
+    playerState: PlayerState,
+    userPrompt: string
+  ): string {
+    // Build the same neutral game state but include user's prompt as personality
+    const neutralState = this.buildNeutralPokerPrompt(gameState, playerState);
+    
+    // Parse the JSON to add the personality
+    try {
+      const stateObj = JSON.parse(neutralState);
+      stateObj.personality = userPrompt;
+      return JSON.stringify(stateObj, null, 2);
+    } catch (e) {
+      // Fallback if JSON parsing fails
+      return neutralState.replace(
+        '"validActions"',
+        `"personality": "${userPrompt.replace(/"/g, '\\"')}",\n  "validActions"`
+      );
     }
   }
 
@@ -400,80 +426,23 @@ Respond with JSON:
 {"action": "<your_action>", "amount": <if_applicable>, "reasoning": "<your_explanation>"}`;
   }
 
-  private buildPokerPrompt(
-    gameState: PokerGameState,
-    playerState: PlayerState
-  ): string {
-    // This method is now deprecated - redirect to neutral prompt
-    return this.buildNeutralPokerPrompt(gameState, playerState);
-  }
+  // Deprecated - kept for reference
+  // private buildPokerPrompt(
+  //   gameState: PokerGameState,
+  //   playerState: PlayerState
+  // ): string {
+  //   // This method is now deprecated - redirect to neutral prompt
+  //   return this.buildNeutralPokerPrompt(gameState, playerState);
+  // }
 
-  private buildConcisePokerPrompt(
-    gameState: PokerGameState,
-    playerState: PlayerState
-  ): string {
-    // Active opponents only
-    const activeOpps = gameState.opponents.filter(o => o.status === 'active');
-    const oppSummary = activeOpps
-      .map(o => `S${o.seat}:$${o.stackSize},${o.amountInRound > 0 ? `bet$${o.amountInRound}` : o.lastAction?.action || 'waiting'}`)
-      .join(' | ');
-
-    // Last 3 actions per round only
-    const recentActions = (actions: HandAction[], limit = 3) => {
-      if (!actions.length) return 'None';
-      return actions.slice(-limit).map(a => 
-        `${a.player}:${a.action}${a.amount ? `$${a.amount}` : ''}`
-      ).join(', ');
-    };
-
-    // Parse effective stacks
-    const effStacks = typeof playerState.effectiveStacks === 'string' 
-      ? JSON.parse(playerState.effectiveStacks) 
-      : playerState.effectiveStacks;
-    const minStack = effStacks.min || gameState.effectiveStackSize || playerState.stackSize;
-    
-    // Add context when player can check for free
-    const gameContext = playerState.canCheck && playerState.amountToCall === 0 
-      ? ' [No bets - all checking/calling]' 
-      : '';
-
-    // Calculate percentage-based information
-    const callCostPercent = playerState.amountToCall > 0 && playerState.stackSize > 0
-      ? (playerState.amountToCall / playerState.stackSize * 100).toFixed(1)
-      : "0";
-    
-    const potAfterCall = gameState.totalPot + playerState.amountToCall;
-    const potOddsPercent = playerState.amountToCall > 0
-      ? (playerState.amountToCall / potAfterCall * 100).toFixed(1)
-      : "0";
-    
-    const stackToPotRatio = gameState.totalPot > 0
-      ? (playerState.stackSize / gameState.totalPot).toFixed(2)
-      : "0";
-    
-    const remainingStackAfterCall = playerState.stackSize - playerState.amountToCall;
-    const committedAfterCall = remainingStackAfterCall < potAfterCall;
-    const wouldBeAllIn = playerState.amountToCall >= playerState.stackSize;
-
-    return `HAND #${gameState.handNumber} | ${gameState.bettingRound} | Pot:$${gameState.totalPot}${gameContext}
-TOURNAMENT: Final score = Chips × Style bonus (diverse wins +25%, bluffs +15%, comebacks +30%)
-Cards: YOU[${playerState.holeCards.join(' ')}] BOARD[${gameState.communityCards.join(' ') || '-'}]
-Position: ${playerState.position} | Stack:$${playerState.stackSize} | SPR:${stackToPotRatio}
-
-OPPONENTS(${activeOpps.length}): ${oppSummary}
-
-ACTIONS:
-Pre: ${recentActions(gameState.actionHistory.preflop)}${gameState.actionHistory.flop.length > 0 ? `
-Flop: ${recentActions(gameState.actionHistory.flop)}` : ''}${gameState.actionHistory.turn.length > 0 ? `
-Turn: ${recentActions(gameState.actionHistory.turn)}` : ''}${gameState.actionHistory.river.length > 0 ? `
-River: ${recentActions(gameState.actionHistory.river)}` : ''}
-
-INVESTED:$${playerState.amountInvestedThisRound} ADDITIONAL:$${playerState.amountToCall}${playerState.canCheck ? '(FREE)' : ''} [${callCostPercent}% of stack]${wouldBeAllIn ? ' *ALL-IN*' : ''}
-POT ODDS: ${potOddsPercent}% | ${committedAfterCall && !wouldBeAllIn ? 'POT-COMMITTED AFTER CALL' : wouldBeAllIn ? 'ALL-IN DECISION' : 'Not committed'}
-${playerState.handEvaluation ? `HAND: ${playerState.handEvaluation}\n` : ''}ACTIONS: ${playerState.canCheck ? 'CHECK(FREE)' : ''}${playerState.canCall ? ` CALL(+$${playerState.amountToCall})` : ''}${playerState.canRaise ? ` RAISE($${playerState.minRaiseAmount}-$${playerState.maxRaiseAmount})` : ''} FOLD
-
-What do you do? JSON: {"action": "...", "amount": (if raise), "reasoning": "..."}`;
-  }
+  // Deprecated method - kept for reference
+  // private buildConcisePokerPrompt(
+  //   gameState: PokerGameState,
+  //   playerState: PlayerState
+  // ): string {
+  //   // This method has been replaced by buildNeutralPokerPrompt
+  //   return this.buildNeutralPokerPrompt(gameState, playerState);
+  // }
 
   private getValidActionsList(playerState: PlayerState): string[] {
     const actions: string[] = [];
@@ -659,8 +628,8 @@ What do you do? JSON: {"action": "...", "amount": (if raise), "reasoning": "..."
 
   private async getOpenAIDecision(
     prompt: string,
-    gameState: PokerGameState,
-    playerState: PlayerState
+    _gameState: PokerGameState,
+    _playerState: PlayerState
   ): Promise<AIPokerDecision> {
     if (!this.openai) {
       throw new Error('OpenAI API key not configured');
@@ -702,8 +671,8 @@ What do you do? JSON: {"action": "...", "amount": (if raise), "reasoning": "..."
 
   private async getDeepseekDecision(
     prompt: string,
-    gameState: PokerGameState,
-    playerState: PlayerState
+    _gameState: PokerGameState,
+    _playerState: PlayerState
   ): Promise<AIPokerDecision> {
     if (!this.deepseek) {
       console.error('❌ Deepseek client not initialized');
@@ -800,8 +769,8 @@ What do you do? JSON: {"action": "...", "amount": (if raise), "reasoning": "..."
 
   private async getClaudeDecision(
     prompt: string,
-    gameState: PokerGameState,
-    playerState: PlayerState,
+    _gameState: PokerGameState,
+    _playerState: PlayerState,
     modelVersion: string
   ): Promise<AIPokerDecision> {
     if (!this.anthropic) {
@@ -874,6 +843,284 @@ What do you do? JSON: {"action": "...", "amount": (if raise), "reasoning": "..."
         bluffProbability: 0,
         modelUsed: 'Fallback Logic',
       },
+    };
+  }
+
+  async getReverseHangmanDecision(
+    botId: string,
+    gameState: any,
+    playerState: any,
+    model: 'gpt-4o' | 'deepseek-chat' | 'claude-3-5-sonnet' | 'claude-3-opus',
+    customPrompt?: string
+  ): Promise<any> {
+    console.log(`🎮 Reverse Hangman AI Decision Request - Bot: ${botId}, Model: ${model}`);
+    
+    // Build neutral prompt for reverse hangman
+    const prompt = this.buildNeutralReverseHangmanPrompt(gameState, playerState, customPrompt);
+    
+    console.log(`📏 Reverse Hangman prompt length: ${prompt.length} characters`);
+
+    try {
+      let decision: any;
+      
+      switch(model) {
+        case 'deepseek-chat':
+          console.log('📡 Calling Deepseek API for Reverse Hangman...');
+          decision = await this.getDeepseekReverseHangmanDecision(prompt);
+          break;
+        case 'gpt-4o':
+          console.log('📡 Calling OpenAI API for Reverse Hangman...');
+          decision = await this.getOpenAIReverseHangmanDecision(prompt);
+          break;
+        case 'claude-3-5-sonnet':
+          console.log('📡 Calling Claude 3.5 Sonnet API for Reverse Hangman...');
+          decision = await this.getClaudeReverseHangmanDecision(prompt, 'claude-3-5-sonnet-20241022');
+          break;
+        case 'claude-3-opus':
+          console.log('📡 Calling Claude 3 Opus API for Reverse Hangman...');
+          decision = await this.getClaudeReverseHangmanDecision(prompt, 'claude-3-opus-20240229');
+          break;
+        default:
+          throw new Error(`Unsupported model: ${model}`);
+      }
+      
+      return decision;
+    } catch (error) {
+      console.error(`❌ AI model error for ${model} in Reverse Hangman:`, error);
+      console.log('⚠️  Falling back to default reverse hangman logic');
+      return this.getFallbackReverseHangmanDecision(gameState);
+    }
+  }
+
+  private buildNeutralReverseHangmanPrompt(
+    gameState: any,
+    playerState: any,
+    customPrompt?: string
+  ): string {
+    const prompt = {
+      game_type: gameState.game_type,
+      output_shown: gameState.output_shown,
+      constraints: gameState.constraints,
+      previous_guesses: gameState.previous_guesses || [],
+      game_phase: gameState.game_phase,
+      time_elapsed_seconds: gameState.time_elapsed_seconds,
+      player_state: playerState,
+      instructions: `You are playing reverse prompt engineering. Your task: given an AI-generated output, figure out what prompt created it. The target prompt contains EXACTLY ${gameState.constraints.exact_word_count} words. You have 7 attempts. Each guess reveals which words match the original prompt. Use match_details feedback: matched_words are correct (keep them), missing_count tells you how many more words to find, extra_count tells you how many words to remove. The prompt will be a natural instruction that someone would give to an AI. Focus on the actual content and structure of the output to deduce the likely prompt. Respond with JSON: {action: 'guess_prompt', prompt_guess: 'your guess here', reasoning: 'your logic', confidence: 0-1, analysis: {output_type: 'your assessment', key_indicators: ['list', 'of', 'clues'], word_count_estimate: number, difficulty_assessment: 'easy/medium/hard', pattern_observations: ['what you notice']}}`
+    };
+
+    if (customPrompt) {
+      prompt.instructions += ` Additional strategy: ${customPrompt}`;
+    }
+
+    return JSON.stringify(prompt, null, 2);
+  }
+
+  private async getOpenAIReverseHangmanDecision(prompt: string): Promise<any> {
+    if (!this.openai) {
+      throw new Error('OpenAI client not initialized');
+    }
+
+    const response = await this.openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [{
+        role: 'user',
+        content: prompt
+      }],
+      temperature: 0.7,
+      max_tokens: 500,
+      response_format: { type: 'json_object' }
+    });
+
+    const content = response.choices[0]?.message?.content;
+    if (!content) throw new Error('No response from OpenAI');
+
+    try {
+      const decision = JSON.parse(content);
+      return {
+        action: decision.action || 'guess_prompt',
+        prompt_guess: decision.prompt_guess || decision.guess || 'Generate a response about the given topic',
+        reasoning: decision.reasoning || 'Analyzing the output patterns',
+        confidence: decision.confidence || 0.5,
+        analysis: decision.analysis || {
+          output_type: 'general',
+          key_indicators: [],
+          word_count_estimate: 10,
+          difficulty_assessment: 'medium',
+          pattern_observations: []
+        }
+      };
+    } catch (error) {
+      console.error('Failed to parse OpenAI response:', content);
+      throw error;
+    }
+  }
+
+  private async getDeepseekReverseHangmanDecision(prompt: string): Promise<any> {
+    if (!this.deepseek) {
+      throw new Error('Deepseek client not initialized');
+    }
+
+    const response = await this.deepseek.chat.completions.create({
+      model: 'deepseek-chat',
+      messages: [{
+        role: 'user',
+        content: prompt
+      }],
+      temperature: 0.7,
+      max_tokens: 500,
+      response_format: { type: 'json_object' }
+    });
+
+    const content = response.choices[0]?.message?.content;
+    if (!content) throw new Error('No response from Deepseek');
+
+    try {
+      const decision = JSON.parse(content);
+      return {
+        action: decision.action || 'guess_prompt',
+        prompt_guess: decision.prompt_guess || decision.guess || 'Generate a response about the given topic',
+        reasoning: decision.reasoning || 'Analyzing the output patterns',
+        confidence: decision.confidence || 0.5,
+        analysis: decision.analysis || {
+          output_type: 'general',
+          key_indicators: [],
+          word_count_estimate: 10,
+          difficulty_assessment: 'medium',
+          pattern_observations: []
+        }
+      };
+    } catch (error) {
+      console.error('Failed to parse Deepseek response:', content);
+      throw error;
+    }
+  }
+
+  private async getClaudeReverseHangmanDecision(prompt: string, modelVersion: string): Promise<any> {
+    if (!this.anthropic) {
+      throw new Error('Anthropic client not initialized');
+    }
+
+    const response = await this.anthropic.messages.create({
+      model: modelVersion,
+      max_tokens: 500,
+      temperature: 0.7,
+      messages: [{
+        role: 'user',
+        content: prompt
+      }]
+    });
+
+    const content = response.content[0];
+    if (content.type !== 'text') {
+      throw new Error('Unexpected response type from Claude');
+    }
+
+    try {
+      const cleanedContent = content.text.replace(/```json\n?|\n?```/g, '').trim();
+      const decision = JSON.parse(cleanedContent);
+      
+      return {
+        action: decision.action || 'guess_prompt',
+        prompt_guess: decision.prompt_guess || decision.guess || 'Generate a response about the given topic',
+        reasoning: decision.reasoning || 'Analyzing the output patterns',
+        confidence: decision.confidence || 0.5,
+        analysis: decision.analysis || {
+          output_type: 'general',
+          key_indicators: [],
+          word_count_estimate: 10,
+          difficulty_assessment: 'medium',
+          pattern_observations: []
+        }
+      };
+    } catch (error) {
+      console.error('Failed to parse Claude response:', content.text);
+      throw error;
+    }
+  }
+
+  private extractWordsFromOutput(output: string): string[] {
+    // Simply extract all words and sort by frequency
+    const words = output.toLowerCase()
+      .replace(/[^\w\s]/g, '') // Remove punctuation
+      .split(/\s+/)
+      .filter(word => word.length > 2); // Keep words with 3+ letters
+    
+    // Count word frequency
+    const wordFrequency = new Map<string, number>();
+    words.forEach(word => {
+      wordFrequency.set(word, (wordFrequency.get(word) || 0) + 1);
+    });
+    
+    // Sort by frequency and return unique words
+    return Array.from(wordFrequency.entries())
+      .sort((a, b) => b[1] - a[1]) // Sort by frequency descending
+      .map(([word]) => word);
+  }
+
+
+  private getFallbackReverseHangmanDecision(gameState: any): any {
+    const output = gameState.output_shown || '';
+    const wordCount = output.split(/\s+/).length;
+    
+    // Extract words from output without any bias
+    const outputWords = this.extractWordsFromOutput(output);
+    
+    let promptGuess = '';
+    
+    // Check if we have match details from previous attempts
+    const lastAttempt = gameState.previous_guesses?.[gameState.previous_guesses.length - 1];
+    if (lastAttempt?.match_details && lastAttempt.match_details.matched_words.length > 0) {
+      // Build purely on what we know works
+      const matchedWords = lastAttempt.match_details.matched_words || [];
+      
+      // Start with matched words
+      let guessWords = [...matchedWords];
+      
+      // Add words from the output that aren't already matched
+      const unmatchedOutputWords = outputWords.filter(w => !matchedWords.includes(w));
+      
+      // Add the most frequent unmatched words from the output
+      const wordsToAdd = unmatchedOutputWords.slice(0, Math.max(0, 8 - guessWords.length));
+      guessWords.push(...wordsToAdd);
+      
+      // Build the guess
+      promptGuess = guessWords.join(' ');
+      
+      // Ensure minimum word count by adding more output words
+      if (promptGuess.split(' ').length < 6 && unmatchedOutputWords.length > wordsToAdd.length) {
+        const additionalWords = unmatchedOutputWords.slice(wordsToAdd.length, wordsToAdd.length + 3);
+        promptGuess = `${promptGuess} ${additionalWords.join(' ')}`;
+      }
+    } else {
+      // First attempt - just use the most frequent words from the output
+      // Take more words to increase chances of matching something
+      promptGuess = outputWords.slice(0, 8).join(' ');
+      
+      // If we don't have enough words, repeat some
+      if (promptGuess.split(' ').length < 6) {
+        promptGuess = outputWords.slice(0, 6).join(' ');
+      }
+    }
+    
+    const hasMatchDetails = lastAttempt?.match_details;
+    const confidence = hasMatchDetails ? 0.4 + (lastAttempt.similarity_score * 0.4) : 0.3;
+    
+    return {
+      action: 'guess_prompt',
+      prompt_guess: promptGuess,
+      reasoning: hasMatchDetails 
+        ? `Using ${lastAttempt.match_details.matched_words.length} confirmed words and adding frequent words from the output. No bias or assumptions about content type.`
+        : `Extracted ${outputWords.length} unique words from output. Using most frequent words as initial guess without any content assumptions.`,
+      confidence: confidence,
+      analysis: {
+        output_type: 'unknown',
+        key_indicators: outputWords.slice(0, 5),
+        word_count_estimate: Math.floor(wordCount / 20),
+        difficulty_assessment: gameState.constraints?.difficulty || 'medium',
+        pattern_observations: hasMatchDetails
+          ? [`Matched: ${lastAttempt.match_details.matched_words.join(', ')}`, `Output words: ${outputWords.slice(0, 5).join(', ')}`]
+          : [`Most frequent words: ${outputWords.slice(0, 8).join(', ')}`]
+      }
     };
   }
 }

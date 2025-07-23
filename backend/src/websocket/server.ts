@@ -14,7 +14,7 @@ export function setupWebSocketServer(port: number) {
 
   subscriber.psubscribe('price:*', 'graduation:*', 'tournament:*');
 
-  subscriber.on('pmessage', (pattern, channel, message) => {
+  subscriber.on('pmessage', (_pattern, channel, message) => {
     const data = JSON.parse(message);
     
     clients.forEach((client) => {

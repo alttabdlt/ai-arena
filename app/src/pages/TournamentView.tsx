@@ -281,7 +281,7 @@ const TournamentView = () => {
                   <div className="flex items-center gap-2">
                     <Timer className="h-4 w-4 text-muted-foreground" />
                     <Badge variant="outline">
-                      Hand {getCurrentHandNumber()} of {config?.maxHands || 20}
+                      Hand {getCurrentHandNumber()}{config?.maxHands !== -1 ? ` of ${config?.maxHands || 20}` : ''}
                     </Badge>
                   </div>
                   <div className="flex items-center gap-2">
@@ -431,7 +431,7 @@ const TournamentView = () => {
                       Number of Players: {config?.playerCount || 3}
                     </label>
                     <div className="flex gap-2 flex-wrap">
-                      {[2, 3, 4, 5, 6, 7, 8, 9].map(count => (
+                      {[2, 3, 4, 5, 6, 7, 8].map(count => (
                         <Button
                           key={count}
                           size="sm"
@@ -451,24 +451,31 @@ const TournamentView = () => {
                     <div className="flex gap-2">
                       <Button
                         size="sm"
-                        variant="outline"
-                        onClick={() => updateConfig({ startingChips: 5000 })}
-                      >
-                        5,000 chips
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
+                        variant={config?.startingChips === 10000 ? 'default' : 'outline'}
                         onClick={() => updateConfig({ startingChips: 10000 })}
                       >
-                        10,000 chips
+                        10K
                       </Button>
                       <Button
                         size="sm"
-                        variant="outline"
-                        onClick={() => updateConfig({ startingChips: 20000 })}
+                        variant={config?.startingChips === 25000 ? 'default' : 'outline'}
+                        onClick={() => updateConfig({ startingChips: 25000 })}
                       >
-                        20,000 chips
+                        25K
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant={config?.startingChips === 50000 ? 'default' : 'outline'}
+                        onClick={() => updateConfig({ startingChips: 50000 })}
+                      >
+                        50K
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant={config?.startingChips === 100000 ? 'default' : 'outline'}
+                        onClick={() => updateConfig({ startingChips: 100000 })}
+                      >
+                        100K
                       </Button>
                     </div>
                   </div>
@@ -477,61 +484,37 @@ const TournamentView = () => {
                 <div className="space-y-4">
                   <div>
                     <label className="text-sm font-medium mb-2 block">
-                      Number of Hands: {config?.maxHands || 20}
+                      Number of Hands: {config?.maxHands === -1 ? 'Infinite' : (config?.maxHands || 20)}
                     </label>
                     <div className="flex gap-2">
                       <Button
                         size="sm"
-                        variant="outline"
-                        onClick={() => updateConfig({ maxHands: 10 })}
-                      >
-                        10
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
+                        variant={config?.maxHands === 20 ? 'default' : 'outline'}
                         onClick={() => updateConfig({ maxHands: 20 })}
                       >
                         20
                       </Button>
                       <Button
                         size="sm"
-                        variant="outline"
+                        variant={config?.maxHands === 50 ? 'default' : 'outline'}
                         onClick={() => updateConfig({ maxHands: 50 })}
                       >
                         50
                       </Button>
                       <Button
                         size="sm"
-                        variant="outline"
+                        variant={config?.maxHands === 100 ? 'default' : 'outline'}
                         onClick={() => updateConfig({ maxHands: 100 })}
                       >
                         100
                       </Button>
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <label className="text-sm font-medium mb-2 block">Display Options</label>
-                    <div className="space-y-2">
-                      <label className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={config?.showAIThinking ?? true}
-                          onChange={(e) => updateConfig({ showAIThinking: e.target.checked })}
-                          className="rounded"
-                        />
-                        <span className="text-sm">Show AI Thinking Panel</span>
-                      </label>
-                      <label className="flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={config?.showDecisionHistory ?? true}
-                          onChange={(e) => updateConfig({ showDecisionHistory: e.target.checked })}
-                          className="rounded"
-                        />
-                        <span className="text-sm">Show Decision History</span>
-                      </label>
+                      <Button
+                        size="sm"
+                        variant={config?.maxHands === -1 ? 'default' : 'outline'}
+                        onClick={() => updateConfig({ maxHands: -1 })}
+                      >
+                        Infinite
+                      </Button>
                     </div>
                   </div>
                 </div>

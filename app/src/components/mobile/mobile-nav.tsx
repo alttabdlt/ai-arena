@@ -7,33 +7,24 @@ import {
   Home, 
   Users, 
   Trophy, 
-  Target,
-  Vault,
-  Shield,
   Rocket,
-  BarChart3, 
   Settings, 
   BookOpen, 
-  Code, 
   Scale,
-  MessageSquare,
-  Activity
+  Activity,
+  LayoutDashboard,
+  HelpCircle
 } from 'lucide-react';
 
 const navItems = [
   { to: '/', icon: Home, label: 'Home' },
-  { to: '/discover', icon: Target, label: 'Discover' },
-  { to: '/bots', icon: BarChart3, label: 'Bots' },
+  { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/tournaments', icon: Trophy, label: 'Tournaments' },
-  { to: '/vaults', icon: Vault, label: 'Vaults' },
-  { to: '/portfolio', icon: Users, label: 'Portfolio' },
-  { to: '/kyc', icon: Shield, label: 'KYC' },
-  { to: '/launch', icon: Rocket, label: 'Launch' },
-  { to: '/analytics', icon: Activity, label: 'Analytics' },
-  { to: '/social', icon: MessageSquare, label: 'Social' },
+  { to: '/bots', icon: Activity, label: 'Bots' },
+  { to: '/queue', icon: Users, label: 'Queue' },
+  { to: '/deploy', icon: Rocket, label: 'Deploy Bot' },
   { to: '/learn', icon: BookOpen, label: 'Learn' },
-  { to: '/legal', icon: Scale, label: 'Legal' },
-  { to: '/settings', icon: Settings, label: 'Settings' }
+  { to: '/legal', icon: Scale, label: 'Legal' }
 ];
 
 export function MobileNav() {

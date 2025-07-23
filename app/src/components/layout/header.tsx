@@ -1,10 +1,13 @@
-// import { WalletButton } from '@/components/ui/wallet-button';
+import { WalletNetworkButton } from '@/components/ui/wallet-network-button';
 import { Button } from '@/components/ui/button';
 import { MobileNav } from '@/components/mobile/mobile-nav';
-import { Zap, Users, Trophy, TrendingUp, BarChart3, Settings, Droplets, BookOpen, Code, Scale, MessageSquare, Activity, Target, Vault, Shield, Rocket } from 'lucide-react';
+import { Zap, Users, Trophy, Activity, Rocket, LayoutDashboard, HelpCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { useAccount } from 'wagmi';
 
 export function Header() {
+  const { isConnected } = useAccount();
+
   return (
     <header className="border-b border-border bg-background/95 backdrop-blur-md sticky top-0 z-50 shadow-sm">
       <div className="container mx-auto px-4 h-16 flex items-center">
@@ -16,10 +19,10 @@ export function Header() {
               <Zap className="h-6 w-6 text-primary-foreground" />
             </div>
             <span className="text-lg font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent tracking-tight">
-              HYPER
+              AI ARENA
             </span>
           </Link>
-          {/* <WalletButton /> */}
+          <WalletNetworkButton />
         </div>
 
         {/* Desktop Layout */}
@@ -34,14 +37,22 @@ export function Header() {
             </span>
           </Link>
 
-          {/* Navigation */}
-          <nav className="hidden md:flex items-center space-x-4">
-            {/* <Button variant="ghost" className="text-foreground hover:text-primary" asChild>
-              <Link to="/discover">
-                <Target className="mr-2 h-4 w-4" />
-                Discover
+          {/* Navigation - Simplified */}
+          <nav className="hidden md:flex items-center space-x-3">
+            {isConnected && (
+              <Button variant="ghost" className="text-foreground hover:text-primary" asChild>
+                <Link to="/dashboard">
+                  <LayoutDashboard className="mr-2 h-4 w-4" />
+                  Dashboard
+                </Link>
+              </Button>
+            )}
+            <Button variant="ghost" className="text-foreground hover:text-primary" asChild>
+              <Link to="/tournaments">
+                <Trophy className="mr-2 h-4 w-4" />
+                Tournaments
               </Link>
-            </Button> */}
+            </Button>
             <Button variant="ghost" className="text-foreground hover:text-primary" asChild>
               <Link to="/bots">
                 <Activity className="mr-2 h-4 w-4" />
@@ -49,63 +60,28 @@ export function Header() {
               </Link>
             </Button>
             <Button variant="ghost" className="text-foreground hover:text-primary" asChild>
-              <Link to="/tournaments">
-                <Trophy className="mr-2 h-4 w-4" />
-                Tournaments
-              </Link>
-            </Button>
-            {/* <Button variant="ghost" className="text-foreground hover:text-primary" asChild>
-              <Link to="/portfolio">
+              <Link to="/queue">
                 <Users className="mr-2 h-4 w-4" />
-                Portfolio
-              </Link>
-            </Button> */}
-            {/* <Button variant="ghost" className="text-foreground hover:text-primary" asChild>
-              <Link to="/vaults">
-                <Vault className="mr-2 h-4 w-4" />
-                Vaults
-              </Link>
-            </Button> */}
-            <Button variant="ghost" className="text-foreground hover:text-primary" asChild>
-              <Link to="/analytics">
-                <BarChart3 className="mr-2 h-4 w-4" />
-                Analytics
+                Queue
               </Link>
             </Button>
-            <Button variant="ghost" className="text-foreground hover:text-primary" asChild>
-              <Link to="/social">
-                <MessageSquare className="mr-2 h-4 w-4" />
-                Social
-              </Link>
-            </Button>
-            {/* <Button variant="ghost" className="text-foreground hover:text-primary" asChild>
-              <Link to="/kyc">
-                <Shield className="mr-2 h-4 w-4" />
-                KYC
-              </Link>
-            </Button> */}
-            {/* <Button variant="ghost" className="text-foreground hover:text-primary" asChild>
-              <Link to="/launch">
+            <Button variant="default" size="sm" asChild>
+              <Link to="/deploy">
                 <Rocket className="mr-2 h-4 w-4" />
-                Launch Bot
-              </Link>
-            </Button> */}
-            <Button variant="ghost" className="text-foreground hover:text-primary" asChild>
-              <Link to="/learn">
-                <BookOpen className="mr-2 h-4 w-4" />
-                Learn
-              </Link>
-            </Button>
-            <Button variant="ghost" className="text-foreground hover:text-primary" asChild>
-              <Link to="/settings">
-                <Settings className="mr-2 h-4 w-4" />
-                Settings
+                Deploy Bot
               </Link>
             </Button>
           </nav>
 
-          {/* Wallet Connection */}
-          {/* <WalletButton /> */}
+          {/* Right side - Help, Wallet/User */}
+          <div className="flex items-center space-x-3">
+            <Button variant="ghost" size="icon" asChild>
+              <Link to="/learn">
+                <HelpCircle className="h-5 w-5" />
+              </Link>
+            </Button>
+            <WalletNetworkButton />
+          </div>
         </div>
       </div>
     </header>

@@ -205,3 +205,47 @@
 .animate-fade-in {
   animation: fade-in 0.3s ease-out;
 }
+
+/* Spin wheel animations */
+@keyframes wheel-appear {
+  from {
+    opacity: 0;
+    transform: scale(0.8) rotate(-20deg);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+@keyframes pointer-bounce {
+  0%, 100% {
+    transform: translateX(-50%) translateY(0);
+  }
+  50% {
+    transform: translateX(-50%) translateY(-10px);
+  }
+}
+
+@keyframes celebration-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 0.8;
+  }
+}
+
+.wheel-container {
+  animation: wheel-appear 0.5s ease-out;
+}
+
+.wheel-pointer {
+  animation: pointer-bounce 1s ease-in-out infinite;
+}
+
+.wheel-celebration {
+  animation: celebration-pulse 0.6s ease-in-out 3;
+}

@@ -6,56 +6,100 @@ export const typeDefs = gql`
   type User {
     id: ID!
     address: String!
+    username: String
+    role: UserRole!
     kycTier: Int!
     createdAt: DateTime!
     updatedAt: DateTime!
     bots: [Bot!]!
-    transactions: [Transaction!]!
+    deployments: [DeploymentTransaction!]!
     achievements: [Achievement!]!
+  }
+  
+  enum UserRole {
+    USER
+    DEVELOPER
+    ADMIN
   }
 
   type Bot {
     id: ID!
-    address: String!
     name: String!
-    description: String!
+    avatar: String!
+    prompt: String!
+    modelType: AIModelType!
     creator: User!
-    creatorAddress: String!
-    bondingCurve: BondingCurve!
-    imageUrl: String
-    tags: [String!]!
+    creatorId: String!
+    isActive: Boolean!
+    stats: BotStats!
     socialStats: SocialStats!
+    queuePosition: Int
     createdAt: DateTime!
     updatedAt: DateTime!
   }
-
-  type BondingCurve {
-    id: ID!
-    botId: String!
-    bot: Bot!
-    currentSupply: String!
-    currentPrice: String!
-    marketCap: String!
-    volume24h: String!
-    holders: Int!
-    graduated: Boolean!
-    graduatedAt: DateTime
-    transactions: [Transaction!]!
+  
+  type BotStats {
+    wins: Int!
+    losses: Int!
+    earnings: String!
+    winRate: Float!
+    avgFinishPosition: Float!
   }
-
-  type Transaction {
+  
+  type DeploymentTransaction {
     id: ID!
-    type: TransactionType!
+    bot: Bot!
     user: User!
-    userAddress: String!
-    bondingCurve: BondingCurve!
-    bondingCurveId: String!
-    amount: String!
-    price: String!
-    totalCost: String!
     txHash: String!
+    amount: String!
+    status: TxStatus!
     createdAt: DateTime!
   }
+  
+  enum TxStatus {
+    PENDING
+    CONFIRMED
+    FAILED
+    REFUNDED
+  }
+  
+  type QueueEntry {
+    id: ID!
+    bot: Bot!
+    queueType: QueueType!
+    priority: Int!
+    status: QueueStatus!
+    enteredAt: DateTime!
+    expiresAt: DateTime!
+    position: Int!
+  }
+  
+  enum QueueType {
+    STANDARD
+    PRIORITY
+    PREMIUM
+  }
+  
+  enum QueueStatus {
+    WAITING
+    MATCHED
+    EXPIRED
+    CANCELLED
+  }
+
+  type QueueStatusInfo {
+    totalInQueue: Int!
+    averageWaitTime: Int!
+    nextMatchTime: DateTime
+    queueTypes: [QueueTypeInfo!]!
+  }
+
+  type QueueTypeInfo {
+    type: QueueType!
+    count: Int!
+    estimatedWaitTime: Int!
+  }
+
 
   type SocialStats {
     likes: Int!
@@ -94,28 +138,7 @@ export const typeDefs = gql`
     users: [User!]!
   }
 
-  type PriceUpdate {
-    botId: String!
-    price: String!
-    marketCap: String!
-    volume24h: String!
-    holders: Int!
-    timestamp: DateTime!
-  }
 
-  type GraduationEvent {
-    botId: String!
-    botName: String!
-    finalPrice: String!
-    totalRaised: String!
-    holders: Int!
-    timestamp: DateTime!
-  }
-
-  enum TransactionType {
-    BUY
-    SELL
-  }
 
   enum TournamentType {
     ROOKIE
@@ -149,8 +172,9 @@ export const typeDefs = gql`
       limit: Int
       offset: Int
     ): [Bot!]!
-    trendingBots(limit: Int): [Bot!]!
-    recentLaunches(limit: Int): [Bot!]!
+    topBots(limit: Int): [Bot!]!
+    recentBots(limit: Int): [Bot!]!
+    queuedBots(limit: Int): [Bot!]!
 
     # Tournament queries
     tournament(id: String!): Tournament
@@ -164,14 +188,18 @@ export const typeDefs = gql`
 
     # Analytics queries
     platformStats: PlatformStats!
-    userPortfolio(address: String!): Portfolio!
+    userStats(address: String!): UserStats!
+    queueStatus: QueueStatusInfo!
   }
 
   type Mutation {
     # Bot mutations
-    createBot(input: CreateBotInput!): Bot!
-    buyBot(input: BuyBotInput!): Transaction!
-    sellBot(input: SellBotInput!): Transaction!
+    deployBot(input: DeployBotInput!): Bot!
+    toggleBotActive(botId: String!): Bot!
+    
+    # Queue mutations
+    enterQueue(botId: String!, queueType: QueueType!): QueueEntry!
+    leaveQueue(botId: String!): Boolean!
 
     # Tournament mutations
     enterTournament(tournamentId: String!, botId: String!): TournamentParticipant!
@@ -185,81 +213,98 @@ export const typeDefs = gql`
 
     # KYC mutations
     completeKYCTier(tier: Int!): User!
+
+    # Auth mutations
+    requestNonce(address: String!): NonceResponse!
+    connectWallet(input: ConnectWalletInput!): AuthResponse!
+    refreshToken(refreshToken: String!): AuthResponse!
+    logout: Boolean!
   }
 
   type Subscription {
-    priceUpdate(botId: String!): PriceUpdate!
-    allPriceUpdates: PriceUpdate!
-    graduationEvent: GraduationEvent!
     tournamentUpdate(tournamentId: String!): Tournament!
+    queueUpdate: QueueEntry!
+    botDeployed: Bot!
   }
 
-  input CreateBotInput {
+  input DeployBotInput {
     name: String!
-    description: String!
-    imageUrl: String
-    tags: [String!]
-    strategy: String
+    avatar: String!
+    prompt: String!
+    modelType: AIModelType!
+    txHash: String!
   }
 
-  input BuyBotInput {
-    botId: String!
-    amount: String!
-    maxSlippage: Float!
+  # Auth types
+  type NonceResponse {
+    nonce: String!
+    message: String!
   }
 
-  input SellBotInput {
-    botId: String!
-    amount: String!
-    minReceived: String!
+  input ConnectWalletInput {
+    address: String!
+    signature: String!
+    nonce: String!
   }
+
+  type AuthResponse {
+    user: User!
+    accessToken: String!
+    refreshToken: String!
+  }
+  
+  enum AIModelType {
+    GPT_4O
+    CLAUDE_3_5_SONNET
+    CLAUDE_3_OPUS
+    DEEPSEEK_CHAT
+  }
+
 
   input BotFilter {
-    minPrice: String
-    maxPrice: String
-    minMarketCap: String
-    maxMarketCap: String
-    tags: [String!]
-    graduated: Boolean
+    modelType: AIModelType
+    isActive: Boolean
     creatorAddress: String
+    hasQueueEntry: Boolean
   }
 
   enum BotSort {
     CREATED_DESC
     CREATED_ASC
-    PRICE_DESC
-    PRICE_ASC
-    MARKET_CAP_DESC
-    MARKET_CAP_ASC
-    VOLUME_DESC
-    VOLUME_ASC
-    HOLDERS_DESC
-    HOLDERS_ASC
+    WINS_DESC
+    WINS_ASC
+    WIN_RATE_DESC
+    WIN_RATE_ASC
+    EARNINGS_DESC
+    EARNINGS_ASC
   }
 
   type PlatformStats {
     totalBots: Int!
-    totalVolume: String!
+    activeBots: Int!
     totalUsers: Int!
     activeUsers24h: Int!
-    graduatedBots: Int!
-    avgGraduationTime: Float
+    totalMatches: Int!
+    queuedBots: Int!
+    totalEarnings: String!
   }
 
-  type Portfolio {
-    totalValue: String!
-    totalPnL: String!
-    totalPnLPercent: Float!
-    holdings: [Holding!]!
+  type UserStats {
+    totalBots: Int!
+    activeBots: Int!
+    totalWins: Int!
+    totalEarnings: String!
+    bestBot: Bot
+    recentMatches: [Match!]!
   }
 
-  type Holding {
-    bot: Bot!
-    amount: String!
-    avgPrice: String!
-    currentValue: String!
-    pnl: String!
-    pnlPercent: Float!
+  type Match {
+    id: ID!
+    bots: [Bot!]!
+    winner: Bot
+    prizePool: String!
+    createdAt: DateTime!
+    completedAt: DateTime
   }
 
   type Comment {
@@ -606,5 +651,126 @@ export const typeDefs = gql`
       playerState: PlayerStateInput!
       opponents: Int!
     ): AIPokerDecision!
+    
+    # AI Reverse Hangman mutation
+    getAIReverseHangmanDecision(
+      botId: String!
+      model: String!
+      gameState: ReverseHangmanGameStateInput!
+      playerState: ReverseHangmanPlayerStateInput!
+    ): AIReverseHangmanDecision!
+  }
+
+  # Reverse Hangman Types
+  type ReverseHangmanGameState {
+    game_type: String!
+    output_shown: String!
+    constraints: ReverseHangmanConstraints!
+    previous_guesses: [ReverseHangmanGuess!]!
+    game_phase: String!
+    time_elapsed_seconds: Int!
+  }
+
+  input ReverseHangmanGameStateInput {
+    game_type: String!
+    output_shown: String!
+    constraints: ReverseHangmanConstraintsInput!
+    previous_guesses: [ReverseHangmanGuessInput!]!
+    game_phase: String!
+    time_elapsed_seconds: Int!
+  }
+
+  type ReverseHangmanConstraints {
+    max_word_count: Int!
+    exact_word_count: Int!
+    difficulty: String!
+    category: String!
+    max_attempts: Int!
+  }
+
+  input ReverseHangmanConstraintsInput {
+    max_word_count: Int!
+    exact_word_count: Int!
+    difficulty: String!
+    category: String!
+    max_attempts: Int!
+  }
+
+  type ReverseHangmanGuess {
+    attempt_number: Int!
+    prompt_guess: String!
+    similarity_score: Float!
+    feedback: String!
+    match_details: ReverseHangmanMatchDetails
+  }
+  
+  type ReverseHangmanMatchDetails {
+    word_matches: Int!
+    total_words: Int!
+    matched_words: [String!]!
+    missing_count: Int!
+    extra_count: Int!
+    semantic_matches: [ReverseHangmanSemanticMatch!]!
+  }
+  
+  type ReverseHangmanSemanticMatch {
+    original: String!
+    matched: String!
+  }
+
+  input ReverseHangmanGuessInput {
+    attempt_number: Int!
+    prompt_guess: String!
+    similarity_score: Float!
+    feedback: String!
+    match_details: ReverseHangmanMatchDetailsInput
+  }
+  
+  input ReverseHangmanMatchDetailsInput {
+    word_matches: Int!
+    total_words: Int!
+    matched_words: [String!]!
+    missing_count: Int!
+    extra_count: Int!
+    semantic_matches: [ReverseHangmanSemanticMatchInput!]!
+  }
+  
+  input ReverseHangmanSemanticMatchInput {
+    original: String!
+    matched: String!
+  }
+
+  type ReverseHangmanPlayerState {
+    player_id: String!
+    current_round: Int!
+    total_rounds: Int!
+    current_score: Int!
+    rounds_won: Int!
+    rounds_lost: Int!
+  }
+
+  input ReverseHangmanPlayerStateInput {
+    player_id: String!
+    current_round: Int!
+    total_rounds: Int!
+    current_score: Int!
+    rounds_won: Int!
+    rounds_lost: Int!
+  }
+
+  type ReverseHangmanAnalysis {
+    output_type: String!
+    key_indicators: [String!]!
+    word_count_estimate: Int!
+    difficulty_assessment: String!
+    pattern_observations: [String!]!
+  }
+
+  type AIReverseHangmanDecision {
+    action: String!
+    prompt_guess: String!
+    reasoning: String!
+    confidence: Float!
+    analysis: ReverseHangmanAnalysis!
   }
 `;

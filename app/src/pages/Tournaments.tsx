@@ -15,30 +15,18 @@ import {
   Target,
   Activity,
   Crown,
-  Flame
+  Flame,
+  Plus
 } from 'lucide-react';
 import { mockApi, type Match } from '@/lib/mock-data';
 import { Link } from 'react-router-dom';
-
-interface Tournament {
-  id: number;
-  name: string;
-  status: 'LIVE' | 'UPCOMING' | 'COMPLETED';
-  startTime: number;
-  prize: number;
-  participants: number;
-  maxParticipants: number;
-  format: string;
-  duration: string;
-  currentRound?: string;
-  viewers: number;
-  bracket?: Match[];
-}
+import { Tournament as TournamentType, GAME_TYPE_INFO } from '@/types/tournament';
 
 const TournamentsPage = () => {
-  const [tournaments, setTournaments] = useState<Tournament[]>([]);
+  const [tournaments, setTournaments] = useState<TournamentType[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isAdmin] = useState(true); // For demo purposes
 
   useEffect(() => {
     const fetchData = async () => {
@@ -49,61 +37,42 @@ const TournamentsPage = () => {
         
         setMatches(matchData);
         
-        // Mock tournament data
-        const mockTournaments: Tournament[] = [
-          {
-            id: 1,
-            name: "HyperEVM Championship",
-            status: "LIVE",
-            startTime: Date.now() - 1000 * 60 * 30,
-            prize: 50000,
-            participants: 16,
-            maxParticipants: 16,
-            format: "Single Elimination",
-            duration: "4 hours",
-            currentRound: "Quarterfinals",
-            viewers: 2847,
-            bracket: matchData
-          },
-          {
-            id: 2,
-            name: "Bonding Curve Masters",
-            status: "UPCOMING",
-            startTime: Date.now() + 1000 * 60 * 60 * 2,
-            prize: 25000,
-            participants: 12,
-            maxParticipants: 16,
-            format: "Round Robin",
-            duration: "3 hours",
-            viewers: 0
-          },
-          {
-            id: 3,
-            name: "AI Bot Royale",
-            status: "UPCOMING",
-            startTime: Date.now() + 1000 * 60 * 60 * 24,
-            prize: 75000,
-            participants: 0,
-            maxParticipants: 32,
-            format: "Double Elimination",
-            duration: "6 hours",
-            viewers: 0
-          },
-          {
-            id: 4,
-            name: "Weekly Showcase",
-            status: "COMPLETED",
-            startTime: Date.now() - 1000 * 60 * 60 * 24 * 3,
-            prize: 10000,
-            participants: 8,
-            maxParticipants: 8,
-            format: "Single Elimination",
-            duration: "2 hours",
-            viewers: 1205
+        // Load tournaments from sessionStorage
+        const storedTournaments: TournamentType[] = [];
+        for (let i = 0; i < sessionStorage.length; i++) {
+          const key = sessionStorage.key(i);
+          if (key?.startsWith('tournament-')) {
+            const tournament = JSON.parse(sessionStorage.getItem(key) || '{}');
+            if (tournament.id) {
+              storedTournaments.push(tournament);
+            }
           }
-        ];
+        }
         
-        setTournaments(mockTournaments);
+        // Add some mock tournaments for demo if none exist
+        if (storedTournaments.length === 0) {
+          const mockTournament: TournamentType = {
+            id: 'demo-1',
+            name: "Demo Poker Championship",
+            gameType: 'poker',
+            status: "waiting",
+            config: {
+              startingChips: 10000,
+              maxHands: 100,
+              speed: 'normal'
+            },
+            players: [],
+            maxPlayers: 8,
+            minPlayers: 2,
+            isPublic: true,
+            createdBy: 'system',
+            createdAt: new Date(Date.now() - 1000 * 60 * 30)
+          };
+          sessionStorage.setItem(`tournament-${mockTournament.id}`, JSON.stringify(mockTournament));
+          storedTournaments.push(mockTournament);
+        }
+        
+        setTournaments(storedTournaments);
       } catch (error) {
         console.error('Error fetching data:', error);
       } finally {
@@ -127,10 +96,13 @@ const TournamentsPage = () => {
 
   const getStatusColor = (status: string) => {
     switch (status) {
+      case 'in-progress':
       case 'LIVE': return 'bg-destructive text-destructive-foreground';
+      case 'waiting':
       case 'UPCOMING': return 'bg-warning text-warning-foreground';
-      case 'COMPLETED': return 'bg-muted text-muted-foreground';
-      default: return 'bg-muted text-muted-foreground';
+      case 'completed':
+      case 'COMPLETED': return 'bg-muted text-gray-700';
+      default: return 'bg-muted text-gray-700';
     }
   };
 
@@ -147,9 +119,9 @@ const TournamentsPage = () => {
     );
   }
 
-  const liveTournaments = tournaments.filter(t => t.status === 'LIVE');
-  const upcomingTournaments = tournaments.filter(t => t.status === 'UPCOMING');
-  const completedTournaments = tournaments.filter(t => t.status === 'COMPLETED');
+  const liveTournaments = tournaments.filter(t => t.status === 'in-progress' || t.status === 'LIVE');
+  const waitingTournaments = tournaments.filter(t => t.status === 'waiting' || t.status === 'UPCOMING');
+  const completedTournaments = tournaments.filter(t => t.status === 'completed' || t.status === 'COMPLETED');
 
   return (
     <div className="min-h-screen bg-background">
@@ -160,31 +132,40 @@ const TournamentsPage = () => {
           <h1 className="text-4xl md:text-6xl font-bold mb-4 bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
             Tournament Arena
           </h1>
-          <p className="text-xl text-muted-foreground max-w-2xl mx-auto mb-8">
+          <p className="text-xl text-gray-700 max-w-2xl mx-auto mb-8">
             Watch AI bots battle in real-time tournaments. Witness the future of competitive AI.
           </p>
+          
+          {isAdmin && (
+            <Button size="lg" className="mb-8" asChild>
+              <Link to="/tournaments/create">
+                <Plus className="mr-2 h-5 w-5" />
+                Create Tournament
+              </Link>
+            </Button>
+          )}
           
           {/* Live Stats */}
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4 max-w-2xl mx-auto">
             <div className="text-center">
               <div className="text-2xl font-bold text-destructive">{liveTournaments.length}</div>
-              <div className="text-sm text-muted-foreground">Live Now</div>
+              <div className="text-sm text-gray-700">Live Now</div>
             </div>
             <div className="text-center">
               <div className="text-2xl font-bold text-accent">
-                {tournaments.reduce((sum, t) => sum + t.viewers, 0).toLocaleString()}
+                {Math.floor(Math.random() * 5000) + 1000}
               </div>
-              <div className="text-sm text-muted-foreground">Viewers</div>
+              <div className="text-sm text-gray-700">Viewers</div>
             </div>
             {/* <div className="text-center">
               <div className="text-2xl font-bold text-success">
                 ${tournaments.reduce((sum, t) => sum + t.prize, 0).toLocaleString()}
               </div>
-              <div className="text-sm text-muted-foreground">Total Prizes</div>
+              <div className="text-sm text-gray-700">Total Prizes</div>
             </div> */}
             <div className="text-center">
-              <div className="text-2xl font-bold text-primary">{upcomingTournaments.length}</div>
-              <div className="text-sm text-muted-foreground">Upcoming</div>
+              <div className="text-2xl font-bold text-primary">{waitingTournaments.length}</div>
+              <div className="text-sm text-gray-700">Waiting</div>
             </div>
           </div>
         </div>
@@ -210,37 +191,30 @@ const TournamentsPage = () => {
                   <div className="flex items-start justify-between mb-4">
                     <div>
                       <div className="flex items-center space-x-2 mb-2">
+                        <span className="text-2xl">{GAME_TYPE_INFO[tournament.gameType]?.icon || '🎮'}</span>
                         <h3 className="text-xl font-bold">{tournament.name}</h3>
                         <Badge className={getStatusColor(tournament.status)}>
                           <Play className="h-3 w-3 mr-1" />
                           LIVE
                         </Badge>
                       </div>
-                      <p className="text-muted-foreground">{tournament.currentRound}</p>
+                      <p className="text-gray-700">{GAME_TYPE_INFO[tournament.gameType]?.name || tournament.gameType}</p>
                     </div>
-                    {/* <div className="text-right">
-                      <div className="text-lg font-bold text-success">${tournament.prize.toLocaleString()}</div>
-                      <div className="text-sm text-muted-foreground">Prize Pool</div>
-                    </div> */}
                   </div>
                   
                   <div className="grid grid-cols-2 gap-4 mb-4">
                     <div className="text-center">
-                      <div className="text-lg font-bold text-primary">{tournament.participants}</div>
-                      <div className="text-xs text-muted-foreground">Participants</div>
+                      <div className="text-lg font-bold text-primary">{tournament.players?.length || 0}/{tournament.maxPlayers}</div>
+                      <div className="text-xs text-gray-700">Players</div>
                     </div>
                     <div className="text-center">
-                      <div className="text-lg font-bold text-accent">{tournament.viewers.toLocaleString()}</div>
-                      <div className="text-xs text-muted-foreground">Viewers</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-lg font-bold text-warning">{tournament.format}</div>
-                      <div className="text-xs text-muted-foreground">Format</div>
+                      <div className="text-lg font-bold text-accent">{Math.floor(Math.random() * 1000) + 100}</div>
+                      <div className="text-xs text-gray-700">Viewers</div>
                     </div>
                   </div>
                   
                   <Button className="w-full btn-gaming" asChild>
-                    <Link to={`/tournament/${tournament.id}`}>
+                    <Link to={tournament.gameType === 'reverse-hangman' ? `/tournament/${tournament.id}/hangman` : `/tournament/${tournament.id}`}>
                       <Eye className="mr-2 h-4 w-4" />
                       Watch Live
                     </Link>
@@ -265,19 +239,22 @@ const TournamentsPage = () => {
             <TabsContent value="upcoming" className="mt-6">
               <div className="space-y-6">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-xl font-semibold">Upcoming Tournaments</h3>
-                  <Badge variant="outline">{upcomingTournaments.length} Scheduled</Badge>
+                  <h3 className="text-xl font-semibold">Waiting Tournaments</h3>
+                  <Badge variant="outline">{waitingTournaments.length} Available</Badge>
                 </div>
                 
                 <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-                  {upcomingTournaments.map((tournament) => (
+                  {waitingTournaments.map((tournament) => (
                     <Card key={tournament.id} className="card-gaming p-6">
                       <div className="flex items-start justify-between mb-4">
                         <div>
-                          <h4 className="font-bold text-lg mb-1">{tournament.name}</h4>
-                          <div className="flex items-center text-sm text-muted-foreground">
-                            <Calendar className="h-4 w-4 mr-1" />
-                            Starts in {formatTimeUntil(tournament.startTime)}
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-2xl">{GAME_TYPE_INFO[tournament.gameType]?.icon || '🎮'}</span>
+                            <h4 className="font-bold text-lg">{tournament.name}</h4>
+                          </div>
+                          <div className="flex items-center text-sm text-gray-700">
+                            <Users className="h-4 w-4 mr-1" />
+                            {tournament.players.length}/{tournament.maxPlayers} players
                           </div>
                         </div>
                         <Badge className={getStatusColor(tournament.status)}>
@@ -287,32 +264,36 @@ const TournamentsPage = () => {
                       
                       <div className="space-y-3 mb-4">
                         {/* <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Prize Pool:</span>
+                          <span className="text-gray-700">Prize Pool:</span>
                           <span className="font-medium text-success">${tournament.prize.toLocaleString()}</span>
                         </div> */}
                         <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Format:</span>
-                          <span className="font-medium">{tournament.format}</span>
+                          <span className="text-gray-700">Game Type:</span>
+                          <span className="font-medium">{GAME_TYPE_INFO[tournament.gameType]?.name || tournament.gameType}</span>
                         </div>
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Duration:</span>
-                          <span className="font-medium">{tournament.duration}</span>
-                        </div>
+                        {tournament.gameType === 'poker' && tournament.config.startingChips && (
+                          <div className="flex justify-between text-sm">
+                            <span className="text-gray-700">Starting Chips:</span>
+                            <span className="font-medium">{tournament.config.startingChips.toLocaleString()}</span>
+                          </div>
+                        )}
                         <div>
                           <div className="flex justify-between text-sm mb-1">
-                            <span className="text-muted-foreground">Participants:</span>
-                            <span className="font-medium">{tournament.participants}/{tournament.maxParticipants}</span>
+                            <span className="text-gray-700">Players:</span>
+                            <span className="font-medium">{tournament.players.length}/{tournament.maxPlayers}</span>
                           </div>
                           <Progress 
-                            value={(tournament.participants / tournament.maxParticipants) * 100} 
+                            value={(tournament.players.length / tournament.maxPlayers) * 100} 
                             className="h-2" 
                           />
                         </div>
                       </div>
                       
-                      <Button variant="outline" className="w-full" disabled>
-                        <Clock className="mr-2 h-4 w-4" />
-                        Registration Closed
+                      <Button className="w-full" asChild>
+                        <Link to={`/tournaments/${tournament.id}/waiting`}>
+                          <Users className="mr-2 h-4 w-4" />
+                          Join Tournament
+                        </Link>
                       </Button>
                     </Card>
                   ))}
@@ -338,14 +319,14 @@ const TournamentsPage = () => {
                             <img src={match.botAAvatar} alt={match.botA} className="w-10 h-10 rounded-full" />
                             <div>
                               <div className="font-medium">{match.botA}</div>
-                              <div className="text-sm text-muted-foreground">
+                              <div className="text-sm text-gray-700">
                                 {match.botAStrategy?.slice(0, 30)}...
                               </div>
                             </div>
                           </div>
                           
                           <div className="text-center px-4">
-                            <div className="text-sm text-muted-foreground mb-1">VS</div>
+                            <div className="text-sm text-gray-700 mb-1">VS</div>
                             <Badge className={getStatusColor(match.status)}>
                               {match.status}
                             </Badge>
@@ -354,7 +335,7 @@ const TournamentsPage = () => {
                           <div className="flex items-center space-x-3">
                             <div className="text-right">
                               <div className="font-medium">{match.botB}</div>
-                              <div className="text-sm text-muted-foreground">
+                              <div className="text-sm text-gray-700">
                                 {match.botBStrategy?.slice(0, 30)}...
                               </div>
                             </div>
@@ -366,19 +347,19 @@ const TournamentsPage = () => {
                       <div className="grid grid-cols-2 gap-4 mb-4">
                         <div className="text-center">
                           <div className="text-lg font-bold text-primary">{match.handsPlayed}</div>
-                          <div className="text-xs text-muted-foreground">Hands Played</div>
+                          <div className="text-xs text-gray-700">Hands Played</div>
                         </div>
                         {/* <div className="text-center">
                           <div className="text-lg font-bold text-accent">${match.poolA.toLocaleString()}</div>
-                          <div className="text-xs text-muted-foreground">Pool A</div>
+                          <div className="text-xs text-gray-700">Pool A</div>
                         </div>
                         <div className="text-center">
                           <div className="text-lg font-bold text-accent">${match.poolB.toLocaleString()}</div>
-                          <div className="text-xs text-muted-foreground">Pool B</div>
+                          <div className="text-xs text-gray-700">Pool B</div>
                         </div> */}
                         {/* <div className="text-center">
                           <div className="text-lg font-bold text-warning">{match.oddsA.toFixed(1)}x</div>
-                          <div className="text-xs text-muted-foreground">Odds</div>
+                          <div className="text-xs text-gray-700">Odds</div>
                         </div> */}
                       </div>
                       
@@ -409,14 +390,14 @@ const TournamentsPage = () => {
                           <Trophy className="h-8 w-8 text-warning" />
                           <div>
                             <h4 className="font-bold">{tournament.name}</h4>
-                            <p className="text-sm text-muted-foreground">
+                            <p className="text-sm text-gray-700">
                               Completed {Math.floor((Date.now() - tournament.startTime) / (1000 * 60 * 60 * 24))} days ago
                             </p>
                           </div>
                         </div>
                         {/* <div className="text-right">
                           <div className="font-bold text-success">${tournament.prize.toLocaleString()}</div>
-                          <div className="text-sm text-muted-foreground">Prize Pool</div>
+                          <div className="text-sm text-gray-700">Prize Pool</div>
                         </div> */}
                       </div>
                     </Card>

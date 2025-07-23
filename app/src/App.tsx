@@ -1,57 +1,65 @@
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Layout } from "@/components/layout/layout";
 // import { Web3Provider } from "@/config/web3";
 import { ApolloProvider } from "@apollo/client";
 import { apolloClient } from "@/lib/apollo-client";
+import { WalletProvider } from "@/config/wallet";
+import { AuthProvider } from "@/contexts/AuthContext";
+import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import Index from "./pages/Index";
+import Dashboard from "./pages/Dashboard";
 import Bots from "./pages/Bots";
+import BotDetail from "./pages/BotDetail";
+import Queue from "./pages/Queue";
 import Tournaments from "./pages/Tournaments";
+import CreateTournament from "./pages/CreateTournament";
+import WaitingRoom from "./pages/WaitingRoom";
 import TournamentView from "./pages/TournamentView";
+import ReverseHangmanView from "./pages/ReverseHangmanView";
 import Settings from "./pages/Settings";
 import DeveloperSubmit from "./pages/DeveloperSubmit";
+import Deploy from "./pages/Deploy";
 import Learn from "./pages/Learn";
 import Legal from "./pages/Legal";
-import Social from "./pages/Social";
-import Analytics from "./pages/Analytics";
 import NotFound from "./pages/NotFound";
 
 const App = () => (
   <ApolloProvider client={apolloClient}>
-    {/* <Web3Provider> */}
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
-          <Layout>
-            <Routes>
+    <WalletProvider>
+      <AuthProvider>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <BrowserRouter>
+            <Layout>
+              <Routes>
             <Route path="/" element={<Index />} />
             
             {/* Core User Journey */}
-            {/* <Route path="/discover" element={<Discover />} /> */}
-            {/* <Route path="/bot/:id/invest" element={<BotInvest />} /> */}
+            <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/tournaments" element={<Tournaments />} />
+            <Route path="/tournaments/create" element={<CreateTournament />} />
+            <Route path="/tournaments/:id/waiting" element={<WaitingRoom />} />
             <Route path="/tournament/:id" element={<TournamentView />} />
-            {/* <Route path="/graduation/:botId" element={<Graduation />} /> */}
-            {/* <Route path="/vaults" element={<Vaults />} /> */}
+            <Route path="/tournament/:id/hangman" element={<ReverseHangmanView />} />
             
             {/* Bot System */}
             <Route path="/bots" element={<Bots />} />
-            {/* <Route path="/bots/:id" element={<BotInvest />} /> */}
+            <Route path="/bot/:id" element={<BotDetail />} />
+            <Route path="/queue" element={<Queue />} />
+            <Route path="/deploy" element={<Deploy />} />
             
             {/* Platform Features */}
-            {/* <Route path="/kyc" element={<KYC />} /> */}
-            {/* <Route path="/launch" element={<Launch />} /> */}
-            {/* <Route path="/portfolio" element={<Portfolio />} /> */}
-            <Route path="/analytics" element={<Analytics />} />
             <Route path="/settings" element={<Settings />} />
-            {/* <Route path="/developer/submit" element={<Launch />} /> */}
             <Route path="/learn" element={<Learn />} />
             <Route path="/legal" element={<Legal />} />
-            <Route path="/social" element={<Social />} />
-            {/* <Route path="/test" element={<TestContract />} /> */}
+            
+            {/* Redirects from old pages */}
+            <Route path="/analytics" element={<Navigate to="/dashboard?tab=performance" replace />} />
+            <Route path="/social" element={<Navigate to="/dashboard?tab=community" replace />} />
             
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
@@ -59,7 +67,8 @@ const App = () => (
         </Layout>
       </BrowserRouter>
     </TooltipProvider>
-  {/* </Web3Provider> */}
+  </AuthProvider>
+  </WalletProvider>
   </ApolloProvider>
 );
 

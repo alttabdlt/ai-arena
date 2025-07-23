@@ -93,14 +93,14 @@ export class AchievementSystem {
     this.addAchievement({
       id: 'perfect_read',
       name: 'Mind Reader',
-      description: 'Make 10 perfect hand reads',
+      description: 'Make 3 perfect hand reads',
       icon: '🔮',
       category: 'skill',
       rarity: 'epic',
       points: 500,
       check: (playerId, ctx) => ({
         progress: ctx.perfectReads || 0,
-        target: 10
+        target: 3
       })
     });
     
@@ -108,56 +108,56 @@ export class AchievementSystem {
     this.addAchievement({
       id: 'trash_master',
       name: 'Trash Master',
-      description: 'Win 5 hands with trash-tier starting cards',
+      description: 'Win 2 hands with trash-tier starting cards',
       icon: '🗑️',
       category: 'style',
       rarity: 'epic',
       points: 400,
       check: (playerId, ctx) => ({
         progress: ctx.unconventionalWins || 0,
-        target: 5
+        target: 2
       })
     });
     
     this.addAchievement({
       id: 'bluff_artist',
       name: 'Bluff Artist',
-      description: 'Successfully bluff 10 times',
+      description: 'Successfully bluff 3 times',
       icon: '🎭',
       category: 'style',
       rarity: 'rare',
       points: 300,
       check: (playerId, ctx) => ({
         progress: ctx.successfulBluffs || 0,
-        target: 10
+        target: 3
       })
     });
     
     this.addAchievement({
       id: 'david_champion',
       name: 'Giant Slayer',
-      description: 'Win 3 David vs Goliath situations',
+      description: 'Win a David vs Goliath situation',
       icon: '🗿',
       category: 'style',
       rarity: 'epic',
       points: 450,
       check: (playerId, ctx) => ({
         progress: ctx.davidVsGoliathWins || 0,
-        target: 3
+        target: 1
       })
     });
     
     this.addAchievement({
       id: 'comeback_king',
       name: 'Comeback King',
-      description: 'Win 5 hands when down to less than 10% stack',
+      description: 'Win 2 hands when down to less than 10% stack',
       icon: '👑',
       category: 'style',
       rarity: 'legendary',
       points: 1000,
       check: (playerId, ctx) => ({
         progress: ctx.comebackCount || 0,
-        target: 5
+        target: 2
       })
     });
     
@@ -165,53 +165,53 @@ export class AchievementSystem {
     this.addAchievement({
       id: 'centurion',
       name: 'Centurion',
-      description: 'Play 100 hands',
+      description: 'Play 20 hands',
       icon: '💯',
       category: 'milestone',
       rarity: 'common',
       points: 100,
       check: (playerId, ctx) => ({
         progress: ctx.totalHands || 0,
-        target: 100
+        target: 20
       })
     });
     
     this.addAchievement({
       id: 'millionaire',
       name: 'Millionaire',
-      description: 'Win a pot worth over 1,000,000 chips',
+      description: 'Win a pot worth over 50,000 chips',
       icon: '💰',
       category: 'milestone',
       rarity: 'legendary',
       points: 1500,
-      check: (playerId, ctx) => (ctx.biggestPot || 0) >= 1000000
+      check: (playerId, ctx) => (ctx.biggestPot || 0) >= 50000
     });
     
     this.addAchievement({
       id: 'terminator',
       name: 'Terminator',
-      description: 'Eliminate 5 opponents',
+      description: 'Eliminate 2 opponents',
       icon: '🤖',
       category: 'milestone',
       rarity: 'rare',
       points: 350,
       check: (playerId, ctx) => ({
         progress: ctx.eliminationCount || 0,
-        target: 5
+        target: 2
       })
     });
     
     this.addAchievement({
       id: 'point_master',
       name: 'Point Master',
-      description: 'Accumulate 10,000 total points',
+      description: 'Accumulate 5,000 total points',
       icon: '🏆',
       category: 'milestone',
       rarity: 'epic',
       points: 750,
       check: (playerId, ctx) => ({
         progress: ctx.totalPoints || 0,
-        target: 10000
+        target: 5000
       })
     });
     
@@ -219,14 +219,14 @@ export class AchievementSystem {
     this.addAchievement({
       id: 'all_in_survivor',
       name: 'Living Dangerously',
-      description: 'Survive 10 all-ins',
+      description: 'Survive 3 all-ins',
       icon: '😱',
       category: 'special',
       rarity: 'rare',
       points: 400,
       check: (playerId, ctx) => ({
         progress: ctx.allInCount || 0,
-        target: 10
+        target: 3
       })
     });
     
@@ -244,12 +244,68 @@ export class AchievementSystem {
     this.addAchievement({
       id: 'perfect_game',
       name: 'Flawless Victory',
-      description: 'Win a tournament without any misreads or penalties',
+      description: 'Win a game without any misreads or penalties',
       icon: '✨',
       category: 'special',
       rarity: 'legendary',
       points: 2500,
       check: (playerId, ctx) => false // TODO: Implement perfect game tracking
+    });
+    
+    // Additional per-game achievements
+    this.addAchievement({
+      id: 'early_dominator',
+      name: 'Early Dominator',
+      description: 'Win 5 of the first 10 hands',
+      icon: '🚀',
+      category: 'skill',
+      rarity: 'rare',
+      points: 300,
+      check: (playerId, ctx) => false // TODO: Track early game wins
+    });
+    
+    this.addAchievement({
+      id: 'fold_discipline',
+      name: 'Disciplined Folder',
+      description: 'Fold 10 hands in a row and then win',
+      icon: '🧘',
+      category: 'style',
+      rarity: 'rare',
+      points: 350,
+      check: (playerId, ctx) => false // TODO: Track consecutive folds
+    });
+    
+    this.addAchievement({
+      id: 'chip_leader',
+      name: 'Chip Leader',
+      description: 'Hold the chip lead for 10+ consecutive hands',
+      icon: '👑',
+      category: 'milestone',
+      rarity: 'epic',
+      points: 500,
+      check: (playerId, ctx) => false // TODO: Track chip lead duration
+    });
+    
+    this.addAchievement({
+      id: 'pocket_rocket',
+      name: 'Pocket Rocket',
+      description: 'Win with pocket aces',
+      icon: '🚀',
+      category: 'special',
+      rarity: 'common',
+      points: 100,
+      check: (playerId, ctx) => false // TODO: Check for AA wins
+    });
+    
+    this.addAchievement({
+      id: 'straight_flush_hero',
+      name: 'Straight Flush Hero',
+      description: 'Win with a straight flush',
+      icon: '🌟',
+      category: 'special',
+      rarity: 'epic',
+      points: 1000,
+      check: (playerId, ctx) => ctx.finalHand === 'Straight Flush'
     });
   }
   

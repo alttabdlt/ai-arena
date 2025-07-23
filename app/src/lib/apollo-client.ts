@@ -16,7 +16,7 @@ const wsLink = new GraphQLWsLink(
     url: import.meta.env.VITE_WS_URL || 'ws://localhost:4000/graphql',
     connectionParams: () => {
       // Get auth token if needed
-      const token = localStorage.getItem('auth-token');
+      const token = localStorage.getItem('ai-arena-access-token');
       return {
         authorization: token ? `Bearer ${token}` : '',
       };
@@ -28,14 +28,24 @@ const wsLink = new GraphQLWsLink(
 
 // Auth link to add headers
 const authLink = setContext((_, { headers }) => {
-  const token = localStorage.getItem('auth-token');
-  const walletAddress = localStorage.getItem('wallet-address');
+  const token = localStorage.getItem('ai-arena-access-token');
+  const user = localStorage.getItem('ai-arena-user');
+  let walletAddress = '';
+  
+  if (user) {
+    try {
+      const parsedUser = JSON.parse(user);
+      walletAddress = parsedUser.address || '';
+    } catch (e) {
+      console.error('Failed to parse user data');
+    }
+  }
   
   return {
     headers: {
       ...headers,
       authorization: token ? `Bearer ${token}` : '',
-      'x-wallet-address': walletAddress || '',
+      'x-wallet-address': walletAddress,
     },
   };
 });

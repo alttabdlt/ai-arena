@@ -5,9 +5,10 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Grid, List, Search, Filter, Zap, Trophy, TrendingUp } from 'lucide-react';
 import { mockApi, type Bot } from '@/lib/mock-data';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 const BotsPage = () => {
+  const navigate = useNavigate();
   const [bots, setBots] = useState<Bot[]>([]);
   const [filteredBots, setFilteredBots] = useState<Bot[]>([]);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -170,7 +171,8 @@ const BotsPage = () => {
         <div className="container mx-auto">
           <div className={viewMode === 'grid' ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6' : 'space-y-4'}>
             {filteredBots.map((bot) => (
-              <div key={bot.id} className="card-gaming p-6 hover:shadow-gaming transition-all duration-300">
+              <Link key={bot.id} to={`/bot/${bot.id}`} className="block">
+                <div className="card-gaming p-6 hover:shadow-gaming transition-all duration-300">
                 {/* Bot Header */}
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center space-x-3">
@@ -231,20 +233,25 @@ const BotsPage = () => {
 
                 {/* Actions */}
                 <div className="flex gap-2">
-                  <Button className="flex-1" variant="outline">
+                  <Button className="flex-1" variant="outline" onClick={(e) => e.preventDefault()}>
                     <Trophy className="mr-2 h-4 w-4" />
-                    View Performance
+                    View Details
                   </Button>
                   {bot.isLive && (
-                    <Button className="flex-1 btn-gaming" asChild>
-                      <Link to="/tournaments">
-                        <TrendingUp className="mr-2 h-4 w-4" />
-                        Watch Live
-                      </Link>
+                    <Button 
+                      className="flex-1 btn-gaming" 
+                      onClick={(e) => {
+                        e.preventDefault();
+                        navigate('/tournaments');
+                      }}
+                    >
+                      <TrendingUp className="mr-2 h-4 w-4" />
+                      Watch Live
                     </Button>
                   )}
                 </div>
-              </div>
+                </div>
+              </Link>
             ))}
           </div>
 

@@ -13,80 +13,143 @@ datasource db {
 model User {
   id              String           @id @default(cuid())
   address         String           @unique
+  username        String?          @unique
+  role            UserRole         @default(USER)
   kycTier         Int              @default(0)
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   
   bots            Bot[]
-  transactions    Transaction[]
+  deployments     DeploymentTransaction[]
   comments        Comment[]
   likes           Like[]
   followers       Follow[]         @relation("follower")
   following       Follow[]         @relation("following")
   achievements    UserAchievement[]
+  sessions        Session[]
   
   @@index([address])
 }
 
+model Session {
+  id              String           @id @default(cuid())
+  userId          String
+  user            User             @relation(fields: [userId], references: [id])
+  token           String           @unique
+  expiresAt       DateTime
+  createdAt       DateTime         @default(now())
+  
+  @@index([userId])
+  @@index([token])
+}
+
 model Bot {
   id              String           @id @default(cuid())
-  address         String           @unique
   name            String
-  description     String
-  imageUrl        String?
-  tags            String[]
-  strategy        Json?
-  creatorAddress  String
-  creator         User             @relation(fields: [creatorAddress], references: [address])
+  avatar          String           // preset avatar identifier
+  prompt          String           @db.VarChar(1000) // 1000 char strategy
+  modelType       AIModel          // gpt-4o, claude-3-5-sonnet, etc.
+  creatorId       String
+  creator         User             @relation(fields: [creatorId], references: [id])
+  isActive        Boolean          @default(true)
+  stats           Json             @default("{}") // wins, losses, earnings
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   
-  bondingCurve    BondingCurve?
+  deploymentTx    DeploymentTransaction?
+  queueEntries    QueueEntry[]
+  tournaments     TournamentParticipant[]
+  matches         MatchParticipant[]
   comments        Comment[]
   likes           Like[]
-  tournaments     TournamentParticipant[]
   
-  @@index([creatorAddress])
+  @@index([creatorId])
   @@index([createdAt])
+  @@index([isActive])
 }
 
-model BondingCurve {
+model DeploymentTransaction {
   id              String           @id @default(cuid())
   botId           String           @unique
   bot             Bot              @relation(fields: [botId], references: [id])
-  currentSupply   Decimal          @db.Decimal(78, 0)
-  currentPrice    Decimal          @db.Decimal(78, 18)
-  marketCap       Decimal          @db.Decimal(78, 18)
-  volume24h       Decimal          @db.Decimal(78, 18)
-  holders         Int              @default(0)
-  graduated       Boolean          @default(false)
-  graduatedAt     DateTime?
+  userId          String
+  user            User             @relation(fields: [userId], references: [id])
+  txHash          String           @unique
+  amount          Decimal          @db.Decimal(78, 18) // deployment fee in ETH
+  status          TxStatus         @default(PENDING)
   createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
   
-  transactions    Transaction[]
-  
-  @@index([graduated])
-  @@index([marketCap])
-  @@index([volume24h])
+  @@index([userId])
+  @@index([txHash])
+  @@index([status])
 }
 
-model Transaction {
+model QueueEntry {
   id              String           @id @default(cuid())
-  type            TransactionType
-  userAddress     String
-  user            User             @relation(fields: [userAddress], references: [address])
-  bondingCurveId  String
-  bondingCurve    BondingCurve     @relation(fields: [bondingCurveId], references: [id])
-  amount          Decimal          @db.Decimal(78, 18)
-  price           Decimal          @db.Decimal(78, 18)
-  totalCost       Decimal          @db.Decimal(78, 18)
-  txHash          String           @unique
-  createdAt       DateTime         @default(now())
+  botId           String
+  bot             Bot              @relation(fields: [botId], references: [id])
+  queueType       QueueType        @default(STANDARD)
+  priority        Int              @default(0) // higher = faster matching
+  status          QueueStatus      @default(WAITING)
+  enteredAt       DateTime         @default(now())
+  expiresAt       DateTime         // 24 hours from entry
+  matchedAt       DateTime?
   
-  @@index([userAddress])
-  @@index([bondingCurveId])
+  @@index([botId])
+  @@index([status])
+  @@index([queueType])
+  @@index([priority])
+}
+
+model Match {
+  id              String           @id @default(cuid())
+  type            MatchType        @default(TOURNAMENT)
+  status          MatchStatus      @default(SCHEDULED)
+  gameHistory     Json             // complete poker game state
+  decisions       Json             // all AI decisions made
+  result          Json?            // final rankings and points
+  replayUrl       String?          // S3/R2 URL for replay file
+  createdAt       DateTime         @default(now())
+  startedAt       DateTime?
+  completedAt     DateTime?
+  
+  participants    MatchParticipant[]
+  aiDecisions     AIDecision[]
+  tournament      Tournament?      @relation(fields: [tournamentId], references: [id])
+  tournamentId    String?
+  
+  @@index([status])
+  @@index([type])
   @@index([createdAt])
+}
+
+model MatchParticipant {
+  id              String           @id @default(cuid())
+  matchId         String
+  match           Match            @relation(fields: [matchId], references: [id])
+  botId           String
+  bot             Bot              @relation(fields: [botId], references: [id])
+  position        Int              // seat position
+  finalRank       Int?             // 1st, 2nd, etc.
+  points          Int              @default(0)
+  
+  @@unique([matchId, botId])
+  @@index([matchId])
+  @@index([botId])
+}
+
+model AIDecision {
+  id              String           @id @default(cuid())
+  matchId         String
+  match           Match            @relation(fields: [matchId], references: [id])
+  botId           String
+  handNumber      Int
+  decision        Json             // action, reasoning, timing
+  gameState       Json             // game state at decision time
+  timestamp       DateTime         @default(now())
+  
+  @@index([matchId])
+  @@index([botId])
 }
 
 model Tournament {
@@ -102,6 +165,7 @@ model Tournament {
   updatedAt       DateTime         @updatedAt
   
   participants    TournamentParticipant[]
+  matches         Match[]
   
   @@index([type])
   @@index([status])
@@ -127,26 +191,27 @@ model TournamentParticipant {
 model Comment {
   id              String           @id @default(cuid())
   content         String
-  userAddress     String
-  user            User             @relation(fields: [userAddress], references: [address])
+  userId          String
+  user            User             @relation(fields: [userId], references: [id])
   botId           String
   bot             Bot              @relation(fields: [botId], references: [id])
   createdAt       DateTime         @default(now())
   
   @@index([botId])
-  @@index([userAddress])
+  @@index([userId])
 }
 
 model Like {
   id              String           @id @default(cuid())
-  userAddress     String
-  user            User             @relation(fields: [userAddress], references: [address])
+  userId          String
+  user            User             @relation(fields: [userId], references: [id])
   botId           String
   bot             Bot              @relation(fields: [botId], references: [id])
   createdAt       DateTime         @default(now())
   
-  @@unique([userAddress, botId])
+  @@unique([userId, botId])
   @@index([botId])
+  @@index([userId])
 }
 
 model Follow {
@@ -175,19 +240,60 @@ model Achievement {
 
 model UserAchievement {
   id              String           @id @default(cuid())
-  userAddress     String
-  user            User             @relation(fields: [userAddress], references: [address])
+  userId          String
+  user            User             @relation(fields: [userId], references: [id])
   achievementId   String
   achievement     Achievement      @relation(fields: [achievementId], references: [id])
   unlockedAt      DateTime         @default(now())
   
-  @@unique([userAddress, achievementId])
-  @@index([userAddress])
+  @@unique([userId, achievementId])
+  @@index([userId])
 }
 
-enum TransactionType {
-  BUY
-  SELL
+enum UserRole {
+  USER
+  DEVELOPER
+  ADMIN
+}
+
+enum AIModel {
+  GPT_4O
+  CLAUDE_3_5_SONNET
+  CLAUDE_3_OPUS
+  DEEPSEEK_CHAT
+}
+
+enum TxStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+  REFUNDED
+}
+
+enum QueueType {
+  STANDARD
+  PRIORITY
+  PREMIUM
+}
+
+enum QueueStatus {
+  WAITING
+  MATCHED
+  EXPIRED
+  CANCELLED
+}
+
+enum MatchType {
+  TOURNAMENT
+  HEAD_TO_HEAD
+  PRACTICE
+}
+
+enum MatchStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  ABANDONED
 }
 
 enum TournamentType {

@@ -1,10 +1,54 @@
+// React hooks imports for legacy code
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { PokerGameManager, GameEvent, DecisionHistoryEntry, GameConfig, GameState } from '@/poker/game/poker-game-manager';
-import { GamePhase, Player, Card } from '@/poker/engine/poker-engine';
-import { AIDecision } from '@/poker/ai/ai-agents';
-import { StyleBonus, PlayerStats } from '@/poker/scoring/style-scoring';
-import { PointEvent } from '@/poker/scoring/point-scoring';
-import { AchievementEvent } from '@/poker/achievements/achievement-system';
+
+// Re-export everything from the adapter to maintain backward compatibility
+export * from './usePokerGameAdapter';
+
+// Legacy support - redirect to adapter
+import { usePokerGame as usePokerGameAdapter } from './usePokerGameAdapter';
+export const usePokerGame = (tournament?: any) => usePokerGameAdapter(tournament);
+
+// Keep type exports for backward compatibility - aliased from new locations
+export type { PokerGameConfig as GameConfig, PokerGameState as GameState } from '@/game-engine/games/poker/PokerTypes';
+export type { PokerPhase as GamePhase, PokerPlayer as Player, Card } from '@/game-engine/games/poker/PokerTypes';
+export type { IGameDecision as AIDecision } from '@/game-engine/core/interfaces';
+export type { PokerStyleBonus as StyleBonus } from '@/game-engine/games/poker/scoring/PokerScoringSystem';
+export type { IScoreBreakdown as PointEvent } from '@/game-engine/core/interfaces';
+export type { IGameEvent as AchievementEvent } from '@/game-engine/core/interfaces';
+
+// PlayerStats is no longer a separate export - it's internal to the scoring system
+
+// Legacy type imports for the unused legacy code below
+import { PokerGameManager } from '@/game-engine/games/poker';
+import type { PokerGameEvent as GameEvent, DecisionHistoryEntry } from '@/game-engine/games/poker/PokerGameManager';
+
+// PlayerStats type for legacy code
+interface PlayerStats {
+  totalStylePoints: number;
+  handsPlayed: number;
+  bluffs: { successful: number; failed: number };
+  trashWins: number;
+  comeback: boolean;
+  davidVsGoliath: number;
+  unconventionalWins: number;
+}
+
+/* LEGACY CODE PRESERVED BELOW - DO NOT USE */
+
+// Import missing types for legacy code
+import type { 
+  PokerPhase as GamePhase, 
+  PokerPlayer as Player, 
+  Card,
+  PokerGameConfig as GameConfig,
+  PokerGameState as GameState
+} from '@/game-engine/games/poker';
+import type { 
+  IGameDecision as AIDecision,
+  IScoreBreakdown as PointEvent,
+  IGameEvent as AchievementEvent
+} from '@/game-engine/core/interfaces';
+import type { PokerStyleBonus as StyleBonus } from '@/game-engine/games/poker';
 
 export interface UsePokerGameState {
   players: (Player & { avatar: string; isAI: boolean })[];
@@ -40,7 +84,9 @@ export interface UsePokerGameState {
   recentAchievementEvents: AchievementEvent[];
 }
 
-export function usePokerGame() {
+// Legacy function commented out - not used, redirects to adapter
+/*
+function usePokerGameLegacy() {
   const gameManagerRef = useRef<PokerGameManager | null>(null);
   const [gameState, setGameState] = useState<UsePokerGameState>({
     players: [],
@@ -416,3 +462,4 @@ export function usePokerGame() {
     getTotalAchievementPoints
   };
 }
+*/

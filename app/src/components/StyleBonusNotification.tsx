@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { StyleBonus } from '@/poker/scoring/style-scoring';
+import { PokerStyleBonus as StyleBonus } from '@/game-engine/games/poker/scoring/PokerScoringSystem';
 import { Trophy, Zap, TrendingUp, Shield, Target } from 'lucide-react';
 
 interface StyleBonusNotificationProps {
@@ -99,7 +99,7 @@ export function StyleBonusNotification({ bonuses }: StyleBonusNotificationProps)
                 {getIconForBonus(bonus.type)}
               </div>
               <div className="flex-1">
-                <div className="font-bold text-lg">+{(bonus.multiplier * 100).toFixed(0)}% Style Bonus!</div>
+                <div className="font-bold text-lg">+{bonus.points} Style Points!</div>
                 <div className="text-sm text-white/90">{bonus.description}</div>
               </div>
             </div>

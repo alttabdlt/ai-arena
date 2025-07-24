@@ -1,6 +1,30 @@
 import * as React from 'react';
 import { useState } from 'react';
-import { Mistake, MistakeDetector } from '../engine/mistake-detector';
+
+// Simple local mistake type - mistake detection was removed in framework migration
+interface Mistake {
+  promptPair: any;
+  attemptDetails: any;
+  type: 'semantic' | 'logic' | 'format';
+  severity: 'minor' | 'major' | 'hilarious';
+  category: string;
+  description: string;
+}
+
+// Simple emoji mapping for mistakes
+const MistakeDetector = {
+  getMistakeEmoji: (category: string) => {
+    const emojiMap: Record<string, string> = {
+      'semantic': '🤔',
+      'logic': '🧠',
+      'format': '📝',
+      'reasoning': '💭',
+      'comprehension': '❓',
+      'default': '😅'
+    };
+    return emojiMap[category] || emojiMap['default'];
+  }
+};
 
 interface MistakeDisplayProps {
   mistakes: Mistake[];
@@ -73,14 +97,14 @@ export function MistakeDisplay({ mistakes, agentName }: MistakeDisplayProps) {
                   {worstMistake.severity.toUpperCase()}
                 </span>
                 <span className="text-sm text-gray-600">
-                  Attempt #{worstMistake.attemptNumber}
+                  {worstMistake.category}
                 </span>
               </div>
               <p className="text-sm font-medium text-gray-900 mb-1">
                 {worstMistake.description}
               </p>
               <p className="text-xs text-gray-600 italic">
-                "{worstMistake.guess}"
+                {worstMistake.type} mistake
               </p>
             </div>
           </div>
@@ -123,7 +147,7 @@ export function MistakeDisplay({ mistakes, agentName }: MistakeDisplayProps) {
                 </span>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-gray-700 truncate">
-                    {mistake.guess}
+                    {mistake.type} - {mistake.category}
                   </p>
                   <p className="text-xs text-gray-500">
                     {mistake.description}

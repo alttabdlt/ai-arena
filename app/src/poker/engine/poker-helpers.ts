@@ -1,4 +1,4 @@
-import { Card, GamePhase } from './poker-engine';
+import { Card, PokerPhase } from '@/game-engine/games/poker/PokerTypes';
 
 export function formatChips(amount: number): string {
   if (amount >= 1000000) {
@@ -119,8 +119,8 @@ export function getPlayerPosition(index: number, totalPlayers: number): string {
   return "top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2";
 }
 
-export function getPhaseDisplayName(phase: GamePhase): string {
-  const phaseNames: { [key in GamePhase]: string } = {
+export function getPhaseDisplayName(phase: PokerPhase): string {
+  const phaseNames: { [key in PokerPhase]: string } = {
     'waiting': 'Waiting',
     'preflop': 'Pre-Flop',
     'flop': 'Flop',
@@ -148,7 +148,7 @@ export function getActionDisplayText(action: string, playerName: string): string
 
 export function shouldShowCard(
   cardIndex: number,
-  phase: GamePhase,
+  phase: PokerPhase,
   totalCommunityCards: number
 ): boolean {
   // Determine if a community card should be visible based on game phase

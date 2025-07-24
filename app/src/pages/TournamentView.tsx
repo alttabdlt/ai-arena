@@ -1,4 +1,4 @@
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -27,7 +27,8 @@ import { PointNotification } from '@/components/PointNotification';
 import { AchievementNotification } from '@/components/AchievementNotification';
 import { CombinedLeaderboard } from '@/components/CombinedLeaderboard';
 import { useModelEvaluations } from '@/hooks/useModelEvaluation';
-import { PlayerConfig } from '@/poker/game/poker-game-manager';
+import { IPlayerConfig as PlayerConfig } from '@/game-engine/core/interfaces';
+import type { PokerAction } from '@/game-engine/games/poker';
 import { 
   formatChips, 
   getCardColor, 
@@ -45,6 +46,7 @@ import botZenMaster from '@/assets/bot-zen-master.png';
 
 const TournamentView = () => {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [tournament, setTournament] = useState<{
     id: string;
     name: string;
@@ -53,7 +55,12 @@ const TournamentView = () => {
     participants: number;
     currentRound: string;
     viewers: number;
+    gameType: string;
+    config: any;
+    players: any[];
   } | null>(null);
+  const [loadingError, setLoadingError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [hoveredPlayerId, setHoveredPlayerId] = useState<string | null>(null);
   const [thinkingTimeLeft, setThinkingTimeLeft] = useState(60);
   const thinkingTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -94,7 +101,7 @@ const TournamentView = () => {
     getAchievementProgress,
     getAllAchievements,
     getTotalAchievementPoints
-  } = usePokerGame();
+  } = usePokerGame(tournament);
 
   // Generate default player configurations
   const generateDefaultPlayerConfigs = (count: number, defaultModel: PlayerConfig['aiModel'] = 'gpt-4o'): PlayerConfig[] => {
@@ -112,7 +119,6 @@ const TournamentView = () => {
       if (i < botProfiles.length) {
         configs.push({
           ...botProfiles[i],
-          position: i,
           aiModel: defaultModel
         });
       } else {
@@ -122,7 +128,6 @@ const TournamentView = () => {
           id: `bot-${i}`,
           name: additionalNames[nameIndex],
           avatar: botProfiles[avatarIndex].avatar,
-          position: i,
           aiModel: defaultModel
         });
       }
@@ -139,17 +144,109 @@ const TournamentView = () => {
   };
 
   useEffect(() => {
-    // Mock tournament data
-    setTournament({
-      id,
-      name: 'AI Battle Championship',
-      status: 'live',
-      totalPrize: 0, // Hidden crypto elements
-      participants: config?.playerCount || 3,
-      currentRound: 'Exhibition Match',
-      viewers: Math.floor(Math.random() * 1000) + 500
-    });
-  }, [id, config]);
+    let timeoutId: NodeJS.Timeout;
+    
+    const loadTournament = async () => {
+      try {
+        // Set a timeout for loading
+        timeoutId = setTimeout(() => {
+          setLoadingError('Tournament loading timed out. The tournament data may be missing.');
+          setIsLoading(false);
+        }, 5000);
+
+        // Load tournament from sessionStorage
+        const tournamentData = sessionStorage.getItem(`tournament-${id}`);
+        
+        if (!tournamentData) {
+          // In development, create a demo tournament if needed
+          if (import.meta.env.DEV) {
+            console.warn('Tournament not found in sessionStorage, creating demo tournament');
+            const demoTournament = {
+              id: id!,
+              name: 'Demo Poker Tournament',
+              status: 'in-progress',
+              gameType: 'poker',
+              config: {
+                startingChips: 10000,
+                blindStructure: 'standard',
+                maxHands: 100,
+                speed: 'normal'
+              },
+              players: generateDefaultPlayerConfigs(3).map((config, idx) => ({
+                id: config.id,
+                name: config.name,
+                aiModel: config.aiModel,
+                strategy: 'Aggressive poker player focused on maximizing value',
+                status: 'playing',
+                isReady: true,
+                joinedAt: new Date(),
+                avatar: config.avatar
+              })),
+              totalPrize: 0,
+              participants: 3,
+              currentRound: 'Exhibition Match',
+              viewers: Math.floor(Math.random() * 1000) + 500,
+              maxPlayers: 8,
+              minPlayers: 2,
+              isPublic: true,
+              createdBy: 'demo',
+              createdAt: new Date()
+            };
+            sessionStorage.setItem(`tournament-${id}`, JSON.stringify(demoTournament));
+            setTournament(demoTournament);
+            clearTimeout(timeoutId);
+            setIsLoading(false);
+            return;
+          }
+          
+          setLoadingError('Tournament not found. It may have been removed or expired.');
+          clearTimeout(timeoutId);
+          setIsLoading(false);
+          return;
+        }
+
+        const loadedTournament = JSON.parse(tournamentData);
+        if (loadedTournament.gameType !== 'poker') {
+          setLoadingError(`This tournament is for ${loadedTournament.gameType}, not poker.`);
+          clearTimeout(timeoutId);
+          setIsLoading(false);
+          
+          // Redirect to correct game view after a short delay
+          setTimeout(() => {
+            if (loadedTournament.gameType === 'reverse-hangman') {
+              navigate(`/tournament/${id}/hangman`);
+            } else {
+              navigate('/tournaments');
+            }
+          }, 2000);
+          return;
+        }
+
+        // Set default values for display
+        loadedTournament.totalPrize = loadedTournament.totalPrize || 0;
+        loadedTournament.participants = loadedTournament.players?.length || loadedTournament.participants || 0;
+        loadedTournament.currentRound = loadedTournament.currentRound || 'Exhibition Match';
+        loadedTournament.viewers = loadedTournament.viewers || Math.floor(Math.random() * 1000) + 500;
+
+        setTournament(loadedTournament);
+        clearTimeout(timeoutId);
+        setIsLoading(false);
+      } catch (error) {
+        console.error('Error loading tournament:', error);
+        setLoadingError('Failed to load tournament data.');
+        clearTimeout(timeoutId);
+        setIsLoading(false);
+      }
+    };
+
+    loadTournament();
+
+    return () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [id, navigate]);
 
   // Sync local state with config
   useEffect(() => {
@@ -159,52 +256,50 @@ const TournamentView = () => {
     }
   }, [config]);
   
-  // Initialize player configs when player count changes
+  // Initialize player configs from tournament data
   useEffect(() => {
-    if (config?.playerCount) {
-      setPlayerConfigs(prev => {
-        // Only regenerate if the count actually changed or we have no configs
-        if (prev.length !== config.playerCount || prev.length === 0) {
-          // If we have existing configs and the count increased, preserve existing selections
-          if (prev.length > 0 && prev.length < config.playerCount) {
-            const newConfigs = [...prev];
-            const additionalCount = config.playerCount - prev.length;
-            const additionalConfigs = generateDefaultPlayerConfigs(config.playerCount).slice(-additionalCount);
-            return [...newConfigs, ...additionalConfigs];
-          }
-          // If count decreased, keep the first N configs
-          if (prev.length > config.playerCount) {
-            return prev.slice(0, config.playerCount);
-          }
-          // Otherwise generate new configs
-          return generateDefaultPlayerConfigs(config.playerCount);
-        }
-        // Keep existing configs if count hasn't changed
-        return prev;
-      });
+    if (tournament?.players) {
+      const configs: PlayerConfig[] = tournament.players.map(player => ({
+        id: player.id,
+        name: player.name,
+        aiModel: player.aiModel || 'gpt-4o',
+        avatar: player.avatar
+      }));
+      setPlayerConfigs(configs);
+    } else if (config?.playerCount && playerConfigs.length === 0) {
+      // Fall back to generating default configs if no tournament data
+      setPlayerConfigs(generateDefaultPlayerConfigs(config.playerCount));
     }
-  }, [config?.playerCount]);
+  }, [tournament?.players, config?.playerCount]);
 
   // Handle thinking timer
   useEffect(() => {
     if (gameState.currentAIThinking) {
-      setThinkingTimeLeft(60);
+      // Set initial time based on speed setting
+      const initialTime = config?.speed === 'thinking' ? 2 : 
+                        config?.speed === 'fast' ? 0.5 : 
+                        1; // normal
+      setThinkingTimeLeft(initialTime);
       
       if (thinkingTimerRef.current) {
         clearInterval(thinkingTimerRef.current);
       }
       
+      // For fast mode, use smaller intervals
+      const interval = config?.speed === 'fast' ? 50 : 100; // 50ms for fast, 100ms otherwise
+      
       thinkingTimerRef.current = setInterval(() => {
         setThinkingTimeLeft(prev => {
-          if (prev <= 1) {
+          const decrement = interval / 1000; // Convert to seconds
+          if (prev <= decrement) {
             if (thinkingTimerRef.current) {
               clearInterval(thinkingTimerRef.current);
             }
             return 0;
           }
-          return prev - 1;
+          return prev - decrement;
         });
-      }, 1000);
+      }, interval);
     } else {
       if (thinkingTimerRef.current) {
         clearInterval(thinkingTimerRef.current);
@@ -216,7 +311,7 @@ const TournamentView = () => {
         clearInterval(thinkingTimerRef.current);
       }
     };
-  }, [gameState.currentAIThinking]);
+  }, [gameState.currentAIThinking, config?.speed]);
 
   // Cleanup on unmount to prevent orphaned games
   useEffect(() => {
@@ -228,8 +323,75 @@ const TournamentView = () => {
     };
   }, [currentGameState, stopGame]);
 
+  // Show loading state
+  if (isLoading && !loadingError) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="container mx-auto px-4 py-8">
+          <Button 
+            variant="outline" 
+            onClick={() => navigate('/tournaments')}
+            className="mb-4"
+          >
+            Back to Tournaments
+          </Button>
+          <div className="flex items-center justify-center mt-20">
+            <Card className="p-8 text-center max-w-md">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+              <h2 className="text-xl font-semibold mb-2">Loading Tournament</h2>
+              <p className="text-muted-foreground">Tournament ID: {id}</p>
+              <p className="text-sm text-muted-foreground mt-2">This may take a few seconds...</p>
+            </Card>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show error state
+  if (loadingError || (!tournament && !isLoading)) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="container mx-auto px-4 py-8">
+          <Button 
+            variant="outline" 
+            onClick={() => navigate('/tournaments')}
+            className="mb-4"
+          >
+            Back to Tournaments
+          </Button>
+          <div className="flex items-center justify-center mt-20">
+            <Card className="p-8 text-center max-w-md">
+              <div className="text-destructive mb-4">
+                <svg className="w-12 h-12 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-semibold mb-2">Unable to Load Tournament</h2>
+              <p className="text-muted-foreground mb-4">{loadingError || 'Tournament not found'}</p>
+              <div className="space-y-2">
+                <Button onClick={() => navigate('/tournaments')} className="w-full">
+                  Go to Tournaments
+                </Button>
+                {import.meta.env.DEV && (
+                  <Button 
+                    variant="outline" 
+                    onClick={() => window.location.reload()} 
+                    className="w-full"
+                  >
+                    Retry
+                  </Button>
+                )}
+              </div>
+            </Card>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!tournament) {
-    return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
+    return null;
   }
 
   return (
@@ -755,10 +917,10 @@ const TournamentView = () => {
                               </div>
                               {(() => {
                                 const playerPoints = getPlayerPoints(player.id);
-                                if (playerPoints && playerPoints.totalPoints > 0) {
+                                if (playerPoints && playerPoints.total > 0) {
                                   return (
                                     <div className="text-[10px] text-purple-400 font-medium">
-                                      {playerPoints.totalPoints} pts
+                                      {playerPoints.total} pts
                                     </div>
                                   );
                                 }
@@ -807,8 +969,8 @@ const TournamentView = () => {
                               <span className="text-xs font-medium">
                                 {aiDecision.action.type === 'check' ? 'Check' :
                                  aiDecision.action.type === 'call' ? 'Call' :
-                                 aiDecision.action.type === 'raise' ? `Raise $${aiDecision.action.amount}` :
-                                 aiDecision.action.type === 'bet' ? `Bet $${aiDecision.action.amount}` :
+                                 aiDecision.action.type === 'raise' ? `Raise $${(aiDecision.action as PokerAction).amount}` :
+                                 aiDecision.action.type === 'bet' ? `Bet $${(aiDecision.action as PokerAction).amount}` :
                                  aiDecision.action.type === 'all-in' ? 'All-In' :
                                  aiDecision.action.type}
                               </span>
@@ -835,14 +997,14 @@ const TournamentView = () => {
                         <div className="sticky top-0 bg-background border-b px-4 py-3">
                           <div className="font-semibold text-lg">{player.name}'s Thinking</div>
                           <div className="text-xs text-muted-foreground">
-                            {aiDecision.details?.personality || 'AI Analysis'}
+                            {aiDecision.metadata?.personality || 'AI Analysis'}
                           </div>
                         </div>
                         <div className="overflow-y-auto max-h-80 px-4 py-3 space-y-3">
                           {/* Action Taken */}
                           <div className="font-medium text-sm">
                             Action: {aiDecision.action.type.toUpperCase()}
-                            {aiDecision.action.amount && ` $${aiDecision.action.amount}`}
+                            {(aiDecision.action as PokerAction).amount && ` $${(aiDecision.action as PokerAction).amount}`}
                           </div>
                           
                           {/* Main Reasoning */}
@@ -864,33 +1026,33 @@ const TournamentView = () => {
                           </div>
                           
                           {/* Detailed Analysis if available */}
-                          {aiDecision.details && (
+                          {aiDecision.metadata && (
                             <>
                               <div className="border-t pt-3 space-y-2">
                                 <div className="text-sm font-medium">Detailed Analysis:</div>
                                 
                                 {/* Hand Evaluation */}
-                                {aiDecision.details.cardEvaluation && (
+                                {aiDecision.metadata.cardEvaluation && (
                                   <div className="text-sm">
                                     <span className="text-muted-foreground">Hand: </span>
-                                    {aiDecision.details.cardEvaluation}
+                                    {aiDecision.metadata.cardEvaluation}
                                   </div>
                                 )}
                                 
                                 {/* Mathematical Breakdown */}
-                                {aiDecision.details.mathBreakdown && (
+                                {aiDecision.metadata.mathBreakdown && (
                                   <div className="text-sm whitespace-pre-wrap">
                                     <span className="text-muted-foreground">Math: </span>
-                                    {aiDecision.details.mathBreakdown}
+                                    {aiDecision.metadata.mathBreakdown}
                                   </div>
                                 )}
                                 
                                 {/* Bluffing Status */}
-                                {aiDecision.details.isBluffing !== undefined && (
+                                {aiDecision.metadata.isBluffing !== undefined && (
                                   <div className="text-sm">
                                     <span className="text-muted-foreground">Bluffing: </span>
-                                    <span className={aiDecision.details.isBluffing ? 'text-orange-500' : 'text-green-500'}>
-                                      {aiDecision.details.isBluffing ? 'Yes - Attempting to deceive' : 'No - Playing honestly'}
+                                    <span className={aiDecision.metadata.isBluffing ? 'text-orange-500' : 'text-green-500'}>
+                                      {aiDecision.metadata.isBluffing ? 'Yes - Attempting to deceive' : 'No - Playing honestly'}
                                     </span>
                                   </div>
                                 )}
@@ -900,7 +1062,7 @@ const TournamentView = () => {
                           
                           {/* Model Info */}
                           <div className="border-t pt-3 text-xs text-muted-foreground">
-                            {aiDecision.details?.modelUsed ? `Powered by ${aiDecision.details.modelUsed}` : 'Using fallback logic'}
+                            {aiDecision.metadata?.modelUsed ? `Powered by ${aiDecision.metadata.modelUsed}` : 'Using fallback logic'}
                           </div>
                         </div>
                       </div>
@@ -948,6 +1110,11 @@ const TournamentView = () => {
               }
               recentDecisions={getCurrentHandDecisions()}
               thinkingTimeLeft={thinkingTimeLeft}
+              maxThinkingTime={
+                config?.speed === 'thinking' ? 2 : 
+                config?.speed === 'fast' ? 0.5 : 
+                1
+              }
             />
           )}
 

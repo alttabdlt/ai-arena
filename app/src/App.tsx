@@ -8,6 +8,7 @@ import { ApolloProvider } from "@apollo/client";
 import { apolloClient } from "@/lib/apollo-client";
 import { WalletProvider } from "@/config/wallet";
 import { AuthProvider } from "@/contexts/AuthContext";
+import "@/utils/build-info"; // Log build info on startup
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";

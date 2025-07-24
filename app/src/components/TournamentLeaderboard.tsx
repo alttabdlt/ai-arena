@@ -2,7 +2,23 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Trophy, TrendingUp, Zap, Shield, Target } from 'lucide-react';
 import { formatChips } from '@/poker/engine/poker-helpers';
-import { PlayerStats } from '@/poker/scoring/style-scoring';
+// PlayerStats type is defined inline for now since it's not exported from PokerScoringSystem
+interface PlayerStats {
+  handsPlayed: number;
+  handsWon: number;
+  showdownsWon: number;
+  bluffsWon: number;
+  comebackWins: number;
+  unconventionalWins: number;
+  aggressiveActions: number;
+  totalActions: number;
+  biggestPotWon: number;
+  totalWinnings: number;
+  handMisreads: number;
+  criticalMisreads: number;
+  illogicalDecisions: number;
+  correctHandReads: number;
+}
 
 interface LeaderboardEntry {
   playerId: string;

@@ -14,24 +14,66 @@ export default function ReverseHangmanView() {
   const navigate = useNavigate();
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [selectedDifficulty, setSelectedDifficulty] = useState<'easy' | 'medium' | 'hard' | 'expert'>('medium');
+  const [loadingError, setLoadingError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isStartingRound, setIsStartingRound] = useState(false);
 
   useEffect(() => {
-    // Load tournament from sessionStorage
-    const tournamentData = sessionStorage.getItem(`tournament-${id}`);
-    if (!tournamentData) {
-      toast.error('Tournament not found');
-      navigate('/tournaments');
-      return;
-    }
+    let timeoutId: NodeJS.Timeout;
+    
+    const loadTournament = async () => {
+      try {
+        // Set a timeout for loading
+        timeoutId = setTimeout(() => {
+          setLoadingError('Tournament loading timed out. The tournament data may be missing.');
+          setIsLoading(false);
+        }, 5000);
 
-    const loadedTournament = JSON.parse(tournamentData);
-    if (loadedTournament.gameType !== 'reverse-hangman') {
-      toast.error('Invalid game type for this view');
-      navigate('/tournaments');
-      return;
-    }
+        // Load tournament from sessionStorage
+        const tournamentData = sessionStorage.getItem(`tournament-${id}`);
+        
+        if (!tournamentData) {
+          setLoadingError('Tournament not found. It may have been removed or expired.');
+          clearTimeout(timeoutId);
+          setIsLoading(false);
+          return;
+        }
 
-    setTournament(loadedTournament);
+        const loadedTournament = JSON.parse(tournamentData);
+        if (loadedTournament.gameType !== 'reverse-hangman') {
+          setLoadingError(`This tournament is for ${loadedTournament.gameType}, not reverse-hangman.`);
+          clearTimeout(timeoutId);
+          setIsLoading(false);
+          
+          // Redirect to correct game view after a short delay
+          setTimeout(() => {
+            if (loadedTournament.gameType === 'poker') {
+              navigate(`/tournament/${id}`);
+            } else {
+              navigate('/tournaments');
+            }
+          }, 2000);
+          return;
+        }
+
+        setTournament(loadedTournament);
+        clearTimeout(timeoutId);
+        setIsLoading(false);
+      } catch (error) {
+        console.error('Error loading tournament:', error);
+        setLoadingError('Failed to load tournament data.');
+        clearTimeout(timeoutId);
+        setIsLoading(false);
+      }
+    };
+
+    loadTournament();
+
+    return () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
   }, [id, navigate]);
 
   // Always call the hook to respect React's rules
@@ -46,19 +88,78 @@ export default function ReverseHangmanView() {
     animationOutput
   } = useReverseHangmanGame({ tournament });
   
-  if (!tournament) {
+  // Show loading state
+  if (isLoading && !loadingError) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-          <p>Loading tournament...</p>
+      <div className="min-h-screen bg-background">
+        <div className="container mx-auto px-4 py-8">
+          <Button 
+            variant="outline" 
+            onClick={() => navigate('/tournaments')}
+            className="mb-4"
+          >
+            Back to Tournaments
+          </Button>
+          <div className="flex items-center justify-center mt-20">
+            <Card className="p-8 text-center max-w-md">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+              <h2 className="text-xl font-semibold mb-2">Loading Tournament</h2>
+              <p className="text-muted-foreground">Tournament ID: {id}</p>
+              <p className="text-sm text-muted-foreground mt-2">This may take a few seconds...</p>
+            </Card>
+          </div>
         </div>
       </div>
     );
   }
 
-  const handleDifficultySelect = () => {
-    startRound(selectedDifficulty);
+  // Show error state
+  if (loadingError || (!tournament && !isLoading)) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="container mx-auto px-4 py-8">
+          <Button 
+            variant="outline" 
+            onClick={() => navigate('/tournaments')}
+            className="mb-4"
+          >
+            Back to Tournaments
+          </Button>
+          <div className="flex items-center justify-center mt-20">
+            <Card className="p-8 text-center max-w-md">
+              <div className="text-destructive mb-4">
+                <svg className="w-12 h-12 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-semibold mb-2">Unable to Load Tournament</h2>
+              <p className="text-muted-foreground mb-4">{loadingError || 'Tournament not found'}</p>
+              <div className="space-y-2">
+                <Button onClick={() => navigate('/tournaments')} className="w-full">
+                  Go to Tournaments
+                </Button>
+              </div>
+            </Card>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!tournament) {
+    return null;
+  }
+
+  const handleDifficultySelect = async () => {
+    setIsStartingRound(true);
+    try {
+      await startRound(selectedDifficulty);
+    } catch (error) {
+      console.error('Error starting round:', error);
+      toast.error('Failed to start the round. Please try again.');
+    } finally {
+      setIsStartingRound(false);
+    }
   };
 
   return (
@@ -131,8 +232,12 @@ export default function ReverseHangmanView() {
                       </Card>
                     </div>
                     
-                    <Button size="lg" onClick={handleDifficultySelect}>
-                      Start Round
+                    <Button 
+                      size="lg" 
+                      onClick={handleDifficultySelect}
+                      disabled={isStartingRound}
+                    >
+                      {isStartingRound ? 'Starting...' : 'Start Round'}
                     </Button>
                   </div>
                 ) : gameState ? (

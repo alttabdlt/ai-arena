@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react';
-import { PointEvent } from '@/poker/scoring/point-scoring';
+// Define PointEvent inline since it's not exported from the new structure
+interface PointEvent {
+  playerId: string;
+  type: 'base' | 'style' | 'penalty';
+  category: string;
+  points: number;
+  description: string;
+  details?: any;
+}
 import { Trophy, Zap, TrendingUp, Shield, Target, AlertTriangle, Star, Coins } from 'lucide-react';
 
 interface PointNotificationProps {

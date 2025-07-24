@@ -1,12 +1,25 @@
 import * as React from 'react';
 import { useState, useEffect } from 'react';
-import { ReverseHangmanState, GuessAttempt } from '../engine/reverse-hangman-engine';
-import { ReverseHangmanScoringSystem } from '../scoring/scoring-system';
 import { AnimatedWordReveal } from './AnimatedWordReveal';
 import { MatchProgressBar } from './MatchProgressBar';
 import { EnhancedAIThinking } from './EnhancedAIThinking';
 import { MistakeDisplay } from './MistakeDisplay';
-import { MistakeDetector, Mistake } from '../engine/mistake-detector';
+import type { ReverseHangmanGameState as ReverseHangmanState, GuessAttempt } from '@/game-engine/games/reverse-hangman/ReverseHangmanTypes';
+
+// Simple local mistake type - mistake detection was removed in framework migration
+interface Mistake {
+  promptPair: any;
+  attemptDetails: any;
+  type: 'semantic' | 'logic' | 'format';
+  severity: 'minor' | 'major' | 'hilarious';
+  category: string;
+  description: string;
+}
+
+// Stub for mistake detection - always returns null for now
+const MistakeDetector = {
+  detectMistakes: (lastAttempt: any, attemptNumber: number, currentPromptPair: any, previousAttempts: any[]) => null
+};
 
 interface ReverseHangmanBoardProps {
   gameState: ReverseHangmanState;

@@ -246,7 +246,25 @@ export class AIService {
     model: 'gpt-4o' | 'deepseek-chat' | 'claude-3-5-sonnet' | 'claude-3-opus',
     customPrompt?: string
   ): Promise<AIPokerDecision> {
+    console.log('\n=== AIService.getPokerDecision Called ===');
     console.log(`🤖 AI Decision Request - Bot: ${botId}, Model: ${model}`);
+    console.log('GameState summary:', {
+      handNumber: gameState.handNumber,
+      bettingRound: gameState.bettingRound,
+      potSize: gameState.potSize,
+      currentBet: gameState.currentBet,
+      communityCards: gameState.communityCards,
+      activeOpponents: gameState.opponents.filter(o => o.status === 'active').length
+    });
+    console.log('PlayerState summary:', {
+      holeCards: playerState.holeCards,
+      stackSize: playerState.stackSize,
+      amountToCall: playerState.amountToCall,
+      canCheck: playerState.canCheck,
+      canFold: playerState.canFold,
+      canCall: playerState.canCall,
+      canRaise: playerState.canRaise
+    });
     
     // Track hand number for evaluation
     this.currentHandNumber = gameState.handNumber;
@@ -273,6 +291,7 @@ export class AIService {
 
     try {
       let decision: AIPokerDecision;
+      const startTime = Date.now();
       
       switch(model) {
         case 'deepseek-chat':
@@ -295,18 +314,29 @@ export class AIService {
           throw new Error(`Unsupported model: ${model}`);
       }
       
+      const elapsedTime = Date.now() - startTime;
+      console.log(`✅ AI decision received in ${elapsedTime}ms:`, {
+        action: decision.action,
+        amount: decision.amount,
+        confidence: decision.confidence,
+        reasoningLength: decision.reasoning?.length
+      });
+      
       // Track and evaluate decision quality
       this.evaluateDecision(model, decision, gameState, playerState);
       
+      console.log('=== Returning decision from AIService ===\n');
       return decision;
     } catch (error) {
-      console.error(`❌ AI model error for ${model}:`, error);
+      console.error(`\n❌ AI model error for ${model}:`, error);
       console.error('Error details:', {
         message: error instanceof Error ? error.message : 'Unknown error',
         stack: error instanceof Error ? error.stack : undefined,
       });
       console.log('⚠️  Falling back to programmatic logic');
-      return this.getFallbackDecision(gameState, playerState);
+      const fallbackDecision = this.getFallbackDecision(gameState, playerState);
+      console.log('Fallback decision:', fallbackDecision);
+      return fallbackDecision;
     }
   }
 

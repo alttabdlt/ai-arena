@@ -124,11 +124,20 @@ export default function WaitingRoom() {
 
     sessionStorage.setItem(`tournament-${id}`, JSON.stringify(updatedTournament));
     
+    // Verify the data was saved
+    const savedData = sessionStorage.getItem(`tournament-${id}`);
+    if (!savedData) {
+      toast.error('Failed to save tournament data. Please try again.');
+      return;
+    }
+    
     // Navigate to appropriate game
     if (tournament.gameType === 'poker') {
       navigate(`/tournament/${id}`);
     } else if (tournament.gameType === 'reverse-hangman') {
       navigate(`/tournament/${id}/hangman`);
+    } else {
+      toast.error(`Unknown game type: ${tournament.gameType}`);
     }
   };
 

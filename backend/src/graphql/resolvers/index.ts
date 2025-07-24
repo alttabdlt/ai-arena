@@ -438,40 +438,88 @@ export const resolvers = {
       { botId, model, gameState, playerState, opponents }: any,
       ctx: Context
     ) => {
-      // Check if this is a test bot request
-      let prompt: string | undefined;
-      if (botId.startsWith('test-bot-')) {
-        // Get prompt from headers for test bots
-        prompt = ctx.req?.headers?.['x-bot-prompt'] as string;
-      }
-      
-      const decision = await aiService.getPokerDecision(
+      console.log('\n=== getAIPokerDecision Resolver Called ===');
+      console.log('Input parameters:', {
         botId,
-        gameState,
-        playerState,
-        opponents,
         model,
-        prompt
-      );
+        opponents,
+        gameStateKeys: Object.keys(gameState || {}),
+        playerStateKeys: Object.keys(playerState || {})
+      });
       
-      // Check if this decision involved a misread or illogical play
-      const modelEval = aiService.getModelEvaluations().get(model);
-      if (modelEval) {
-        const lastMisread = modelEval.handMisreads[modelEval.handMisreads.length - 1];
-        const lastIllogical = modelEval.illogicalDecisions[modelEval.illogicalDecisions.length - 1];
+      try {
+        // Check if this is a test bot request
+        let prompt: string | undefined;
+        if (botId.startsWith('test-bot-')) {
+          // Get prompt from headers for test bots
+          prompt = ctx.req?.headers?.['x-bot-prompt'] as string;
+          console.log('Test bot detected, using header prompt:', prompt);
+        } else if (botId.startsWith('player-') || botId.startsWith('game-bot-')) {
+          // For demo players, use default strategies based on their model
+          const defaultStrategies: Record<string, string> = {
+            'gpt-4o': 'Play aggressive poker, focus on value betting and exploiting opponents',
+            'deepseek-chat': 'Play balanced poker with calculated risks and strategic bluffs',
+            'claude-3-5-sonnet': 'Play tight-aggressive poker, maximizing expected value',
+            'claude-3-opus': 'Play adaptively based on opponent tendencies and board texture'
+          };
+          prompt = defaultStrategies[model] || 'Play optimal poker strategy';
+          console.log('Demo player detected, using default prompt for model', model, ':', prompt);
+        }
+      
+        console.log('Calling aiService.getPokerDecision...');
+        const startTime = Date.now();
         
-        // Check if this was a misread (check last entry's hand number)
-        const handMisread = lastMisread && lastMisread.handNumber === gameState.handNumber;
-        const illogicalPlay = lastIllogical && lastIllogical.handNumber === gameState.handNumber;
+        const decision = await aiService.getPokerDecision(
+          botId,
+          gameState,
+          playerState,
+          opponents,
+          model,
+          prompt
+        );
         
-        return {
-          ...decision,
-          handMisread,
-          illogicalPlay
-        };
+        const elapsedTime = Date.now() - startTime;
+        console.log(`AI decision received in ${elapsedTime}ms:`, {
+          action: decision.action,
+          amount: decision.amount,
+          confidence: decision.confidence,
+          reasoningLength: decision.reasoning?.length
+        });
+      
+        // Check if this decision involved a misread or illogical play
+        const modelEval = aiService.getModelEvaluations().get(model);
+        if (modelEval) {
+          const lastMisread = modelEval.handMisreads[modelEval.handMisreads.length - 1];
+          const lastIllogical = modelEval.illogicalDecisions[modelEval.illogicalDecisions.length - 1];
+        
+          // Check if this was a misread (check last entry's hand number)
+          const handMisread = lastMisread && lastMisread.handNumber === gameState.handNumber;
+          const illogicalPlay = lastIllogical && lastIllogical.handNumber === gameState.handNumber;
+        
+          console.log('Evaluation check:', { handMisread, illogicalPlay });
+          
+          return {
+            ...decision,
+            handMisread,
+            illogicalPlay
+          };
+        }
+      
+        console.log('Returning decision to client');
+        return decision;
+      } catch (error: any) {
+        console.error('\n=== ERROR in getAIPokerDecision ===');
+        console.error('Error details:', {
+          message: error.message,
+          stack: error.stack,
+          name: error.name,
+          botId,
+          model
+        });
+        
+        // Re-throw the error to be handled by Apollo
+        throw error;
       }
-      
-      return decision;
     },
 
     getAIReverseHangmanDecision: async (

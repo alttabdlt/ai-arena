@@ -16,17 +16,30 @@ import {
   Activity,
   Crown,
   Flame,
-  Plus
+  Plus,
+  Trash2
 } from 'lucide-react';
 import { mockApi, type Match } from '@/lib/mock-data';
 import { Link } from 'react-router-dom';
 import { Tournament as TournamentType, GAME_TYPE_INFO } from '@/types/tournament';
+import { toast } from 'sonner';
+import { 
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const TournamentsPage = () => {
   const [tournaments, setTournaments] = useState<TournamentType[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAdmin] = useState(true); // For demo purposes
+  const [tournamentToDelete, setTournamentToDelete] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -83,6 +96,25 @@ const TournamentsPage = () => {
     fetchData();
   }, []);
 
+  const handleDeleteTournament = (tournamentId: string) => {
+    try {
+      // Remove from sessionStorage
+      sessionStorage.removeItem(`tournament-${tournamentId}`);
+      
+      // Update local state
+      setTournaments(prev => prev.filter(t => t.id !== tournamentId));
+      
+      // Close dialog
+      setTournamentToDelete(null);
+      
+      // Show success message
+      toast.success('Tournament deleted successfully');
+    } catch (error) {
+      console.error('Error deleting tournament:', error);
+      toast.error('Failed to delete tournament');
+    }
+  };
+
   const formatTimeUntil = (timestamp: number) => {
     const diff = timestamp - Date.now();
     const hours = Math.floor(diff / (1000 * 60 * 60));
@@ -96,12 +128,10 @@ const TournamentsPage = () => {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'in-progress':
-      case 'LIVE': return 'bg-destructive text-destructive-foreground';
-      case 'waiting':
-      case 'UPCOMING': return 'bg-warning text-warning-foreground';
-      case 'completed':
-      case 'COMPLETED': return 'bg-muted text-gray-700';
+      case 'in-progress': return 'bg-destructive text-destructive-foreground';
+      case 'waiting': return 'bg-warning text-warning-foreground';
+      case 'completed': return 'bg-muted text-gray-700';
+      case 'cancelled': return 'bg-muted text-gray-700';
       default: return 'bg-muted text-gray-700';
     }
   };
@@ -119,9 +149,9 @@ const TournamentsPage = () => {
     );
   }
 
-  const liveTournaments = tournaments.filter(t => t.status === 'in-progress' || t.status === 'LIVE');
-  const waitingTournaments = tournaments.filter(t => t.status === 'waiting' || t.status === 'UPCOMING');
-  const completedTournaments = tournaments.filter(t => t.status === 'completed' || t.status === 'COMPLETED');
+  const liveTournaments = tournaments.filter(t => t.status === 'in-progress');
+  const waitingTournaments = tournaments.filter(t => t.status === 'waiting');
+  const completedTournaments = tournaments.filter(t => t.status === 'completed');
 
   return (
     <div className="min-h-screen bg-background">
@@ -213,12 +243,24 @@ const TournamentsPage = () => {
                     </div>
                   </div>
                   
-                  <Button className="w-full btn-gaming" asChild>
-                    <Link to={tournament.gameType === 'reverse-hangman' ? `/tournament/${tournament.id}/hangman` : `/tournament/${tournament.id}`}>
-                      <Eye className="mr-2 h-4 w-4" />
-                      Watch Live
-                    </Link>
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button className="flex-1 btn-gaming" asChild>
+                      <Link to={tournament.gameType === 'reverse-hangman' ? `/tournament/${tournament.id}/hangman` : `/tournament/${tournament.id}`}>
+                        <Eye className="mr-2 h-4 w-4" />
+                        Watch Live
+                      </Link>
+                    </Button>
+                    {isAdmin && (
+                      <Button 
+                        variant="destructive" 
+                        size="icon"
+                        onClick={() => setTournamentToDelete(tournament.id)}
+                        className="shrink-0"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
                 </Card>
               ))}
             </div>
@@ -391,7 +433,7 @@ const TournamentsPage = () => {
                           <div>
                             <h4 className="font-bold">{tournament.name}</h4>
                             <p className="text-sm text-gray-700">
-                              Completed {Math.floor((Date.now() - tournament.startTime) / (1000 * 60 * 60 * 24))} days ago
+                              Completed {tournament.completedAt ? Math.floor((Date.now() - new Date(tournament.completedAt).getTime()) / (1000 * 60 * 60 * 24)) : 0} days ago
                             </p>
                           </div>
                         </div>
@@ -408,6 +450,27 @@ const TournamentsPage = () => {
           </Tabs>
         </div>
       </section>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={!!tournamentToDelete} onOpenChange={(open) => !open && setTournamentToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Tournament</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this tournament? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => tournamentToDelete && handleDeleteTournament(tournamentToDelete)}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

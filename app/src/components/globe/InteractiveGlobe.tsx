@@ -1,0 +1,192 @@
+import React, { useRef, useEffect, useState } from 'react';
+import Globe from 'react-globe.gl';
+import { Tournament } from '@/types/tournament';
+
+interface GlobePoint {
+  lat: number;
+  lng: number;
+  size: number;
+  color: string;
+  name: string;
+  type: 'tournament' | 'bot';
+  id: string;
+  intensity?: number;
+}
+
+interface GlobeArc {
+  startLat: number;
+  startLng: number;
+  endLat: number;
+  endLng: number;
+  color: string;
+  dashLength?: number;
+  dashGap?: number;
+  dashAnimateTime?: number;
+}
+
+interface InteractiveGlobeProps {
+  tournaments?: Tournament[];
+  onLocationClick?: (lat: number, lng: number) => void;
+  onZoomComplete?: () => void;
+}
+
+const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({ 
+  tournaments = [], 
+  onLocationClick,
+  onZoomComplete 
+}) => {
+  const globeEl = useRef<any>(null);
+  const [points, setPoints] = useState<GlobePoint[]>([]);
+  const [arcs, setArcs] = useState<GlobeArc[]>([]);
+  const [globeReady, setGlobeReady] = useState(false);
+
+  // Generate random coordinates for demo purposes
+  const generateRandomCoordinates = () => {
+    const lat = (Math.random() - 0.5) * 180;
+    const lng = (Math.random() - 0.5) * 360;
+    return { lat, lng };
+  };
+
+  // Initialize globe data
+  useEffect(() => {
+    // Create points for active tournaments
+    const tournamentPoints: GlobePoint[] = tournaments
+      .filter(t => t.status === 'in-progress')
+      .map(tournament => {
+        const coords = generateRandomCoordinates();
+        return {
+          ...coords,
+          size: 0.8,
+          color: '#ff0000',
+          name: tournament.name,
+          type: 'tournament' as const,
+          id: tournament.id,
+          intensity: Math.random()
+        };
+      });
+
+    // Add some random bot creation points for visual effect
+    const botPoints: GlobePoint[] = Array.from({ length: 10 }, (_, i) => {
+      const coords = generateRandomCoordinates();
+      return {
+        ...coords,
+        size: 0.4,
+        color: '#00ff00',
+        name: `Bot ${i + 1}`,
+        type: 'bot' as const,
+        id: `bot-${i}`,
+        intensity: Math.random() * 0.5
+      };
+    });
+
+    setPoints([...tournamentPoints, ...botPoints]);
+
+    // Create arcs between some points for visual effect
+    const connectionArcs: GlobeArc[] = [];
+    for (let i = 0; i < Math.min(tournamentPoints.length - 1, 5); i++) {
+      connectionArcs.push({
+        startLat: tournamentPoints[i].lat,
+        startLng: tournamentPoints[i].lng,
+        endLat: tournamentPoints[i + 1].lat,
+        endLng: tournamentPoints[i + 1].lng,
+        color: '#ffaa00',
+        dashLength: 0.5,
+        dashGap: 0.2,
+        dashAnimateTime: 2000
+      });
+    }
+    setArcs(connectionArcs);
+  }, [tournaments]);
+
+  // Configure globe on mount
+  useEffect(() => {
+    if (globeEl.current && globeReady) {
+      // Auto-rotate
+      globeEl.current.controls().autoRotate = true;
+      globeEl.current.controls().autoRotateSpeed = 0.5;
+      
+      // Set initial camera position
+      globeEl.current.pointOfView({
+        lat: 0,
+        lng: 0,
+        altitude: 2.5
+      });
+    }
+  }, [globeReady]);
+
+  const handlePointClick = (point: GlobePoint) => {
+    if (onLocationClick) {
+      // Zoom to the clicked point
+      globeEl.current.pointOfView({
+        lat: point.lat,
+        lng: point.lng,
+        altitude: 0.5
+      }, 2000);
+
+      // Call callback after zoom animation
+      setTimeout(() => {
+        onLocationClick(point.lat, point.lng);
+        if (onZoomComplete) {
+          onZoomComplete();
+        }
+      }, 2000);
+    }
+  };
+
+  const handleGlobeReady = () => {
+    setGlobeReady(true);
+  };
+
+  return (
+    <div className="w-full h-full bg-black relative">
+      <Globe
+        ref={globeEl}
+        globeImageUrl="//unpkg.com/three-globe/example/img/earth-night.jpg"
+        backgroundImageUrl="//unpkg.com/three-globe/example/img/night-sky.png"
+        pointsData={points}
+        pointAltitude={d => d.size * 0.1}
+        pointColor={d => d.color}
+        pointRadius={d => d.size}
+        pointLabel={d => `
+          <div class="text-white bg-black/80 px-2 py-1 rounded">
+            <div class="font-bold">${d.name}</div>
+            <div class="text-xs">${d.type === 'tournament' ? 'Live Tournament' : 'Bot Created'}</div>
+          </div>
+        `}
+        onPointClick={handlePointClick}
+        arcsData={arcs}
+        arcColor={d => d.color}
+        arcDashLength={d => d.dashLength || 0.5}
+        arcDashGap={d => d.dashGap || 0.2}
+        arcDashAnimateTime={d => d.dashAnimateTime || 2000}
+        atmosphereColor="#3a228a"
+        atmosphereAltitude={0.25}
+        onGlobeReady={handleGlobeReady}
+      />
+      
+      {/* Pulse animation for points */}
+      <style jsx>{`
+        :global(.scene-container) {
+          background: radial-gradient(ellipse at bottom, #1b2735 0%, #090a0f 100%);
+        }
+      `}</style>
+
+      {/* Stats overlay */}
+      <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-sm rounded-lg p-4 text-white">
+        <div className="text-sm opacity-80">Live Activity</div>
+        <div className="flex items-center gap-4 mt-2">
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
+            <span className="text-sm">{tournaments.filter(t => t.status === 'in-progress').length} Tournaments</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+            <span className="text-sm">10 Bots</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default InteractiveGlobe;

@@ -2,8 +2,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Brain, Clock, Target, Lightbulb } from 'lucide-react';
-import { AIDecision } from '@/poker/ai/ai-agents';
-import { DecisionHistoryEntry } from '@/poker/game/poker-game-manager';
+import { IGameDecision as AIDecision } from '@/game-engine/core/interfaces';
+import { DecisionHistoryEntry } from '@/game-engine/games/poker/PokerGameManager';
 import { formatChips } from '@/poker/engine/poker-helpers';
 
 interface AIThinkingPanelProps {
@@ -14,9 +14,10 @@ interface AIThinkingPanelProps {
   } | null;
   recentDecisions: DecisionHistoryEntry[];
   thinkingTimeLeft: number;
+  maxThinkingTime?: number; // Maximum thinking time based on speed setting
 }
 
-export function AIThinkingPanel({ currentThinking, recentDecisions, thinkingTimeLeft }: AIThinkingPanelProps) {
+export function AIThinkingPanel({ currentThinking, recentDecisions, thinkingTimeLeft, maxThinkingTime = 2 }: AIThinkingPanelProps) {
   if (!currentThinking) {
     return (
       <Card className="w-full">
@@ -35,7 +36,7 @@ export function AIThinkingPanel({ currentThinking, recentDecisions, thinkingTime
     );
   }
 
-  const progressPercent = (thinkingTimeLeft / 60) * 100;
+  const progressPercent = (thinkingTimeLeft / maxThinkingTime) * 100;
   const decision = currentThinking.decision;
 
   return (
@@ -48,7 +49,12 @@ export function AIThinkingPanel({ currentThinking, recentDecisions, thinkingTime
           </CardTitle>
           <div className="flex items-center gap-2">
             <Clock className="h-4 w-4" />
-            <span className="text-sm font-medium">{Math.ceil(thinkingTimeLeft)}s</span>
+            <span className="text-sm font-medium">
+              {maxThinkingTime < 1 
+                ? `${thinkingTimeLeft.toFixed(1)}s` 
+                : `${Math.ceil(thinkingTimeLeft)}s`
+              }
+            </span>
           </div>
         </div>
         <Progress value={progressPercent} className="h-1.5 mt-2" />
@@ -62,7 +68,7 @@ export function AIThinkingPanel({ currentThinking, recentDecisions, thinkingTime
                 <span className="text-sm font-medium">Decision:</span>
                 <Badge variant="default" className="text-lg px-3 py-1">
                   {decision.action.type.toUpperCase()}
-                  {decision.action.amount && ` $${decision.action.amount}`}
+                  {(decision.action as any).amount && ` $${(decision.action as any).amount}`}
                 </Badge>
               </div>
               <div className="text-sm text-muted-foreground">

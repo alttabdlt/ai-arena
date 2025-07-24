@@ -2,9 +2,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Clock, Hash } from 'lucide-react';
-import { DecisionHistoryEntry } from '@/poker/game/poker-game-manager';
+import { DecisionHistoryEntry } from '@/game-engine/games/poker/PokerGameManager';
 import { formatChips, getCardColor, getCardDisplayValue } from '@/poker/engine/poker-helpers';
-import { Card as PokerCard } from '@/poker/engine/poker-engine';
+import { Card as PokerCard } from '@/game-engine/games/poker/PokerTypes';
 
 interface DecisionHistoryProps {
   history: DecisionHistoryEntry[];

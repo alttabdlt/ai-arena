@@ -1,5 +1,18 @@
 import { useEffect, useState } from 'react';
-import { AchievementEvent } from '@/poker/achievements/achievement-system';
+// Define AchievementEvent inline since it's not exported from the new structure
+interface AchievementEvent {
+  playerId: string;
+  achievement: {
+    id: string;
+    name: string;
+    description: string;
+    category: string;
+    rarity: string;
+    points: number;
+    icon?: string;
+  };
+  unlockedAt: Date;
+}
 import { Trophy, Star, Award, Crown } from 'lucide-react';
 
 interface AchievementNotificationProps {

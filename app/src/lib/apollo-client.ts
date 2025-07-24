@@ -71,9 +71,6 @@ export const apolloClient = new ApolloClient({
       Bot: {
         keyFields: ['id'],
       },
-      BondingCurve: {
-        keyFields: ['id'],
-      },
       User: {
         keyFields: ['address'],
       },

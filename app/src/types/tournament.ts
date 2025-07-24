@@ -117,7 +117,15 @@ export const DEMO_BOTS: DemoBot[] = [
   }
 ];
 
-export const GAME_TYPE_INFO = {
+export const GAME_TYPE_INFO: Record<GameType, {
+  name: string;
+  description: string;
+  icon: string;
+  minPlayers: number;
+  maxPlayers: number;
+  defaultConfig: GameConfig;
+  disabled?: boolean;
+}> = {
   'poker': {
     name: 'Texas Hold\'em Poker',
     description: 'Classic poker with big blinds, bluffs, and all-ins',

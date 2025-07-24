@@ -3,7 +3,11 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Trophy, Star, Award, Crown, Lock } from 'lucide-react';
-import { Achievement, PlayerAchievement } from '@/poker/achievements/achievement-system';
+import { IGameAchievement } from '@/game-engine/core/interfaces';
+import { AchievementUnlockEvent } from '@/game-engine/scoring/AchievementTracker';
+
+type Achievement = IGameAchievement;
+type PlayerAchievement = AchievementUnlockEvent;
 
 interface AchievementPanelProps {
   allAchievements: Achievement[];

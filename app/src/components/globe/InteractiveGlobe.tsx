@@ -35,10 +35,11 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
   onLocationClick,
   onZoomComplete 
 }) => {
-  const globeEl = useRef<any>(null);
+  const globeEl = useRef<any>(null); // Globe.gl doesn't export proper types
   const [points, setPoints] = useState<GlobePoint[]>([]);
   const [arcs, setArcs] = useState<GlobeArc[]>([]);
   const [globeReady, setGlobeReady] = useState(false);
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
 
   // Generate random coordinates for demo purposes
   const generateRandomCoordinates = () => {
@@ -46,6 +47,23 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
     const lng = (Math.random() - 0.5) * 360;
     return { lat, lng };
   };
+
+  // Track window dimensions
+  useEffect(() => {
+    const updateDimensions = () => {
+      setDimensions({
+        width: window.innerWidth,
+        height: window.innerHeight
+      });
+    };
+
+    updateDimensions();
+    window.addEventListener('resize', updateDimensions);
+
+    return () => {
+      window.removeEventListener('resize', updateDimensions);
+    };
+  }, []);
 
   // Initialize globe data
   useEffect(() => {
@@ -56,8 +74,8 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
         const coords = generateRandomCoordinates();
         return {
           ...coords,
-          size: 0.8,
-          color: '#ff0000',
+          size: 1.2,
+          color: '#ffffff',
           name: tournament.name,
           type: 'tournament' as const,
           id: tournament.id,
@@ -70,8 +88,8 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
       const coords = generateRandomCoordinates();
       return {
         ...coords,
-        size: 0.4,
-        color: '#00ff00',
+        size: 0.8,
+        color: '#ffffff',
         name: `Bot ${i + 1}`,
         type: 'bot' as const,
         id: `bot-${i}`,
@@ -138,22 +156,26 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
   };
 
   return (
-    <div className="w-full h-full bg-black relative">
+    <div className="fixed inset-0 bg-black">
       <Globe
         ref={globeEl}
+        width={dimensions.width}
+        height={dimensions.height}
         globeImageUrl="//unpkg.com/three-globe/example/img/earth-night.jpg"
         backgroundImageUrl="//unpkg.com/three-globe/example/img/night-sky.png"
-        pointsData={points}
-        pointAltitude={d => d.size * 0.1}
-        pointColor={d => d.color}
-        pointRadius={d => d.size}
-        pointLabel={d => `
+        backgroundColor="rgba(0,0,0,0)"
+        hexPolygonsData={points}
+        hexPolygonAltitude={0.01}
+        hexPolygonResolution={3}
+        hexPolygonMargin={0.3}
+        hexPolygonColor={(d) => d.type === 'tournament' ? 'rgba(255, 255, 255, 0.9)' : 'rgba(255, 255, 255, 0.5)'}
+        hexPolygonLabel={d => `
           <div class="text-white bg-black/80 px-2 py-1 rounded">
             <div class="font-bold">${d.name}</div>
             <div class="text-xs">${d.type === 'tournament' ? 'Live Tournament' : 'Bot Created'}</div>
           </div>
         `}
-        onPointClick={handlePointClick}
+        onHexPolygonClick={handlePointClick}
         arcsData={arcs}
         arcColor={d => d.color}
         arcDashLength={d => d.dashLength || 0.5}
@@ -163,28 +185,7 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
         atmosphereAltitude={0.25}
         onGlobeReady={handleGlobeReady}
       />
-      
-      {/* Pulse animation for points */}
-      <style jsx>{`
-        :global(.scene-container) {
-          background: radial-gradient(ellipse at bottom, #1b2735 0%, #090a0f 100%);
-        }
-      `}</style>
 
-      {/* Stats overlay */}
-      <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-sm rounded-lg p-4 text-white">
-        <div className="text-sm opacity-80">Live Activity</div>
-        <div className="flex items-center gap-4 mt-2">
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-            <span className="text-sm">{tournaments.filter(t => t.status === 'in-progress').length} Tournaments</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-            <span className="text-sm">10 Bots</span>
-          </div>
-        </div>
-      </div>
     </div>
   );
 };

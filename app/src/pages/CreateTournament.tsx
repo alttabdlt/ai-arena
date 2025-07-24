@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -13,23 +13,41 @@ import {
   DEMO_BOTS
 } from '@/types/tournament';
 import { toast } from 'sonner';
-import SpinWheel from '@/components/SpinWheel';
+import SlotMachineTitle from '@/components/SlotMachineTitle';
+import { motion } from 'framer-motion';
 
 export default function CreateTournament() {
   const navigate = useNavigate();
-  const [step, setStep] = useState(1);
+  const location = useLocation();
+  const preselectedGame = location.state?.preselectedGame as GameType | undefined;
+  const [step, setStep] = useState(preselectedGame ? 2 : 1);
   const [isDemoMode, setIsDemoMode] = useState(false);
-  const [gameSelected, setGameSelected] = useState(false);
+  const [gameSelected, setGameSelected] = useState(!!preselectedGame);
   
-  const [formData, setFormData] = useState<CreateTournamentData>({
-    name: '',
-    description: '',
-    gameType: '' as GameType,
-    config: {},
-    maxPlayers: 8,
-    minPlayers: 2,
-    isPublic: true
+  const [formData, setFormData] = useState<CreateTournamentData>(() => {
+    if (preselectedGame) {
+      const gameInfo = GAME_TYPE_INFO[preselectedGame];
+      return {
+        name: '',
+        description: '',
+        gameType: preselectedGame,
+        config: gameInfo.defaultConfig || {},
+        maxPlayers: gameInfo.maxPlayers,
+        minPlayers: gameInfo.minPlayers,
+        isPublic: true
+      };
+    }
+    return {
+      name: '',
+      description: '',
+      gameType: '' as GameType,
+      config: {},
+      maxPlayers: 8,
+      minPlayers: 2,
+      isPublic: true
+    };
   });
+
 
   const handleGameSelect = (gameType: GameType) => {
     const gameInfo = GAME_TYPE_INFO[gameType];
@@ -107,13 +125,8 @@ export default function CreateTournament() {
 
   const renderStep1 = () => (
     <div className="space-y-6">
-      <div className="text-center">
-        <h2 className="text-2xl font-bold mb-2">Spin the Wheel!</h2>
-        <p className="text-gray-700">Let fate decide which game your tournament will feature</p>
-      </div>
-
       <div className="flex justify-center">
-        <SpinWheel onGameSelected={handleGameSelect} />
+        <SlotMachineTitle onGameSelected={handleGameSelect} />
       </div>
     </div>
   );
@@ -317,12 +330,17 @@ export default function CreateTournament() {
   );
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-4xl">
+    <motion.div 
+      className="container mx-auto px-4 py-8 max-w-4xl"
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5 }}
+    >
       <div className="mb-8">
         <h1 className="text-4xl font-bold">Create Tournament</h1>
         <div className="flex items-center space-x-2 mt-4">
           {[1, 2, 3].map((i) => {
-            const labels = ['Spin', 'Configure', 'Details'];
+            const labels = ['Select', 'Configure', 'Details'];
             return (
               <div key={i} className="flex items-center">
                 <div className="flex flex-col items-center">
@@ -349,6 +367,6 @@ export default function CreateTournament() {
         {step === 2 && renderStep2()}
         {step === 3 && renderStep3()}
       </Card>
-    </div>
+    </motion.div>
   );
 }

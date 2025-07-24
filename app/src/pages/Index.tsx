@@ -1,109 +1,149 @@
-import { HeroSection } from '@/components/home/hero-section';
-import { LiveMatches } from '@/components/home/live-matches';
-import { BotLeaderboard } from '@/components/home/bot-leaderboard';
-// import { AdvancedTradingPanels } from '@/components/trading/advanced-panels';
-import { RealTimeStatus } from '@/components/real-time/real-time-status';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import InteractiveGlobe from '@/components/globe/InteractiveGlobe';
+import SlotMachineTitle from '@/components/SlotMachineTitle';
+import PortalTransition from '@/components/PortalTransition';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { MessageSquare, Activity, Smartphone, Wifi } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Trophy, Globe, Gamepad2 } from 'lucide-react';
+import { Tournament } from '@/types/tournament';
+import { motion, AnimatePresence } from 'framer-motion';
 
 const Index = () => {
+  const navigate = useNavigate();
+  const [tournaments, setTournaments] = useState<Tournament[]>([]);
+  const [showGameSelection, setShowGameSelection] = useState(false);
+  const [showPortalTransition, setShowPortalTransition] = useState(false);
+  const [selectedGameType, setSelectedGameType] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Load tournaments from sessionStorage
+    const storedTournaments: Tournament[] = [];
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i);
+      if (key?.startsWith('tournament-')) {
+        const tournament = JSON.parse(sessionStorage.getItem(key) || '{}');
+        if (tournament.id) {
+          storedTournaments.push(tournament);
+        }
+      }
+    }
+    setTournaments(storedTournaments);
+  }, []);
+
+  const handleCreateTournament = () => {
+    setShowGameSelection(true);
+  };
+
+  const handleGameSelected = (gameType: string) => {
+    // Store selected game type
+    setSelectedGameType(gameType);
+    
+    // Start portal transition
+    setTimeout(() => {
+      setShowPortalTransition(true);
+    }, 500);
+  };
+
+  const handlePortalComplete = () => {
+    // Navigate after portal animation completes
+    navigate('/tournaments/create', { state: { preselectedGame: selectedGameType } });
+  };
+
+  const handleGlobeLocationClick = (lat: number, lng: number) => {
+    // Could be used to show tournament details at specific location
+    console.log('Globe clicked at:', lat, lng);
+  };
+
   return (
-    <div className="min-h-screen bg-background">
-      <HeroSection />
+    <div className="min-h-screen relative overflow-hidden">
+      {/* Globe Background */}
+      <InteractiveGlobe 
+        tournaments={tournaments}
+        onLocationClick={handleGlobeLocationClick}
+      />
       
-      <main className="container mx-auto px-4 py-8">
-        <LiveMatches />
-        <BotLeaderboard />
+      {/* Main Content Section */}
+      <section className="fixed inset-0 flex items-center justify-center pointer-events-none">
         
-        {/* Phase 3 Features Showcase */}
-        <section className="mb-16">
-          <div className="text-center mb-8">
-            <Badge className="mb-4">Phase 3 - Now Available</Badge>
-            <h2 className="text-3xl font-bold mb-4">Next-Gen Features</h2>
-            <p className="text-muted-foreground">Real-time updates, advanced analytics, social features, and mobile optimization</p>
-          </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-            <Card className="hover:shadow-lg transition-shadow">
-              <CardHeader className="text-center">
-                <div className="w-12 h-12 bg-blue-100 dark:bg-blue-900/20 rounded-full flex items-center justify-center mx-auto mb-2">
-                  <Wifi className="h-6 w-6 text-blue-600" />
+        {/* Overlay Content */}
+        <div className="relative z-10 text-center px-4 pointer-events-auto">
+          <AnimatePresence mode="wait">
+            {!showGameSelection ? (
+              <motion.div
+                key="main"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="space-y-6"
+              >
+                {/* Live Activity Stats */}
+                <div className="inline-flex items-center gap-6 px-6 py-3 bg-black/60 backdrop-blur-sm rounded-full mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-white rounded-full animate-pulse"></div>
+                    <span className="text-sm text-white">{tournaments.filter(t => t.status === 'in-progress').length} Tournaments</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-white/70 rounded-full"></div>
+                    <span className="text-sm text-white">10 Bots</span>
+                  </div>
                 </div>
-                <CardTitle className="text-lg">Real-Time Updates</CardTitle>
-              </CardHeader>
-              <CardContent className="text-center">
-                <p className="text-sm text-muted-foreground mb-4">
-                  Live WebSocket connections for instant market data and bot performance updates
-                </p>
-                <div className="mb-4">
-                  <RealTimeStatus />
-                </div>
-              </CardContent>
-            </Card>
 
-            <Card className="hover:shadow-lg transition-shadow">
-              <CardHeader className="text-center">
-                <div className="w-12 h-12 bg-green-100 dark:bg-green-900/20 rounded-full flex items-center justify-center mx-auto mb-2">
-                  <Activity className="h-6 w-6 text-green-600" />
+                <div className="inline-flex items-center gap-2 px-4 py-2 bg-primary/10 backdrop-blur-sm rounded-full border border-primary/20 mb-4">
+                  <Globe className="w-4 h-4 text-primary animate-pulse" />
+                  <span className="text-sm font-medium">AI Arena Global Network</span>
                 </div>
-                <CardTitle className="text-lg">Advanced Analytics</CardTitle>
-              </CardHeader>
-              <CardContent className="text-center">
-                <p className="text-sm text-muted-foreground mb-4">
-                  Comprehensive dashboards with performance metrics and insights
+                
+                <h1 className="text-5xl md:text-7xl font-bold text-white drop-shadow-2xl">
+                  Watch AI Battle
+                  <span className="block text-3xl md:text-5xl mt-2 bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+                    Across The Globe
+                  </span>
+                </h1>
+                
+                <p className="text-xl text-white/80 max-w-2xl mx-auto drop-shadow-lg">
+                  Witness AI models compete in real-time tournaments. No bias, no coaching - just raw AI intelligence.
                 </p>
-                <Button variant="outline" size="sm" asChild>
-                  <Link to="/analytics">View Analytics</Link>
-                </Button>
-              </CardContent>
-            </Card>
-
-            <Card className="hover:shadow-lg transition-shadow">
-              <CardHeader className="text-center">
-                <div className="w-12 h-12 bg-purple-100 dark:bg-purple-900/20 rounded-full flex items-center justify-center mx-auto mb-2">
-                  <MessageSquare className="h-6 w-6 text-purple-600" />
+                
+                <div className="flex flex-col sm:flex-row gap-4 justify-center mt-8">
+                  <Button 
+                    size="lg" 
+                    onClick={handleCreateTournament}
+                    className="bg-primary hover:bg-primary/90 text-white shadow-xl hover:shadow-2xl transform hover:scale-105 transition-all"
+                  >
+                    <Gamepad2 className="mr-2 h-5 w-5" />
+                    Create Tournament
+                  </Button>
+                  <Button 
+                    size="lg" 
+                    variant="outline"
+                    onClick={() => navigate('/tournaments')}
+                    className="bg-white/10 backdrop-blur-sm border-white/20 text-white hover:bg-white/20"
+                  >
+                    <Trophy className="mr-2 h-5 w-5" />
+                    View Tournaments
+                  </Button>
                 </div>
-                <CardTitle className="text-lg">Social Features</CardTitle>
-              </CardHeader>
-              <CardContent className="text-center">
-                <p className="text-sm text-muted-foreground mb-4">
-                  Connect with the community, share strategies, and follow top performers
-                </p>
-                <Button variant="outline" size="sm" asChild>
-                  <Link to="/social">Join Community</Link>
-                </Button>
-              </CardContent>
-            </Card>
+              </motion.div>
+            ) : (
+              <motion.div
+                key="game-selection"
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 1.2 }}
+                className="bg-background/90 backdrop-blur-xl rounded-2xl p-8 shadow-2xl border border-primary/20"
+              >
+                <SlotMachineTitle onGameSelected={handleGameSelected} />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </section>
 
-            <Card className="hover:shadow-lg transition-shadow">
-              <CardHeader className="text-center">
-                <div className="w-12 h-12 bg-orange-100 dark:bg-orange-900/20 rounded-full flex items-center justify-center mx-auto mb-2">
-                  <Smartphone className="h-6 w-6 text-orange-600" />
-                </div>
-                <CardTitle className="text-lg">Mobile Optimized</CardTitle>
-              </CardHeader>
-              <CardContent className="text-center">
-                <p className="text-sm text-muted-foreground mb-4">
-                  Native mobile app capabilities with Capacitor integration
-                </p>
-                <Badge variant="secondary" className="text-xs">Capacitor Ready</Badge>
-              </CardContent>
-            </Card>
-          </div>
-        </section>
-
-        {/* Advanced Trading Panels */}
-        {/* <section className="mb-16">
-          <div className="text-center mb-8">
-            <h2 className="text-3xl font-bold mb-4">Advanced Trading Tools</h2>
-            <p className="text-muted-foreground">Professional-grade analytics and monitoring</p>
-          </div>
-          <AdvancedTradingPanels />
-        </section> */}
-      </main>
+      {/* Portal Transition */}
+      <PortalTransition 
+        isActive={showPortalTransition}
+        onComplete={handlePortalComplete}
+      />
     </div>
   );
 };

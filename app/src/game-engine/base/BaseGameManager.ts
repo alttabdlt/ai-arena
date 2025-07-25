@@ -250,7 +250,7 @@ export abstract class BaseGameManager<TState extends IGameState, TConfig extends
           
           // Check if we've exceeded max retries before attempting
           if (retryCount >= this.MAX_AI_RETRIES) {
-            this.context.logger.error('Skipping AI turn due to max retries', {
+            this.context.logger.warn('Skipping AI turn due to max retries', {
               playerId: state.currentTurn,
               retryCount
             });
@@ -326,6 +326,13 @@ export abstract class BaseGameManager<TState extends IGameState, TConfig extends
   }
 
   protected async handleAITurn(playerId: string): Promise<void> {
+    console.log('handleAITurn called for:', {
+      playerId,
+      aiAgentsSize: this.aiAgents.size,
+      aiAgentKeys: Array.from(this.aiAgents.keys()),
+      hasAgent: this.aiAgents.has(playerId)
+    });
+    
     const aiAgent = this.aiAgents.get(playerId);
     if (!aiAgent) {
       throw new Error(`AI agent not found for player ${playerId}`);
@@ -436,7 +443,7 @@ export abstract class BaseGameManager<TState extends IGameState, TConfig extends
             reason: 'max_retries_exceeded'
           });
         } catch (fallbackError) {
-          this.context.logger.error('Fallback action also failed', {
+          this.context.logger.warn('Fallback action also failed', {
             playerId,
             fallbackError,
             originalError: error
@@ -451,7 +458,7 @@ export abstract class BaseGameManager<TState extends IGameState, TConfig extends
         }
       } else {
         // No fallback available, force game continuation
-        this.context.logger.error('No fallback action available', { playerId });
+        this.context.logger.warn('No fallback action available', { playerId });
         this.emit('ai:turn:failed', {
           playerId,
           error: gameError,

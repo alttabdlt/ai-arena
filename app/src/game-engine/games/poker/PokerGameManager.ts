@@ -1,6 +1,6 @@
 import { BaseGameManager } from '../../base/BaseGameManager';
 import { PokerGameState, PokerGameConfig, PokerAction, PokerPlayer } from './PokerTypes';
-import { IGameEngine, IGameAction, IGamePlayer, IGameAIAgent, IGameScoringSystem } from '../../core/interfaces';
+import { IGameEngine, IGameAction, IGamePlayer, IGameAIAgent, IGameScoringSystem, IGameEvent } from '../../core/interfaces';
 import { IGameContext } from '../../core/context';
 import { PokerGameEngine } from './engine/PokerGameEngine';
 import { PokerAIAgentFactory } from './ai/PokerAIAgentFactory';
@@ -318,7 +318,7 @@ export class PokerGameManager extends BaseGameManager<PokerGameState, PokerGameC
             timestamp: Date.now()
           });
         } catch (foldError) {
-          this.context.logger.error('Failed to force fold, advancing turn anyway', {
+          this.context.logger.warn('Failed to force fold, advancing turn anyway', {
             playerId: data.playerId,
             error: foldError
           });

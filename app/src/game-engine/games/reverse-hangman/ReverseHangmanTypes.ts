@@ -19,9 +19,11 @@ export interface GuessAttempt {
     wordMatches: number;
     totalWords: number;
     matchedWords: string[];
+    matchedWordPositions: Array<{ word: string; position: number }>;
     missingWords: string[];
     extraWords: string[];
-    semanticMatches: Array<{ original: string; matched: string }>;
+    semanticMatches: Array<{ original: string; matched: string; position: number }>;
+    positionTemplate: string;
   };
 }
 

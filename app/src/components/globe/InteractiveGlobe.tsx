@@ -155,6 +155,11 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
     setGlobeReady(true);
   };
 
+  // Don't render globe until we have dimensions
+  if (dimensions.width === 0 || dimensions.height === 0) {
+    return <div className="fixed inset-0 bg-black" />;
+  }
+
   return (
     <div className="fixed inset-0 bg-black">
       <Globe
@@ -164,23 +169,22 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
         globeImageUrl="//unpkg.com/three-globe/example/img/earth-night.jpg"
         backgroundImageUrl="//unpkg.com/three-globe/example/img/night-sky.png"
         backgroundColor="rgba(0,0,0,0)"
-        hexPolygonsData={points}
-        hexPolygonAltitude={0.01}
-        hexPolygonResolution={3}
-        hexPolygonMargin={0.3}
-        hexPolygonColor={(d) => d.type === 'tournament' ? 'rgba(255, 255, 255, 0.9)' : 'rgba(255, 255, 255, 0.5)'}
-        hexPolygonLabel={d => `
-          <div class="text-white bg-black/80 px-2 py-1 rounded">
-            <div class="font-bold">${d.name}</div>
-            <div class="text-xs">${d.type === 'tournament' ? 'Live Tournament' : 'Bot Created'}</div>
+        pointsData={points}
+        pointAltitude={0.01}
+        pointRadius={0.5}
+        pointColor={(d: any) => d?.type === 'tournament' ? '#ffaa00' : '#ffffff'}
+        pointLabel={(d: any) => d ? `
+          <div style="color: white; background: rgba(0,0,0,0.8); padding: 4px 8px; border-radius: 4px;">
+            <div style="font-weight: bold;">${d.name || 'Unknown'}</div>
+            <div style="font-size: 12px;">${d.type === 'tournament' ? 'Live Tournament' : 'Bot Created'}</div>
           </div>
-        `}
-        onHexPolygonClick={handlePointClick}
+        ` : ''}
+        onPointClick={handlePointClick}
         arcsData={arcs}
-        arcColor={d => d.color}
-        arcDashLength={d => d.dashLength || 0.5}
-        arcDashGap={d => d.dashGap || 0.2}
-        arcDashAnimateTime={d => d.dashAnimateTime || 2000}
+        arcColor={(d: any) => d?.color || '#ffaa00'}
+        arcDashLength={(d: any) => d?.dashLength || 0.5}
+        arcDashGap={(d: any) => d?.dashGap || 0.2}
+        arcDashAnimateTime={(d: any) => d?.dashAnimateTime || 2000}
         atmosphereColor="#3a228a"
         atmosphereAltitude={0.25}
         onGlobeReady={handleGlobeReady}

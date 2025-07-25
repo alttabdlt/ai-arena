@@ -4,8 +4,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { toast } from 'sonner';
-import { ReverseHangmanBoard } from '@/reverse-hangman/components/ReverseHangmanBoard';
-import { PromptGenerationAnimation } from '@/reverse-hangman/components/PromptGenerationAnimation';
+import { ReverseHangmanBoard } from '@/components/game/reverse-hangman/ReverseHangmanBoard';
+import { PromptGenerationAnimation } from '@/components/game/reverse-hangman/PromptGenerationAnimation';
 import { useReverseHangmanGame } from '@/hooks/useReverseHangmanGame';
 import { Tournament } from '@/types/tournament';
 

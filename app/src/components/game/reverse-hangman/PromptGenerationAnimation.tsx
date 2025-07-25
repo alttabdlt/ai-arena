@@ -14,7 +14,7 @@ export type AnimationPhase =
 interface PromptGenerationAnimationProps {
   phase: AnimationPhase;
   output: string;
-  onComplete: () => void;
+  onComplete?: () => void;
 }
 
 export function PromptGenerationAnimation({
@@ -48,7 +48,7 @@ export function PromptGenerationAnimation({
         } else {
           clearInterval(interval);
           setTimeout(() => {
-            onComplete();
+            onComplete?.();
           }, 1000);
         }
       }, 30); // Adjust speed as needed

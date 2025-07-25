@@ -38,6 +38,32 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
   const [isRevealing, setIsRevealing] = useState(false);
   const attemptsRemaining = gameState.maxAttempts - gameState.attempts.length;
   
+  // Debug logging - commented out to reduce console spam
+  // useEffect(() => {
+  //   console.log('ReverseHangmanBoard state:', {
+  //     phase: gameState.phase,
+  //     hasCurrentPromptPair: !!gameState.currentPromptPair,
+  //     promptPair: gameState.currentPromptPair,
+  //     attempts: gameState.attempts.length,
+  //     maxAttempts: gameState.maxAttempts,
+  //     roundNumber: gameState.roundNumber,
+  //     isGameOver: ['won', 'lost', 'round-complete'].includes(gameState.phase)
+  //   });
+  // }, [gameState]);
+  
+  // Show loading state if game is not ready
+  if (!gameState.currentPromptPair || gameState.phase === 'waiting') {
+    return (
+      <div className="max-w-4xl mx-auto p-6">
+        <div className="text-center py-12">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-lg text-gray-700">Preparing game...</p>
+          <p className="text-sm text-gray-600 mt-2">Phase: {gameState.phase}</p>
+        </div>
+      </div>
+    );
+  }
+  
   // Detect mistakes when new attempts are made
   useEffect(() => {
     if (gameState.attempts.length > 0) {
@@ -81,11 +107,23 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
       {/* Header */}
       <div className="text-center">
         <h2 className="text-3xl font-bold mb-2">Reverse Engineering Challenge</h2>
-        <p className="text-gray-900">
-          Difficulty: <span className="capitalize font-semibold">{gameState.currentPromptPair.difficulty}</span> | 
-          Category: <span className="capitalize font-semibold">{gameState.currentPromptPair.category}</span>
-        </p>
+        {gameState.currentPromptPair && (
+          <p className="text-gray-900">
+            Difficulty: <span className="capitalize font-semibold">{gameState.currentPromptPair.difficulty}</span> | 
+            Category: <span className="capitalize font-semibold">{gameState.currentPromptPair.category}</span>
+          </p>
+        )}
       </div>
+      
+      {/* Show animation during selecting phase */}
+      {gameState.phase === 'selecting' && (
+        <div className="text-center py-8">
+          <div className="animate-pulse">
+            <p className="text-lg font-semibold text-primary">Generating prompt...</p>
+            <p className="text-sm text-gray-600 mt-2">Preparing your challenge</p>
+          </div>
+        </div>
+      )}
 
       {/* Progress Bar */}
       {gameState.attempts.length > 0 && (
@@ -109,12 +147,14 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
       </div>
 
       {/* Output Display */}
-      <div className="bg-gray-50 rounded-lg p-6">
-        <h3 className="text-lg font-semibold mb-3 text-gray-900">AI Output:</h3>
-        <div className="bg-white p-4 rounded border border-gray-300 whitespace-pre-wrap text-gray-900 font-medium">
-          {gameState.currentPromptPair.output}
+      {gameState.currentPromptPair && (
+        <div className="bg-gray-50 rounded-lg p-6">
+          <h3 className="text-lg font-semibold mb-3 text-gray-900">AI Output:</h3>
+          <div className="bg-white p-4 rounded border border-gray-300 whitespace-pre-wrap text-gray-900 font-medium">
+            {gameState.currentPromptPair.output}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Game Status */}
       {gameState.phase === 'playing' && (
@@ -159,6 +199,16 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
                 {/* Detailed Match Feedback */}
                 {attempt.matchDetails && (
                   <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
+                    {/* Position Template (Hangman-style) */}
+                    {attempt.matchDetails.positionTemplate && (
+                      <div className="text-sm mb-2">
+                        <span className="font-medium text-gray-800">Pattern:</span>{' '}
+                        <span className="font-mono text-gray-900 bg-gray-100 px-2 py-1 rounded">
+                          {attempt.matchDetails.positionTemplate}
+                        </span>
+                      </div>
+                    )}
+                    
                     {/* Word Match Summary */}
                     <div className="text-sm">
                       <span className="font-medium text-gray-800">Word Match:</span>{' '}
@@ -189,15 +239,6 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
                       </div>
                     )}
                     
-                    {/* Missing Words */}
-                    {attempt.matchDetails.missingWords.length > 0 && (
-                      <div className="text-sm">
-                        <span className="font-medium text-orange-700">− Missing:</span>{' '}
-                        <span className="text-orange-600">
-                          {attempt.matchDetails.missingWords.join(', ')}
-                        </span>
-                      </div>
-                    )}
                     
                     {/* Extra Words */}
                     {attempt.matchDetails.extraWords.length > 0 && (
@@ -217,7 +258,7 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
       )}
 
       {/* Game Over Display */}
-      {gameState.phase !== 'playing' && (
+      {(['won', 'lost', 'round-complete'].includes(gameState.phase) && gameState.currentPromptPair && gameState.roundNumber > 0) && (
         <div className={`p-6 rounded-lg text-center ${
           gameState.phase === 'won' ? 'bg-green-100' : 'bg-red-100'
         }`}>
@@ -228,10 +269,10 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
             <p className="text-sm text-gray-900 mb-1">The correct prompt was:</p>
             <p className="font-semibold text-lg">{gameState.currentPromptPair.prompt}</p>
           </div>
-          {gameState.phase === 'won' && (
+          {gameState.phase === 'won' && gameState.endTime && (
             <div className="text-sm text-gray-900">
               <p>Solved in {gameState.attempts.length} attempt{gameState.attempts.length !== 1 ? 's' : ''}</p>
-              <p>Time: {Math.round((gameState.endTime!.getTime() - gameState.startTime.getTime()) / 1000)}s</p>
+              <p>Time: {Math.round((gameState.endTime.getTime() - gameState.startTime.getTime()) / 1000)}s</p>
             </div>
           )}
         </div>

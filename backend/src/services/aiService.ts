@@ -935,7 +935,24 @@ Respond with JSON:
       game_phase: gameState.game_phase,
       time_elapsed_seconds: gameState.time_elapsed_seconds,
       player_state: playerState,
-      instructions: `You are playing reverse prompt engineering. Your task: given an AI-generated output, figure out what prompt created it. The target prompt contains EXACTLY ${gameState.constraints.exact_word_count} words. You have 7 attempts. Each guess reveals which words match the original prompt. Use match_details feedback: matched_words are correct (keep them), missing_count tells you how many more words to find, extra_count tells you how many words to remove. The prompt will be a natural instruction that someone would give to an AI. Focus on the actual content and structure of the output to deduce the likely prompt. Respond with JSON: {action: 'guess_prompt', prompt_guess: 'your guess here', reasoning: 'your logic', confidence: 0-1, analysis: {output_type: 'your assessment', key_indicators: ['list', 'of', 'clues'], word_count_estimate: number, difficulty_assessment: 'easy/medium/hard', pattern_observations: ['what you notice']}}`
+      instructions: `You are playing reverse prompt engineering. Your task: given an AI-generated output, figure out what prompt created it. The target prompt contains EXACTLY ${gameState.constraints.exact_word_count} words. You have 7 attempts.
+
+CRITICAL: This is an ITERATIVE game! BUILD UPON your previous guesses:
+- If you have previous guesses, look at the feedback carefully
+- Keep ALL words that were marked as correct in 'matched_words'
+- Add any words listed in 'missing_words' 
+- Remove any words listed in 'extra_words'
+- For semantic matches, replace your word with the suggested original
+
+Each guess reveals detailed feedback to help you get closer:
+- similarity_score: How close you are (aim to increase this each time)
+- matched_words: These are CORRECT - keep them!
+- missing_words: Add these to your next guess
+- extra_words: Remove these from your next guess
+
+You're looking for the EXACT wording, not just the general idea. Focus on the actual content and structure of the output to deduce the prompt.
+
+Respond with JSON: {action: 'guess_prompt', prompt_guess: 'your refined guess here', reasoning: 'explain how you used the feedback', confidence: 0-1, analysis: {output_type: 'your assessment', key_indicators: ['list', 'of', 'clues'], word_count_estimate: number, difficulty_assessment: 'easy/medium/hard', pattern_observations: ['what you notice']}}`
     };
 
     if (customPrompt) {
@@ -990,6 +1007,9 @@ Respond with JSON:
       throw new Error('Deepseek client not initialized');
     }
 
+    console.log('Calling Deepseek API for reverse hangman...');
+    const startTime = Date.now();
+    
     const response = await this.deepseek.chat.completions.create({
       model: 'deepseek-chat',
       messages: [{
@@ -1002,10 +1022,19 @@ Respond with JSON:
     });
 
     const content = response.choices[0]?.message?.content;
+    const elapsedTime = Date.now() - startTime;
+    console.log(`Deepseek API response received in ${elapsedTime}ms`);
+    
     if (!content) throw new Error('No response from Deepseek');
 
     try {
       const decision = JSON.parse(content);
+      console.log('Deepseek decision parsed:', {
+        action: decision.action,
+        hasGuess: !!decision.prompt_guess || !!decision.guess,
+        confidence: decision.confidence
+      });
+      
       return {
         action: decision.action || 'guess_prompt',
         prompt_guess: decision.prompt_guess || decision.guess || 'Generate a response about the given topic',
@@ -1154,3 +1183,6 @@ Respond with JSON:
     };
   }
 }
+
+// Create and export a singleton instance
+export const aiService = new AIService();

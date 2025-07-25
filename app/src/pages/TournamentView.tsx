@@ -38,7 +38,7 @@ import {
   getActionDisplayText,
   shouldShowCard,
   getPlayerStatusColor
-} from '@/poker/engine/poker-helpers';
+} from '@/game-engine/games/poker/utils/poker-helpers';
 import botGambler from '@/assets/bot-gambler.png';
 import botTerminator from '@/assets/bot-terminator.png';
 import botZenMaster from '@/assets/bot-zen-master.png';

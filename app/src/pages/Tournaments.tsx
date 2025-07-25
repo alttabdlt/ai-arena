@@ -19,7 +19,6 @@ import {
   Plus,
   Trash2
 } from 'lucide-react';
-import { mockApi, type Match } from '@/lib/mock-data';
 import { Link } from 'react-router-dom';
 import { Tournament as TournamentType, GAME_TYPE_INFO } from '@/types/tournament';
 import { toast } from 'sonner';
@@ -36,7 +35,6 @@ import {
 
 const TournamentsPage = () => {
   const [tournaments, setTournaments] = useState<TournamentType[]>([]);
-  const [matches, setMatches] = useState<Match[]>([]);
   const [loading, setLoading] = useState(true);
   const [isAdmin] = useState(true); // For demo purposes
   const [tournamentToDelete, setTournamentToDelete] = useState<string | null>(null);
@@ -44,12 +42,6 @@ const TournamentsPage = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [matchData] = await Promise.all([
-          mockApi.getMatches()
-        ]);
-        
-        setMatches(matchData);
-        
         // Load tournaments from sessionStorage
         const storedTournaments: TournamentType[] = [];
         for (let i = 0; i < sessionStorage.length; i++) {
@@ -272,9 +264,8 @@ const TournamentsPage = () => {
       <section className="py-8 px-4">
         <div className="container mx-auto">
           <Tabs defaultValue="upcoming" className="w-full">
-            <TabsList className="grid w-full grid-cols-3">
+            <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
-              <TabsTrigger value="live-matches">Live Matches</TabsTrigger>
               <TabsTrigger value="completed">Results</TabsTrigger>
             </TabsList>
 
@@ -343,79 +334,6 @@ const TournamentsPage = () => {
               </div>
             </TabsContent>
 
-            <TabsContent value="live-matches" className="mt-6">
-              <div className="space-y-6">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xl font-semibold">Live Matches</h3>
-                  <Badge variant="outline" className="bg-destructive/10 text-destructive border-destructive/20">
-                    {matches.filter(m => m.status === 'LIVE').length} Live
-                  </Badge>
-                </div>
-                
-                <div className="grid gap-6">
-                  {matches.map((match) => (
-                    <Card key={match.id} className="card-gaming p-6">
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center space-x-4">
-                          <div className="flex items-center space-x-3">
-                            <img src={match.botAAvatar} alt={match.botA} className="w-10 h-10 rounded-full" />
-                            <div>
-                              <div className="font-medium">{match.botA}</div>
-                              <div className="text-sm text-gray-700">
-                                {match.botAStrategy?.slice(0, 30)}...
-                              </div>
-                            </div>
-                          </div>
-                          
-                          <div className="text-center px-4">
-                            <div className="text-sm text-gray-700 mb-1">VS</div>
-                            <Badge className={getStatusColor(match.status)}>
-                              {match.status}
-                            </Badge>
-                          </div>
-                          
-                          <div className="flex items-center space-x-3">
-                            <div className="text-right">
-                              <div className="font-medium">{match.botB}</div>
-                              <div className="text-sm text-gray-700">
-                                {match.botBStrategy?.slice(0, 30)}...
-                              </div>
-                            </div>
-                            <img src={match.botBAvatar} alt={match.botB} className="w-10 h-10 rounded-full" />
-                          </div>
-                        </div>
-                      </div>
-                      
-                      <div className="grid grid-cols-2 gap-4 mb-4">
-                        <div className="text-center">
-                          <div className="text-lg font-bold text-primary">{match.handsPlayed}</div>
-                          <div className="text-xs text-gray-700">Hands Played</div>
-                        </div>
-                        {/* <div className="text-center">
-                          <div className="text-lg font-bold text-accent">${match.poolA.toLocaleString()}</div>
-                          <div className="text-xs text-gray-700">Pool A</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="text-lg font-bold text-accent">${match.poolB.toLocaleString()}</div>
-                          <div className="text-xs text-gray-700">Pool B</div>
-                        </div> */}
-                        {/* <div className="text-center">
-                          <div className="text-lg font-bold text-warning">{match.oddsA.toFixed(1)}x</div>
-                          <div className="text-xs text-gray-700">Odds</div>
-                        </div> */}
-                      </div>
-                      
-                      <Button className="w-full btn-gaming" asChild>
-                        <Link to={`/tournament/1`}>
-                          <Eye className="mr-2 h-4 w-4" />
-                          Watch Match
-                        </Link>
-                      </Button>
-                    </Card>
-                  ))}
-                </div>
-              </div>
-            </TabsContent>
 
             <TabsContent value="completed" className="mt-6">
               <div className="space-y-6">

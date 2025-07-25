@@ -190,6 +190,11 @@ export const typeDefs = gql`
     platformStats: PlatformStats!
     userStats(address: String!): UserStats!
     queueStatus: QueueStatusInfo!
+    
+    # Game Manager queries
+    activeGames: [GameInstance!]!
+    gameById(gameId: String!): GameInstance
+    gameStats: GameStats!
   }
 
   type Mutation {
@@ -219,12 +224,24 @@ export const typeDefs = gql`
     connectWallet(input: ConnectWalletInput!): AuthResponse!
     refreshToken(refreshToken: String!): AuthResponse!
     logout: Boolean!
+    
+    # Game Manager mutations
+    createGame(gameId: String!, type: GameType!, players: [String!]!): GameInstance!
+    startGame(gameId: String!): GameInstance!
+    pauseGame(gameId: String!): GameInstance!
+    resumeGame(gameId: String!): GameInstance!
+    addSpectator(gameId: String!, userId: String!): Boolean!
+    removeSpectator(gameId: String!, userId: String!): Boolean!
   }
 
   type Subscription {
     tournamentUpdate(tournamentId: String!): Tournament!
     queueUpdate: QueueEntry!
     botDeployed: Bot!
+    # Game Manager subscriptions
+    gameStateUpdate(gameId: String!): GameUpdate!
+    gameEvent(gameId: String!): GameEvent!
+    allGameUpdates: GameUpdate!
   }
 
   input DeployBotInput {
@@ -313,6 +330,84 @@ export const typeDefs = gql`
     user: User!
     bot: Bot!
     createdAt: DateTime!
+  }
+
+  # Game Manager Types
+  type GameInstance {
+    id: ID!
+    type: GameType!
+    status: GameStatus!
+    players: [GamePlayer!]!
+    spectatorCount: Int!
+    createdAt: DateTime!
+    lastActivity: DateTime!
+    gameState: String! # JSON string of game-specific state
+  }
+
+  type GamePlayer {
+    id: ID!
+    name: String!
+    isAI: Boolean!
+    model: String
+    status: PlayerStatus!
+  }
+
+  enum GameType {
+    POKER
+    REVERSE_HANGMAN
+    CHESS
+    GO
+  }
+
+  enum GameStatus {
+    WAITING
+    ACTIVE
+    PAUSED
+    COMPLETED
+  }
+
+  enum PlayerStatus {
+    ACTIVE
+    FOLDED
+    ELIMINATED
+    WINNER
+  }
+
+  type GameStats {
+    totalGames: Int!
+    activeGames: Int!
+    pausedGames: Int!
+    completedGames: Int!
+    totalSpectators: Int!
+    gamesByType: [GameTypeStats!]!
+  }
+
+  type GameTypeStats {
+    type: GameType!
+    count: Int!
+    active: Int!
+  }
+
+  type GameUpdate {
+    gameId: ID!
+    type: GameUpdateType!
+    timestamp: DateTime!
+    data: String! # JSON string of update data
+  }
+
+  type GameEvent {
+    gameId: ID!
+    event: String!
+    playerId: String
+    data: String! # JSON string of event data
+    timestamp: DateTime!
+  }
+
+  enum GameUpdateType {
+    STATE_CHANGE
+    PLAYER_ACTION
+    GAME_EVENT
+    SPECTATOR_CHANGE
   }
 
   # AI Poker Types - Comprehensive Tournament-Level Data

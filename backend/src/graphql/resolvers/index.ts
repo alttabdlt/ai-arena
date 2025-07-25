@@ -7,6 +7,7 @@ import { PromptValidator } from '../../utils/promptValidation';
 import { isHexString } from 'ethers';
 import { Prisma, QueueType } from '@prisma/client';
 import { PubSub } from 'graphql-subscriptions';
+import { gameManagerResolvers } from './gameManager';
 
 interface PubSubAsyncIterator<T> extends AsyncIterator<T> {
   return(): Promise<IteratorResult<T>>;
@@ -240,6 +241,9 @@ export const resolvers = {
       const evaluations = aiService.getModelEvaluations();
       return evaluations.get(model) || null;
     },
+    
+    // Game Manager queries
+    ...gameManagerResolvers.Query,
   },
 
   Mutation: {
@@ -646,6 +650,9 @@ export const resolvers = {
       
       return true;
     },
+    
+    // Game Manager mutations
+    ...gameManagerResolvers.Mutation,
   },
 
   Subscription: {
@@ -666,6 +673,9 @@ export const resolvers = {
         return (ctx.pubsub as TypedPubSub).asyncIterator(['BOT_DEPLOYED']);
       },
     },
+    
+    // Game Manager subscriptions
+    ...gameManagerResolvers.Subscription,
   },
 
   Bot: {

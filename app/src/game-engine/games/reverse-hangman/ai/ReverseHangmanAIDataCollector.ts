@@ -11,10 +11,27 @@ export interface ReverseHangmanNeutralData extends NeutralGameData {
     maxAttempts: number;
     animationPhase: string;
     currentOutput: string;
+    targetWordCount: number;
+    currentPositionTemplate: string;
+    matchedWordsCount: number;
+    warningFlags?: {
+      repeatedLastGuess?: boolean;
+      noProgressInLastThree?: boolean;
+    };
     previousGuesses: Array<{
       guess: string;
       matchType: string;
       matchPercentage: number;
+      matchDetails?: {
+        wordMatches: number;
+        totalWords: number;
+        matchedWords: string[];
+        matchedWordPositions: Array<{ word: string; position: number }>;
+        missingWords: string[];
+        extraWords: string[];
+        semanticMatches: Array<{ original: string; matched: string; position: number }>;
+        positionTemplate: string;
+      };
     }>;
     difficulty?: string;
     category?: string;
@@ -39,7 +56,42 @@ export class ReverseHangmanAIDataCollector extends BaseGameDataCollector<Reverse
 
     const attemptsRemaining = state.maxAttempts - state.attempts.length;
     
+    console.log('ReverseHangmanAIDataCollector.collectGameSpecificData:', {
+      phase: state.phase,
+      currentTurn: state.currentTurn,
+      playerId: playerId,
+      hasPromptPair: !!state.currentPromptPair,
+      hasOutput: !!state.currentPromptPair?.output,
+      attemptsRemaining
+    });
+    
+    // Calculate current position template and matched words count
+    const lastAttempt = state.attempts[state.attempts.length - 1];
+    const currentPositionTemplate = lastAttempt?.matchDetails?.positionTemplate || 
+      (state.currentPromptPair ? '_'.repeat(state.currentPromptPair.wordCount).split('').join(' ') : '');
+    const matchedWordsCount = lastAttempt?.matchDetails?.matchedWords.length || 0;
+    const targetWordCount = state.currentPromptPair?.wordCount || 0;
+
+    // Calculate warning flags
+    const warningFlags: { repeatedLastGuess?: boolean; noProgressInLastThree?: boolean } = {};
+    if (state.attempts.length >= 2) {
+      const lastTwo = state.attempts.slice(-2);
+      if (lastTwo[0].guess === lastTwo[1].guess) {
+        warningFlags.repeatedLastGuess = true;
+      }
+    }
+    if (state.attempts.length >= 3) {
+      const lastThree = state.attempts.slice(-3);
+      const noProgress = lastThree.every((attempt, idx) => 
+        idx === 0 || attempt.matchPercentage <= lastThree[idx - 1].matchPercentage
+      );
+      if (noProgress) {
+        warningFlags.noProgressInLastThree = true;
+      }
+    }
+
     return {
+      gameType: 'reverse-hangman',  // Explicitly include game type
       phase: state.phase,
       roundNumber: state.roundNumber,
       maxRounds: state.maxRounds,
@@ -47,10 +99,15 @@ export class ReverseHangmanAIDataCollector extends BaseGameDataCollector<Reverse
       maxAttempts: state.maxAttempts,
       animationPhase: state.animationPhase,
       currentOutput: state.currentPromptPair?.output || '',
+      targetWordCount,
+      currentPositionTemplate,
+      matchedWordsCount,
+      warningFlags: Object.keys(warningFlags).length > 0 ? warningFlags : undefined,
       previousGuesses: state.attempts.map(attempt => ({
         guess: attempt.guess,
         matchType: attempt.matchType || 'incorrect',
-        matchPercentage: attempt.matchPercentage
+        matchPercentage: attempt.matchPercentage,
+        matchDetails: attempt.matchDetails
       })),
       difficulty: state.currentPromptPair?.difficulty,
       category: state.currentPromptPair?.category,
@@ -99,12 +156,23 @@ export class ReverseHangmanAIDataCollector extends BaseGameDataCollector<Reverse
       }));
   }
 
-  collectValidActions(state: ReverseHangmanGameState, playerId: string): string[] {
+  collectValidActions(state: ReverseHangmanGameState, playerId: string): any[] {
+    console.log('ReverseHangmanAIDataCollector.collectValidActions:', {
+      phase: state.phase,
+      currentTurn: state.currentTurn,
+      playerId: playerId,
+      match: state.currentTurn === playerId
+    });
+    
     if (state.phase !== 'playing' || state.currentTurn !== playerId) {
       return [];
     }
 
-    return ['guess', 'skip'];
+    // Return full action objects instead of just strings
+    return [
+      { playerId, type: 'guess', timestamp: new Date().toISOString() },
+      { playerId, type: 'skip', timestamp: new Date().toISOString() }
+    ];
   }
 
   obfuscateHiddenInformation(data: Record<string, any>, playerId: string): Record<string, any> {

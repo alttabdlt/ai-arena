@@ -44,10 +44,32 @@ import type {
   PokerGameState as GameState
 } from '@/game-engine/games/poker';
 import type { 
-  IGameDecision as AIDecision,
-  IScoreBreakdown as PointEvent,
-  IGameEvent as AchievementEvent
+  IGameDecision as AIDecision
 } from '@/game-engine/core/interfaces';
+
+// Define types inline to match notification components
+interface PointEvent {
+  playerId: string;
+  type: 'base' | 'style' | 'penalty';
+  category: string;
+  points: number;
+  description: string;
+  details?: any;
+}
+
+interface AchievementEvent {
+  playerId: string;
+  achievement: {
+    id: string;
+    name: string;
+    description: string;
+    category: string;
+    rarity: string;
+    points: number;
+    icon?: string;
+  };
+  unlockedAt: Date;
+}
 import type { PokerStyleBonus as StyleBonus } from '@/game-engine/games/poker';
 
 export interface UsePokerGameState {

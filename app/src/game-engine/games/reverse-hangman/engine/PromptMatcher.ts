@@ -5,9 +5,11 @@ export interface MatchResult {
     wordMatches: number;
     totalWords: number;
     matchedWords: string[];
+    matchedWordPositions: Array<{ word: string; position: number }>;
     missingWords: string[];
     extraWords: string[];
-    semanticMatches: Array<{ original: string; matched: string }>;
+    semanticMatches: Array<{ original: string; matched: string; position: number }>;
+    positionTemplate: string;
   };
 }
 
@@ -55,6 +57,8 @@ export class PromptMatcher {
 
   private createExactMatch(guess: string, target: string): MatchResult {
     const words = this.normalize(target).split(' ');
+    const matchedWordPositions = words.map((word, index) => ({ word, position: index }));
+    
     return {
       percentage: 100,
       type: 'exact',
@@ -62,16 +66,19 @@ export class PromptMatcher {
         wordMatches: words.length,
         totalWords: words.length,
         matchedWords: words,
+        matchedWordPositions,
         missingWords: [],
         extraWords: [],
-        semanticMatches: []
+        semanticMatches: [],
+        positionTemplate: words.join(' ')
       }
     };
   }
 
   private analyzeWordMatches(guessWords: string[], targetWords: string[]): MatchResult['details'] {
     const matchedWords: string[] = [];
-    const semanticMatches: Array<{ original: string; matched: string }> = [];
+    const matchedWordPositions: Array<{ word: string; position: number }> = [];
+    const semanticMatches: Array<{ original: string; matched: string; position: number }> = [];
     const usedTargetIndices = new Set<number>();
 
     // First pass: exact word matches
@@ -79,6 +86,7 @@ export class PromptMatcher {
       for (let j = 0; j < targetWords.length; j++) {
         if (!usedTargetIndices.has(j) && guessWords[i] === targetWords[j]) {
           matchedWords.push(guessWords[i]);
+          matchedWordPositions.push({ word: guessWords[i], position: j });
           usedTargetIndices.add(j);
           break;
         }
@@ -90,7 +98,7 @@ export class PromptMatcher {
       if (!matchedWords.includes(guessWords[i])) {
         for (let j = 0; j < targetWords.length; j++) {
           if (!usedTargetIndices.has(j) && this.areSemanticallySimilar(guessWords[i], targetWords[j])) {
-            semanticMatches.push({ original: targetWords[j], matched: guessWords[i] });
+            semanticMatches.push({ original: targetWords[j], matched: guessWords[i], position: j });
             usedTargetIndices.add(j);
             break;
           }
@@ -104,13 +112,18 @@ export class PromptMatcher {
       !semanticMatches.some(sm => sm.matched === word)
     );
 
+    // Build position template (hangman-style)
+    const positionTemplate = this.buildPositionTemplate(targetWords, usedTargetIndices);
+
     return {
       wordMatches: matchedWords.length + semanticMatches.length,
       totalWords: targetWords.length,
       matchedWords,
+      matchedWordPositions,
       missingWords,
       extraWords,
-      semanticMatches
+      semanticMatches,
+      positionTemplate
     };
   }
 
@@ -143,14 +156,14 @@ export class PromptMatcher {
     const semanticScore = details.semanticMatches.length * semanticMatchWeight;
     const totalScore = exactScore + semanticScore;
     
-    const maxPossibleScore = Math.max(guessLength, targetLength);
-    const percentage = (totalScore / maxPossibleScore) * 100;
+    // Base percentage on target length (what we're trying to match)
+    const basePercentage = (totalScore / targetLength) * 100;
     
-    // Penalty for wrong word count
+    // Smaller penalty for wrong word count to avoid harsh drops
     const wordCountDiff = Math.abs(guessLength - targetLength);
-    const wordCountPenalty = Math.min(wordCountDiff * 5, 20);
+    const wordCountPenalty = Math.min(wordCountDiff * 2, 10);
     
-    return Math.max(0, Math.min(100, percentage - wordCountPenalty));
+    return Math.max(0, Math.min(100, basePercentage - wordCountPenalty));
   }
 
   private determineMatchType(percentage: number, details: MatchResult['details']): MatchResult['type'] {
@@ -164,5 +177,19 @@ export class PromptMatcher {
       return 'semantic';
     }
     return 'incorrect';
+  }
+
+  private buildPositionTemplate(targetWords: string[], usedIndices: Set<number>): string {
+    const template: string[] = [];
+    
+    for (let i = 0; i < targetWords.length; i++) {
+      if (usedIndices.has(i)) {
+        template.push(targetWords[i]);
+      } else {
+        template.push('_');
+      }
+    }
+    
+    return template.join(' ');
   }
 }

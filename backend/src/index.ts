@@ -12,14 +12,13 @@ import { typeDefs } from './graphql/schema';
 import { resolvers } from './graphql/resolvers';
 import { createContext } from './config/context';
 // import { setupWebSocketServer } from './websocket/server';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from './config/database';
 import Redis from 'ioredis';
 import { QueueService } from './services/queueService';
 import { TransactionService } from './services/transactionService';
+import { gameManagerService } from './services/gameManagerService';
 import { logWalletConfig } from './config/wallets';
 import { PubSub } from 'graphql-subscriptions';
-
-const prisma = new PrismaClient();
 
 // Create Redis client with error handling
 const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
@@ -150,6 +149,9 @@ async function startServer() {
     transactionService.startMonitoring();
     console.log('💰 Transaction monitoring service started');
     
+    // Game manager service is initialized as a singleton
+    console.log('🎮 Game manager service ready');
+    
     // Log wallet configuration
     logWalletConfig();
   });
@@ -159,6 +161,7 @@ async function startServer() {
     
     // Stop services
     queueService.stopMatchmaking();
+    await gameManagerService.shutdown();
     
     httpServer.close();
     await prisma.$disconnect();

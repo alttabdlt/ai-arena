@@ -3,7 +3,7 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Clock, Hash } from 'lucide-react';
 import { DecisionHistoryEntry } from '@/game-engine/games/poker/PokerGameManager';
-import { formatChips, getCardColor, getCardDisplayValue } from '@/poker/engine/poker-helpers';
+import { formatChips, getCardColor, getCardDisplayValue } from '@/game-engine/games/poker/utils/poker-helpers';
 import { Card as PokerCard } from '@/game-engine/games/poker/PokerTypes';
 
 interface DecisionHistoryProps {

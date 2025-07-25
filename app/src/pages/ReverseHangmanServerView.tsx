@@ -1,0 +1,288 @@
+import * as React from 'react';
+import { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { toast } from 'sonner';
+import { ReverseHangmanBoard } from '@/components/game/reverse-hangman/ReverseHangmanBoard';
+import { PromptGenerationAnimation } from '@/components/game/reverse-hangman/PromptGenerationAnimation';
+import { useServerSideReverseHangman } from '@/hooks/useServerSideReverseHangman';
+import { Tournament } from '@/types/tournament';
+import { Pause, Play } from 'lucide-react';
+
+export default function ReverseHangmanServerView() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const [tournament, setTournament] = useState<Tournament | null>(null);
+  const [selectedDifficulty, setSelectedDifficulty] = useState<'easy' | 'medium' | 'hard' | 'expert'>('medium');
+  const [loadingError, setLoadingError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let timeoutId: NodeJS.Timeout;
+    
+    const loadTournament = async () => {
+      try {
+        // Set a timeout for loading
+        timeoutId = setTimeout(() => {
+          setLoadingError('Tournament loading timed out. The tournament data may be missing.');
+          setIsLoading(false);
+        }, 5000);
+
+        // Load tournament from sessionStorage
+        const tournamentData = sessionStorage.getItem(`tournament-${id}`);
+        
+        if (!tournamentData) {
+          setLoadingError('Tournament not found. It may have been removed or expired.');
+          clearTimeout(timeoutId);
+          setIsLoading(false);
+          return;
+        }
+
+        const loadedTournament = JSON.parse(tournamentData);
+        if (loadedTournament.gameType !== 'reverse-hangman') {
+          setLoadingError(`This tournament is for ${loadedTournament.gameType}, not reverse-hangman.`);
+          clearTimeout(timeoutId);
+          setIsLoading(false);
+          
+          // Redirect to correct game view after a short delay
+          setTimeout(() => {
+            if (loadedTournament.gameType === 'poker') {
+              navigate(`/tournament/${id}`);
+            } else {
+              navigate('/tournaments');
+            }
+          }, 2000);
+          return;
+        }
+
+        setTournament(loadedTournament);
+        clearTimeout(timeoutId);
+        setIsLoading(false);
+      } catch (error) {
+        console.error('Error loading tournament:', error);
+        setLoadingError('Failed to load tournament data.');
+        clearTimeout(timeoutId);
+        setIsLoading(false);
+      }
+    };
+
+    loadTournament();
+
+    return () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [id, navigate]);
+
+  // Use server-side game execution
+  const {
+    gameState,
+    isAIThinking,
+    currentAgent,
+    tournamentStats,
+    showDifficultySelect,
+    startRound,
+    animationPhase,
+    animationOutput,
+    isActive,
+    toggleGamePause
+  } = useServerSideReverseHangman({ tournament });
+  
+  // Show loading state
+  if (isLoading && !loadingError) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="container mx-auto px-4 py-8">
+          <Button 
+            variant="outline" 
+            onClick={() => navigate('/tournaments')}
+            className="mb-4"
+          >
+            Back to Tournaments
+          </Button>
+          <div className="flex items-center justify-center mt-20">
+            <Card className="p-8 text-center max-w-md">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+              <h2 className="text-xl font-semibold mb-2">Loading Tournament</h2>
+              <p className="text-muted-foreground">Tournament ID: {id}</p>
+              <p className="text-sm text-muted-foreground mt-2">This may take a few seconds...</p>
+            </Card>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show error state
+  if (loadingError || (!tournament && !isLoading)) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="container mx-auto px-4 py-8">
+          <Button 
+            variant="outline" 
+            onClick={() => navigate('/tournaments')}
+            className="mb-4"
+          >
+            Back to Tournaments
+          </Button>
+          <div className="flex items-center justify-center mt-20">
+            <Card className="p-8 text-center max-w-md">
+              <h2 className="text-xl font-semibold mb-4 text-destructive">
+                {loadingError || 'Tournament Not Found'}
+              </h2>
+              <p className="text-muted-foreground mb-6">
+                {loadingError ? 'Please try again or return to the tournaments page.' : 
+                 'The tournament you are looking for does not exist or has been removed.'}
+              </p>
+              <Button onClick={() => navigate('/tournaments')}>
+                Return to Tournaments
+              </Button>
+            </Card>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const handleStartRound = () => {
+    startRound(selectedDifficulty);
+  };
+
+  // Show difficulty selection for first round
+  if (showDifficultySelect && !gameState?.phase) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="container mx-auto px-4 py-8">
+          <div className="flex items-center justify-between mb-4">
+            <Button 
+              variant="outline" 
+              onClick={() => navigate('/tournaments')}
+            >
+              Back to Tournaments
+            </Button>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Server-Side Execution</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={toggleGamePause}
+              >
+                {isActive ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+              </Button>
+            </div>
+          </div>
+          
+          <div className="max-w-4xl mx-auto">
+            <Card className="p-8">
+              <h1 className="text-3xl font-bold mb-6 text-center">Reverse Hangman: AI vs AI</h1>
+              
+              <div className="mb-8 text-center">
+                <p className="text-lg text-muted-foreground mb-4">
+                  Watch AI models compete to guess the prompts behind generated outputs!
+                </p>
+              </div>
+
+              <div className="mb-8">
+                <h3 className="text-lg font-semibold mb-4 text-center">Select Difficulty</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {(['easy', 'medium', 'hard', 'expert'] as const).map((diff) => (
+                    <Button
+                      key={diff}
+                      variant={selectedDifficulty === diff ? 'default' : 'outline'}
+                      onClick={() => setSelectedDifficulty(diff)}
+                      className="capitalize"
+                    >
+                      {diff}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="text-center">
+                <Button 
+                  size="lg" 
+                  onClick={handleStartRound}
+                  className="min-w-[200px]"
+                >
+                  Start Tournament
+                </Button>
+              </div>
+            </Card>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show animation phase
+  if (animationPhase !== 'idle' && animationPhase !== 'complete') {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="container mx-auto px-4 py-8">
+          <div className="flex items-center justify-between mb-4">
+            <Button 
+              variant="outline" 
+              onClick={() => navigate('/tournaments')}
+            >
+              Back to Tournaments
+            </Button>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Server-Side Execution</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={toggleGamePause}
+              >
+                {isActive ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+              </Button>
+            </div>
+          </div>
+          
+          <PromptGenerationAnimation
+            phase={animationPhase}
+            output={animationOutput}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // Main game view
+  return (
+    <div className="min-h-screen bg-background">
+      <div className="container mx-auto px-4 py-8">
+        <div className="flex items-center justify-between mb-4">
+          <Button 
+            variant="outline" 
+            onClick={() => navigate('/tournaments')}
+          >
+            Back to Tournaments
+          </Button>
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-muted-foreground">
+              Round {tournamentStats.currentRound} of {tournamentStats.totalRounds}
+            </span>
+            <span className="text-sm text-muted-foreground">Server-Side Execution</span>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={toggleGamePause}
+            >
+              {isActive ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+            </Button>
+          </div>
+        </div>
+
+        {gameState && (
+          <ReverseHangmanBoard
+            gameState={gameState}
+            isAIThinking={isAIThinking}
+            currentAgent={currentAgent}
+          />
+        )}
+      </div>
+    </div>
+  );
+}

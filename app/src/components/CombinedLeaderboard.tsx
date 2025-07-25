@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Trophy, TrendingUp, Crown, X } from 'lucide-react';
-import { formatChips } from '@/poker/engine/poker-helpers';
+import { formatChips } from '@/game-engine/games/poker/utils/poker-helpers';
 
 interface Player {
   id: string;

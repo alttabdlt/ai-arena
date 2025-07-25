@@ -21,6 +21,7 @@ export interface ReverseHangmanEvent {
   guess?: string;
   matchResult?: any;
   animationPhase?: string;
+  output?: string;
   timestamp: number;
 }
 
@@ -53,7 +54,7 @@ export class ReverseHangmanGameManager extends BaseGameManager<ReverseHangmanGam
     this.setupGameEventHandlers();
   }
 
-  async startNewRound(difficulty?: 'easy' | 'medium' | 'hard' | 'expert'): Promise<void> {
+  async startNewRound(difficulty?: 'easy' | 'medium' | 'hard' | 'expert' | 'mixed'): Promise<void> {
     if (this.config.maxRounds && this.currentRoundNumber >= this.config.maxRounds) {
       await this.endGame();
       return;
@@ -70,12 +71,24 @@ export class ReverseHangmanGameManager extends BaseGameManager<ReverseHangmanGam
       const difficulties: ('easy' | 'medium' | 'hard' | 'expert')[] = ['easy', 'medium', 'hard', 'expert'];
       roundDifficulty = difficulties[Math.floor(Math.random() * difficulties.length)];
     } else if (this.config.difficulty && this.config.difficulty !== 'mixed') {
-      roundDifficulty = this.config.difficulty;
+      roundDifficulty = this.config.difficulty as 'easy' | 'medium' | 'hard' | 'expert';
     }
+    
+    console.log('Starting new round:', {
+      roundNumber: this.currentRoundNumber,
+      difficulty: roundDifficulty,
+      aiAgentCount: this.aiAgents.size
+    });
     
     await this.rhEngine.startNewRound(roundDifficulty);
 
     const state = this.rhEngine.getState();
+    
+    console.log('Round started, current state:', {
+      phase: state.phase,
+      currentTurn: state.currentTurn,
+      players: state.players.map(p => ({ id: p.id, name: p.name, isAI: p.isAI }))
+    });
     
     this.emit('round-started', {
       type: 'round-started',
@@ -87,8 +100,13 @@ export class ReverseHangmanGameManager extends BaseGameManager<ReverseHangmanGam
     // Wait for animation phase
     await this.waitForAnimationPhase();
     
-    // Continue game loop
-    await this.runGameLoop();
+    console.log('Animation phase complete, starting game loop');
+    
+    // Ensure we're still in the playing state before starting the loop
+    if (this.managerState === 'playing') {
+      // Start the game loop which will handle AI turns
+      await this.runGameLoop();
+    }
   }
 
   protected async initializePlayers(): Promise<IGamePlayer[]> {
@@ -116,8 +134,17 @@ export class ReverseHangmanGameManager extends BaseGameManager<ReverseHangmanGam
   protected async processGameTick(): Promise<void> {
     const state = this.rhEngine.getState();
     
+    console.log('ReverseHangman processGameTick:', {
+      phase: state.phase,
+      roundNumber: state.roundNumber,
+      currentTurn: state.currentTurn
+    });
+    
     // Check if round is complete
     if (state.phase === 'round-complete') {
+      // Stop the current game loop before starting a new round
+      this.gameLoopRunning = false;
+      
       this.emit('round-complete', {
         type: 'round-complete',
         roundNumber: state.roundNumber,
@@ -193,6 +220,7 @@ export class ReverseHangmanGameManager extends BaseGameManager<ReverseHangmanGam
       this.emit('animation-phase', {
         type: 'animation-phase',
         animationPhase: event.data.phase,
+        output: event.data.output,
         timestamp: Date.now()
       });
     });
@@ -261,7 +289,51 @@ export class ReverseHangmanGameManager extends BaseGameManager<ReverseHangmanGam
   // Override startGame to initialize without starting first round
   // The first round will be started when user selects difficulty
   async startGame(): Promise<void> {
-    await super.startGame();
-    // Don't auto-start the first round - wait for user to select difficulty
+    if (this.managerState !== 'setup') {
+      throw new Error('Game already started');
+    }
+
+    try {
+      const players = await this.initializePlayers();
+      this.engine.initialize(players);
+      
+      // Create AI agents for all AI players
+      console.log('Player configs:', this.config.playerConfigs);
+      
+      for (const playerConfig of this.config.playerConfigs) {
+        console.log('Checking player config:', {
+          id: playerConfig.id,
+          name: playerConfig.name,
+          aiModel: playerConfig.aiModel,
+          hasAiModel: !!playerConfig.aiModel
+        });
+        
+        if (playerConfig.aiModel) {
+          console.log('Creating AI agent for player:', playerConfig.id, playerConfig.name);
+          const aiAgent = await this.createAIAgent(playerConfig);
+          this.aiAgents.set(playerConfig.id, aiAgent);
+          console.log('AI agent created and stored');
+        }
+      }
+      
+      console.log('AI agents created:', {
+        count: this.aiAgents.size,
+        playerIds: Array.from(this.aiAgents.keys())
+      });
+
+      this.managerState = 'playing';
+      
+      this.emit('game:started', {
+        config: this.config,
+        players,
+        state: this.engine.getState()
+      });
+
+      console.log('ReverseHangmanGameManager.startGame() complete - waiting for difficulty selection');
+      // Don't call runGameLoop() here - wait for startNewRound to be called
+    } catch (error) {
+      console.error('Failed to start game:', error);
+      throw error;
+    }
   }
 }

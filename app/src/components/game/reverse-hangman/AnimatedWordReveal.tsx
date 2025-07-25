@@ -14,14 +14,17 @@ export function AnimatedWordReveal({
   onRevealComplete,
   revealSpeed = 150 
 }: AnimatedWordRevealProps) {
-  const [revealedWords, setRevealedWords] = useState<number>(0);
   const words = text.split(' ');
+  const [revealedWords, setRevealedWords] = useState<number>(isRevealing ? 0 : words.length);
 
   useEffect(() => {
     if (!isRevealing) {
-      setRevealedWords(0);
+      setRevealedWords(words.length);
       return;
     }
+
+    // Reset to 0 when starting a new reveal
+    setRevealedWords(0);
 
     const timer = setInterval(() => {
       setRevealedWords(prev => {
@@ -48,7 +51,7 @@ export function AnimatedWordReveal({
               : 'opacity-0 translate-y-2'
           }`}
         >
-          <span className={`px-1 py-0.5 rounded ${
+          <span className={`px-1 py-0.5 rounded text-gray-900 font-medium ${
             index < revealedWords ? 'bg-primary/10' : ''
           }`}>
             {word}

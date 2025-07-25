@@ -4,7 +4,7 @@ import { Progress } from '@/components/ui/progress';
 import { Brain, Clock, Target, Lightbulb } from 'lucide-react';
 import { IGameDecision as AIDecision } from '@/game-engine/core/interfaces';
 import { DecisionHistoryEntry } from '@/game-engine/games/poker/PokerGameManager';
-import { formatChips } from '@/poker/engine/poker-helpers';
+import { formatChips } from '@/game-engine/games/poker/utils/poker-helpers';
 
 interface AIThinkingPanelProps {
   currentThinking: {

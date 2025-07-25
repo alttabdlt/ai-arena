@@ -11,7 +11,7 @@ import {
 } from '@/game-engine/games/reverse-hangman';
 import { registerGames } from '@/game-engine/games';
 import { Tournament } from '@/types';
-import { AnimationPhase } from '@/reverse-hangman/components/PromptGenerationAnimation';
+import { AnimationPhase } from '@/components/game/reverse-hangman/PromptGenerationAnimation';
 import { toast } from 'sonner';
 
 interface AIAgentConfig {
@@ -64,7 +64,7 @@ class ReverseHangmanGameAdapter {
     
     // Convert to new config format
     const rhConfig: ReverseHangmanGameConfig = {
-      thinkingTime: config.thinkingTime || 2000,
+      thinkingTime: config.thinkingTime || 30000, // Default 30s for AI API calls
       playerConfigs: config.playerConfigs || [],
       maxAttempts: 7,
       maxRounds: config.maxRounds || 5,
@@ -82,7 +82,7 @@ class ReverseHangmanGameAdapter {
     switch (event) {
       case 'animation:phase':
         this.manager.on('animation-phase', (data: ReverseHangmanEvent) => {
-          handler({ phase: data.animationPhase, output: '' });
+          handler({ phase: data.animationPhase, output: data.output || '' });
         });
         break;
       
@@ -217,6 +217,8 @@ export function useReverseHangmanGame({ tournament }: UseReverseHangmanGameProps
   const [isInitialized, setIsInitialized] = useState(false);
   
   const gameAdapterRef = useRef<ReverseHangmanGameAdapter | null>(null);
+  const aiAgentConfigsRef = useRef<AIAgentConfig[]>([]);
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (!tournament) {
@@ -229,24 +231,63 @@ export function useReverseHangmanGame({ tournament }: UseReverseHangmanGameProps
       setAnimationOutput('');
       setIsInitialized(false);
       gameAdapterRef.current = null;
+      
+      // Clear any existing poll interval
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
+      
       return;
     }
 
     try {
-      // Initialize game adapter
-      const playerConfigs: AIAgentConfig[] = tournament.players.map(player => ({
+      console.log('Tournament players:', tournament.players);
+      
+      // Create AI agent configs for UI (uses 'model' property)
+      const aiAgentConfigs: AIAgentConfig[] = tournament.players.map(player => ({
         id: player.id,
         name: player.name,
         model: player.aiModel,
         strategy: player.strategy,
         avatar: player.avatar
       }));
+      
+      // Store in ref so event handlers can access it
+      aiAgentConfigsRef.current = aiAgentConfigs;
+      
+      // Initialize game adapter
+      // Map to IPlayerConfig format expected by the game engine
+      const playerConfigs = tournament.players.map(player => ({
+        id: player.id,
+        name: player.name,
+        aiModel: player.aiModel,  // Changed from 'model' to 'aiModel'
+        aiStrategy: player.strategy,  // Changed from 'strategy' to 'aiStrategy'
+        avatar: player.avatar
+      }));
 
+      // Set thinking time based on tournament speed
+      const thinkingTimeMap: Record<string, number> = {
+        'thinking': 60000,  // 60 seconds for thinking mode
+        'normal': 30000,    // 30 seconds for normal mode
+        'fast': 15000       // 15 seconds for fast mode
+      };
+      
       const config = {
         maxRounds: tournament.config.maxRounds || 5,
-        thinkingTime: 2000,
+        thinkingTime: thinkingTimeMap[tournament.config.speed || 'normal'] || 30000,
         playerConfigs
       };
+      
+      console.log('ReverseHangmanGameAdapter config:', {
+        playerConfigsCount: playerConfigs.length,
+        playerConfigs: playerConfigs.map(p => ({
+          id: p.id,
+          name: p.name,
+          hasAiModel: !!p.aiModel,
+          aiModel: p.aiModel
+        }))
+      });
 
       const adapter = new ReverseHangmanGameAdapter(config);
       gameAdapterRef.current = adapter;
@@ -271,15 +312,16 @@ export function useReverseHangmanGame({ tournament }: UseReverseHangmanGameProps
     });
 
     adapter.on('round:start', ({ gameState, roundNumber }) => {
+      console.log('Round start event:', { phase: gameState?.phase, roundNumber });
       setGameState(gameState);
       setShowDifficultySelect(false);
-      setAnimationPhase('idle');
+      // Don't reset animation phase here - let it be controlled by animation:phase events
       setTournamentStats(prev => ({ ...prev, currentRound: roundNumber }));
     });
 
     adapter.on('ai:thinking', ({ agentId, agentName }) => {
       setIsAIThinking(true);
-      const agent = playerConfigs.find(p => p.id === agentId);
+      const agent = aiAgentConfigsRef.current.find(p => p.id === agentId);
       if (agent) {
         setCurrentAgent(agent);
       }
@@ -318,9 +360,42 @@ export function useReverseHangmanGame({ tournament }: UseReverseHangmanGameProps
     
     // Don't auto-start the tournament - wait for user to select difficulty
     // The game will start when user clicks "Start Round"
+    
+    // Poll for current state to ensure we have the latest
+    const updateState = () => {
+      const currentState = adapter.getState();
+      if (currentState) {
+        // Only log significant state changes
+        if (gameState?.phase !== currentState.phase) {
+          console.log('Game phase changed:', gameState?.phase, '->', currentState.phase);
+        }
+        setGameState(currentState);
+      }
+    };
+    
+    // Initial state update
+    updateState();
+    
+    // Clear any existing poll interval before creating new one
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+    
+    // Set up polling for phase changes (especially for selecting -> playing transition)
+    pollIntervalRef.current = setInterval(() => {
+      const currentState = adapter.getState();
+      if (currentState && (currentState.phase === 'selecting' || currentState.phase === 'playing')) {
+        updateState();
+      }
+    }, 2000); // Poll every 2 seconds during active phases
 
     return () => {
       // Cleanup
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
+      }
       gameAdapterRef.current = null;
       setIsInitialized(false);
     };

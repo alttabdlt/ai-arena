@@ -201,6 +201,10 @@ export class GameAIService {
     
     for (const validAction of validActions) {
       if (this.actionsMatch(responseAction, validAction)) {
+        // For reverse hangman guess actions, we need to include the guess text
+        if (validAction.type === 'guess' && responseAction.guess) {
+          return { ...validAction, guess: responseAction.guess };
+        }
         return validAction;
       }
     }
@@ -281,18 +285,78 @@ export class GameAIService {
   }
 
   private detectGameType(userPrompt: string): string | null {
-    const promptLower = userPrompt.toLowerCase();
-    
-    if (promptLower.includes('poker') || promptLower.includes('cards') || promptLower.includes('bet') || 
-        promptLower.includes('fold') || promptLower.includes('call') || promptLower.includes('raise')) {
-      return 'poker';
+    // First try to extract and examine the game data structure
+    try {
+      // Look for game state JSON in the prompt
+      const gameStateMatch = userPrompt.match(/Current game state:\s*(\{[\s\S]*?\})\s*Valid actions/);
+      if (gameStateMatch) {
+        const gameData = JSON.parse(gameStateMatch[1]);
+        
+        // Check for explicit gameType field in gameSpecific
+        if (gameData.gameSpecific && (gameData.gameSpecific.gameType === 'reverse-hangman' || gameData.gameSpecific.gameType === 'reverse_hangman')) {
+          console.log('Detected game type from gameSpecific.gameType field: reverse-hangman');
+          return 'reverse-hangman';
+        }
+        
+        // Check for reverse hangman specific fields
+        if (gameData.gameSpecific && (
+          gameData.gameSpecific.currentOutput !== undefined ||
+          gameData.gameSpecific.previousGuesses !== undefined ||
+          gameData.gameSpecific.attemptsRemaining !== undefined ||
+          gameData.gameSpecific.phase === 'playing' ||
+          gameData.gameSpecific.phase === 'selecting'
+        )) {
+          console.log('Detected game type from structure: reverse-hangman');
+          return 'reverse-hangman';
+        }
+        
+        // Check for explicit gameType field at root level
+        if (gameData.gameType === 'reverse-hangman' || gameData.gameType === 'reverse_hangman') {
+          console.log('Detected game type from root gameType field: reverse-hangman');
+          return 'reverse-hangman';
+        }
+        
+        // Check for poker specific fields
+        if (gameData.gameSpecific && (
+          gameData.gameSpecific.communityCards !== undefined ||
+          gameData.gameSpecific.pot !== undefined ||
+          gameData.gameSpecific.currentBet !== undefined ||
+          gameData.gameSpecific.phase === 'preflop' ||
+          gameData.gameSpecific.phase === 'flop' ||
+          gameData.gameSpecific.phase === 'turn' ||
+          gameData.gameSpecific.phase === 'river'
+        )) {
+          console.log('Detected game type from structure: poker');
+          return 'poker';
+        }
+      }
+    } catch (e) {
+      // If JSON parsing fails, fall back to keyword detection
+      console.log('Failed to parse game data for type detection:', e);
     }
     
-    if (promptLower.includes('reverse') || promptLower.includes('prompt') || promptLower.includes('guess') ||
-        promptLower.includes('output_shown')) {
+    // Fallback to keyword detection in prompt text
+    const promptLower = userPrompt.toLowerCase();
+    
+    // Check for reverse hangman keywords - including template placeholders
+    if (promptLower.includes('reverse-engineer') || promptLower.includes('output you need to reverse-engineer') ||
+        promptLower.includes('previous guesses') || promptLower.includes('attempts remaining') ||
+        promptLower.includes('guess the exact prompt') || promptLower.includes('match percentages') ||
+        promptLower.includes('{{gamedata.gamespecific.currentoutput}}') || 
+        promptLower.includes('{{gamedata.gamespecific.previousguesses}}')) {
+      console.log('Detected game type from keywords: reverse-hangman');
       return 'reverse-hangman';
     }
     
+    // Check for poker keywords
+    if (promptLower.includes('poker') || promptLower.includes('cards') || promptLower.includes('bet') || 
+        promptLower.includes('fold') || promptLower.includes('call') || promptLower.includes('raise') ||
+        promptLower.includes('hole cards') || promptLower.includes('community cards')) {
+      console.log('Detected game type from keywords: poker');
+      return 'poker';
+    }
+    
+    console.log('Could not detect game type from prompt');
     return null;
   }
 
@@ -303,7 +367,8 @@ export class GameAIService {
 
     try {
       // Log the full prompt for debugging
-      console.log('Full AI prompt:', request.userPrompt);
+      console.log('Full AI prompt (first 500 chars):', request.userPrompt.substring(0, 500));
+      console.log('Detected game type:', gameType);
       
       // Extract game data and valid actions from the complex prompt structure
       let gameData: any;
@@ -427,26 +492,91 @@ export class GameAIService {
       } else if (gameType === 'reverse-hangman') {
         const { gameState, playerState } = this.transformReverseHangmanDataForGraphQL(gameData);
 
-        const { data } = await this.apolloClient.mutate({
-          mutation: GET_AI_REVERSE_HANGMAN_DECISION,
-          variables: {
-            botId,
-            model: modelName,
-            gameState,
-            playerState
-          }
+        console.log('Sending Reverse Hangman GraphQL mutation with variables:', {
+          botId,
+          model: modelName,
+          gameStateKeys: Object.keys(gameState),
+          playerStateKeys: Object.keys(playerState),
+          outputShown: gameState.output_shown?.substring(0, 50) + '...'
         });
 
-        const decision = data.getAIReverseHangmanDecision;
+        console.log('Sending Apollo mutation for reverse hangman with timeout...');
+        let result;
+        try {
+          result = await this.apolloClient.mutate({
+            mutation: GET_AI_REVERSE_HANGMAN_DECISION,
+            variables: {
+              botId,
+              model: modelName,
+              gameState,
+              playerState
+            },
+            fetchPolicy: 'no-cache',
+            errorPolicy: 'all'
+          });
+        } catch (mutationError) {
+          console.error('GraphQL mutation error for reverse hangman:', {
+            error: mutationError,
+            message: (mutationError as Error).message,
+            stack: (mutationError as Error).stack,
+            botId,
+            model: modelName
+          });
+          throw new Error(`GraphQL mutation failed: ${(mutationError as Error).message}`);
+        }
+
+        console.log('Reverse Hangman GraphQL mutation result:', {
+          hasData: !!result.data,
+          hasErrors: !!result.errors,
+          errors: result.errors,
+          dataKeys: result.data ? Object.keys(result.data) : []
+        });
         
-        // Transform response to expected format
+        // Log detailed error information
+        if (result.errors && result.errors.length > 0) {
+          console.error('GraphQL errors for reverse hangman:', result.errors.map((err: any) => ({
+            message: err.message,
+            path: err.path,
+            extensions: err.extensions
+          })));
+        }
+
+        if (!result.data || !result.data.getAIReverseHangmanDecision) {
+          console.error('Invalid GraphQL response for reverse hangman:', {
+            data: result.data,
+            errors: result.errors
+          });
+          
+          // Include error details in the thrown error
+          const errorDetails = result.errors ? 
+            result.errors.map((e: any) => e.message).join('; ') : 
+            'No data returned';
+          throw new Error(`GraphQL mutation failed: ${errorDetails}`);
+        }
+
+        const decision = result.data.getAIReverseHangmanDecision;
+        
+        // Transform response to expected format for reverse hangman
+        // The AI expects action to be an object with type and guess properties
+        // Normalize 'guess_prompt' to 'guess' to match game engine expectations
         const responseObj = {
-          action: decision.action,
-          prompt_guess: decision.prompt_guess,
+          action: {
+            type: decision.action === 'guess_prompt' ? 'guess' : (decision.action || 'guess'),
+            guess: decision.prompt_guess || '',
+            playerId: gameData.currentPlayer?.id || '',
+            timestamp: new Date().toISOString()
+          },
           reasoning: decision.reasoning,
           confidence: decision.confidence,
           analysis: decision.analysis
         };
+        
+        console.log('GraphQL Reverse Hangman Decision:', {
+          action: decision.action,
+          prompt_guess: decision.prompt_guess,
+          model: request.model,
+          transformedAction: responseObj.action
+        });
 
         return {
           content: JSON.stringify(responseObj),
@@ -469,15 +599,32 @@ export class GameAIService {
       
       // Check for specific error types
       if (error.networkError) {
-        console.error('Network error details:', error.networkError);
+        console.error('Network error details:', {
+          message: error.networkError.message,
+          statusCode: error.networkError.statusCode,
+          result: error.networkError.result,
+          fullError: error.networkError
+        });
         throw new Error(`GraphQL network error: ${error.networkError.message || error.networkError}`);
       }
       
       if (error.graphQLErrors && error.graphQLErrors.length > 0) {
-        console.error('GraphQL errors:', error.graphQLErrors);
-        const errorMessages = error.graphQLErrors.map((e: any) => e.message).join(', ');
+        console.error('GraphQL errors detailed:', error.graphQLErrors.map((e: any) => ({
+          message: e.message,
+          path: e.path,
+          extensions: e.extensions,
+          locations: e.locations
+        })));
+        const errorMessages = error.graphQLErrors.map((e: any) => e.message).join('; ');
         throw new Error(`GraphQL errors: ${errorMessages}`);
       }
+      
+      // Log any other error details
+      console.error('Unknown GraphQL error:', {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      });
       
       throw new Error(`GraphQL request failed: ${error.message || 'Unknown error'}`);
     }
@@ -589,20 +736,54 @@ export class GameAIService {
   }
 
   private transformReverseHangmanDataForGraphQL(gameData: any): { gameState: any; playerState: any } {
+    console.log('Transforming reverse hangman data:', {
+      hasGameSpecific: !!gameData.gameSpecific,
+      gameSpecificKeys: gameData.gameSpecific ? Object.keys(gameData.gameSpecific) : [],
+      phase: gameData.phase,
+      currentOutput: gameData.gameSpecific?.currentOutput
+    });
+    
+    // Transform the neutral game data format to match GraphQL schema
+    const gameSpecific = gameData.gameSpecific || {};
+    const currentPlayer = gameData.currentPlayer || {};
+    const playerSpecific = gameSpecific.playerSpecific || {};
+    
+    // Build gameState according to ReverseHangmanGameStateInput schema
     const gameState = {
-      game_type: gameData.game_type || 'reverse_prompt_engineering',
-      output_shown: gameData.output_shown || '',
-      constraints: gameData.constraints || { exact_word_count: 10 },
-      previous_guesses: gameData.previous_guesses || [],
-      game_phase: gameData.game_phase || 'guessing',
-      time_elapsed_seconds: gameData.time_elapsed_seconds || 0
+      game_type: 'reverse_prompt_engineering',
+      output_shown: gameSpecific.currentOutput || '',
+      constraints: {
+        max_word_count: 50,  // Default max word count
+        exact_word_count: 10, // Default exact word count
+        difficulty: gameSpecific.difficulty || 'medium',
+        category: gameSpecific.category || 'general',
+        max_attempts: gameSpecific.maxAttempts || 7
+      },
+      previous_guesses: (gameSpecific.previousGuesses || []).map((g: any, index: number) => ({
+        attempt_number: index + 1,
+        prompt_guess: g.guess,
+        similarity_score: g.matchPercentage || 0,
+        feedback: `${g.matchType || 'incorrect'} - ${g.matchPercentage || 0}% match`
+      })),
+      game_phase: gameSpecific.phase || 'guessing',
+      time_elapsed_seconds: Math.floor((Date.now() - (gameData.startTime || Date.now())) / 1000)
     };
-
-    const playerState = gameData.player_state || {
-      total_attempts: 0,
-      successful_attempts: 0
+    
+    // Build playerState according to ReverseHangmanPlayerStateInput schema
+    const playerState = {
+      player_id: currentPlayer.id || '',
+      current_round: gameSpecific.roundNumber || 1,
+      total_rounds: gameSpecific.maxRounds || 5,
+      current_score: currentPlayer.score || playerSpecific.totalScore || 0,
+      rounds_won: playerSpecific.roundsWon || 0,
+      rounds_lost: Math.max(0, (gameSpecific.roundNumber || 1) - 1 - (playerSpecific.roundsWon || 0))
     };
-
+    
+    console.log('Transformed reverse hangman data:', {
+      gameState,
+      playerState
+    });
+    
     return { gameState, playerState };
   }
 
@@ -642,6 +823,18 @@ export class GameAIService {
     if (a.type === 'call' || a.type === 'bet' || a.type === 'raise' || a.type === 'all-in') {
       // These actions may have amount, but it's not always required for matching
       // The game engine will handle amount validation
+      return true;
+    }
+    
+    // For reverse hangman actions
+    if (a.type === 'guess' || a.type === 'skip') {
+      // For guess actions, the AI response will include the guess text
+      // For skip actions, no additional data needed
+      // We'll copy over any additional fields from the AI response to the valid action
+      if (a.type === 'guess' && a.guess && b.type === 'guess') {
+        // Copy the guess from AI response to the valid action template
+        b.guess = a.guess;
+      }
       return true;
     }
     

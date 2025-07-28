@@ -355,6 +355,7 @@ export const typeDefs = gql`
   enum GameType {
     POKER
     REVERSE_HANGMAN
+    CONNECT4
     CHESS
     GO
   }
@@ -754,6 +755,14 @@ export const typeDefs = gql`
       gameState: ReverseHangmanGameStateInput!
       playerState: ReverseHangmanPlayerStateInput!
     ): AIReverseHangmanDecision!
+    
+    # AI Connect4 mutation
+    getAIConnect4Decision(
+      botId: String!
+      model: String!
+      gameState: Connect4GameStateInput!
+      playerState: Connect4PlayerStateInput!
+    ): AIConnect4Decision!
   }
 
   # Reverse Hangman Types
@@ -867,5 +876,134 @@ export const typeDefs = gql`
     reasoning: String!
     confidence: Float!
     analysis: ReverseHangmanAnalysis!
+  }
+
+  # Connect4 Types
+  type Connect4GameState {
+    game_type: String!
+    board: [[String!]!]!
+    current_player_index: Int!
+    move_count: Int!
+    game_phase: String!
+    valid_columns: [Int!]!
+    last_move: Connect4Move
+  }
+
+  input Connect4GameStateInput {
+    game_type: String!
+    board: [[String!]!]!
+    current_player_index: Int!
+    move_count: Int!
+    game_phase: String!
+    valid_columns: [Int!]!
+    last_move: Connect4MoveInput
+  }
+
+  type Connect4Move {
+    column: Int!
+    row: Int!
+    was_yours: Boolean!
+  }
+
+  input Connect4MoveInput {
+    column: Int!
+    row: Int!
+    was_yours: Boolean!
+  }
+
+  type Connect4PlayerState {
+    player_id: String!
+    player_pieces: Int!
+    opponent_pieces: Int!
+    board_metrics: Connect4BoardMetrics!
+    threat_analysis: Connect4ThreatAnalysis!
+    calculations: Connect4Calculations!
+  }
+
+  input Connect4PlayerStateInput {
+    player_id: String!
+    player_pieces: Int!
+    opponent_pieces: Int!
+    board_metrics: Connect4BoardMetricsInput!
+    threat_analysis: Connect4ThreatAnalysisInput!
+    calculations: Connect4CalculationsInput!
+  }
+
+  type Connect4BoardMetrics {
+    center_column_control: Connect4Control!
+    piece_distribution: Connect4Distribution!
+  }
+
+  input Connect4BoardMetricsInput {
+    center_column_control: Connect4ControlInput!
+    piece_distribution: Connect4DistributionInput!
+  }
+
+  type Connect4Control {
+    yours: Int!
+    opponent: Int!
+  }
+
+  input Connect4ControlInput {
+    yours: Int!
+    opponent: Int!
+  }
+
+  type Connect4Distribution {
+    top_half: Int!
+    bottom_half: Int!
+    left_side: Int!
+    center: Int!
+    right_side: Int!
+  }
+
+  input Connect4DistributionInput {
+    top_half: Int!
+    bottom_half: Int!
+    left_side: Int!
+    center: Int!
+    right_side: Int!
+  }
+
+  type Connect4ThreatAnalysis {
+    immediate_win_opportunities: [Int!]!
+    must_block_positions: [Int!]!
+    total_threats_created: Int!
+    total_threats_against: Int!
+  }
+
+  input Connect4ThreatAnalysisInput {
+    immediate_win_opportunities: [Int!]!
+    must_block_positions: [Int!]!
+    total_threats_created: Int!
+    total_threats_against: Int!
+  }
+
+  type Connect4Calculations {
+    moves_remaining: Int!
+    board_fill_percentage: Float!
+    column_availability: [Int!]!
+  }
+
+  input Connect4CalculationsInput {
+    moves_remaining: Int!
+    board_fill_percentage: Float!
+    column_availability: [Int!]!
+  }
+
+  type Connect4Analysis {
+    board_state: String!
+    immediate_threats: [Int!]!
+    winning_moves: [Int!]!
+    blocking_moves: [Int!]!
+    strategic_assessment: String!
+  }
+
+  type AIConnect4Decision {
+    action: String!
+    column: Int!
+    reasoning: String!
+    confidence: Float!
+    analysis: Connect4Analysis!
   }
 `;

@@ -3,6 +3,7 @@ import { GameAIService, AIServiceConfig } from '../services/AIService';
 import { AIModelConfig } from '../ai/AIDecisionStructure';
 import { createPokerGameDescriptor } from './poker';
 import { createReverseHangmanGameDescriptor } from './reverse-hangman/ReverseHangmanGame';
+import { createConnect4GameDescriptor } from './connect4';
 import { apolloClient } from '@/lib/apollo-client';
 
 // AI Model configurations
@@ -63,6 +64,10 @@ export function registerGames() {
   const reverseHangmanDescriptor = createReverseHangmanGameDescriptor(aiService, aiModels);
   gameRegistry.register(reverseHangmanDescriptor);
 
+  // Register Connect4
+  const connect4Descriptor = createConnect4GameDescriptor(aiService, aiModels);
+  gameRegistry.register(connect4Descriptor);
+
   // Future games will be registered here
   // gameRegistry.register(createChessDescriptor(aiService, aiModels));
   // gameRegistry.register(createGoDescriptor(aiService, aiModels));
@@ -74,3 +79,4 @@ export { aiService, aiModels };
 // Export game types and managers
 export * from './poker';
 export * from './reverse-hangman';
+export * from './connect4';

@@ -111,7 +111,9 @@ export default function CreateTournament() {
       if (isDemoMode) {
         // For demo mode, go directly to game based on game type
         const path = formData.gameType === 'reverse-hangman' 
-          ? `/tournament/${tournamentId}/hangman` 
+          ? `/tournament/${tournamentId}/hangman`
+          : formData.gameType === 'connect4'
+          ? `/tournament/${tournamentId}/connect4` 
           : `/tournament/${tournamentId}`;
         navigate(path);
       } else {
@@ -221,6 +223,36 @@ export default function CreateTournament() {
               <option value={60}>60 seconds</option>
               <option value={120}>120 seconds</option>
               <option value={180}>180 seconds</option>
+            </select>
+          </div>
+        </div>
+      )}
+
+      {formData.gameType === 'connect4' && (
+        <div className="space-y-4">
+          <div>
+            <Label>Time Limit per Move</Label>
+            <select 
+              className="w-full mt-1 p-2 border border-gray-300 rounded text-gray-900 bg-white focus:border-primary focus:outline-none"
+              value={formData.config.timeLimit}
+              onChange={(e) => handleConfigUpdate('timeLimit', Number(e.target.value))}
+            >
+              <option value={30}>30 seconds</option>
+              <option value={60}>60 seconds</option>
+              <option value={120}>120 seconds</option>
+            </select>
+          </div>
+
+          <div>
+            <Label>Game Speed</Label>
+            <select 
+              className="w-full mt-1 p-2 border border-gray-300 rounded text-gray-900 bg-white focus:border-primary focus:outline-none"
+              value={formData.config.speed || 'normal'}
+              onChange={(e) => handleConfigUpdate('speed', e.target.value)}
+            >
+              <option value="thinking">Thinking (60s AI thinking)</option>
+              <option value="normal">Normal (30s AI thinking)</option>
+              <option value="fast">Fast (10s AI thinking)</option>
             </select>
           </div>
         </div>

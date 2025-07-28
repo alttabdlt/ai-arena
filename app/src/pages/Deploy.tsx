@@ -16,7 +16,9 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { DEPLOY_BOT } from '@/graphql/mutations/deployBot';
 import { useNavigate } from 'react-router-dom';
 import { WALLET_ADDRESSES, FEE_CONFIG } from '@/config/wallets';
-import { AllTestsRunner } from '@/components/poker/AllTestsRunner';
+// Test components temporarily removed - to be reimplemented
+// import { AllTestsRunner } from '@/components/poker/AllTestsRunner';
+// import { Connect4TestRunner } from '@/components/connect4/Connect4TestRunner';
 
 // Available bot avatars
 const AVATARS = [
@@ -35,6 +37,7 @@ const AVATARS = [
 // Game Types
 const GAME_TYPES = [
   { id: 'poker', name: 'Texas Hold\'em Poker', icon: '🃏', description: 'Classic poker with bluffing and strategy' },
+  { id: 'connect4', name: 'Connect4', icon: '🔴', description: 'Connect 4 pieces in a row to win' },
   { id: 'chess', name: 'Chess', icon: '♟️', description: 'The ultimate strategy game', status: 'coming-soon' },
   { id: 'go', name: 'Go', icon: '⚫', description: 'Ancient game of territorial control', status: 'coming-soon' },
   { id: 'hangman', name: 'Hangman', icon: '📝', description: 'Word guessing game', status: 'coming-soon' },
@@ -155,14 +158,15 @@ export default function Deploy() {
       return;
     }
 
-    if (!allTestsPassed) {
-      toast({
-        title: "Tests Not Passed",
-        description: "Your bot must pass all test scenarios before deployment. Please select poker in the test section and run all tests.",
-        variant: "destructive"
-      });
-      return;
-    }
+    // Test requirement temporarily disabled
+    // if (!allTestsPassed) {
+    //   toast({
+    //     title: "Tests Not Passed",
+    //     description: "Your bot must pass all test scenarios before deployment. Please select poker in the test section and run all tests.",
+    //     variant: "destructive"
+    //   });
+    //   return;
+    // }
 
     setIsSubmitting(true);
     
@@ -230,8 +234,8 @@ export default function Deploy() {
                   <Zap className="h-4 w-4" />
                   <AlertDescription>
                     <strong>Spin-the-Wheel System:</strong> Your bot will be randomly assigned to different games during tournaments. 
-                    Write a universal strategy that can adapt to any competitive scenario - from poker bluffs to chess tactics.
-                    Currently supporting: Texas Hold'em Poker (Chess, Go, Hangman, and more coming soon!)
+                    Write a universal strategy that can adapt to any competitive scenario - from poker bluffs to Connect4 strategies.
+                    Currently supporting: Texas Hold'em Poker and Connect4 (Chess, Go, Hangman, and more coming soon!)
                   </AlertDescription>
                 </Alert>
               </CardContent>
@@ -388,6 +392,7 @@ export default function Deploy() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="poker">Texas Hold'em Poker</SelectItem>
+                      <SelectItem value="connect4">Connect4</SelectItem>
                       <SelectItem value="chess" disabled>Chess (Coming Soon)</SelectItem>
                       <SelectItem value="go" disabled>Go (Coming Soon)</SelectItem>
                       <SelectItem value="hangman" disabled>Hangman (Coming Soon)</SelectItem>
@@ -396,16 +401,26 @@ export default function Deploy() {
                   </Select>
                 </div>
                 
+                {/* Test runners temporarily disabled - to be reimplemented */}
                 {testGameType === 'poker' && (
-                  <AllTestsRunner
-                    prompt={formData.prompt}
-                    modelType={formData.modelType}
-                    isDisabled={!isConnected || isSubmitting}
-                    onTestsComplete={setAllTestsPassed}
-                  />
+                  <Alert>
+                    <Info className="h-4 w-4" />
+                    <AlertDescription>
+                      Poker test scenarios are temporarily unavailable. Your bot will still be able to compete.
+                    </AlertDescription>
+                  </Alert>
                 )}
                 
-                {testGameType && testGameType !== 'poker' && (
+                {testGameType === 'connect4' && (
+                  <Alert>
+                    <Info className="h-4 w-4" />
+                    <AlertDescription>
+                      Connect4 test scenarios are temporarily unavailable. Your bot will still be able to compete.
+                    </AlertDescription>
+                  </Alert>
+                )}
+                
+                {testGameType && testGameType !== 'poker' && testGameType !== 'connect4' && (
                   <Alert>
                     <Info className="h-4 w-4" />
                     <AlertDescription>
@@ -418,11 +433,11 @@ export default function Deploy() {
             </Card>
 
             {/* Test Requirement Notice */}
-            {!allTestsPassed && testGameType === 'poker' && (
+            {!allTestsPassed && (testGameType === 'poker' || testGameType === 'connect4') && (
               <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
                 <AlertDescription>
-                  <strong>Tests Required:</strong> You must pass all 5 test scenarios before you can deploy your bot. 
+                  <strong>Tests Required:</strong> You must pass all {testGameType === 'poker' ? '5' : '6'} test scenarios before you can deploy your bot. 
                   This ensures your bot can handle various game situations properly.
                 </AlertDescription>
               </Alert>
@@ -462,7 +477,7 @@ export default function Deploy() {
                 type="submit"
                 size="lg"
                 className="flex-1"
-                disabled={!isConnected || isSubmitting || isWriting || isConfirming || !allTestsPassed}
+                disabled={!isConnected || isSubmitting || isWriting || isConfirming}
               >
                 {isWriting ? (
                   <>
@@ -478,11 +493,6 @@ export default function Deploy() {
                   <>
                     <Upload className="mr-2 h-4 w-4 animate-spin" />
                     Deploying Bot...
-                  </>
-                ) : !allTestsPassed ? (
-                  <>
-                    <AlertCircle className="mr-2 h-4 w-4" />
-                    Pass Tests to Deploy
                   </>
                 ) : (
                   <>

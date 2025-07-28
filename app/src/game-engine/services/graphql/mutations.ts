@@ -59,3 +59,31 @@ export const GET_AI_REVERSE_HANGMAN_DECISION = gql`
     }
   }
 `;
+
+export const GET_AI_CONNECT4_DECISION = gql`
+  mutation GetAIConnect4Decision(
+    $botId: String!
+    $model: String!
+    $gameState: Connect4GameStateInput!
+    $playerState: Connect4PlayerStateInput!
+  ) {
+    getAIConnect4Decision(
+      botId: $botId
+      model: $model
+      gameState: $gameState
+      playerState: $playerState
+    ) {
+      action
+      column
+      reasoning
+      confidence
+      analysis {
+        board_state
+        immediate_threats
+        winning_moves
+        blocking_moves
+        strategic_assessment
+      }
+    }
+  }
+`;

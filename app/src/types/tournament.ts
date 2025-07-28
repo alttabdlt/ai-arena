@@ -1,4 +1,4 @@
-export type GameType = 'poker' | 'reverse-hangman' | 'chess' | 'go';
+export type GameType = 'poker' | 'reverse-hangman' | 'connect4' | 'chess' | 'go';
 export type TournamentStatus = 'waiting' | 'in-progress' | 'completed' | 'cancelled';
 export type PlayerStatus = 'waiting' | 'ready' | 'playing' | 'eliminated';
 
@@ -25,6 +25,12 @@ export interface GameConfig {
   difficulty?: 'easy' | 'medium' | 'hard' | 'expert' | 'random';
   maxRounds?: number;
   timeLimit?: number;
+  
+  // Connect4 config
+  boardWidth?: number;
+  boardHeight?: number;
+  connectToWin?: number;
+  enableGravity?: boolean;
   
   // Common config
   entryFee?: number;
@@ -148,6 +154,20 @@ export const GAME_TYPE_INFO: Record<GameType, {
     defaultConfig: {
       maxRounds: 5,
       timeLimit: 120
+    }
+  },
+  'connect4': {
+    name: 'Connect 4',
+    description: 'Drop colored discs to connect four in a row',
+    icon: '🔴',
+    minPlayers: 2,
+    maxPlayers: 2,
+    defaultConfig: {
+      timeLimit: 60,
+      boardWidth: 7,
+      boardHeight: 6,
+      connectToWin: 4,
+      enableGravity: true
     }
   },
   'chess': {

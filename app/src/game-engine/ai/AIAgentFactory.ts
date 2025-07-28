@@ -66,7 +66,12 @@ export class UniversalAIAgent<TState extends IGameState, TAction extends IGameAc
   }
 
   protected collectGameData(state: TState): any {
-    return this.aiService.collectNeutralGameData(state, this.id);
+    // This method should be overridden by game-specific agents
+    // Return basic state for fallback
+    return {
+      gameState: state,
+      playerId: this.id
+    };
   }
 
   protected buildPrompt(gameData: any, validActions: TAction[]): string {
@@ -174,6 +179,7 @@ export class DefaultAIAgentFactory<TState extends IGameState, TAction extends IG
     playerConfig: IPlayerConfig,
     modelConfig: AIModelConfig
   ): IGameAIAgent<TState, TAction> {
+    console.log('DefaultAIAgentFactory.createModelSpecificAgent called - this should be overridden!');
     const promptTemplate = this.getPromptTemplate(modelConfig);
     
     return new UniversalAIAgent<TState, TAction>(

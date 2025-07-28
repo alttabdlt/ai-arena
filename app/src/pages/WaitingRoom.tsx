@@ -136,6 +136,8 @@ export default function WaitingRoom() {
       navigate(`/tournament/${id}`);
     } else if (tournament.gameType === 'reverse-hangman') {
       navigate(`/tournament/${id}/hangman`);
+    } else if (tournament.gameType === 'connect4') {
+      navigate(`/tournament/${id}/connect4`);
     } else {
       toast.error(`Unknown game type: ${tournament.gameType}`);
     }
@@ -314,6 +316,22 @@ export default function WaitingRoom() {
                     <span className="text-gray-700">Time per Guess</span>
                     <span className="font-medium">
                       {tournament.config.timeLimit}s
+                    </span>
+                  </div>
+                </>
+              )}
+              {tournament.gameType === 'connect4' && (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-gray-700">Board Size</span>
+                    <span className="font-medium">
+                      {tournament.config.boardWidth || 7}×{tournament.config.boardHeight || 6}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-700">Time per Move</span>
+                    <span className="font-medium">
+                      {tournament.config.timeLimit || 30}s
                     </span>
                   </div>
                 </>

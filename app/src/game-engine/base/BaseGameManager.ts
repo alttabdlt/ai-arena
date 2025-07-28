@@ -54,14 +54,31 @@ export abstract class BaseGameManager<TState extends IGameState, TConfig extends
 
     try {
       const players = await this.initializePlayers();
+      console.log('BaseGameManager: Players initialized:', players.map(p => ({ id: p.id, name: p.name })));
+      
       this.engine.initialize(players);
+      console.log('BaseGameManager: Engine initialized, state:', {
+        hasState: !!this.engine.getState(),
+        stateKeys: this.engine.getState() ? Object.keys(this.engine.getState()) : [],
+        hasBoard: !!(this.engine.getState() as any)?.board
+      });
+      
+      console.log('Creating AI agents for players:', this.config.playerConfigs.map(p => ({ 
+        id: p.id, 
+        name: p.name, 
+        aiModel: p.aiModel 
+      })));
       
       for (const playerConfig of this.config.playerConfigs) {
         if (playerConfig.aiModel) {
+          console.log(`Creating AI agent for player ${playerConfig.id} with model ${playerConfig.aiModel}`);
           const aiAgent = await this.createAIAgent(playerConfig);
+          console.log(`Created AI agent: ${aiAgent.constructor.name} for player ${playerConfig.id}`);
           this.aiAgents.set(playerConfig.id, aiAgent);
         }
       }
+      
+      console.log('AI agents created:', this.aiAgents.size, 'agents');
 
       this.managerState = 'playing';
       
@@ -334,7 +351,16 @@ export abstract class BaseGameManager<TState extends IGameState, TConfig extends
     });
     
     const aiAgent = this.aiAgents.get(playerId);
+    console.log('AI agent retrieved:', {
+      found: !!aiAgent,
+      agentType: aiAgent ? aiAgent.constructor.name : 'null'
+    });
+    
     if (!aiAgent) {
+      console.error('Available AI agents:', Array.from(this.aiAgents.entries()).map(([id, agent]) => ({
+        id,
+        agentType: agent.constructor.name
+      })));
       throw new Error(`AI agent not found for player ${playerId}`);
     }
 
@@ -359,13 +385,18 @@ export abstract class BaseGameManager<TState extends IGameState, TConfig extends
         }, this.config.thinkingTime);
       });
 
-      const decision = await Promise.race([
-        aiAgent.makeDecision(state, validActions),
-        timeoutPromise
-      ]);
-
-      if (this.thinkingTimer) {
-        clearTimeout(this.thinkingTimer);
+      let decision;
+      try {
+        decision = await Promise.race([
+          aiAgent.makeDecision(state, validActions),
+          timeoutPromise
+        ]);
+      } finally {
+        // Always clear the timeout, even if an error occurred
+        if (this.thinkingTimer) {
+          clearTimeout(this.thinkingTimer);
+          this.thinkingTimer = null;
+        }
       }
 
       const thinkingTime = Date.now() - thinkingStartTime;

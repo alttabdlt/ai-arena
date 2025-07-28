@@ -13,6 +13,12 @@ export abstract class BaseGameEngine<TState extends IGameState, TAction extends 
   }
 
   initialize(players: IGamePlayer[]): void {
+    console.log('BaseGameEngine.initialize called', {
+      gameId: this.context.gameId,
+      playerCount: players.length,
+      players: players.map(p => ({ id: p.id, name: p.name }))
+    });
+    
     if (this.initialized) {
       throw new Error('Game engine already initialized');
     }
@@ -20,6 +26,12 @@ export abstract class BaseGameEngine<TState extends IGameState, TAction extends 
     this.validatePlayerCount(players.length);
     this.state = this.createInitialState(players);
     this.initialized = true;
+
+    console.log('BaseGameEngine.initialize completed', {
+      hasState: !!this.state,
+      stateKeys: this.state ? Object.keys(this.state) : [],
+      hasBoard: !!(this.state as any).board
+    });
 
     this.context.logger.info('Game engine initialized', {
       gameId: this.context.gameId,

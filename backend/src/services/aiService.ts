@@ -174,12 +174,18 @@ export interface ModelEvaluation {
   illogicalRate: number;
 }
 
+// Singleton pattern for AIService
+
 export class AIService {
   private openai: OpenAI | null = null;
   private anthropic: Anthropic | null = null;
   private deepseek: OpenAI | null = null;
   private modelEvaluations: Map<string, ModelEvaluation> = new Map();
   private currentHandNumber: number = 0;
+  private static maxConcurrentRequests = 10; // Increased from 5 to reduce slot contention
+  private activeRequests = 0;
+  private lastSlotActivity: number = Date.now();
+  private slotResetTimeout = 30000; // Reset if no activity for 30 seconds
 
   private extractJSON(content: string): any {
     // Try direct parsing first
@@ -211,8 +217,9 @@ export class AIService {
     if (process.env.OPENAI_API_KEY && !process.env.OPENAI_API_KEY.includes('YOUR_OPENAI_KEY_HERE')) {
       this.openai = new OpenAI({
         apiKey: process.env.OPENAI_API_KEY,
+        timeout: 30000, // 30 seconds timeout
       });
-      console.log('✅ OpenAI API configured');
+      console.log('✅ OpenAI API configured with 30s timeout');
     } else {
       console.log('⚠️  OpenAI API key not configured - using fallback logic');
     }
@@ -220,8 +227,9 @@ export class AIService {
     if (process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY.includes('YOUR_ANTHROPIC_KEY_HERE')) {
       this.anthropic = new Anthropic({
         apiKey: process.env.ANTHROPIC_API_KEY,
+        timeout: 30000, // 30 seconds timeout
       });
-      console.log('✅ Anthropic API configured');
+      console.log('✅ Anthropic API configured with 30s timeout');
     } else {
       console.log('⚠️  Anthropic API key not configured - using fallback logic');
     }
@@ -230,8 +238,9 @@ export class AIService {
       this.deepseek = new OpenAI({
         apiKey: process.env.DEEPSEEK_API_KEY,
         baseURL: 'https://api.deepseek.com/v1',
+        timeout: 30000, // 30 seconds timeout
       });
-      console.log('✅ Deepseek API configured with key:', process.env.DEEPSEEK_API_KEY.substring(0, 10) + '...');
+      console.log('✅ Deepseek API configured with 30s timeout, key:', process.env.DEEPSEEK_API_KEY.substring(0, 10) + '...');
     } else {
       console.log('⚠️  Deepseek API key not configured - using fallback logic');
       console.log('   Current DEEPSEEK_API_KEY value:', process.env.DEEPSEEK_API_KEY);
@@ -1179,6 +1188,429 @@ Respond with JSON: {action: 'guess_prompt', prompt_guess: 'your refined guess he
         pattern_observations: hasMatchDetails
           ? [`Matched: ${lastAttempt.match_details.matched_words.join(', ')}`, `Output words: ${outputWords.slice(0, 5).join(', ')}`]
           : [`Most frequent words: ${outputWords.slice(0, 8).join(', ')}`]
+      }
+    };
+  }
+
+  // Connect4 Methods
+  async getConnect4Decision(
+    botId: string,
+    gameState: any,
+    playerState: any,
+    model: 'gpt-4o' | 'deepseek-chat' | 'claude-3-5-sonnet' | 'claude-3-opus',
+    customPrompt?: string
+  ): Promise<any> {
+    const requestId = `ai-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    console.log(`\n=== AIService.getConnect4Decision Called [${requestId}] ===`);
+    console.log(`[${requestId}] 🎮 Connect4 AI Decision Request - Bot: ${botId}, Model: ${model}`);
+    
+    try {
+      // Validate inputs
+      if (!gameState || !playerState) {
+        throw new Error('Missing required game state or player state');
+      }
+      
+      console.log(`[${requestId}] 🔑 DeepSeek client status:`, !!this.deepseek);
+      console.log(`[${requestId}] GameState:`, {
+        moveCount: gameState.move_count,
+        validColumns: gameState.valid_columns,
+        playerNumber: playerState.player_number,
+        boardPreview: gameState.board?.[0]?.join('|') + '...' + gameState.board?.[5]?.join('|')
+      });
+    
+      // Build neutral prompt for Connect4
+      const prompt = this.buildNeutralConnect4Prompt(gameState, playerState, customPrompt);
+      
+      console.log(`📏 Connect4 prompt length: ${prompt.length} characters`);
+      console.log('📝 First 300 chars of prompt:', prompt.substring(0, 300) + '...');
+
+      let decision: any;
+      
+      switch(model) {
+        case 'deepseek-chat':
+          console.log(`[${requestId}] 📡 Calling Deepseek API for Connect4...`);
+          decision = await this.getDeepseekConnect4Decision(prompt, requestId);
+          break;
+        case 'gpt-4o':
+          console.log('📡 Calling OpenAI API for Connect4...');
+          decision = await this.getOpenAIConnect4Decision(prompt);
+          break;
+        case 'claude-3-5-sonnet':
+          console.log('📡 Calling Claude 3.5 Sonnet API for Connect4...');
+          decision = await this.getClaudeConnect4Decision(prompt, 'claude-3-5-sonnet-20241022');
+          break;
+        case 'claude-3-opus':
+          console.log('📡 Calling Claude 3 Opus API for Connect4...');
+          decision = await this.getClaudeConnect4Decision(prompt, 'claude-3-opus-20240229');
+          break;
+        default:
+          throw new Error(`Unsupported model: ${model}`);
+      }
+      
+      console.log(`[${requestId}] ✅ AI decision prepared, returning:`, {
+        hasDecision: !!decision,
+        column: decision?.column,
+        action: decision?.action,
+        confidence: decision?.confidence
+      });
+      
+      return decision;
+    } catch (error: any) {
+      console.error(`[${requestId}] ❌ AI model error for ${model} in Connect4:`, error.message);
+      console.error('Error type:', error.constructor.name);
+      
+      // Don't log full stack trace to avoid memory issues
+      console.log('⚠️  Falling back to default Connect4 logic');
+      return this.getFallbackConnect4Decision(gameState);
+    }
+  }
+
+  private buildNeutralConnect4Prompt(
+    gameState: any,
+    playerState: any,
+    customPrompt?: string
+  ): string {
+    const prompt = {
+      game_type: 'connect4',
+      board: gameState.board,
+      current_turn: gameState.move_count + 1,
+      total_moves: gameState.move_count,
+      player_pieces: playerState.player_pieces,
+      opponent_pieces: playerState.opponent_pieces,
+      valid_columns: gameState.valid_columns,
+      last_move: gameState.last_move,
+      board_metrics: playerState.board_metrics,
+      threat_analysis: playerState.threat_analysis,
+      calculations: playerState.calculations,
+      instructions: `You are playing Connect4. The game is played on an 8x8 grid where players alternate dropping pieces into columns. Pieces fall to the lowest available position due to gravity. The goal is to connect 4 pieces in a row (horizontally, vertically, or diagonally).
+
+Game board representation:
+- '_' = empty space
+- 'X' = your pieces
+- 'O' = opponent pieces
+- Board is shown with row 0 at the top and row 7 at the bottom (8x8 grid)
+
+Column numbering:
+- Columns are numbered 0-7 internally (8 columns total)
+- When displayed to users, columns show as 1-8
+- In your reasoning, please use user-friendly numbering (1-8) to avoid confusion
+- Example: internal column 3 should be referred to as "column 4" in your reasoning
+
+Available columns: ${gameState.valid_columns.join(', ')}
+
+Select your move based solely on the provided game state.
+
+Respond with valid JSON format:
+{
+  "action": "place",
+  "column": <number 0-7>,
+  "reasoning": "<brief explanation of your choice using column numbers 1-8>",
+  "confidence": <number between 0 and 1>,
+  "analysis": {
+    "board_state": "your assessment of the current position",
+    "immediate_threats": [<columns where opponent can win>],
+    "winning_moves": [<columns where you can win>],
+    "blocking_moves": [<columns to block opponent threats>],
+    "strategic_assessment": "overall strategy for this position"
+  }
+}`
+    };
+
+    if (customPrompt) {
+      prompt.instructions += ` Additional strategy: ${customPrompt}`;
+    }
+
+    return JSON.stringify(prompt, null, 2);
+  }
+
+  private async getOpenAIConnect4Decision(prompt: string): Promise<any> {
+    if (!this.openai) {
+      throw new Error('OpenAI client not initialized');
+    }
+
+    const response = await this.openai.chat.completions.create({
+      model: 'gpt-4o',
+      messages: [{
+        role: 'user',
+        content: prompt
+      }],
+      temperature: 0.7,
+      max_tokens: 500,
+      response_format: { type: 'json_object' }
+    });
+
+    const content = response.choices[0]?.message?.content;
+    if (!content) {
+      throw new Error('No response from OpenAI');
+    }
+
+    const decision = JSON.parse(content);
+    
+    return {
+      action: decision.action || 'place',
+      column: decision.column ?? 3, // Default to center if not specified
+      reasoning: decision.reasoning || 'Calculated best move',
+      confidence: decision.confidence || 0.7,
+      analysis: decision.analysis || {
+        board_state: 'Analyzing position',
+        immediate_threats: [],
+        winning_moves: [],
+        blocking_moves: [],
+        strategic_assessment: 'Playing optimally'
+      }
+    };
+  }
+
+  private async waitForRequestSlot(): Promise<void> {
+    // Check if we should reset the counter due to inactivity
+    const timeSinceLastActivity = Date.now() - this.lastSlotActivity;
+    if (timeSinceLastActivity > this.slotResetTimeout && this.activeRequests > 0) {
+      console.warn(`⚠️ Resetting stuck slot counter. Was: ${this.activeRequests}, Time since activity: ${timeSinceLastActivity}ms`);
+      this.activeRequests = 0;
+    }
+    
+    // Wait for available slot
+    let waitTime = 0;
+    while (this.activeRequests >= AIService.maxConcurrentRequests) {
+      if (waitTime > 15000) { // If waiting more than 15 seconds, something is wrong
+        console.error(`❌ Slot wait timeout after ${waitTime}ms. Force resetting counter from ${this.activeRequests} to 0`);
+        this.activeRequests = 0;
+        break;
+      }
+      // Wait 100ms before checking again
+      await new Promise(resolve => setTimeout(resolve, 100));
+      waitTime += 100;
+    }
+    
+    this.activeRequests++;
+    this.lastSlotActivity = Date.now();
+  }
+
+  private releaseRequestSlot(): void {
+    this.activeRequests = Math.max(0, this.activeRequests - 1);
+    this.lastSlotActivity = Date.now();
+    
+    // Log if we've fully released all slots
+    if (this.activeRequests === 0) {
+      console.log('✅ All request slots released');
+    }
+  }
+
+  private async getDeepseekConnect4Decision(prompt: string, requestId?: string): Promise<any> {
+    const reqId = requestId || 'unknown';
+    console.log(`[${reqId}] 🔍 getDeepseekConnect4Decision called`);
+    console.log(`[${reqId}] 🔍 Deepseek client initialized:`, !!this.deepseek);
+    console.log(`[${reqId}] Active requests before: ${this.activeRequests}/${AIService.maxConcurrentRequests}`);
+    
+    if (!this.deepseek) {
+      throw new Error('Deepseek client not initialized');
+    }
+
+    // Ensure slot is always released, even if waitForRequestSlot throws
+    let slotAcquired = false;
+    
+    try {
+      await this.waitForRequestSlot();
+      slotAcquired = true;
+      console.log(`[${reqId}] ✅ Slot acquired. Active requests now: ${this.activeRequests}/${AIService.maxConcurrentRequests}`);
+      
+      console.log(`[${reqId}] 📤 Sending request to Deepseek API...`);
+      const startTime = Date.now();
+      
+      const response = await this.deepseek.chat.completions.create({
+        model: 'deepseek-chat',
+        messages: [{
+          role: 'user',
+          content: prompt
+        }],
+        temperature: 0.7,
+        max_tokens: 500,
+        response_format: { type: 'json_object' }
+      });
+
+      const elapsedTime = Date.now() - startTime;
+      console.log(`[${reqId}] 📥 Deepseek responded in ${elapsedTime}ms`);
+      
+      const content = response.choices[0]?.message?.content;
+      if (!content) {
+        throw new Error('No response from Deepseek');
+      }
+      
+      return this.parseDeepseekResponse(content, reqId);
+    } catch (error: any) {
+      const errorDetails = {
+        message: error.message,
+        type: error.constructor.name,
+        code: error.code,
+        status: error.status,
+        statusText: error.statusText,
+        isTimeout: error.message?.includes('timeout') || error.code === 'ETIMEDOUT',
+        isRateLimit: error.status === 429 || error.message?.includes('rate limit'),
+        response: error.response?.data || error.response,
+        stack: error.stack?.split('\n').slice(0, 3).join('\n')
+      };
+      
+      console.error(`[${reqId}] ❌ Deepseek Connect4 request failed:`, errorDetails);
+      
+      // Log specific error types
+      if (errorDetails.isRateLimit) {
+        console.error(`[${reqId}] ⚠️ RATE LIMIT detected from DeepSeek API`);
+      }
+      if (errorDetails.isTimeout) {
+        console.error(`[${reqId}] ⏱️ TIMEOUT detected from DeepSeek API`);
+      }
+      
+      // Log current slot status
+      console.error(`[${reqId}] 🎰 Slot status at error: ${this.activeRequests}/${AIService.maxConcurrentRequests}, acquired: ${slotAcquired}`);
+      
+      // If it's a timeout or any error, use fallback
+      console.log(`[${reqId}] ⚠️ Using fallback Connect4 decision due to API error`);
+      
+      // Extract valid columns from prompt for fallback
+      const validColumnsMatch = prompt.match(/valid_columns.*?\[([\d,\s]+)\]/);
+      const validColumns = validColumnsMatch 
+        ? validColumnsMatch[1].split(',').map(c => parseInt(c.trim()))
+        : [0, 1, 2, 3, 4, 5, 6, 7];
+      
+      const fallbackState = { valid_columns: validColumns };
+      return this.getFallbackConnect4Decision(fallbackState);
+    } finally {
+      if (slotAcquired) {
+        this.releaseRequestSlot();
+        console.log(`[${reqId}] 🎰 Slot released. Active requests now: ${this.activeRequests}/${AIService.maxConcurrentRequests}`);
+      }
+    }
+  }
+  
+  private parseDeepseekResponse(content: string, requestId?: string): any {
+    const reqId = requestId || 'unknown';
+    console.log(`[${reqId}] 📥 Deepseek raw response:`, content.substring(0, 200) + '...');
+
+    let decision;
+    try {
+      decision = JSON.parse(content);
+      console.log(`[${reqId}] 📥 Deepseek decision parsed:`, {
+        action: decision.action,
+        column: decision.column,
+        reasoning: decision.reasoning?.substring(0, 100) + '...',
+        confidence: decision.confidence
+      });
+    } catch (parseError: any) {
+      console.error(`[${reqId}] ❌ Failed to parse Deepseek response:`, parseError.message);
+      // Don't log the full content to avoid memory issues
+      console.error(`[${reqId}] Content length:`, content.length);
+      throw new Error(`Invalid JSON response from Deepseek: ${parseError.message}`);
+    }
+    
+    // Validate decision has required fields
+    if (decision.column === undefined || decision.column === null) {
+      console.error(`[${reqId}] ❌ Decision missing column:`, decision);
+      throw new Error('AI decision missing required column field');
+    }
+    
+    // Ensure column is a valid number
+    const column = parseInt(decision.column);
+    if (isNaN(column) || column < 0 || column > 6) {
+      console.error(`[${reqId}] ❌ Invalid column value:`, decision.column);
+      throw new Error(`Invalid column value: ${decision.column}`);
+    }
+    
+    console.log(`[${reqId}] ✅ Valid decision parsed, column:`, column);
+    
+    return {
+      action: decision.action || 'place',
+      column: column,
+      reasoning: decision.reasoning || 'Strategic move',
+      confidence: decision.confidence || 0.6,
+      analysis: decision.analysis || {
+        board_state: 'Evaluating position',
+        immediate_threats: [],
+        winning_moves: [],
+        blocking_moves: [],
+        strategic_assessment: 'Playing strategically'
+      }
+    };
+  }
+
+  private async getClaudeConnect4Decision(prompt: string, modelVersion: string): Promise<any> {
+    if (!this.anthropic) {
+      throw new Error('Anthropic client not initialized');
+    }
+
+    const response = await this.anthropic.messages.create({
+      model: modelVersion,
+      max_tokens: 500,
+      temperature: 0.7,
+      messages: [{
+        role: 'user',
+        content: prompt
+      }]
+    });
+
+    const content = response.content[0];
+    if (content.type !== 'text') {
+      throw new Error('Unexpected response type from Claude');
+    }
+
+    try {
+      const cleanedContent = content.text.replace(/```json\n?|\n?```/g, '').trim();
+      const decision = JSON.parse(cleanedContent);
+      
+      return {
+        action: decision.action || 'place',
+        column: decision.column ?? 3,
+        reasoning: decision.reasoning || 'Optimal play',
+        confidence: decision.confidence || 0.8,
+        analysis: decision.analysis || {
+          board_state: 'Assessing board position',
+          immediate_threats: [],
+          winning_moves: [],
+          blocking_moves: [],
+          strategic_assessment: 'Playing for advantage'
+        }
+      };
+    } catch (error) {
+      console.error('Failed to parse Claude response:', content.text);
+      throw error;
+    }
+  }
+
+  private getFallbackConnect4Decision(gameState: any): any {
+    const validColumns = gameState.valid_columns || [0, 1, 2, 3, 4, 5, 6, 7];
+    
+    // For 8x8 board, prefer center columns (3, 4)
+    const centerBias = [3, 4, 2, 5, 1, 6, 0, 7];
+    let chosenColumn = 3;
+    
+    for (const col of centerBias) {
+      if (validColumns.includes(col)) {
+        chosenColumn = col;
+        break;
+      }
+    }
+
+    // Check for immediate wins or blocks
+    const threatAnalysis = gameState.threat_analysis || {};
+    const winningMoves = threatAnalysis.immediate_win_opportunities || [];
+    const blockingMoves = threatAnalysis.must_block_positions || [];
+
+    if (winningMoves.length > 0 && validColumns.includes(winningMoves[0])) {
+      chosenColumn = winningMoves[0];
+    } else if (blockingMoves.length > 0 && validColumns.includes(blockingMoves[0])) {
+      chosenColumn = blockingMoves[0];
+    }
+
+    return {
+      action: 'place',
+      column: chosenColumn,
+      reasoning: 'Fallback logic: prefer center columns, block threats, take wins',
+      confidence: 0.5,
+      analysis: {
+        board_state: 'Using fallback strategy',
+        immediate_threats: blockingMoves,
+        winning_moves: winningMoves,
+        blocking_moves: blockingMoves,
+        strategic_assessment: 'Playing defensively with center preference'
       }
     };
   }

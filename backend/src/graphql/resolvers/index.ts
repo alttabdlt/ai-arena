@@ -1,6 +1,6 @@
 import { Context } from '../../config/context';
 import { DateTimeResolver } from 'graphql-scalars';
-import { AIService } from '../../services/aiService';
+import { aiService } from '../../services/aiService';
 import { TransactionService } from '../../services/transactionService';
 import { AuthService } from '../../services/authService';
 import { PromptValidator } from '../../utils/promptValidation';
@@ -18,7 +18,7 @@ interface TypedPubSub extends PubSub {
   asyncIterator<T = any>(triggers: string | string[]): PubSubAsyncIterator<T>;
 }
 
-const aiService = new AIService();
+// Use the singleton aiService instance
 const DEPLOYMENT_FEE = '0.01'; // 0.01 HYPE
 
 export const resolvers = {
@@ -571,6 +571,188 @@ export const resolvers = {
       );
 
       return decision;
+    },
+
+    getAIConnect4Decision: async (
+      _: any,
+      { botId, model, gameState, playerState }: any,
+      ctx: Context
+    ) => {
+      const requestId = `c4-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      console.log(`\n=== getAIConnect4Decision Resolver Called [${requestId}] ===`);
+      console.log(`[${requestId}] Timestamp:`, new Date().toISOString());
+      console.log(`[${requestId}] Input parameters:`, {
+        botId,
+        model,
+        gameStateKeys: Object.keys(gameState || {}),
+        playerStateKeys: Object.keys(playerState || {}),
+        moveCount: gameState?.move_count,
+        playerNumber: playerState?.player_number
+      });
+      
+      try {
+        // Check if this is a test bot or demo player request
+        let prompt: string | undefined;
+        
+        if (botId.startsWith('test-bot-')) {
+          // Get prompt from headers for test bots
+          prompt = ctx.req?.headers?.['x-bot-prompt'] as string;
+          console.log('Test bot detected, using header prompt:', prompt);
+        } else if (botId.startsWith('player-') || botId.startsWith('game-bot-')) {
+          // For demo players, use default strategies based on their model
+          const defaultStrategies: Record<string, string> = {
+            'gpt-4o': 'Play strategic Connect4, focus on creating multiple threats and blocking opponent wins',
+            'deepseek-chat': 'Analyze board patterns in Connect4, balance offense and defense with tactical plays',
+            'claude-3-5-sonnet': 'Play optimal Connect4 using position evaluation and threat analysis',
+            'claude-3-opus': 'Master Connect4 through deep pattern recognition and strategic foresight'
+          };
+          prompt = defaultStrategies[model] || 'Play strategic Connect4 to win';
+          console.log('Demo player detected, using default prompt for model', model, ':', prompt);
+        } else {
+          // Get bot's prompt from database
+          const bot = await ctx.prisma.bot.findUnique({
+            where: { id: botId },
+            select: { prompt: true }
+          });
+          prompt = bot?.prompt;
+        }
+
+        if (!prompt) {
+          // Use a generic default prompt for Connect4
+          prompt = 'Play Connect4 strategically to win the game';
+        }
+
+        console.log(`[${requestId}] Calling aiService.getConnect4Decision...`);
+        console.log(`[${requestId}] Request details:`, {
+          botId,
+          model,
+          promptLength: prompt?.length || 0,
+          gameStateBoard: gameState?.board,
+          validColumns: gameState?.valid_columns,
+          moveCount: gameState?.move_count,
+          playerNumber: playerState?.player_number,
+          timestamp: new Date().toISOString()
+        });
+        
+        const startTime = Date.now();
+        const timeout = 25000; // 25 second timeout for DeepSeek models
+        
+        try {
+          // Create a timeout promise
+          const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => {
+              reject(new Error(`Connect4 AI decision timeout after ${timeout}ms`));
+            }, timeout);
+          });
+          
+          // Race between AI decision and timeout
+          const decision = await Promise.race([
+            aiService.getConnect4Decision(
+              botId,
+              gameState,
+              playerState,
+              model,
+              prompt
+            ),
+            timeoutPromise
+          ]);
+          
+          const elapsedTime = Date.now() - startTime;
+          console.log(`[${requestId}] ✅ AI decision received in ${elapsedTime}ms:`, {
+            hasDecision: !!decision,
+            decisionType: typeof decision,
+            action: decision?.action,
+            column: decision?.column,
+            confidence: decision?.confidence,
+            reasoningLength: decision?.reasoning?.length,
+            timestamp: new Date().toISOString()
+          });
+          
+          // Validate the decision
+          if (!decision) {
+            console.error(`[${requestId}] ❌ No decision returned from AI service`);
+            throw new Error('AI service returned null decision');
+          }
+          
+          if (decision.column === undefined || decision.column === null) {
+            console.error(`[${requestId}] ❌ Invalid column in decision:`, decision);
+            throw new Error('AI decision missing column');
+          }
+          
+          console.log(`[${requestId}] ✅ Returning valid decision to GraphQL`);
+          return decision;
+        } catch (innerError: any) {
+          const elapsedTime = Date.now() - startTime;
+          
+          // Enhanced error logging to understand the actual failure
+          const errorDetails = {
+            message: innerError.message,
+            type: innerError.constructor.name,
+            code: innerError.code,
+            isTimeout: innerError.message?.includes('timeout') || elapsedTime >= timeout,
+            isSlotError: innerError.message?.includes('slot') || innerError.message?.includes('concurrent'),
+            elapsedTime,
+            model,
+            botId,
+            moveCount: gameState?.move_count,
+            timestamp: new Date().toISOString()
+          };
+          
+          console.error(`[${requestId}] ❌ AI decision failed after ${elapsedTime}ms:`);
+          console.error(`[${requestId}] Error details:`, errorDetails);
+          console.error(`[${requestId}] Stack trace:`, innerError.stack?.split('\n').slice(0, 5).join('\n'));
+          
+          // Log specific error patterns
+          if (errorDetails.isTimeout) {
+            console.error(`[${requestId}] ⏱️ TIMEOUT: AI took longer than ${timeout}ms`);
+          }
+          if (errorDetails.isSlotError) {
+            console.error(`[${requestId}] 🎰 SLOT ERROR: Concurrent request limit issue`);
+          }
+          if (innerError.message?.includes('rate limit')) {
+            console.error(`[${requestId}] 🚫 RATE LIMIT: API rate limit exceeded`);
+          }
+          
+          // Log the error type for easier debugging
+          console.log(`[${requestId}] ⚠️ Using GraphQL resolver fallback for Connect4 (confidence: 0.1)`);
+          console.log(`[${requestId}] 📊 Error type: ${errorDetails.type}, Move: ${gameState?.move_count}`);
+          
+          const validColumns = gameState.valid_columns || [0, 1, 2, 3, 4, 5, 6, 7];
+          
+          // Try to be a bit smarter with fallback - choose randomly from valid columns
+          // but prefer center columns (3, 4) for 8x8 board
+          const centerCols = [3, 4].filter(col => validColumns.includes(col));
+          const fallbackColumn = centerCols.length > 0 
+            ? centerCols[Math.floor(Math.random() * centerCols.length)]
+            : validColumns[Math.floor(Math.random() * validColumns.length)];
+          
+          return {
+            action: 'place',
+            column: fallbackColumn,
+            reasoning: `Fallback decision due to AI error: ${innerError.message}`,
+            confidence: 0.1,
+            analysis: {
+              board_state: 'Error occurred, using fallback',
+              immediate_threats: [],
+              winning_moves: [],
+              blocking_moves: [],
+              strategic_assessment: `${errorDetails.type}: ${innerError.message}`
+            }
+          };
+        }
+      } catch (error: any) {
+        console.error('\n=== ERROR in getAIConnect4Decision ===');
+        console.error('Error details:', {
+          message: error.message,
+          stack: error.stack,
+          name: error.name,
+          botId,
+          model
+        });
+        
+        // Re-throw the error to be handled by Apollo
+        throw error;
+      }
     },
 
     requestNonce: async (_: any, { address }: { address: string }, ctx: Context) => {

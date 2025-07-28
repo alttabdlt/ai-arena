@@ -1,8 +1,9 @@
-import { ApolloClient, InMemoryCache, split, createHttpLink } from '@apollo/client';
+import { ApolloClient, InMemoryCache, split, createHttpLink, from } from '@apollo/client';
 import { GraphQLWsLink } from '@apollo/client/link/subscriptions';
 import { createClient } from 'graphql-ws';
 import { getMainDefinition } from '@apollo/client/utilities';
 import { setContext } from '@apollo/client/link/context';
+import { RetryLink } from '@apollo/client/link/retry';
 
 // HTTP connection to the API
 const httpLink = createHttpLink({
@@ -25,6 +26,26 @@ const wsLink = new GraphQLWsLink(
     shouldRetry: () => true,
   })
 );
+
+// Retry link for handling transient failures
+const retryLink = new RetryLink({
+  delay: {
+    initial: 300,
+    max: Infinity,
+    jitter: true
+  },
+  attempts: {
+    max: 3,
+    retryIf: (error, _operation) => {
+      // Retry on network errors but not on GraphQL errors
+      return !!error && (
+        error.networkError?.message?.includes('Failed to fetch') ||
+        error.networkError?.message?.includes('NetworkError') ||
+        error.networkError?.message?.includes('ERR_CONNECTION_REFUSED')
+      );
+    }
+  }
+});
 
 // Auth link to add headers
 const authLink = setContext((_, { headers }) => {
@@ -60,7 +81,7 @@ const splitLink = split(
     );
   },
   wsLink,
-  authLink.concat(httpLink)
+  from([retryLink, authLink, httpLink])
 );
 
 // Apollo Client instance

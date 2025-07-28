@@ -21,6 +21,7 @@ import WaitingRoom from "./pages/WaitingRoom";
 import TournamentView from "./pages/TournamentView";
 import ReverseHangmanView from "./pages/ReverseHangmanView";
 import ReverseHangmanServerView from "./pages/ReverseHangmanServerView";
+import Connect4View from "./pages/Connect4View";
 import Settings from "./pages/Settings";
 import DeveloperSubmit from "./pages/DeveloperSubmit";
 import Deploy from "./pages/Deploy";
@@ -48,6 +49,7 @@ const App = () => (
             <Route path="/tournament/:id" element={<TournamentView />} />
             <Route path="/tournament/:id/hangman" element={<ReverseHangmanView />} />
             <Route path="/tournament/:id/hangman-server" element={<ReverseHangmanServerView />} />
+            <Route path="/tournament/:id/connect4" element={<Connect4View />} />
             
             {/* Bot System */}
             <Route path="/bots" element={<Bots />} />

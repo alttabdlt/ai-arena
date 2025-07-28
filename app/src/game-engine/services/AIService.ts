@@ -1,6 +1,7 @@
+// Updated: 2025-01-24 - Fixed JSON extraction for nested objects
 import { IGameState, IGameAction } from '../core/interfaces';
 import { ApolloClient, NormalizedCacheObject } from '@apollo/client';
-import { GET_AI_POKER_DECISION, GET_AI_REVERSE_HANGMAN_DECISION } from './graphql/mutations';
+import { GET_AI_POKER_DECISION, GET_AI_REVERSE_HANGMAN_DECISION, GET_AI_CONNECT4_DECISION } from './graphql/mutations';
 
 export interface AIServiceConfig {
   apiEndpoint: string;
@@ -41,6 +42,7 @@ export class GameAIService {
   private requestCache: Map<string, AIResponse> = new Map();
   private cacheTimeout: number = 5 * 60 * 1000; // 5 minutes
   private apolloClient?: ApolloClient<NormalizedCacheObject>;
+  private activeRequests: Map<string, Promise<any>> = new Map();
 
   constructor(config: AIServiceConfig, apolloClient?: ApolloClient<NormalizedCacheObject>) {
     this.config = config;
@@ -61,6 +63,10 @@ export class GameAIService {
       promptLength: request.userPrompt.length,
       systemPromptLength: request.systemPrompt.length
     });
+    
+    // Log the first 500 chars of the prompt to debug JSON extraction issues
+    console.log('User prompt preview (first 500 chars):', request.userPrompt.substring(0, 500));
+    console.log('User prompt includes "Current game state":', request.userPrompt.includes('Current game state'));
     
     const cacheKey = this.getCacheKey(request);
     const cachedResponse = this.requestCache.get(cacheKey);
@@ -88,8 +94,14 @@ export class GameAIService {
         return response;
       } catch (error) {
         lastError = error as Error;
+        console.error(`AI request attempt ${attempt + 1} failed:`, {
+          error: lastError.message,
+          model: request.model,
+          attempt: attempt + 1
+        });
         
         if (attempt < this.config.retryAttempts - 1) {
+          console.log(`Retrying in ${Math.pow(2, attempt)} seconds...`);
           await this.delay(Math.pow(2, attempt) * 1000);
         }
       }
@@ -222,67 +234,28 @@ export class GameAIService {
     if (this.apolloClient) {
       try {
         const gameType = this.detectGameType(request.userPrompt);
+        console.log('Detected game type:', gameType);
         
-        if (gameType === 'poker' || gameType === 'reverse-hangman') {
+        if (!gameType) {
+          console.error('Could not detect game type from prompt');
+          throw new Error('Unable to detect game type from prompt. Prompt must contain game-specific keywords or JSON structure.');
+        }
+        
+        if (gameType === 'poker' || gameType === 'reverse-hangman' || gameType === 'connect4') {
           return await this.sendGraphQLRequest(request, modelConfig, gameType);
+        } else {
+          throw new Error(`Unsupported game type: ${gameType}`);
         }
       } catch (error) {
-        console.warn('Failed to use GraphQL, falling back to REST:', error);
+        console.error('Failed to use GraphQL:', error);
+        throw error; // Don't fall back to REST - it doesn't exist
       }
     }
 
-    // Fallback to REST API (will fail with 404, but preserves original behavior)
-    const endpoint = modelConfig.endpoint || this.config.apiEndpoint;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.config.timeout);
-
-    try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${modelConfig.apiKey || import.meta.env.VITE_AI_API_KEY}`
-        },
-        body: JSON.stringify({
-          model: modelConfig.name,
-          messages: [
-            { role: 'system', content: request.systemPrompt },
-            { role: 'user', content: request.userPrompt }
-          ],
-          temperature: request.temperature || 0.7,
-          max_tokens: request.maxTokens || modelConfig.maxTokens || 1000,
-          response_format: request.responseFormat === 'json' ? { type: 'json_object' } : undefined
-        }),
-        signal: controller.signal
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        throw new Error(`AI API error: ${response.status} ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      
-      return {
-        content: data.choices[0].message.content,
-        model: request.model,
-        usage: data.usage,
-        metadata: {
-          requestId: data.id,
-          created: data.created
-        }
-      };
-    } catch (error: any) {
-      clearTimeout(timeoutId);
-      
-      if (error.name === 'AbortError') {
-        throw new Error('AI request timed out');
-      }
-      
-      throw error;
-    }
+    // This should never be reached now, but keeping for safety
+    throw new Error('AI request failed: No GraphQL client available');
   }
+  
 
   private detectGameType(userPrompt: string): string | null {
     // First try to extract and examine the game data structure
@@ -329,6 +302,15 @@ export class GameAIService {
           console.log('Detected game type from structure: poker');
           return 'poker';
         }
+        
+        // Check for Connect4 specific fields
+        if (gameData.gameType === 'connect4' || 
+            (gameData.board !== undefined && 
+             gameData.validColumns !== undefined && 
+             gameData.playerNumber !== undefined)) {
+          console.log('Detected game type from structure: connect4');
+          return 'connect4';
+        }
       }
     } catch (e) {
       // If JSON parsing fails, fall back to keyword detection
@@ -356,15 +338,30 @@ export class GameAIService {
       return 'poker';
     }
     
+    // Check for Connect4 keywords
+    if (promptLower.includes('connect4') || promptLower.includes('connect 4') || 
+        promptLower.includes('column') || promptLower.includes('disc') ||
+        promptLower.includes('7-column') || promptLower.includes('6-row') ||
+        promptLower.includes('four in a row')) {
+      console.log('Detected game type from keywords: connect4');
+      return 'connect4';
+    }
+    
     console.log('Could not detect game type from prompt');
     return null;
   }
 
   private async sendGraphQLRequest(request: AIRequest, modelConfig: any, gameType: string): Promise<AIResponse> {
+    console.log('=== GRAPHQL REQUEST START (v2) ===');
+    console.log('Code version: 2.0 - With fixes for JSON extraction');
+    console.log('Timestamp:', new Date().toISOString());
+    
     if (!this.apolloClient) {
       throw new Error('Apollo client not configured');
     }
 
+    let requestKey = ''; // Declare at method scope for error cleanup
+    
     try {
       // Log the full prompt for debugging
       console.log('Full AI prompt (first 500 chars):', request.userPrompt.substring(0, 500));
@@ -375,47 +372,222 @@ export class GameAIService {
       let validActions: any[] = [];
       
       // First, try to extract the game state JSON object
-      const gameStateMatch = request.userPrompt.match(/Current game state:\s*(\{[\s\S]*?\})\s*Valid actions/);
-      if (gameStateMatch) {
-        try {
-          gameData = JSON.parse(gameStateMatch[1]);
-        } catch (e) {
-          console.error('Failed to parse game state:', gameStateMatch[1]);
-          throw new Error(`Failed to parse game state JSON: ${e}`);
+      // Extract everything between "Current game state:" (with optional text after) and "Valid actions"
+      const gameStateSection = request.userPrompt.match(/Current game state(?:\s*\([^)]*\))?:\s*([\s\S]*?)(?:Valid actions|$)/);
+      console.log('=== JSON EXTRACTION DEBUG ===');
+      console.log('Prompt contains "Current game state":', request.userPrompt.includes('Current game state'));
+      console.log('Prompt contains "(for reference)":', request.userPrompt.includes('(for reference)'));
+      console.log('Game state section match:', {
+        found: !!gameStateSection,
+        hasCurrentGameState: request.userPrompt.includes('Current game state'),
+        hasValidActions: request.userPrompt.includes('Valid actions')
+      });
+      
+      // Check if the prompt contains template variables that weren't replaced
+      if (request.userPrompt.includes('{{')) {
+        console.error('Prompt contains unreplaced template variables');
+        const unresolved = request.userPrompt.match(/\{\{[^}]+\}\}/g);
+        console.error('Unresolved template variables:', unresolved);
+        throw new Error('Prompt contains unresolved template variables: ' + unresolved?.join(', '));
+      }
+      
+      if (gameStateSection) {
+        const jsonText = gameStateSection[1].trim();
+        console.log('Extracted game state section length:', jsonText.length);
+        console.log('First 100 chars of extracted section:', jsonText.substring(0, 100));
+        
+        // Find the complete JSON object by counting braces
+        let braceCount = 0;
+        let startIndex = jsonText.indexOf('{');
+        let endIndex = -1;
+        
+        if (startIndex !== -1) {
+          for (let i = startIndex; i < jsonText.length; i++) {
+            if (jsonText[i] === '{') braceCount++;
+            else if (jsonText[i] === '}') {
+              braceCount--;
+              if (braceCount === 0) {
+                endIndex = i + 1;
+                break;
+              }
+            }
+          }
+          
+          if (endIndex !== -1) {
+            try {
+              const extractedJson = jsonText.substring(startIndex, endIndex);
+              console.log('Extracted JSON length:', extractedJson.length);
+              console.log('First 100 chars of JSON:', extractedJson.substring(0, 100));
+              console.log('Last 100 chars of JSON:', extractedJson.substring(Math.max(0, extractedJson.length - 100)));
+              gameData = JSON.parse(extractedJson);
+            } catch (e) {
+              console.error('Failed to parse extracted game state:', e);
+              console.error('Parse error details:', (e as any).message);
+              console.error('Extracted JSON preview:', jsonText.substring(startIndex, Math.min(endIndex, startIndex + 200)) + '...');
+              const extractedJson = jsonText.substring(startIndex, endIndex);
+              // Check for common JSON issues
+              if (extractedJson.includes('undefined')) {
+                console.error('JSON contains "undefined" which is not valid JSON');
+              }
+              if (extractedJson.includes('NaN')) {
+                console.error('JSON contains "NaN" which is not valid JSON');
+              }
+              throw new Error(`Failed to parse game state JSON: ${(e as any).message}`);
+            }
+          } else {
+            console.error('Could not find matching closing brace for game state JSON');
+          }
         }
       }
       
-      // Then extract valid actions array
-      const actionsMatch = request.userPrompt.match(/Valid actions you can take:\s*(\[[\s\S]*?\])/);
-      if (actionsMatch) {
-        try {
-          validActions = JSON.parse(actionsMatch[1]);
-        } catch (e) {
-          console.error('Failed to parse valid actions:', actionsMatch[1]);
+      // Then extract valid actions array - handle different formats
+      const actionsSection = request.userPrompt.match(/Valid actions(?:\s+you can take)?:\s*([\s\S]*?)$/);
+      console.log('Valid actions section match:', {
+        found: !!actionsSection
+      });
+      
+      if (actionsSection) {
+        const actionsText = actionsSection[1].trim();
+        console.log('Actions text length:', actionsText.length);
+        console.log('First 100 chars of actions text:', actionsText.substring(0, 100));
+        
+        // Find the complete array by counting brackets
+        let bracketCount = 0;
+        let startIndex = actionsText.indexOf('[');
+        let endIndex = -1;
+        
+        if (startIndex !== -1) {
+          for (let i = startIndex; i < actionsText.length; i++) {
+            if (actionsText[i] === '[') bracketCount++;
+            else if (actionsText[i] === ']') {
+              bracketCount--;
+              if (bracketCount === 0) {
+                endIndex = i + 1;
+                break;
+              }
+            }
+          }
+          
+          if (endIndex !== -1) {
+            try {
+              const extractedJson = actionsText.substring(startIndex, endIndex);
+              validActions = JSON.parse(extractedJson);
+              console.log('Extracted valid actions count:', validActions.length);
+            } catch (e) {
+              console.error('Failed to parse valid actions:', e);
+            }
+          }
         }
       }
       
-      // If extraction failed, try a more general approach
+      // If extraction failed, try a more general approach with proper brace counting
       if (!gameData) {
-        // Look for any JSON object in the prompt
-        const jsonMatches = request.userPrompt.match(/\{[\s\S]*?\}/g);
-        if (jsonMatches && jsonMatches.length > 0) {
-          try {
-            gameData = JSON.parse(jsonMatches[0]);
-          } catch (e) {
-            console.error('Failed to parse any JSON from prompt');
-            throw new Error('Could not extract game data from prompt');
+        console.warn('Primary game data extraction failed, attempting fallback extraction');
+        console.warn('Full prompt:', request.userPrompt);
+        console.warn('Prompt length:', request.userPrompt.length);
+        
+        // Find the first JSON object or array in the prompt
+        let jsonStart = -1;
+        let jsonEnd = -1;
+        let isArray = false;
+        
+        // Look for the first { or [
+        for (let i = 0; i < request.userPrompt.length; i++) {
+          if (request.userPrompt[i] === '{' || request.userPrompt[i] === '[') {
+            jsonStart = i;
+            isArray = request.userPrompt[i] === '[';
+            break;
+          }
+        }
+        
+        if (jsonStart !== -1) {
+          // Count braces/brackets to find the complete JSON
+          let count = 0;
+          const openChar = isArray ? '[' : '{';
+          const closeChar = isArray ? ']' : '}';
+          
+          for (let i = jsonStart; i < request.userPrompt.length; i++) {
+            if (request.userPrompt[i] === openChar) count++;
+            else if (request.userPrompt[i] === closeChar) {
+              count--;
+              if (count === 0) {
+                jsonEnd = i + 1;
+                break;
+              }
+            }
+          }
+          
+          if (jsonEnd !== -1) {
+            try {
+              const extractedJson = request.userPrompt.substring(jsonStart, jsonEnd);
+              const parsed = JSON.parse(extractedJson);
+              
+              // If we got an array, it's probably valid actions, not game data
+              if (isArray) {
+                console.warn('Fallback extraction found an array, not game data. Looking for an object instead.');
+                // Continue searching for an object after this array
+                for (let i = jsonEnd; i < request.userPrompt.length; i++) {
+                  if (request.userPrompt[i] === '{') {
+                    jsonStart = i;
+                    // Count braces for the object
+                    count = 0;
+                    for (let j = jsonStart; j < request.userPrompt.length; j++) {
+                      if (request.userPrompt[j] === '{') count++;
+                      else if (request.userPrompt[j] === '}') {
+                        count--;
+                        if (count === 0) {
+                          jsonEnd = j + 1;
+                          const objJson = request.userPrompt.substring(jsonStart, jsonEnd);
+                          gameData = JSON.parse(objJson);
+                          break;
+                        }
+                      }
+                    }
+                    break;
+                  }
+                }
+              } else {
+                gameData = parsed;
+              }
+              
+              if (gameData) {
+                console.log('Fallback extraction successful, found game data');
+              }
+            } catch (e) {
+              console.error('Failed to parse fallback JSON. Parse error:', e);
+              console.error('JSON Start position:', jsonStart);
+              console.error('JSON End position:', jsonEnd);
+              console.error('Attempted to parse:', request.userPrompt.substring(jsonStart, Math.min(jsonEnd, jsonStart + 200)) + '...');
+              console.error('Parse error at position:', (e as any).message);
+              // Try to identify the exact character causing the issue
+              if (jsonStart !== -1 && jsonEnd !== -1) {
+                const problemJson = request.userPrompt.substring(jsonStart, jsonEnd);
+                console.error('Full extracted JSON:', problemJson);
+                console.error('Character at position 328:', problemJson.charAt(328), 'Code:', problemJson.charCodeAt(328));
+              }
+              throw new Error(`Could not extract game data from prompt. Failed to parse JSON at position ${(e as any).message?.match(/position (\d+)/)?.at(1) || 'unknown'}`);
+            }
+          } else {
+            console.error('Could not find complete JSON structure in prompt');
+            throw new Error('Incomplete JSON structure in prompt');
           }
         } else {
-          throw new Error('No JSON game data found in prompt');
+          console.error('No JSON structure found in prompt. Prompt structure:', {
+            length: request.userPrompt.length,
+            hasCurrentGameState: request.userPrompt.includes('Current game state:'),
+            hasValidActions: request.userPrompt.includes('Valid actions'),
+            first200Chars: request.userPrompt.substring(0, 200)
+          });
+          throw new Error('No JSON structure found in prompt');
         }
       }
       
       console.log('Extracted game data:', gameData);
       console.log('Extracted valid actions:', validActions);
       
-      // Generate a temporary bot ID
-      const botId = `game-bot-${Date.now()}`;
+      // Use player ID from game data for consistent bot ID
+      const playerId = gameData.currentPlayer?.id || gameData.player?.id || `player-${Date.now()}`;
+      const botId = playerId.startsWith('player-') ? playerId : `game-bot-${playerId}`;
       
       // Format model name for backend (e.g., "gpt-4o" -> "gpt-4o")
       const modelName = request.model;
@@ -585,10 +757,108 @@ export class GameAIService {
             analysis: decision.analysis
           }
         };
+      } else if (gameType === 'connect4') {
+        const { gameState, playerState } = this.transformConnect4DataForGraphQL(gameData);
+
+        // Create a unique key for deduplication
+        requestKey = `connect4-${botId}-${gameState.move_count}-${playerState.player_number}`;
+        
+        // Check if there's already an active request for this state
+        const activeRequest = this.activeRequests.get(requestKey);
+        if (activeRequest) {
+          console.log('Found active Connect4 request, reusing:', requestKey);
+          const result = await activeRequest;
+          return result;
+        }
+
+        console.log('Sending Connect4 GraphQL mutation with variables:', {
+          botId,
+          model: modelName,
+          gameStateKeys: Object.keys(gameState),
+          playerStateKeys: Object.keys(playerState),
+          requestKey
+        });
+
+        // Create the mutation promise and store it
+        const mutationPromise = this.apolloClient.mutate({
+          mutation: GET_AI_CONNECT4_DECISION,
+          variables: {
+            botId,
+            model: modelName,
+            gameState,
+            playerState
+          },
+          fetchPolicy: 'no-cache',
+          errorPolicy: 'all'
+        });
+
+        // Store the promise to prevent duplicate requests
+        this.activeRequests.set(requestKey, mutationPromise);
+
+        try {
+          const result = await mutationPromise;
+
+        console.log('Connect4 GraphQL mutation result:', {
+          hasData: !!result.data,
+          hasErrors: !!result.errors,
+          errors: result.errors,
+          dataKeys: result.data ? Object.keys(result.data) : []
+        });
+
+        if (!result.data || !result.data.getAIConnect4Decision) {
+          console.error('Invalid GraphQL response for connect4:', result);
+          // Clean up the active request on error
+          this.activeRequests.delete(requestKey);
+          throw new Error('No AI decision returned from GraphQL mutation');
+        }
+
+        const decision = result.data.getAIConnect4Decision;
+        
+        // Transform response to expected format
+        const responseObj = {
+          action: {
+            type: 'place',
+            column: decision.column,
+            playerId: gameData.currentPlayer?.id || '',
+            timestamp: new Date().toISOString()
+          },
+          reasoning: decision.reasoning,
+          confidence: decision.confidence,
+          analysis: decision.analysis
+        };
+
+        console.log('GraphQL Connect4 Decision:', {
+          action: decision.action,
+          column: decision.column,
+          model: request.model,
+          transformedAction: responseObj.action
+        });
+
+        // Clean up the active request on success
+        this.activeRequests.delete(requestKey);
+        
+        return {
+          content: JSON.stringify(responseObj),
+          model: request.model,
+          metadata: {
+            analysis: decision.analysis
+          }
+        };
+        } catch (innerError: any) {
+          // Clean up the active request on error
+          this.activeRequests.delete(requestKey);
+          throw innerError;
+        }
       }
 
       throw new Error(`Unsupported game type: ${gameType}`);
     } catch (error: any) {
+      // Clean up any active Connect4 requests on error
+      if (gameType === 'connect4' && this.activeRequests.has(requestKey)) {
+        console.log('Cleaning up failed Connect4 request:', requestKey);
+        this.activeRequests.delete(requestKey);
+      }
+      
       console.error('GraphQL request failed with full error:', {
         message: error.message,
         networkError: error.networkError,
@@ -605,6 +875,14 @@ export class GameAIService {
           result: error.networkError.result,
           fullError: error.networkError
         });
+        
+        // Check if it's a connection refused error (server down)
+        if (error.networkError.message?.includes('ERR_CONNECTION_REFUSED') || 
+            error.networkError.message?.includes('Failed to fetch') ||
+            error.networkError.message?.includes('NetworkError')) {
+          throw new Error('Backend server is not running. Please ensure the backend is started on port 4000.');
+        }
+        
         throw new Error(`GraphQL network error: ${error.networkError.message || error.networkError}`);
       }
       
@@ -787,6 +1065,125 @@ export class GameAIService {
     return { gameState, playerState };
   }
 
+  private transformConnect4DataForGraphQL(gameData: any): { gameState: any; playerState: any } {
+    console.log('Transforming Connect4 data:', {
+      hasBoard: !!gameData.board,
+      playerNumber: gameData.playerNumber,
+      validColumns: gameData.validColumns,
+      boardMetrics: gameData.boardMetrics
+    });
+    
+    // Transform the neutral game data format to match GraphQL schema
+    const boardStrings = gameData.board || [];
+    const playerNumber = gameData.playerNumber || 1;
+    const opponentNumber = playerNumber === 1 ? 2 : 1;
+    
+    // Convert board from array of strings to 2D array for processing
+    const board: number[][] = boardStrings.map((rowStr: string) => 
+      rowStr.split('').map((cell: string) => cell === '.' ? 0 : parseInt(cell))
+    );
+    
+    // Format board for GraphQL (convert to 2D array of strings)
+    const formattedBoard = board.map((row: number[]) => 
+      row.map((cell: number) => cell === 0 ? '.' : cell.toString())
+    );
+    
+    // Count pieces
+    let playerPieces = 0;
+    let opponentPieces = 0;
+    let topHalf = 0;
+    let bottomHalf = 0;
+    let leftSide = 0;
+    let center = 0;
+    let rightSide = 0;
+    
+    for (let row = 0; row < board.length; row++) {
+      for (let col = 0; col < board[row].length; col++) {
+        const piece = board[row][col];
+        if (piece === playerNumber) {
+          playerPieces++;
+          // Distribution tracking
+          if (row < 3) topHalf++;
+          else bottomHalf++;
+          
+          if (col < 2) leftSide++;
+          else if (col >= 2 && col <= 4) center++;
+          else rightSide++;
+        } else if (piece === opponentNumber) {
+          opponentPieces++;
+        }
+      }
+    }
+    
+    // Center column control
+    let centerYours = 0;
+    let centerOpponent = 0;
+    const centerCol = 3;
+    
+    for (let row = 0; row < board.length; row++) {
+      if (board[row] && board[row][centerCol] === playerNumber) {
+        centerYours++;
+      } else if (board[row] && board[row][centerCol] === opponentNumber) {
+        centerOpponent++;
+      }
+    }
+    
+    // Build gameState according to Connect4GameStateInput schema
+    const gameState = {
+      game_type: 'connect_four',
+      board: formattedBoard,
+      current_player_index: playerNumber - 1,
+      move_count: gameData.moveCount || 0,
+      game_phase: gameData.gamePhase || 'playing',
+      valid_columns: gameData.validColumns || [],
+      last_move: gameData.lastMove ? {
+        column: gameData.lastMove.column,
+        row: gameData.lastMove.row,
+        was_yours: gameData.lastMove.playerId === (gameData.currentPlayer?.id || `player-${playerNumber}`)
+      } : null
+    };
+    
+    // Build playerState according to Connect4PlayerStateInput schema
+    const playerState = {
+      player_id: gameData.currentPlayer?.id || `player-${playerNumber}`,
+      player_pieces: playerPieces,
+      opponent_pieces: opponentPieces,
+      board_metrics: {
+        center_column_control: {
+          yours: centerYours,
+          opponent: centerOpponent
+        },
+        piece_distribution: {
+          top_half: topHalf,
+          bottom_half: bottomHalf,
+          left_side: leftSide,
+          center: center,
+          right_side: rightSide
+        }
+      },
+      threat_analysis: {
+        immediate_win_opportunities: gameData.boardMetrics?.immediateWinOpportunities > 0 ? 
+          gameData.validColumns || [] : [],
+        must_block_positions: gameData.boardMetrics?.opponentWinThreats > 0 ? 
+          gameData.validColumns || [] : [],
+        total_threats_created: gameData.boardMetrics?.immediateWinOpportunities || 0,
+        total_threats_against: gameData.boardMetrics?.opponentWinThreats || 0
+      },
+      calculations: {
+        moves_remaining: 42 - (gameData.moveCount || 0),
+        board_fill_percentage: ((gameData.moveCount || 0) / 42) * 100,
+        column_availability: gameData.validColumns || []
+      }
+    };
+    
+    console.log('Transformed Connect4 data:', {
+      gameState,
+      playerState
+    });
+    
+    return { gameState, playerState };
+  }
+
   private getCacheKey(request: AIRequest): string {
     return `${request.model}:${request.systemPrompt}:${request.userPrompt}`;
   }
@@ -835,6 +1232,12 @@ export class GameAIService {
         // Copy the guess from AI response to the valid action template
         b.guess = a.guess;
       }
+      return true;
+    }
+    
+    // For connect4 actions
+    if (a.type === 'place') {
+      // Column validation happens in game engine
       return true;
     }
     

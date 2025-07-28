@@ -37,6 +37,7 @@ export abstract class BaseAIAgent<TState extends IGameState, TAction extends IGa
   }
 
   async makeDecision(state: TState, validActions: TAction[]): Promise<IGameDecision> {
+    console.log(`${this.constructor.name}.makeDecision called for player:`, this.id);
     if (validActions.length === 0) {
       throw new Error('No valid actions available');
     }

@@ -123,8 +123,37 @@ async function startServer() {
     }) as any
   );
 
-  app.get('/health', (_req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  app.get('/health', async (_req, res) => {
+    const memoryUsage = process.memoryUsage();
+    const uptime = process.uptime();
+    
+    // Check database connection
+    let dbStatus = 'ok';
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+    } catch (error) {
+      dbStatus = 'error';
+    }
+    
+    // Check Redis connection
+    let redisStatus = redis.status;
+    
+    res.json({ 
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      uptime: `${Math.floor(uptime / 60)}m ${Math.floor(uptime % 60)}s`,
+      memory: {
+        heapUsed: `${Math.round(memoryUsage.heapUsed / 1024 / 1024)}MB`,
+        heapTotal: `${Math.round(memoryUsage.heapTotal / 1024 / 1024)}MB`,
+        rss: `${Math.round(memoryUsage.rss / 1024 / 1024)}MB`
+      },
+      services: {
+        database: dbStatus,
+        redis: redisStatus,
+        graphql: 'ok'
+      },
+      version: process.version
+    });
   });
 
   // const customWsServer = setupWebSocketServer(parseInt(WS_PORT.toString()));
@@ -174,6 +203,43 @@ async function startServer() {
     process.exit(0);
   });
 }
+
+// Process-level error handlers
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('\n=== UNHANDLED REJECTION ===');
+  console.error('Reason:', reason);
+  console.error('Promise:', promise);
+  console.error('Stack:', reason instanceof Error ? reason.stack : 'No stack trace');
+  console.error('========================\n');
+  
+  // Don't exit immediately - give time to handle ongoing requests
+  setTimeout(() => {
+    console.error('Exiting due to unhandled rejection...');
+    process.exit(1);
+  }, 1000);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('\n=== UNCAUGHT EXCEPTION ===');
+  console.error('Error:', error.message);
+  console.error('Stack:', error.stack);
+  console.error('=========================\n');
+  
+  // Exit immediately for uncaught exceptions
+  process.exit(1);
+});
+
+// Memory usage monitoring
+setInterval(() => {
+  const usage = process.memoryUsage();
+  const heapUsed = Math.round(usage.heapUsed / 1024 / 1024);
+  const heapTotal = Math.round(usage.heapTotal / 1024 / 1024);
+  const rss = Math.round(usage.rss / 1024 / 1024);
+  
+  if (heapUsed > 500) { // Alert if heap usage exceeds 500MB
+    console.warn(`⚠️  High memory usage: Heap ${heapUsed}MB / ${heapTotal}MB, RSS: ${rss}MB`);
+  }
+}, 30000); // Check every 30 seconds
 
 startServer().catch((err) => {
   console.error('Error starting server:', err);

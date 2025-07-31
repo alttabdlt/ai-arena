@@ -2,6 +2,7 @@ import { gql } from 'graphql-tag';
 
 export const typeDefs = gql`
   scalar DateTime
+  scalar JSON
 
   type User {
     id: ID!
@@ -31,9 +32,12 @@ export const typeDefs = gql`
     creator: User!
     creatorId: String!
     isActive: Boolean!
+    isDemo: Boolean!
     stats: BotStats!
     socialStats: SocialStats!
     queuePosition: Int
+    queueEntries: [QueueEntry!]!
+    currentMatch: Match
     createdAt: DateTime!
     updatedAt: DateTime!
   }
@@ -72,6 +76,8 @@ export const typeDefs = gql`
     enteredAt: DateTime!
     expiresAt: DateTime!
     position: Int!
+    matchId: String
+    gameType: String
   }
   
   enum QueueType {
@@ -89,6 +95,7 @@ export const typeDefs = gql`
 
   type QueueStatusInfo {
     totalInQueue: Int!
+    totalMatched: Int
     averageWaitTime: Int!
     nextMatchTime: DateTime
     queueTypes: [QueueTypeInfo!]!
@@ -191,6 +198,9 @@ export const typeDefs = gql`
     userStats(address: String!): UserStats!
     queueStatus: QueueStatusInfo!
     
+    # Match queries
+    match(id: String!): Match
+    
     # Game Manager queries
     activeGames: [GameInstance!]!
     gameById(gameId: String!): GameInstance
@@ -205,6 +215,17 @@ export const typeDefs = gql`
     # Queue mutations
     enterQueue(botId: String!, queueType: QueueType!): QueueEntry!
     leaveQueue(botId: String!): Boolean!
+    signalFrontendReady(matchId: String!): Boolean!
+    startReverseHangmanRound(matchId: String!, difficulty: String!): Boolean!
+    
+    # Test mode mutations
+    setTestGameType(gameType: String): Boolean!
+    
+    # Debug logging control
+    startDebugLogging(gameType: String!, matchId: String): Boolean!
+    stopDebugLogging: Boolean!
+    sendDebugLog(log: DebugLogInput!): Boolean!
+    sendDebugLogBatch(logs: [DebugLogInput!]!): Boolean!
 
     # Tournament mutations
     enterTournament(tournamentId: String!, botId: String!): TournamentParticipant!
@@ -242,6 +263,26 @@ export const typeDefs = gql`
     gameStateUpdate(gameId: String!): GameUpdate!
     gameEvent(gameId: String!): GameEvent!
     allGameUpdates: GameUpdate!
+    # Debug log subscription
+    debugLog: DebugLog!
+  }
+  
+  type DebugLog {
+    timestamp: String!
+    level: String!
+    source: String!
+    message: String!
+    data: JSON
+    stack: String
+  }
+  
+  input DebugLogInput {
+    timestamp: String!
+    level: String!
+    source: String!
+    message: String!
+    data: JSON
+    stack: String
   }
 
   input DeployBotInput {
@@ -317,11 +358,24 @@ export const typeDefs = gql`
 
   type Match {
     id: ID!
+    type: String!
+    status: String!
     bots: [Bot!]!
+    participants: [MatchParticipant!]!
     winner: Bot
     prizePool: String!
+    tournament: Tournament
+    gameHistory: JSON
     createdAt: DateTime!
+    startedAt: DateTime
     completedAt: DateTime
+  }
+  
+  type MatchParticipant {
+    bot: Bot!
+    position: Int!
+    finalRank: Int
+    points: Int!
   }
 
   type Comment {

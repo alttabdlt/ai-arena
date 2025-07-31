@@ -10,12 +10,14 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Bot, Wallet, Brain, Zap, AlertCircle, Info, CheckCircle, Upload, CheckCircle2 } from 'lucide-react';
+import { Bot, Wallet, Brain, Zap, AlertCircle, Info, CheckCircle, Upload, CheckCircle2, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { DEPLOY_BOT } from '@/graphql/mutations/deployBot';
 import { useNavigate } from 'react-router-dom';
 import { WALLET_ADDRESSES, FEE_CONFIG } from '@/config/wallets';
+import { useHypeBalance } from '@/hooks/useHypeBalance';
+import { DeploymentStatus, DeploymentState } from '@/components/deploy/deployment-status';
 // Test components temporarily removed - to be reimplemented
 // import { AllTestsRunner } from '@/components/poker/AllTestsRunner';
 // import { Connect4TestRunner } from '@/components/connect4/Connect4TestRunner';
@@ -57,6 +59,7 @@ export default function Deploy() {
   const navigate = useNavigate();
   const { address, isConnected } = useAccount();
   const [deployBot] = useMutation(DEPLOY_BOT);
+  const { balance, formatted: formattedBalance, symbol, isLoading: balanceLoading } = useHypeBalance();
   const [formData, setFormData] = useState({
     name: '',
     avatar: '',
@@ -68,22 +71,40 @@ export default function Deploy() {
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>();
   const [testGameType, setTestGameType] = useState<string>('');
   const [allTestsPassed, setAllTestsPassed] = useState(false);
+  const [deploymentState, setDeploymentState] = useState<DeploymentState>('idle');
+  const [deploymentError, setDeploymentError] = useState<string>('');
   
   const { sendTransaction, data: hash, error: sendError, isPending: isWriting } = useSendTransaction();
-  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
+  const { 
+    isLoading: isConfirming, 
+    isSuccess: isConfirmed,
+    data: receipt 
+  } = useWaitForTransactionReceipt({
     hash: txHash,
+    confirmations: 3, // Wait for 3 confirmations as required by backend
   });
 
-  // Update txHash when writeContract succeeds
+  // Update txHash and deployment state when transaction is sent
   useEffect(() => {
     if (hash) {
       setTxHash(hash);
+      setDeploymentState('transaction-confirming');
     }
   }, [hash]);
+
+  // Handle transaction errors
+  useEffect(() => {
+    if (sendError) {
+      setDeploymentState('error');
+      setDeploymentError(sendError.message || 'Transaction failed');
+      setIsSubmitting(false);
+    }
+  }, [sendError]);
 
   // Handle transaction confirmation
   useEffect(() => {
     if (isConfirmed && txHash) {
+      setDeploymentState('deploying-bot');
       // Call deployBot mutation
       deployBot({
         variables: {
@@ -96,29 +117,46 @@ export default function Deploy() {
           },
         },
       }).then((result) => {
+        setDeploymentState('success');
         toast({
           title: "Bot Deployed Successfully!",
           description: "Your bot has been added to the matchmaking queue.",
         });
         
-        // Reset form
-        setFormData({
-          name: '',
-          avatar: '',
-          prompt: '',
-          modelType: ''
-        });
-        setPromptLength(0);
-        setIsSubmitting(false);
-        setTxHash(undefined);
-        
-        // Navigate to bots page
-        navigate('/bots');
+        // Reset form after a delay
+        setTimeout(() => {
+          setFormData({
+            name: '',
+            avatar: '',
+            prompt: '',
+            modelType: ''
+          });
+          setPromptLength(0);
+          setIsSubmitting(false);
+          setTxHash(undefined);
+          setDeploymentState('idle');
+          
+          // Navigate to bots page
+          navigate('/bots');
+        }, 2000);
       }).catch((error) => {
         console.error('Bot deployment error:', error);
+        setDeploymentState('error');
+        
+        // Check if it's a confirmation error
+        const isConfirmationError = error.message?.includes('Insufficient confirmations');
+        
+        setDeploymentError(
+          isConfirmationError 
+            ? "Transaction needs more confirmations. Please wait a moment and try again." 
+            : error.message || "Failed to deploy bot."
+        );
+        
         toast({
           title: "Bot Deployment Failed",
-          description: error.message || "Failed to deploy bot.",
+          description: isConfirmationError 
+            ? "Transaction needs more confirmations. Please wait and retry."
+            : error.message || "Failed to deploy bot.",
           variant: "destructive"
         });
         setIsSubmitting(false);
@@ -134,6 +172,60 @@ export default function Deploy() {
       if (allTestsPassed) {
         setAllTestsPassed(false);
       }
+    }
+  };
+
+  // Retry deployment with existing transaction hash
+  const retryDeployment = async () => {
+    if (!txHash) return;
+    
+    setDeploymentState('deploying-bot');
+    setDeploymentError('');
+    
+    try {
+      await deployBot({
+        variables: {
+          input: {
+            name: formData.name,
+            avatar: formData.avatar,
+            prompt: formData.prompt,
+            modelType: formData.modelType.toUpperCase().replace('-', '_'),
+            txHash: txHash,
+          },
+        },
+      });
+      
+      setDeploymentState('success');
+      toast({
+        title: "Bot Deployed Successfully!",
+        description: "Your bot has been added to the matchmaking queue.",
+      });
+      
+      // Reset form after a delay
+      setTimeout(() => {
+        setFormData({
+          name: '',
+          avatar: '',
+          prompt: '',
+          modelType: ''
+        });
+        setPromptLength(0);
+        setIsSubmitting(false);
+        setTxHash(undefined);
+        setDeploymentState('idle');
+        
+        // Navigate to bots page
+        navigate('/bots');
+      }, 2000);
+    } catch (error: any) {
+      console.error('Bot deployment retry error:', error);
+      setDeploymentState('error');
+      setDeploymentError(error.message || "Failed to deploy bot.");
+      toast({
+        title: "Retry Failed",
+        description: error.message || "Failed to deploy bot.",
+        variant: "destructive"
+      });
     }
   };
 
@@ -158,6 +250,17 @@ export default function Deploy() {
       return;
     }
 
+    // Check balance
+    const deploymentFee = parseEther(FEE_CONFIG.DEPLOYMENT_FEE);
+    if (balance && balance < deploymentFee) {
+      toast({
+        title: "Insufficient Balance",
+        description: `You need ${FEE_CONFIG.DEPLOYMENT_FEE} ${symbol} to deploy a bot. Your balance: ${formattedBalance} ${symbol}`,
+        variant: "destructive"
+      });
+      return;
+    }
+
     // Test requirement temporarily disabled
     // if (!allTestsPassed) {
     //   toast({
@@ -169,15 +272,20 @@ export default function Deploy() {
     // }
 
     setIsSubmitting(true);
+    setDeploymentState('wallet-signature');
+    setDeploymentError('');
     
     try {
       // Send deployment fee transaction to deployment wallet
       sendTransaction({
         to: WALLET_ADDRESSES.DEPLOYMENT_WALLET as `0x${string}`,
-        value: parseEther(FEE_CONFIG.DEPLOYMENT_FEE),
+        value: deploymentFee,
       });
+      setDeploymentState('transaction-pending');
     } catch (error) {
       console.error('Deployment error:', error);
+      setDeploymentState('error');
+      setDeploymentError('Failed to send deployment transaction');
       toast({
         title: "Deployment Failed",
         description: "Failed to send deployment transaction.",
@@ -202,6 +310,14 @@ export default function Deploy() {
           <Info className="h-4 w-4" />
           <AlertDescription>
             <strong>Deployment Fee:</strong> {FEE_CONFIG.DEPLOYMENT_FEE} HYPE per bot. Your bot will automatically enter the matchmaking queue and compete in tournaments. Winners earn HYPE prizes!
+            {isConnected && !balanceLoading && (
+              <div className="mt-2">
+                <strong>Your Balance:</strong> {formattedBalance} {symbol}
+                {balance && balance < parseEther(FEE_CONFIG.DEPLOYMENT_FEE) && (
+                  <Badge variant="destructive" className="ml-2">Insufficient Balance</Badge>
+                )}
+              </div>
+            )}
           </AlertDescription>
         </Alert>
 
@@ -459,14 +575,42 @@ export default function Deploy() {
                 <CardDescription>One-time fee to deploy your bot</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="flex items-center justify-between p-4 rounded-lg bg-muted">
-                  <div>
-                    <p className="font-semibold">Standard Deployment</p>
-                    <p className="text-sm text-muted-foreground">Bot enters queue immediately</p>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between p-4 rounded-lg bg-muted">
+                    <div>
+                      <p className="font-semibold">Standard Deployment</p>
+                      <p className="text-sm text-muted-foreground">Bot enters queue immediately</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-2xl font-bold">{FEE_CONFIG.DEPLOYMENT_FEE} HYPE</p>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="text-2xl font-bold">{FEE_CONFIG.DEPLOYMENT_FEE} HYPE</p>
-                  </div>
+                  
+                  {isConnected && (
+                    <div className="flex items-center justify-between p-3 rounded-lg border">
+                      <span className="text-sm font-medium">Your Balance</span>
+                      <div className="flex items-center gap-2">
+                        {balanceLoading ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <>
+                            <span className="font-mono">{formattedBalance} {symbol}</span>
+                            {balance && balance >= parseEther(FEE_CONFIG.DEPLOYMENT_FEE) ? (
+                              <Badge variant="outline" className="text-xs">
+                                <CheckCircle className="h-3 w-3 mr-1" />
+                                Sufficient
+                              </Badge>
+                            ) : (
+                              <Badge variant="destructive" className="text-xs">
+                                <AlertCircle className="h-3 w-3 mr-1" />
+                                Insufficient
+                              </Badge>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -502,6 +646,21 @@ export default function Deploy() {
                 )}
               </Button>
             </div>
+
+            {/* Deployment Status */}
+            <DeploymentStatus 
+              state={deploymentState}
+              txHash={txHash}
+              error={deploymentError}
+              confirmations={receipt?.confirmations || 0}
+              requiredConfirmations={3}
+              onClose={deploymentState === 'error' ? () => {
+                setDeploymentState('idle');
+                setDeploymentError('');
+                setIsSubmitting(false);
+              } : undefined}
+              onRetry={deploymentError?.includes('confirmations') && txHash ? retryDeployment : undefined}
+            />
           </div>
         </form>
       </div>

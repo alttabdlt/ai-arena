@@ -15,8 +15,8 @@ export class Connect4GameEngine extends BaseGameEngine<Connect4GameState, Connec
   protected createInitialState(players: IGamePlayer[]): Connect4GameState {
     console.log('Connect4GameEngine.createInitialState called with players:', players);
     
-    if (players.length !== 2) {
-      throw new Error('Connect4 requires exactly 2 players');
+    if (players.length !== 4) {
+      throw new Error('Connect4 requires exactly 4 players');
     }
 
     // Create empty board
@@ -36,7 +36,7 @@ export class Connect4GameEngine extends BaseGameEngine<Connect4GameState, Connec
       phase: 'playing',
       players: players.map((p, index) => ({
         ...p,
-        playerNumber: (index + 1) as 1 | 2,
+        playerNumber: (index + 1) as 1 | 2 | 3 | 4,
         wins: 0,
         totalMoves: 0,
         timeouts: 0,
@@ -209,7 +209,7 @@ export class Connect4GameEngine extends BaseGameEngine<Connect4GameState, Connec
     return -1; // Column is full
   }
 
-  private checkWin(row: number, col: number, playerNumber: 1 | 2): Array<[number, number]> {
+  private checkWin(row: number, col: number, playerNumber: 1 | 2 | 3 | 4): Array<[number, number]> {
     if (!this.state) return [];
 
     const directions = [
@@ -229,7 +229,7 @@ export class Connect4GameEngine extends BaseGameEngine<Connect4GameState, Connec
     return [];
   }
 
-  private getLine(row: number, col: number, dr: number, dc: number, playerNumber: 1 | 2): Array<[number, number]> {
+  private getLine(row: number, col: number, dr: number, dc: number, playerNumber: 1 | 2 | 3 | 4): Array<[number, number]> {
     if (!this.state) return [];
 
     const cells: Array<[number, number]> = [[row, col]];
@@ -260,11 +260,12 @@ export class Connect4GameEngine extends BaseGameEngine<Connect4GameState, Connec
     return this.state?.board ?? null;
   }
 
-  public checkForThreats(playerNumber: 1 | 2): Array<{ row: number; col: number; type: 'win' | 'block' }> {
+  public checkForThreats(playerNumber: 1 | 2 | 3 | 4): Array<{ row: number; col: number; type: 'win' | 'block' }> {
     if (!this.state || this.state.gamePhase !== 'playing') return [];
 
     const threats: Array<{ row: number; col: number; type: 'win' | 'block' }> = [];
-    const opponentNumber = playerNumber === 1 ? 2 : 1;
+    const allPlayerNumbers: Array<1 | 2 | 3 | 4> = [1, 2, 3, 4];
+    const opponentNumbers = allPlayerNumbers.filter(n => n !== playerNumber);
 
     // Check each column
     for (let col = 0; col < CONNECT4_COLS; col++) {
@@ -279,11 +280,14 @@ export class Connect4GameEngine extends BaseGameEngine<Connect4GameState, Connec
       }
       this.state.board[row][col] = 0; // Remove temporary piece
 
-      // Check if opponent can win
-      this.state.board[row][col] = opponentNumber;
-      const opponentWinCells = this.checkWin(row, col, opponentNumber);
-      if (opponentWinCells.length > 0) {
-        threats.push({ row, col, type: 'block' });
+      // Check if any opponent can win
+      for (const opponentNumber of opponentNumbers) {
+        this.state.board[row][col] = opponentNumber;
+        const opponentWinCells = this.checkWin(row, col, opponentNumber);
+        if (opponentWinCells.length > 0) {
+          threats.push({ row, col, type: 'block' });
+          break; // Only need to find one threat per position
+        }
       }
       this.state.board[row][col] = 0; // Remove temporary piece
     }
@@ -304,8 +308,8 @@ export class Connect4GameEngine extends BaseGameEngine<Connect4GameState, Connec
 
   protected getGameDefinition(): { minPlayers: number; maxPlayers: number } {
     return {
-      minPlayers: 2,
-      maxPlayers: 2
+      minPlayers: 4,
+      maxPlayers: 4
     };
   }
 }

@@ -12,11 +12,23 @@ export class PokerEngineAdapter implements GameEngineAdapter {
   processAction(gameState: any, action: any): any {
     // Apply poker action to game state
     const { currentTurn, players, currentBet } = gameState;
-    const player = players.find((p: any) => p.id === currentTurn);
+    const playerIndex = players.findIndex((p: any) => p.id === currentTurn);
     
-    if (!player) return gameState;
+    if (playerIndex === -1) return gameState;
     
-    const newState = { ...gameState };
+    // Deep clone the state to avoid mutations
+    const newState = {
+      ...gameState,
+      players: players.map((p: any) => ({ ...p })),
+      deck: gameState.deck ? [...gameState.deck] : [],
+      burnt: gameState.burnt ? [...gameState.burnt] : [],
+      communityCards: gameState.communityCards ? [...gameState.communityCards] : []
+    };
+    
+    const player = newState.players[playerIndex];
+    
+    // Mark that this player has acted
+    player.hasActed = true;
     
     switch (action.action) {
       case 'fold':
@@ -32,6 +44,7 @@ export class PokerEngineAdapter implements GameEngineAdapter {
         const callAmount = currentBet - (player.bet || 0);
         player.chips -= callAmount;
         player.bet = currentBet;
+        player.totalBet = (player.totalBet || 0) + callAmount;
         newState.pot += callAmount;
         break;
         
@@ -40,20 +53,45 @@ export class PokerEngineAdapter implements GameEngineAdapter {
         const raiseAmount = action.amount;
         player.chips -= raiseAmount;
         player.bet = (player.bet || 0) + raiseAmount;
+        player.totalBet = (player.totalBet || 0) + raiseAmount;
         newState.currentBet = player.bet;
         newState.pot += raiseAmount;
+        // When someone raises, all other players need to act again
+        newState.players.forEach((p: any, idx: number) => {
+          if (idx !== playerIndex && !p.folded) {
+            p.hasActed = false;
+          }
+        });
         break;
         
       case 'all-in':
         const allInAmount = player.chips;
         player.bet = (player.bet || 0) + allInAmount;
+        player.totalBet = (player.totalBet || 0) + allInAmount;
         player.chips = 0;
         player.isAllIn = true;
         newState.pot += allInAmount;
         if (player.bet > newState.currentBet) {
           newState.currentBet = player.bet;
+          // When someone raises via all-in, all other players need to act again
+          newState.players.forEach((p: any, idx: number) => {
+            if (idx !== playerIndex && !p.folded && !p.isAllIn) {
+              p.hasActed = false;
+            }
+          });
         }
         break;
+    }
+    
+    // Check if only one player remains active (everyone else folded)
+    const activePlayers = newState.players.filter((p: any) => !p.folded);
+    if (activePlayers.length === 1) {
+      // End the hand immediately
+      newState.phase = 'complete';
+      newState.winners = [{ playerId: activePlayers[0].id, amount: newState.pot }];
+      // Award pot to the last remaining player
+      activePlayers[0].chips += newState.pot;
+      return newState;
     }
     
     // Move to next player
@@ -63,7 +101,26 @@ export class PokerEngineAdapter implements GameEngineAdapter {
     if (this.isBettingRoundComplete(newState)) {
       newState.phase = this.getNextPhase(newState.phase);
       newState.currentBet = 0;
-      players.forEach((p: any) => p.bet = 0);
+      newState.players.forEach((p: any) => {
+        p.bet = 0;
+        p.hasActed = false; // Reset for new betting round
+      });
+      
+      // Deal community cards for next phase
+      if (newState.phase === 'flop' && newState.deck) {
+        // Burn one card and deal 3
+        newState.burnt = newState.burnt || [];
+        newState.burnt.push(newState.deck.pop());
+        newState.communityCards = [
+          newState.deck.pop(),
+          newState.deck.pop(),
+          newState.deck.pop()
+        ];
+      } else if ((newState.phase === 'turn' || newState.phase === 'river') && newState.deck) {
+        // Burn one card and deal 1
+        newState.burnt.push(newState.deck.pop());
+        newState.communityCards.push(newState.deck.pop());
+      }
     }
     
     return newState;
@@ -81,19 +138,19 @@ export class PokerEngineAdapter implements GameEngineAdapter {
     const toCall = currentBet - (player.bet || 0);
     
     if (toCall === 0) {
-      actions.push({ type: 'check', playerId, timestamp: new Date().toISOString() });
+      actions.push({ action: 'check', playerId, timestamp: new Date().toISOString() });
     } else if (player.chips > toCall) {
-      actions.push({ type: 'call', amount: toCall, playerId, timestamp: new Date().toISOString() });
+      actions.push({ action: 'call', amount: toCall, playerId, timestamp: new Date().toISOString() });
     }
     
-    actions.push({ type: 'fold', playerId, timestamp: new Date().toISOString() });
+    actions.push({ action: 'fold', playerId, timestamp: new Date().toISOString() });
     
     if (player.chips > toCall) {
-      actions.push({ type: 'raise', amount: toCall + 100, playerId, timestamp: new Date().toISOString() });
+      actions.push({ action: 'raise', amount: toCall + 100, playerId, timestamp: new Date().toISOString() });
     }
     
     if (player.chips > 0) {
-      actions.push({ type: 'all-in', amount: player.chips, playerId, timestamp: new Date().toISOString() });
+      actions.push({ action: 'all-in', amount: player.chips, playerId, timestamp: new Date().toISOString() });
     }
     
     return actions;
@@ -123,13 +180,14 @@ export class PokerEngineAdapter implements GameEngineAdapter {
   }
   
   private getNextPlayer(gameState: any): string {
-    const { players, currentTurn } = gameState;
+    const { players, currentTurn, currentBet } = gameState;
     const currentIndex = players.findIndex((p: any) => p.id === currentTurn);
     
     for (let i = 1; i < players.length; i++) {
       const nextIndex = (currentIndex + i) % players.length;
       const nextPlayer = players[nextIndex];
-      if (!nextPlayer.folded && nextPlayer.chips > 0) {
+      if (!nextPlayer.folded && !nextPlayer.isAllIn && 
+          (!nextPlayer.hasActed || nextPlayer.bet < currentBet)) {
         return nextPlayer.id;
       }
     }
@@ -139,10 +197,10 @@ export class PokerEngineAdapter implements GameEngineAdapter {
   
   private isBettingRoundComplete(gameState: any): boolean {
     const { players, currentBet } = gameState;
-    const activePlayers = players.filter((p: any) => !p.folded && p.chips > 0);
+    const activePlayers = players.filter((p: any) => !p.folded && !p.isAllIn);
     
-    // All active players have matched the current bet
-    return activePlayers.every((p: any) => p.bet === currentBet || p.isAllIn);
+    // All active players must have acted AND matched the current bet
+    return activePlayers.every((p: any) => p.hasActed && (p.bet === currentBet || p.chips === 0));
   }
   
   private getNextPhase(currentPhase: string): string {
@@ -249,6 +307,175 @@ export class ReverseHangmanEngineAdapter implements GameEngineAdapter {
   }
 }
 
+export class Connect4EngineAdapter implements GameEngineAdapter {
+  processAction(gameState: any, action: any): any {
+    // Deep clone the state
+    const newState = {
+      ...gameState,
+      players: gameState.players.map((p: any) => ({ ...p })),
+      board: gameState.board.map((row: any[]) => [...row])
+    };
+    
+    if (action.type === 'place' && action.column !== undefined) {
+      const row = this.getLowestEmptyRow(newState.board, action.column);
+      if (row === -1) {
+        throw new Error('Column is full');
+      }
+      
+      // Find player index from ID
+      const playerIndex = newState.players.findIndex((p: any) => p.id === action.playerId);
+      if (playerIndex === -1) {
+        throw new Error('Player not found');
+      }
+      
+      // Place piece (1 for player 1, 2 for player 2)
+      const playerNumber = playerIndex + 1;
+      newState.board[row][action.column] = playerNumber;
+      newState.moveCount = (newState.moveCount || 0) + 1;
+      
+      // Check for win
+      if (this.checkWin(newState.board, row, action.column, playerNumber)) {
+        newState.winner = action.playerId;
+        newState.phase = 'complete';
+        newState.gamePhase = 'won';
+      } else if (this.isBoardFull(newState.board)) {
+        newState.phase = 'draw';
+        newState.gamePhase = 'draw';
+      } else {
+        // Move to next player
+        const nextPlayerIndex = (playerIndex + 1) % newState.players.length;
+        newState.currentTurn = newState.players[nextPlayerIndex].id;
+        newState.currentPlayerIndex = nextPlayerIndex;
+      }
+    } else if (action.type === 'timeout') {
+      // Handle timeout - move to next player
+      const playerIndex = newState.players.findIndex((p: any) => p.id === action.playerId);
+      if (playerIndex !== -1) {
+        const nextPlayerIndex = (playerIndex + 1) % newState.players.length;
+        newState.currentTurn = newState.players[nextPlayerIndex].id;
+        newState.currentPlayerIndex = nextPlayerIndex;
+      }
+    }
+    
+    return newState;
+  }
+  
+  getValidActions(gameState: any, playerId: string): any[] {
+    if ((gameState.phase !== 'playing' && gameState.phase !== 'waiting' && gameState.gamePhase !== 'playing') ||
+        gameState.phase === 'complete' || gameState.phase === 'draw' ||
+        gameState.gamePhase === 'won' || gameState.gamePhase === 'draw') {
+      return [];
+    }
+    
+    // Check if it's this player's turn
+    const currentPlayerId = this.getCurrentTurn(gameState);
+    if (currentPlayerId !== playerId) {
+      return [];
+    }
+    
+    const actions = [];
+    for (let col = 0; col < gameState.board[0].length; col++) {
+      if (this.getLowestEmptyRow(gameState.board, col) !== -1) {
+        actions.push({
+          type: 'place',
+          column: col,
+          playerId,
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+    
+    // Always allow timeout
+    actions.push({
+      type: 'timeout',
+      playerId,
+      timestamp: new Date().toISOString()
+    });
+    
+    return actions;
+  }
+  
+  isGameComplete(gameState: any): boolean {
+    return gameState.phase === 'complete' || gameState.phase === 'draw' ||
+           gameState.gamePhase === 'won' || gameState.gamePhase === 'draw';
+  }
+  
+  getWinner(gameState: any): string | null {
+    return gameState.winner || null;
+  }
+  
+  getCurrentTurn(gameState: any): string | null {
+    if (gameState.phase === 'complete' || gameState.phase === 'draw' || 
+        gameState.gamePhase === 'won' || gameState.gamePhase === 'draw') {
+      return null;
+    }
+    // Return the currentTurn ID directly if it exists
+    if (gameState.currentTurn && typeof gameState.currentTurn === 'string') {
+      return gameState.currentTurn;
+    }
+    // Otherwise try to get from currentPlayerIndex
+    if (typeof gameState.currentPlayerIndex === 'number' && gameState.players) {
+      return gameState.players[gameState.currentPlayerIndex]?.id || null;
+    }
+    return null;
+  }
+  
+  private getLowestEmptyRow(board: any[][], column: number): number {
+    for (let row = board.length - 1; row >= 0; row--) {
+      if (board[row][column] === null || board[row][column] === 0) {
+        return row;
+      }
+    }
+    return -1;
+  }
+  
+  private isBoardFull(board: any[][]): boolean {
+    for (let col = 0; col < board[0].length; col++) {
+      if (this.getLowestEmptyRow(board, col) !== -1) {
+        return false;
+      }
+    }
+    return true;
+  }
+  
+  private checkWin(board: any[][], row: number, col: number, player: number): boolean {
+    // Check horizontal
+    if (this.checkLine(board, row, col, 0, 1, player)) return true;
+    // Check vertical
+    if (this.checkLine(board, row, col, 1, 0, player)) return true;
+    // Check diagonal (top-left to bottom-right)
+    if (this.checkLine(board, row, col, 1, 1, player)) return true;
+    // Check diagonal (top-right to bottom-left)
+    if (this.checkLine(board, row, col, 1, -1, player)) return true;
+    
+    return false;
+  }
+  
+  private checkLine(board: any[][], row: number, col: number, dRow: number, dCol: number, player: number): boolean {
+    let count = 1;
+    
+    // Check forward direction
+    let r = row + dRow;
+    let c = col + dCol;
+    while (r >= 0 && r < board.length && c >= 0 && c < board[0].length && board[r][c] === player) {
+      count++;
+      r += dRow;
+      c += dCol;
+    }
+    
+    // Check backward direction
+    r = row - dRow;
+    c = col - dCol;
+    while (r >= 0 && r < board.length && c >= 0 && c < board[0].length && board[r][c] === player) {
+      count++;
+      r -= dRow;
+      c -= dCol;
+    }
+    
+    return count >= 4;
+  }
+}
+
 export class GameEngineAdapterFactory {
   static create(gameType: string): GameEngineAdapter {
     switch (gameType) {
@@ -256,6 +483,8 @@ export class GameEngineAdapterFactory {
         return new PokerEngineAdapter();
       case 'reverse-hangman':
         return new ReverseHangmanEngineAdapter();
+      case 'connect4':
+        return new Connect4EngineAdapter();
       default:
         throw new Error(`Unknown game type: ${gameType}`);
     }

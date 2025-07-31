@@ -76,6 +76,31 @@ ${JSON.stringify(validActions, null, 2)}
 [Instructions here]`
 ```
 
+### 6. **Missing Null Checks in UI Components**
+**Problem**: Components crash when AI decision data is incomplete or undefined
+**Solution**: ALWAYS add null checks when accessing nested properties
+```typescript
+// ❌ WRONG - Will crash if decision is undefined
+{entry.decision.action.type.toUpperCase()}
+
+// ✅ CORRECT - Safe with null checks
+{entry.decision?.action?.type ? 
+  entry.decision.action.type.toUpperCase() : 
+  'UNKNOWN'}
+```
+
+### 7. **Game Type Detection Failures**
+**Problem**: Wrong game view loads when gameHistory is missing or malformed
+**Solution**: Implement robust game type detection with proper defaults
+```typescript
+// ❌ WRONG - Assumes gameHistory always exists
+const gameType = match.gameHistory.gameType;
+
+// ✅ CORRECT - Handles missing data gracefully
+const gameHistory = match.gameHistory || null;
+const gameType = gameHistory?.gameType || 'poker'; // Default to poker
+```
+
 ## ⚠️ CRITICAL AI INTEGRATION REQUIREMENTS
 
 Before implementing ANY game, understand these MANDATORY requirements:
@@ -123,6 +148,9 @@ The AIService uses regex with brace counting to extract game data. Your prompts 
 - ❌ Not creating game-specific AI agent
 - ❌ Missing GraphQL mutation in backend
 - ❌ Not testing with nested JSON objects
+- ❌ Missing null checks for AI decision data in UI components
+- ❌ Not handling missing gameHistory in match data
+- ❌ Assuming nested properties always exist (decision.action.type)
 
 ### 6. Mandatory Testing Before Completion
 - [ ] Test with complex nested JSON (3+ levels deep)
@@ -131,6 +159,9 @@ The AIService uses regex with brace counting to extract game data. Your prompts 
 - [ ] Verify logs show correct agent type (not UniversalAIAgent)
 - [ ] Confirm no "Failed to parse game state" errors
 - [ ] Check game completes full cycle with AI decisions
+- [ ] Test UI components handle undefined AI decision data gracefully
+- [ ] Verify game type detection works with missing gameHistory
+- [ ] Ensure correct game view loads based on gameType
 
 ## Part 1: Game Engine Implementation
 
@@ -1589,6 +1620,7 @@ Fix any TypeScript errors.
 11. **DO NOT** forget to update BOTH currentPlayerIndex AND currentTurn when switching turns
 12. **DO NOT** mix property names (e.g., col vs column, playerId vs playerNumber)
 13. **DO NOT** assume GraphQL data structure - verify against schema exactly
+14. **DO NOT** forget to add Apollo cache type policies for types without IDs
 
 ### Critical Lessons from Connect4 Debug:
 
@@ -1646,6 +1678,21 @@ private updateCurrentPlayerIndex(): void {
     this.state.currentPlayerIndex = playerIndex;
   }
 }
+```
+
+#### Apollo Client Cache Configuration
+If your game adds new GraphQL types without ID fields, configure Apollo cache:
+```typescript
+// In apollo-client.ts, add type policies for types without IDs:
+cache: new InMemoryCache({
+  typePolicies: {
+    YourGameStats: {
+      keyFields: false,  // No ID field
+      merge: true,       // Merge by reference
+    },
+    // ... other types
+  }
+})
 ```
 
 ## Final Checklist

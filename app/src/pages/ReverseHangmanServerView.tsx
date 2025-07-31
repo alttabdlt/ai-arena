@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useQuery } from '@apollo/client';
+import { GET_MATCH } from '@/graphql/queries/bot';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { toast } from 'sonner';
@@ -15,66 +17,84 @@ export default function ReverseHangmanServerView() {
   const navigate = useNavigate();
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [selectedDifficulty, setSelectedDifficulty] = useState<'easy' | 'medium' | 'hard' | 'expert'>('medium');
-  const [loadingError, setLoadingError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
 
+  // Use GraphQL to fetch match data
+  const { data: matchData, loading: matchLoading, error: matchError } = useQuery(GET_MATCH, {
+    variables: { id },
+    skip: !id,
+    onCompleted: (data) => {
+      console.log('✅ Reverse Hangman match loaded:', {
+        matchId: id,
+        hasMatch: !!data?.match,
+        matchStatus: data?.match?.status,
+        gameType: data?.match?.gameHistory?.gameType
+      });
+      
+      // Check game type and redirect if not reverse-hangman
+      const gameType = data?.match?.gameHistory?.gameType;
+      if (gameType && gameType !== 'reverse-hangman') {
+        console.log(`Wrong game type: ${gameType}, redirecting...`);
+        // Redirect to correct game view
+        if (gameType === 'poker') {
+          navigate(`/tournament/${id}`);
+        } else if (gameType === 'connect4') {
+          navigate(`/tournament/${id}/connect4`);
+        }
+      }
+    },
+    onError: (error) => {
+      console.error('❌ Reverse Hangman match query error:', error);
+    }
+  });
+
+  // Transform match data to tournament format
   useEffect(() => {
-    let timeoutId: NodeJS.Timeout;
-    
-    const loadTournament = async () => {
-      try {
-        // Set a timeout for loading
-        timeoutId = setTimeout(() => {
-          setLoadingError('Tournament loading timed out. The tournament data may be missing.');
-          setIsLoading(false);
-        }, 5000);
-
-        // Load tournament from sessionStorage
-        const tournamentData = sessionStorage.getItem(`tournament-${id}`);
-        
-        if (!tournamentData) {
-          setLoadingError('Tournament not found. It may have been removed or expired.');
-          clearTimeout(timeoutId);
-          setIsLoading(false);
-          return;
-        }
-
-        const loadedTournament = JSON.parse(tournamentData);
-        if (loadedTournament.gameType !== 'reverse-hangman') {
-          setLoadingError(`This tournament is for ${loadedTournament.gameType}, not reverse-hangman.`);
-          clearTimeout(timeoutId);
-          setIsLoading(false);
-          
-          // Redirect to correct game view after a short delay
-          setTimeout(() => {
-            if (loadedTournament.gameType === 'poker') {
-              navigate(`/tournament/${id}`);
-            } else {
-              navigate('/tournaments');
-            }
-          }, 2000);
-          return;
-        }
-
-        setTournament(loadedTournament);
-        clearTimeout(timeoutId);
-        setIsLoading(false);
-      } catch (error) {
-        console.error('Error loading tournament:', error);
-        setLoadingError('Failed to load tournament data.');
-        clearTimeout(timeoutId);
-        setIsLoading(false);
+    if (matchData?.match) {
+      const match = matchData.match;
+      const gameHistory = match.gameHistory || {};
+      const gameType = gameHistory.gameType || 'reverse-hangman';
+      
+      if (gameType !== 'reverse-hangman') {
+        return; // Will redirect in onCompleted
       }
-    };
-
-    loadTournament();
-
-    return () => {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    };
-  }, [id, navigate]);
+      
+      // Transform match data to tournament format
+      const tournamentData: Tournament = {
+        id: match.id,
+        name: match.tournament?.name || `Match ${match.id.slice(0, 8)}`,
+        status: match.status === 'SCHEDULED' ? 'waiting' : match.status === 'IN_PROGRESS' ? 'in-progress' : 'completed',
+        gameType: gameType,
+        config: {
+          maxRounds: 3,
+          timeLimit: 30,
+          difficulty: 'medium'
+        },
+        players: match.participants.map((participant: any) => ({
+          id: participant.bot.id,
+          name: participant.bot.name,
+          aiModel: participant.bot.modelType,
+          strategy: participant.bot.prompt,
+          status: 'playing',
+          isReady: true,
+          joinedAt: match.createdAt,
+          avatar: participant.bot.avatar,
+          seat: participant.position
+        })),
+        currentRound: 'Round 1',
+        viewers: Math.floor(Math.random() * 500) + 100,
+        maxPlayers: 4,
+        minPlayers: 4,
+        isPublic: true,
+        createdBy: 'system',
+        createdAt: match.createdAt,
+        startedAt: match.startedAt,
+        completedAt: match.completedAt,
+        tournamentType: 'SINGLE_ELIMINATION'
+      };
+      
+      setTournament(tournamentData);
+    }
+  }, [matchData, navigate]);
 
   // Use server-side game execution
   const {
@@ -91,7 +111,7 @@ export default function ReverseHangmanServerView() {
   } = useServerSideReverseHangman({ tournament });
   
   // Show loading state
-  if (isLoading && !loadingError) {
+  if (matchLoading) {
     return (
       <div className="min-h-screen bg-background">
         <div className="container mx-auto px-4 py-8">
@@ -116,7 +136,7 @@ export default function ReverseHangmanServerView() {
   }
 
   // Show error state
-  if (loadingError || (!tournament && !isLoading)) {
+  if (matchError || (!tournament && !matchLoading)) {
     return (
       <div className="min-h-screen bg-background">
         <div className="container mx-auto px-4 py-8">
@@ -130,10 +150,10 @@ export default function ReverseHangmanServerView() {
           <div className="flex items-center justify-center mt-20">
             <Card className="p-8 text-center max-w-md">
               <h2 className="text-xl font-semibold mb-4 text-destructive">
-                {loadingError || 'Tournament Not Found'}
+                {matchError ? 'Error Loading Tournament' : 'Tournament Not Found'}
               </h2>
               <p className="text-muted-foreground mb-6">
-                {loadingError ? 'Please try again or return to the tournaments page.' : 
+                {matchError ? matchError.message : 
                  'The tournament you are looking for does not exist or has been removed.'}
               </p>
               <Button onClick={() => navigate('/tournaments')}>
@@ -151,7 +171,7 @@ export default function ReverseHangmanServerView() {
   };
 
   // Show difficulty selection for first round
-  if (showDifficultySelect && !gameState?.phase) {
+  if (showDifficultySelect && (!gameState || gameState.phase === 'waiting')) {
     return (
       <div className="min-h-screen bg-background">
         <div className="container mx-auto px-4 py-8">
@@ -216,8 +236,8 @@ export default function ReverseHangmanServerView() {
     );
   }
 
-  // Show animation phase
-  if (animationPhase !== 'idle' && animationPhase !== 'complete') {
+  // Show animation phase only if we don't have game state ready
+  if ((animationPhase === 'generating' || (animationPhase === 'revealing' && !gameState))) {
     return (
       <div className="min-h-screen bg-background">
         <div className="container mx-auto px-4 py-8">

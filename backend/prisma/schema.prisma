@@ -48,6 +48,7 @@ model Bot {
   name            String
   avatar          String           // preset avatar identifier
   prompt          String           @db.VarChar(1000) // 1000 char strategy
+  isDemo          Boolean          @default(false) // System demo bots
   modelType       AIModel          // gpt-4o, claude-3-5-sonnet, etc.
   creatorId       String
   creator         User             @relation(fields: [creatorId], references: [id])

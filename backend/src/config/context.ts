@@ -10,13 +10,23 @@ export interface Context {
   pubsub: PubSub;
   req?: Request;
   connection?: any;
-  user?: AuthenticatedUser;
+  user?: AuthenticatedUser | null;
 }
 
 let pubsub: PubSub;
 
-export function initializeServices(_prisma: PrismaClient, _redis: Redis) {
-  pubsub = new PubSub();
+export function initializePubSub() {
+  if (!pubsub) {
+    pubsub = new PubSub();
+    // Ensure asyncIterator is available
+    if (typeof (pubsub as any).asyncIterator !== 'function') {
+      console.error('⚠️ PubSub asyncIterator not found, attempting to patch...');
+      // Patch asyncIterator if missing
+      (pubsub as any).asyncIterator = function(triggers: string | string[]) {
+        return this.asyncIterableIterator(triggers);
+      };
+    }
+  }
 }
 
 export async function createContext({ req, prisma, redis, connection, pubsub: externalPubsub }: {
@@ -26,15 +36,44 @@ export async function createContext({ req, prisma, redis, connection, pubsub: ex
   connection?: any;
   pubsub?: PubSub;
 }): Promise<Context> {
-  if (!pubsub) {
-    initializeServices(prisma, redis);
+  if (!pubsub && !externalPubsub) {
+    initializePubSub();
   }
   
   // Use external pubsub if provided, otherwise use the initialized one
   const pubsubInstance = externalPubsub || pubsub;
   
+  // Debug logging for WebSocket contexts
+  if (connection) {
+    console.log('🔌 Creating WebSocket context:', {
+      hasPubsub: !!pubsubInstance,
+      hasAsyncIterator: typeof (pubsubInstance as any)?.asyncIterator === 'function',
+      pubsubType: pubsubInstance?.constructor?.name,
+      connectionParams: connection.connectionParams
+    });
+  }
+  
   // Extract user from JWT if present
-  const user = await extractUserFromRequest(req, prisma, redis);
+  let user = null;
+  
+  // For WebSocket connections, extract auth from connection params
+  if (connection?.connectionParams?.authorization) {
+    const authHeader = connection.connectionParams.authorization;
+    console.log('🔑 WebSocket auth header found:', authHeader.substring(0, 20) + '...');
+    
+    // Create a fake request object with the auth header for extractUserFromRequest
+    const fakeReq = {
+      headers: {
+        authorization: authHeader
+      }
+    } as any;
+    
+    user = await extractUserFromRequest(fakeReq, prisma, redis);
+    console.log('👤 WebSocket user extracted:', user ? user.address : 'none');
+  } else if (req) {
+    // For HTTP requests, extract from request headers
+    user = await extractUserFromRequest(req, prisma, redis);
+  }
   
   return {
     prisma,
@@ -42,6 +81,6 @@ export async function createContext({ req, prisma, redis, connection, pubsub: ex
     pubsub: pubsubInstance,
     req,
     connection,
-    user: user || undefined,
+    user,
   };
 }

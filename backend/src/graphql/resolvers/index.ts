@@ -1,5 +1,6 @@
 import { Context } from '../../config/context';
 import { DateTimeResolver } from 'graphql-scalars';
+import GraphQLJSON from 'graphql-type-json';
 import { aiService } from '../../services/aiService';
 import { TransactionService } from '../../services/transactionService';
 import { AuthService } from '../../services/authService';
@@ -8,6 +9,8 @@ import { isHexString } from 'ethers';
 import { Prisma, QueueType } from '@prisma/client';
 import { PubSub } from 'graphql-subscriptions';
 import { gameManagerResolvers } from './gameManager';
+import { getQueueService } from '../../services';
+import { getGameManagerService } from '../../services/gameManagerService';
 
 interface PubSubAsyncIterator<T> extends AsyncIterator<T> {
   return(): Promise<IteratorResult<T>>;
@@ -23,6 +26,7 @@ const DEPLOYMENT_FEE = '0.01'; // 0.01 HYPE
 
 export const resolvers = {
   DateTime: DateTimeResolver,
+  JSON: GraphQLJSON,
 
   Query: {
     user: async (_: any, { address }: { address: string }, ctx: Context) => {
@@ -43,7 +47,6 @@ export const resolvers = {
           creator: true,
           queueEntries: {
             where: { status: 'WAITING' },
-            take: 1,
           },
         },
       });
@@ -57,7 +60,18 @@ export const resolvers = {
       if (filter) {
         if (filter.modelType) where.modelType = filter.modelType;
         if (filter.isActive !== undefined) where.isActive = filter.isActive;
-        if (filter.creatorAddress) where.creatorId = filter.creatorAddress;
+        if (filter.creatorAddress) {
+          // Need to find user by address first
+          const user = await ctx.prisma.user.findUnique({
+            where: { address: filter.creatorAddress.toLowerCase() }
+          });
+          if (user) {
+            where.creatorId = user.id;
+          } else {
+            // If user not found, return empty array
+            return [];
+          }
+        }
       }
       
       return ctx.prisma.bot.findMany({
@@ -212,24 +226,102 @@ export const resolvers = {
     },
 
     queueStatus: async (_: any, __: any, ctx: Context) => {
-      const entries = await ctx.prisma.queueEntry.groupBy({
-        by: ['queueType'],
-        where: { status: 'WAITING' },
-        _count: true,
-      });
+      // Get both WAITING and MATCHED entries
+      const [waitingEntries, matchedEntries] = await Promise.all([
+        ctx.prisma.queueEntry.groupBy({
+          by: ['queueType'],
+          where: { status: 'WAITING' },
+          _count: true,
+        }),
+        ctx.prisma.queueEntry.groupBy({
+          by: ['queueType'],
+          where: { status: 'MATCHED' },
+          _count: true,
+        })
+      ]);
 
-      const totalInQueue = entries.reduce((sum, entry) => sum + entry._count, 0);
+      // Count WAITING entries (these are actually in queue)
+      const totalWaiting = waitingEntries.reduce((sum, entry) => sum + entry._count, 0);
+      
+      // Count MATCHED entries (these are in active matches)
+      const totalMatched = matchedEntries.reduce((sum, entry) => sum + entry._count, 0);
+      
+      // For the queue display, we want to show WAITING players
+      // but we can add matched count for debugging
+      console.log(`Queue status: ${totalWaiting} waiting, ${totalMatched} matched`);
+      
+      // Get next match time from queue service
+      const nextMatchTime = getQueueService().getNextMatchTime();
       
       return {
-        totalInQueue,
+        totalInQueue: totalWaiting, // Only count waiting players as "in queue"
+        totalMatched, // Add this for debugging
         averageWaitTime: 120, // TODO: Calculate from historical data
-        nextMatchTime: new Date(Date.now() + 60000), // TODO: Calculate from queue
-        queueTypes: entries.map(entry => ({
+        nextMatchTime,
+        queueTypes: waitingEntries.map(entry => ({
           type: entry.queueType,
           count: entry._count,
           estimatedWaitTime: 120, // TODO: Calculate per queue type
         })),
       };
+    },
+    
+    match: async (_: any, { id }: { id: string }, ctx: Context) => {
+      console.log(`\n=== Match Query ===`);
+      console.log(`Match ID requested: ${id}`);
+      console.log(`User authenticated: ${!!ctx.user}`);
+      console.log(`User ID: ${ctx.user?.id || 'N/A'}`);
+      
+      try {
+        const match = await ctx.prisma.match.findUnique({
+          where: { id },
+          include: {
+            participants: {
+              include: {
+                bot: {
+                  include: {
+                    creator: true,
+                  },
+                },
+              },
+            },
+            tournament: true,
+          },
+        });
+        
+        console.log(`Match found: ${!!match}`);
+        if (match) {
+          console.log(`Match status: ${match.status}`);
+          console.log(`Participants: ${match.participants?.length || 0}`);
+          console.log(`Tournament ID: ${match.tournamentId || 'N/A'}`);
+          console.log(`Has tournament loaded: ${!!match.tournament}`);
+        }
+        
+        if (!match) {
+          console.error(`❌ Match not found in database: ${id}`);
+          throw new Error(`Match not found: ${id}`);
+        }
+        
+        // Ensure tournament is loaded
+        if (!match.tournament && match.tournamentId) {
+          console.log(`Loading tournament separately: ${match.tournamentId}`);
+          match.tournament = await ctx.prisma.tournament.findUnique({
+            where: { id: match.tournamentId },
+          });
+          console.log(`Tournament loaded: ${!!match.tournament}`);
+        }
+        
+        console.log(`✅ Match query successful`);
+        return match;
+      } catch (error: any) {
+        console.error(`❌ Match query error:`, {
+          matchId: id,
+          error: error.message,
+          stack: error.stack,
+          user: ctx.user?.address
+        });
+        throw error;
+      }
     },
     
     getModelEvaluations: async (_: any, __: any, _ctx: Context) => {
@@ -378,6 +470,8 @@ export const resolvers = {
         throw new Error('Bot is not active');
       }
       
+      console.log(`User ${ctx.user.address} entering queue with bot ${bot.name} (${botId}), isDemo: ${bot.isDemo}`);
+      
       // Check if already in queue
       const existingEntry = await ctx.prisma.queueEntry.findFirst({
         where: {
@@ -424,6 +518,11 @@ export const resolvers = {
         throw new Error('Not authorized');
       }
       
+      // Prevent demo bots from being removed from queue
+      if (bot.isDemo) {
+        throw new Error('Demo bots cannot be removed from queue');
+      }
+      
       const result = await ctx.prisma.queueEntry.updateMany({
         where: {
           botId,
@@ -435,6 +534,195 @@ export const resolvers = {
       });
       
       return result.count > 0;
+    },
+    
+    signalFrontendReady: async (_: any, { matchId }: { matchId: string }, ctx: Context) => {
+      if (!ctx.user) {
+        throw new Error('Not authenticated');
+      }
+      
+      const gameManagerService = getGameManagerService();
+      return gameManagerService.signalFrontendReady(matchId);
+    },
+    
+    startReverseHangmanRound: async (_: any, { matchId, difficulty }: { matchId: string; difficulty: string }, ctx: Context) => {
+      if (!ctx.user) {
+        throw new Error('Not authenticated');
+      }
+      
+      const gameManagerService = getGameManagerService();
+      return gameManagerService.startReverseHangmanRound(matchId, difficulty);
+    },
+    
+    setTestGameType: async (_: any, { gameType }: { gameType: string | null }) => {
+      // Only allow in development mode
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('Test mode is not available in production');
+      }
+      
+      const queueService = getQueueService();
+      queueService.setTestGameTypeOverride(gameType);
+      
+      return true;
+    },
+    
+    startDebugLogging: async (_: any, { gameType, matchId }: { gameType: string; matchId?: string }) => {
+      const { fileLoggerService } = await import('../../services/fileLoggerService');
+      fileLoggerService.startGameLogging(gameType, matchId);
+      return true;
+    },
+    
+    stopDebugLogging: async () => {
+      const { fileLoggerService } = await import('../../services/fileLoggerService');
+      await fileLoggerService.stopGameLogging();
+      return true;
+    },
+    
+    sendDebugLog: async (_: any, { log }: { log: any }) => {
+      // Filter out any logs that mention SendDebugLog to prevent flooding
+      const message = (log.message || '').toLowerCase();
+      const dataStr = JSON.stringify(log.data || {}).toLowerCase();
+      
+      if (message.includes('senddebuglog') || 
+          message.includes('send_debug_log') ||
+          message.includes('debuglog') ||
+          dataStr.includes('senddebuglog') ||
+          dataStr.includes('send_debug_log')) {
+        return true; // Silently skip logging but return success
+      }
+      
+      const { fileLoggerService } = await import('../../services/fileLoggerService');
+      
+      // Save to the appropriate game folder
+      if (log.source === 'frontend') {
+        // Extract game type from the log data
+        const gameType = log.data?.gameType || 'poker'; // Default to poker if not specified
+        
+        // Write to console.log file in the game folder
+        const fs = await import('fs');
+        const path = await import('path');
+        // From compiled location: dist/graphql/resolvers/index.js
+        // Need to go up: dist/graphql/resolvers -> dist/graphql -> dist -> backend -> project root
+        const logDir = path.join(__dirname, '..', '..', '..', '..', 'debug-logs', gameType);
+        const consoleLogFile = path.join(logDir, 'console.log');
+        
+        // Ensure directory exists
+        await fs.promises.mkdir(logDir, { recursive: true });
+        
+        // Format log entry
+        let logEntry = `[${log.timestamp}] [${log.level.toUpperCase()}] ${log.message}`;
+        
+        // Add data if present
+        if (log.data && Object.keys(log.data).length > 1) { // More than just gameType
+          const dataWithoutGameType = { ...log.data };
+          delete dataWithoutGameType.gameType;
+          if (Object.keys(dataWithoutGameType).length > 0) {
+            logEntry += `\nData: ${JSON.stringify(dataWithoutGameType, null, 2)}`;
+          }
+        }
+        
+        // Add stack trace if present
+        if (log.stack) {
+          logEntry += `\nStack: ${log.stack}`;
+        }
+        
+        logEntry += '\n\n';
+        
+        // Write to file (overwrite mode for first log, append for subsequent)
+        const isFirstLog = log.message.includes('Started capturing logs');
+        await fs.promises.writeFile(
+          consoleLogFile,
+          logEntry,
+          { flag: isFirstLog ? 'w' : 'a' }
+        );
+      } else {
+        // Backend logs go through fileLoggerService
+        fileLoggerService.addLog(log);
+      }
+      
+      return true;
+    },
+    
+    sendDebugLogBatch: async (_: any, { logs }: { logs: any[] }) => {
+      const { fileLoggerService } = await import('../../services/fileLoggerService');
+      const fs = await import('fs');
+      const path = await import('path');
+      
+      // Filter out any logs that mention SendDebugLog to prevent flooding
+      const filteredLogs = logs.filter(log => {
+        const message = (log.message || '').toLowerCase();
+        const dataStr = JSON.stringify(log.data || {}).toLowerCase();
+        
+        // Skip logs that mention SendDebugLog operations
+        if (message.includes('senddebuglog') || 
+            message.includes('send_debug_log') ||
+            message.includes('debuglog') ||
+            dataStr.includes('senddebuglog') ||
+            dataStr.includes('send_debug_log')) {
+          return false;
+        }
+        
+        return true;
+      });
+      
+      // Group logs by game type
+      const logsByGameType = new Map<string, any[]>();
+      
+      for (const log of filteredLogs) {
+        if (log.source === 'frontend') {
+          const gameType = log.data?.gameType || 'poker';
+          if (!logsByGameType.has(gameType)) {
+            logsByGameType.set(gameType, []);
+          }
+          logsByGameType.get(gameType)!.push(log);
+        } else {
+          // Backend logs go through fileLoggerService
+          fileLoggerService.addLog(log);
+        }
+      }
+      
+      // Write frontend logs to their respective console.log files
+      for (const [gameType, gameLogs] of logsByGameType) {
+        const logDir = path.join(__dirname, '..', '..', '..', '..', 'debug-logs', gameType);
+        const consoleLogFile = path.join(logDir, 'console.log');
+        
+        // Ensure directory exists
+        await fs.promises.mkdir(logDir, { recursive: true });
+        
+        // Build log content
+        let logContent = '';
+        for (const log of gameLogs) {
+          let logEntry = `[${log.timestamp}] [${log.level.toUpperCase()}] ${log.message}`;
+          
+          // Add data if present
+          if (log.data && Object.keys(log.data).length > 1) {
+            const dataWithoutGameType = { ...log.data };
+            delete dataWithoutGameType.gameType;
+            if (Object.keys(dataWithoutGameType).length > 0) {
+              logEntry += `\nData: ${JSON.stringify(dataWithoutGameType, null, 2)}`;
+            }
+          }
+          
+          // Add stack trace if present
+          if (log.stack) {
+            logEntry += `\nStack: ${log.stack}`;
+          }
+          
+          logContent += logEntry + '\n\n';
+        }
+        
+        // Write to file (overwrite if first log, append otherwise)
+        const hasStartMessage = filteredLogs.some(log => 
+          log.message && log.message.includes('Started capturing logs')
+        );
+        await fs.promises.writeFile(
+          consoleLogFile,
+          logContent,
+          { flag: hasStartMessage ? 'w' : 'a' }
+        );
+      }
+      
+      return true;
     },
 
     getAIPokerDecision: async (
@@ -760,8 +1048,17 @@ export const resolvers = {
       const nonce = authService.generateNonce();
       const message = authService.generateSignMessage(nonce);
       
-      // Store nonce temporarily in Redis
-      await ctx.redis.setex(`nonce:${address.toLowerCase()}`, 300, nonce); // 5 minutes expiry
+      const normalizedAddress = address.toLowerCase();
+      const nonceKey = `nonces:${normalizedAddress}`;
+      
+      // Store nonce in a list to handle multiple requests
+      await ctx.redis.multi()
+        .rpush(nonceKey, nonce)
+        .expire(nonceKey, 300) // 5 minutes expiry for the entire list
+        .exec();
+      
+      // Keep only the last 5 nonces to prevent memory issues
+      await ctx.redis.ltrim(nonceKey, -5, -1);
       
       return { nonce, message };
     },
@@ -770,11 +1067,19 @@ export const resolvers = {
       const { address, signature, nonce } = input;
       const authService = new AuthService(ctx.prisma, ctx.redis);
       
-      // Verify nonce
-      const storedNonce = await ctx.redis.get(`nonce:${address.toLowerCase()}`);
-      if (!storedNonce || storedNonce !== nonce) {
+      const normalizedAddress = address.toLowerCase();
+      const nonceKey = `nonces:${normalizedAddress}`;
+      
+      // Get all valid nonces for this address
+      const validNonces = await ctx.redis.lrange(nonceKey, 0, -1);
+      
+      // Check if the provided nonce is in the list
+      if (!validNonces || !validNonces.includes(nonce)) {
         throw new Error('Invalid or expired nonce');
       }
+      
+      // Remove the used nonce from the list
+      await ctx.redis.lrem(nonceKey, 1, nonce);
       
       // Verify signature
       const message = authService.generateSignMessage(nonce);
@@ -846,6 +1151,20 @@ export const resolvers = {
 
     queueUpdate: {
       subscribe: (_: any, __: any, ctx: Context) => {
+        console.log('🔔 Queue update subscription requested:', {
+          hasPubsub: !!ctx.pubsub,
+          hasAsyncIterator: typeof (ctx.pubsub as any)?.asyncIterator === 'function',
+          pubsubType: ctx.pubsub?.constructor?.name
+        });
+        
+        if (!ctx.pubsub) {
+          throw new Error('PubSub not initialized in context');
+        }
+        
+        if (typeof (ctx.pubsub as any).asyncIterator !== 'function') {
+          throw new Error('PubSub does not have asyncIterator method');
+        }
+        
         return (ctx.pubsub as TypedPubSub).asyncIterator(['QUEUE_UPDATE']);
       },
     },
@@ -897,6 +1216,79 @@ export const resolvers = {
       });
       
       return position + 1;
+    },
+    currentMatch: async (bot: any, _: any, ctx: Context) => {
+      // Find active match where this bot is participating
+      // Order by createdAt DESC to get the newest match first
+      console.log(`Finding current match for bot ${bot.id} (${bot.name})`);
+      
+      const matches = await ctx.prisma.match.findMany({
+        where: {
+          status: {
+            in: ['SCHEDULED', 'IN_PROGRESS'],
+          },
+          participants: {
+            some: {
+              botId: bot.id,
+            },
+          },
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+        include: {
+          participants: {
+            include: {
+              bot: true,
+            },
+          },
+        },
+      });
+      
+      console.log(`Found ${matches.length} active matches for bot ${bot.name}:`);
+      matches.forEach((match, index) => {
+        console.log(`  ${index + 1}. Match ${match.id} - Status: ${match.status}, Created: ${match.createdAt}`);
+      });
+      
+      // Return the most recent match
+      const currentMatch = matches[0] || null;
+      if (currentMatch) {
+        console.log(`Returning match ${currentMatch.id} as current match for bot ${bot.name}`);
+      } else {
+        console.log(`No current match found for bot ${bot.name}`);
+      }
+      
+      return currentMatch;
+    },
+    queueEntries: async (bot: any, _: any, ctx: Context) => {
+      // Return queue entries for this bot
+      return ctx.prisma.queueEntry.findMany({
+        where: {
+          botId: bot.id,
+        },
+        include: {
+          bot: true,
+        },
+      });
+    },
+  },
+  
+  Match: {
+    participants: async (match: any, _: any, ctx: Context) => {
+      if (match.participants) return match.participants;
+      
+      return ctx.prisma.matchParticipant.findMany({
+        where: { matchId: match.id },
+        include: { bot: true },
+      });
+    },
+    type: (match: any) => {
+      // Convert from database enum if needed
+      return match.type || 'TOURNAMENT';
+    },
+    status: (match: any) => {
+      // Convert from database enum if needed
+      return match.status || 'SCHEDULED';
     },
   },
 };

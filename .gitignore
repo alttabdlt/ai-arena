@@ -39,6 +39,9 @@ lerna-debug.log*
 logs/
 *.log
 
+# Debug logs
+debug-logs/
+
 # Runtime data
 pids/
 *.pid

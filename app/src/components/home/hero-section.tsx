@@ -2,17 +2,17 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Play, TrendingUp, Zap } from 'lucide-react';
 import heroBg from '@/assets/hero-bg.png';
-import { useEffect, useState } from 'react';
-import { mockApi, type LiveStats } from '@/lib/mock-data';
 import { Link } from 'react-router-dom';
+import { useQuery } from '@apollo/client';
+import { GET_PLATFORM_STATS } from '@/graphql/queries/user';
 // import { QuickLaunch } from '@/components/launch/QuickLaunch';
 
 export function HeroSection() {
-  const [liveStats, setLiveStats] = useState<LiveStats | null>(null);
+  const { data } = useQuery(GET_PLATFORM_STATS, {
+    pollInterval: 60000 // Poll every minute
+  });
 
-  useEffect(() => {
-    mockApi.getLiveStats().then(setLiveStats);
-  }, []);
+  const platformStats = data?.platformStats;
 
   return (
     <section className="relative min-h-[80vh] flex items-center justify-center overflow-hidden">
@@ -43,23 +43,23 @@ export function HeroSection() {
         </p>
 
         {/* Live Stats */}
-        {liveStats && (
+        {platformStats && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8 max-w-3xl mx-auto">
             <div className="card-gaming p-4 text-center">
-              <div className="text-2xl font-bold text-primary">{liveStats.totalMatches.toLocaleString()}</div>
+              <div className="text-2xl font-bold text-primary">{platformStats.totalMatches.toLocaleString()}</div>
               <div className="text-sm text-muted-foreground">Total Battles</div>
             </div>
             <div className="card-gaming p-4 text-center">
-              <div className="text-2xl font-bold text-success">{liveStats.activeBots}</div>
+              <div className="text-2xl font-bold text-success">{platformStats.activeBots}</div>
               <div className="text-sm text-muted-foreground">Active Bots</div>
             </div>
             <div className="card-gaming p-4 text-center">
-              <div className="text-2xl font-bold text-accent">{Math.floor(liveStats.totalMatches * 0.52)}</div>
-              <div className="text-sm text-muted-foreground">Battles Won</div>
+              <div className="text-2xl font-bold text-accent">{platformStats.totalBots}</div>
+              <div className="text-sm text-muted-foreground">Total Bots</div>
             </div>
             <div className="card-gaming p-4 text-center">
-              <div className="text-2xl font-bold text-warning">{liveStats.liveViewers.toLocaleString()}</div>
-              <div className="text-sm text-muted-foreground">Live Viewers</div>
+              <div className="text-2xl font-bold text-warning">{platformStats.queuedBots}</div>
+              <div className="text-sm text-muted-foreground">In Queue</div>
             </div>
           </div>
         )}

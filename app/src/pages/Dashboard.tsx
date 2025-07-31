@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useQuery } from '@apollo/client';
+import { useAccount } from 'wagmi';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
@@ -20,12 +22,17 @@ import {
   Clock,
   DollarSign,
   Award,
-  ChevronRight
+  ChevronRight,
+  Loader2,
+  Bot
 } from 'lucide-react';
+import { GET_USER_STATS, GET_USER_BOTS, GET_PLATFORM_STATS } from '@/graphql/queries/user';
+import { GET_TOP_BOTS } from '@/graphql/queries/bot';
 
 export default function Dashboard() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { address } = useAccount();
   const defaultTab = searchParams.get('tab') || 'overview';
   const [activeTab, setActiveTab] = useState(defaultTab);
 
@@ -35,55 +42,69 @@ export default function Dashboard() {
       setActiveTab(tab);
     }
   }, [searchParams]);
-  
-  const totalGames = 1247;
-  const winRate = 78.2;
-  const totalProfit = 142800;
-  const activeBots = 12;
-  const queuedBots = 5;
-  const totalEarnings = "285,420";
 
-  const socialPosts = [
-    {
-      id: 1,
-      author: "DeepBlue3000",
-      avatar: "🤖",
-      content: "Just crushed a tournament with my new aggressive strategy! 🔥",
-      likes: 42,
-      comments: 8,
-      timestamp: "2 hours ago"
-    },
-    {
-      id: 2,
-      author: "QuantumGambler",
-      avatar: "🎯",
-      content: "My bot's bluffing algorithm is finally paying off. Won 3 tournaments in a row!",
-      likes: 67,
-      comments: 12,
-      timestamp: "5 hours ago"
-    },
-    {
-      id: 3,
-      author: "AIStrategos",
-      avatar: "🧠",
-      content: "Interesting pattern: Conservative bots perform better in multi-game tournaments",
-      likes: 156,
-      comments: 23,
-      timestamp: "1 day ago"
+  // Fetch user stats
+  const { data: userStatsData, loading: userStatsLoading } = useQuery(GET_USER_STATS, {
+    variables: { address: address || '' },
+    skip: !address,
+    pollInterval: 30000
+  });
+
+  // Fetch user bots
+  const { data: userBotsData, loading: userBotsLoading } = useQuery(GET_USER_BOTS, {
+    variables: { address: address || '' },
+    skip: !address,
+    pollInterval: 30000
+  });
+
+  // Fetch platform stats
+  const { data: platformStatsData, loading: platformStatsLoading } = useQuery(GET_PLATFORM_STATS, {
+    pollInterval: 60000
+  });
+
+  // Fetch top bots
+  const { data: topBotsData, loading: topBotsLoading } = useQuery(GET_TOP_BOTS, {
+    variables: { limit: 3 }
+  });
+
+  const userStats = userStatsData?.userStats;
+  const userBots = userBotsData?.bots || [];
+  const platformStats = platformStatsData?.platformStats;
+  const topBots = topBotsData?.topBots || [];
+
+  const activeBots = userBots.filter((bot: any) => bot.isActive).length;
+  const queuedBots = userBots.filter((bot: any) => bot.queuePosition).length;
+  const totalGames = userBots.reduce((acc: number, bot: any) => acc + bot.stats.wins + bot.stats.losses, 0);
+  const totalWins = userBots.reduce((acc: number, bot: any) => acc + bot.stats.wins, 0);
+  const winRate = totalGames > 0 ? (totalWins / totalGames * 100).toFixed(1) : '0.0';
+  const totalEarnings = userStats?.totalEarnings || '0';
+
+  const formatEarnings = (earnings: string) => {
+    const num = parseFloat(earnings);
+    if (num >= 1000000) {
+      return `${(num / 1000000).toFixed(1)}M`;
+    } else if (num >= 1000) {
+      return `${(num / 1000).toFixed(1)}K`;
     }
-  ];
+    return num.toFixed(0);
+  };
 
-  const recentAchievements = [
-    { id: 1, title: "Bluff Master", description: "Successfully bluffed 10 times", icon: "🎭", time: "2h ago" },
-    { id: 2, title: "Comeback King", description: "Won after being down to 10% chips", icon: "👑", time: "5h ago" },
-    { id: 3, title: "David vs Goliath", description: "Beat opponent with 3x stack", icon: "🗿", time: "1d ago" }
-  ];
+  const loading = userStatsLoading || userBotsLoading || platformStatsLoading || topBotsLoading;
 
-  const topBots = [
-    { rank: 1, name: "DeepThink Pro", winRate: 82.5, earnings: "52,100 HYPE", trend: "up" },
-    { rank: 2, name: "Bluff Master 3000", winRate: 78.3, earnings: "48,900 HYPE", trend: "up" },
-    { rank: 3, name: "Conservative Carl", winRate: 75.1, earnings: "44,200 HYPE", trend: "down" }
-  ];
+  if (!address) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <Bot className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
+          <h2 className="text-2xl font-semibold mb-2">Connect Your Wallet</h2>
+          <p className="text-muted-foreground mb-4">Please connect your wallet to view your dashboard</p>
+          <Button onClick={() => navigate('/')} className="btn-gaming">
+            Go to Home
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -91,7 +112,7 @@ export default function Dashboard() {
         <div className="mb-8">
           <h1 className="text-3xl font-bold mb-2">Dashboard</h1>
           <p className="text-muted-foreground">
-            Your AI Arena overview and community activity
+            Your AI Arena overview and bot performance
           </p>
         </div>
 
@@ -112,11 +133,16 @@ export default function Dashboard() {
                   <Trophy className="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">{totalGames.toLocaleString()}</div>
-                  <p className="text-xs text-muted-foreground">
-                    <TrendingUp className="inline h-3 w-3 mr-1" />
-                    +12% from last month
-                  </p>
+                  {loading ? (
+                    <Loader2 className="h-6 w-6 animate-spin" />
+                  ) : (
+                    <>
+                      <div className="text-2xl font-bold">{totalGames.toLocaleString()}</div>
+                      <p className="text-xs text-muted-foreground">
+                        Across {userBots.length} bots
+                      </p>
+                    </>
+                  )}
                 </CardContent>
               </Card>
 
@@ -126,11 +152,17 @@ export default function Dashboard() {
                   <Target className="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">{winRate}%</div>
-                  <Progress value={winRate} className="mt-2" />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    +5.2% improvement
-                  </p>
+                  {loading ? (
+                    <Loader2 className="h-6 w-6 animate-spin" />
+                  ) : (
+                    <>
+                      <div className="text-2xl font-bold">{winRate}%</div>
+                      <Progress value={parseFloat(winRate)} className="mt-2" />
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {totalWins} wins
+                      </p>
+                    </>
+                  )}
                 </CardContent>
               </Card>
 
@@ -140,11 +172,16 @@ export default function Dashboard() {
                   <DollarSign className="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">{totalEarnings} HYPE</div>
-                  <p className="text-xs text-muted-foreground">
-                    <TrendingUp className="inline h-3 w-3 mr-1" />
-                    +28% this quarter
-                  </p>
+                  {loading ? (
+                    <Loader2 className="h-6 w-6 animate-spin" />
+                  ) : (
+                    <>
+                      <div className="text-2xl font-bold">{formatEarnings(totalEarnings)} HYPE</div>
+                      <p className="text-xs text-muted-foreground">
+                        Lifetime earnings
+                      </p>
+                    </>
+                  )}
                 </CardContent>
               </Card>
 
@@ -154,11 +191,17 @@ export default function Dashboard() {
                   <Zap className="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">{activeBots}</div>
-                  <div className="flex space-x-1 mt-2">
-                    <Badge variant="outline" className="text-xs">8 Playing</Badge>
-                    <Badge variant="secondary" className="text-xs">{queuedBots} Queued</Badge>
-                  </div>
+                  {loading ? (
+                    <Loader2 className="h-6 w-6 animate-spin" />
+                  ) : (
+                    <>
+                      <div className="text-2xl font-bold">{activeBots}</div>
+                      <div className="flex space-x-1 mt-2">
+                        <Badge variant="outline" className="text-xs">{activeBots - queuedBots} Idle</Badge>
+                        <Badge variant="secondary" className="text-xs">{queuedBots} Queued</Badge>
+                      </div>
+                    </>
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -192,7 +235,7 @@ export default function Dashboard() {
                   <Button 
                     className="w-full justify-between" 
                     variant="outline"
-                    onClick={() => navigate('/bots?filter=my-bots')}
+                    onClick={() => navigate('/bots')}
                   >
                     <span>Manage Your Bots</span>
                     <ChevronRight className="h-4 w-4" />
@@ -208,56 +251,100 @@ export default function Dashboard() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-3">
-                    {topBots.map((bot) => (
-                      <div key={bot.rank} className="flex items-center justify-between p-2 rounded-lg hover:bg-muted/50">
-                        <div className="flex items-center gap-3">
-                          <span className="text-2xl font-bold text-muted-foreground">#{bot.rank}</span>
-                          <div>
-                            <p className="font-medium">{bot.name}</p>
-                            <p className="text-sm text-muted-foreground">{bot.winRate}% win rate</p>
+                  {loading ? (
+                    <div className="flex justify-center py-8">
+                      <Loader2 className="h-6 w-6 animate-spin" />
+                    </div>
+                  ) : topBots.length > 0 ? (
+                    <div className="space-y-3">
+                      {topBots.map((bot: any, index: number) => (
+                        <div key={bot.id} className="flex items-center justify-between p-2 rounded-lg hover:bg-muted/50 cursor-pointer" onClick={() => navigate(`/bot/${bot.id}`)}>
+                          <div className="flex items-center gap-3">
+                            <span className="text-2xl font-bold text-muted-foreground">#{index + 1}</span>
+                            <div>
+                              <p className="font-medium">{bot.name}</p>
+                              <p className="text-sm text-muted-foreground">{bot.stats.winRate.toFixed(1)}% win rate</p>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-medium">{formatEarnings(bot.stats.earnings)} HYPE</p>
+                            <p className="text-sm text-success">
+                              {bot.stats.wins} wins
+                            </p>
                           </div>
                         </div>
-                        <div className="text-right">
-                          <p className="font-medium">{bot.earnings}</p>
-                          <p className="text-sm">
-                            {bot.trend === 'up' ? (
-                              <TrendingUp className="inline h-3 w-3 text-green-500" />
-                            ) : (
-                              <TrendingUp className="inline h-3 w-3 text-red-500 rotate-180" />
-                            )}
-                          </p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8">
+                      <p className="text-muted-foreground">No bots deployed yet</p>
+                      <Button onClick={() => navigate('/deploy')} className="mt-4">
+                        Deploy Your First Bot
+                      </Button>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
 
-            {/* Recent Achievements */}
+            {/* Your Bots */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center justify-between">
-                  <span>Recent Achievements</span>
-                  <Award className="h-5 w-5 text-muted-foreground" />
+                  <span>Your Bots</span>
+                  <Bot className="h-5 w-5 text-muted-foreground" />
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="space-y-3">
-                  {recentAchievements.map((achievement) => (
-                    <div key={achievement.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
-                      <div className="flex items-center gap-3">
-                        <span className="text-2xl">{achievement.icon}</span>
-                        <div>
-                          <p className="font-medium">{achievement.title}</p>
-                          <p className="text-sm text-muted-foreground">{achievement.description}</p>
+                {loading ? (
+                  <div className="flex justify-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin" />
+                  </div>
+                ) : userBots.length > 0 ? (
+                  <div className="space-y-3">
+                    {userBots.slice(0, 5).map((bot: any) => (
+                      <div key={bot.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted cursor-pointer" onClick={() => navigate(`/bot/${bot.id}`)}>
+                        <div className="flex items-center gap-3">
+                          <img 
+                            src={bot.avatar || '/default-bot-avatar.png'} 
+                            alt={bot.name}
+                            className="w-10 h-10 rounded-full"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src = '/default-bot-avatar.png';
+                            }}
+                          />
+                          <div>
+                            <p className="font-medium">{bot.name}</p>
+                            <p className="text-sm text-muted-foreground">
+                              {bot.stats.wins}W / {bot.stats.losses}L
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge variant={bot.isActive ? "default" : "secondary"}>
+                            {bot.isActive ? 'Active' : 'Inactive'}
+                          </Badge>
+                          {bot.queuePosition && (
+                            <Badge variant="outline">#{bot.queuePosition}</Badge>
+                          )}
                         </div>
                       </div>
-                      <span className="text-sm text-muted-foreground">{achievement.time}</span>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                    {userBots.length > 5 && (
+                      <Button variant="outline" className="w-full" onClick={() => navigate('/bots')}>
+                        View All {userBots.length} Bots
+                      </Button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <Bot className="h-12 w-12 text-muted-foreground mx-auto mb-2" />
+                    <p className="text-muted-foreground mb-4">You haven't deployed any bots yet</p>
+                    <Button onClick={() => navigate('/deploy')} className="btn-gaming">
+                      Deploy Your First Bot
+                    </Button>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -269,64 +356,37 @@ export default function Dashboard() {
           <TabsContent value="community" className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center justify-between">
-                  <span>Community Feed</span>
-                  <MessageSquare className="h-5 w-5 text-muted-foreground" />
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ScrollArea className="h-[600px] pr-4">
-                  <div className="space-y-4">
-                    {socialPosts.map((post) => (
-                      <div key={post.id} className="p-4 rounded-lg border bg-card hover:shadow-md transition-shadow">
-                        <div className="flex items-start justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <span className="text-2xl">{post.avatar}</span>
-                            <div>
-                              <p className="font-semibold">{post.author}</p>
-                              <p className="text-xs text-muted-foreground">{post.timestamp}</p>
-                            </div>
-                          </div>
-                        </div>
-                        <p className="mb-3">{post.content}</p>
-                        <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                          <button className="flex items-center gap-1 hover:text-primary transition-colors">
-                            <Heart className="h-4 w-4" />
-                            {post.likes}
-                          </button>
-                          <button className="flex items-center gap-1 hover:text-primary transition-colors">
-                            <MessageSquare className="h-4 w-4" />
-                            {post.comments}
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </ScrollArea>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
                 <CardTitle>Community Stats</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <span className="text-muted-foreground">Total Players</span>
-                  <span className="font-bold">1,247</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-muted-foreground">Active Today</span>
-                  <span className="font-bold">342</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-muted-foreground">Tournaments Today</span>
-                  <span className="font-bold">28</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-muted-foreground">Total Prize Pool</span>
-                  <span className="font-bold">1.2M HYPE</span>
-                </div>
+                {loading ? (
+                  <div className="flex justify-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin" />
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Total Players</span>
+                      <span className="font-bold">{platformStats?.totalUsers.toLocaleString() || 0}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Active Today</span>
+                      <span className="font-bold">{platformStats?.activeUsers24h.toLocaleString() || 0}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Total Bots</span>
+                      <span className="font-bold">{platformStats?.totalBots.toLocaleString() || 0}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Bots in Queue</span>
+                      <span className="font-bold">{platformStats?.queuedBots.toLocaleString() || 0}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Total Prize Pool</span>
+                      <span className="font-bold">{formatEarnings(platformStats?.totalEarnings || '0')} HYPE</span>
+                    </div>
+                  </>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -340,100 +400,12 @@ export default function Dashboard() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <ScrollArea className="h-[500px] pr-4">
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
-                      <div className="flex items-center gap-3">
-                        <Clock className="h-4 w-4 text-muted-foreground" />
-                        <div>
-                          <p className="font-medium">Tournament #1247 Completed</p>
-                          <p className="text-sm text-muted-foreground">Your bot "DeepThink Pro" finished 2nd</p>
-                        </div>
-                      </div>
-                      <span className="text-sm text-muted-foreground">5 min ago</span>
-                    </div>
-                    <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
-                      <div className="flex items-center gap-3">
-                        <Trophy className="h-4 w-4 text-muted-foreground" />
-                        <div>
-                          <p className="font-medium">Achievement Unlocked</p>
-                          <p className="text-sm text-muted-foreground">Bluff Master - Successfully bluffed 10 times</p>
-                        </div>
-                      </div>
-                      <span className="text-sm text-muted-foreground">2h ago</span>
-                    </div>
-                    <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
-                      <div className="flex items-center gap-3">
-                        <Users className="h-4 w-4 text-muted-foreground" />
-                        <div>
-                          <p className="font-medium">New Follower</p>
-                          <p className="text-sm text-muted-foreground">QuantumGambler started following your bot</p>
-                        </div>
-                      </div>
-                      <span className="text-sm text-muted-foreground">5h ago</span>
-                    </div>
-                    <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
-                      <div className="flex items-center gap-3">
-                        <DollarSign className="h-4 w-4 text-muted-foreground" />
-                        <div>
-                          <p className="font-medium">Prize Earned</p>
-                          <p className="text-sm text-muted-foreground">+5,200 HYPE from Tournament #1245</p>
-                        </div>
-                      </div>
-                      <span className="text-sm text-muted-foreground">1d ago</span>
-                    </div>
-                  </div>
-                </ScrollArea>
+                <div className="text-center py-12 text-muted-foreground">
+                  <Activity className="h-12 w-12 mx-auto mb-4" />
+                  <p>Activity feed coming soon</p>
+                </div>
               </CardContent>
             </Card>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Match History</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm">vs. Bluff Master 3000</span>
-                      <Badge variant="default">Won</Badge>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm">vs. Conservative Carl</span>
-                      <Badge variant="destructive">Lost</Badge>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm">vs. Strategic Sage</span>
-                      <Badge variant="default">Won</Badge>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Upcoming Tournaments</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <p className="font-medium">Multi-Game Championship</p>
-                        <p className="text-sm text-muted-foreground">50,000 HYPE Prize Pool</p>
-                      </div>
-                      <Badge variant="outline">In 2h</Badge>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <p className="font-medium">Speed Tournament</p>
-                        <p className="text-sm text-muted-foreground">25,000 HYPE Prize Pool</p>
-                      </div>
-                      <Badge variant="outline">In 5h</Badge>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
           </TabsContent>
         </Tabs>
       </div>

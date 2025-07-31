@@ -1,4 +1,6 @@
 import { useParams, useNavigate } from 'react-router-dom';
+import { useQuery } from '@apollo/client';
+import { GET_MATCH } from '@/graphql/queries/bot';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,9 +17,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { Eye, Users, Trophy, Activity, Play, Pause, Zap, Timer, Brain, History, ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
+import { Eye, Users, Trophy, Activity, Play, Pause, Zap, Timer, Brain, History, ChevronDown, ChevronUp, Sparkles, Loader2 } from 'lucide-react';
+import { PokerTable } from '@/components/game/poker/PokerTable';
 import { useState, useEffect, useRef } from 'react';
-import { usePokerGame } from '@/hooks/usePokerGame';
+import { useServerSidePoker } from '@/hooks/useServerSidePoker';
 import { AIThinkingPanel } from '@/components/AIThinkingPanel';
 import { DecisionHistory } from '@/components/DecisionHistory';
 import { StyleBonusNotification } from '@/components/StyleBonusNotification';
@@ -29,16 +32,6 @@ import { CombinedLeaderboard } from '@/components/CombinedLeaderboard';
 import { useModelEvaluations } from '@/hooks/useModelEvaluation';
 import { IPlayerConfig as PlayerConfig } from '@/game-engine/core/interfaces';
 import type { PokerAction } from '@/game-engine/games/poker';
-import { 
-  formatChips, 
-  getCardColor, 
-  getCardDisplayValue, 
-  getPlayerPosition,
-  getPhaseDisplayName,
-  getActionDisplayText,
-  shouldShowCard,
-  getPlayerStatusColor
-} from '@/game-engine/games/poker/utils/poker-helpers';
 import botGambler from '@/assets/bot-gambler.png';
 import botTerminator from '@/assets/bot-terminator.png';
 import botZenMaster from '@/assets/bot-zen-master.png';
@@ -47,6 +40,29 @@ import botZenMaster from '@/assets/bot-zen-master.png';
 const TournamentView = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  
+  // Load match data from GraphQL
+  const { data: matchData, loading: matchLoading, error: matchError } = useQuery(GET_MATCH, {
+    variables: { id },
+    skip: !id,
+    onCompleted: (data) => {
+      console.log('🏆 Match data loaded:', {
+        matchId: id,
+        hasMatch: !!data?.match,
+        matchStatus: data?.match?.status,
+        participantCount: data?.match?.participants?.length
+      });
+    },
+    onError: (error) => {
+      console.error('❌ Match query error:', {
+        matchId: id,
+        error: error.message,
+        graphQLErrors: error.graphQLErrors,
+        networkError: error.networkError
+      });
+    }
+  });
+  
   const [tournament, setTournament] = useState<{
     id: string;
     name: string;
@@ -61,7 +77,6 @@ const TournamentView = () => {
   } | null>(null);
   const [loadingError, setLoadingError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [hoveredPlayerId, setHoveredPlayerId] = useState<string | null>(null);
   const [thinkingTimeLeft, setThinkingTimeLeft] = useState(60);
   const thinkingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [showAIThinking, setShowAIThinking] = useState(true);
@@ -70,38 +85,52 @@ const TournamentView = () => {
   const [playerConfigs, setPlayerConfigs] = useState<PlayerConfig[]>([]);
   const [selectedTournamentMode, setSelectedTournamentMode] = useState<'STYLE_MASTER' | 'BALANCED' | 'CLASSIC'>('BALANCED');
   
+  // Check if this is actually a poker game
+  const isPokerGame = !matchData?.match?.gameHistory || 
+    matchData?.match?.gameHistory?.gameType === 'poker' || 
+    !matchData?.match?.gameHistory?.gameType;
+  
+  // Only use poker hook for poker games, provide empty values for other games
+  const pokerHookResult = isPokerGame ? useServerSidePoker({ 
+    gameId: id || '', 
+    tournament: matchData?.match || null
+  }) : null;
+
+  // Provide default values for non-poker games
+  const { 
+    gameState = { players: [], communityCards: [], pot: 0, currentBet: 0, phase: 'waiting', currentPlayer: null, winners: [], isHandComplete: false, currentAIThinking: null, currentAIReasoning: null, recentActions: [], aiDecisionHistory: new Map(), recentStyleBonuses: [], recentMisreads: [], recentPointEvents: [], recentAchievementEvents: [] },
+    isInitialized = false, 
+    isPaused = false, 
+    gameSpeed = 'normal',
+    config = {},
+    currentGameState = 'setup',
+    startNewHand = () => Promise.resolve(), 
+    pauseGame = () => {}, 
+    resumeGame = () => {}, 
+    changeSpeed = () => {},
+    getDecisionHistory = () => [],
+    getCurrentHandDecisions = () => new Map(),
+    getCurrentHandNumber = () => 1,
+    updateConfig = () => {},
+    startGame = () => {},
+    stopGame = () => {},
+    clearGame = () => {},
+    getStyleLeaderboard = () => [],
+    getPlayerStyleStats = () => null,
+    getAllStyleStats = () => new Map(),
+    getPointLeaderboard = () => [],
+    getPlayerPoints = () => ({ base: 0, style: 0, penalty: 0, total: 0 })
+  } = pokerHookResult || {};
+  
   // Fetch AI evaluation data
   const { evaluations } = useModelEvaluations();
   
-  const { 
-    gameState, 
-    isInitialized, 
-    isPaused, 
-    gameSpeed,
-    config,
-    currentGameState,
-    startNewHand, 
-    pauseGame, 
-    resumeGame, 
-    changeSpeed,
-    getDecisionHistory,
-    getCurrentHandDecisions,
-    getCurrentHandNumber,
-    updateConfig,
-    startGame,
-    stopGame,
-    clearGame,
-    getStyleLeaderboard,
-    getPlayerStyleStats,
-    getAllStyleStats,
-    getPointLeaderboard,
-    getPlayerPoints,
-    setTournamentMode,
-    getPlayerAchievements,
-    getAchievementProgress,
-    getAllAchievements,
-    getTotalAchievementPoints
-  } = usePokerGame(tournament);
+  // Mock tournament-specific functions not in server-side hook
+  const setTournamentMode = (mode: any) => setSelectedTournamentMode(mode);
+  const getPlayerAchievements = () => [];
+  const getAchievementProgress = () => ({ unlocked: 0, total: 0, percentage: 0 });
+  const getAllAchievements = () => [];
+  const getTotalAchievementPoints = () => 0;
 
   // Generate default player configurations
   const generateDefaultPlayerConfigs = (count: number, defaultModel: PlayerConfig['aiModel'] = 'gpt-4o'): PlayerConfig[] => {
@@ -143,110 +172,114 @@ const TournamentView = () => {
     );
   };
 
+  // Process match data when loaded
   useEffect(() => {
-    let timeoutId: NodeJS.Timeout;
-    
-    const loadTournament = async () => {
-      try {
-        // Set a timeout for loading
-        timeoutId = setTimeout(() => {
-          setLoadingError('Tournament loading timed out. The tournament data may be missing.');
-          setIsLoading(false);
-        }, 5000);
-
-        // Load tournament from sessionStorage
-        const tournamentData = sessionStorage.getItem(`tournament-${id}`);
-        
-        if (!tournamentData) {
-          // In development, create a demo tournament if needed
-          if (import.meta.env.DEV) {
-            console.warn('Tournament not found in sessionStorage, creating demo tournament');
-            const demoTournament = {
-              id: id!,
-              name: 'Demo Poker Tournament',
-              status: 'in-progress',
-              gameType: 'poker',
-              config: {
-                startingChips: 10000,
-                blindStructure: 'standard',
-                maxHands: 100,
-                speed: 'normal'
-              },
-              players: generateDefaultPlayerConfigs(3).map((config, idx) => ({
-                id: config.id,
-                name: config.name,
-                aiModel: config.aiModel,
-                strategy: 'Aggressive poker player focused on maximizing value',
-                status: 'playing',
-                isReady: true,
-                joinedAt: new Date(),
-                avatar: config.avatar
-              })),
-              totalPrize: 0,
-              participants: 3,
-              currentRound: 'Exhibition Match',
-              viewers: Math.floor(Math.random() * 1000) + 500,
-              maxPlayers: 8,
-              minPlayers: 2,
-              isPublic: true,
-              createdBy: 'demo',
-              createdAt: new Date()
-            };
-            sessionStorage.setItem(`tournament-${id}`, JSON.stringify(demoTournament));
-            setTournament(demoTournament);
-            clearTimeout(timeoutId);
-            setIsLoading(false);
-            return;
-          }
-          
-          setLoadingError('Tournament not found. It may have been removed or expired.');
-          clearTimeout(timeoutId);
-          setIsLoading(false);
-          return;
-        }
-
-        const loadedTournament = JSON.parse(tournamentData);
-        if (loadedTournament.gameType !== 'poker') {
-          setLoadingError(`This tournament is for ${loadedTournament.gameType}, not poker.`);
-          clearTimeout(timeoutId);
-          setIsLoading(false);
-          
-          // Redirect to correct game view after a short delay
-          setTimeout(() => {
-            if (loadedTournament.gameType === 'reverse-hangman') {
-              navigate(`/tournament/${id}/hangman`);
-            } else {
-              navigate('/tournaments');
-            }
-          }, 2000);
-          return;
-        }
-
-        // Set default values for display
-        loadedTournament.totalPrize = loadedTournament.totalPrize || 0;
-        loadedTournament.participants = loadedTournament.players?.length || loadedTournament.participants || 0;
-        loadedTournament.currentRound = loadedTournament.currentRound || 'Exhibition Match';
-        loadedTournament.viewers = loadedTournament.viewers || Math.floor(Math.random() * 1000) + 500;
-
-        setTournament(loadedTournament);
-        clearTimeout(timeoutId);
-        setIsLoading(false);
-      } catch (error) {
-        console.error('Error loading tournament:', error);
-        setLoadingError('Failed to load tournament data.');
-        clearTimeout(timeoutId);
-        setIsLoading(false);
+    if (matchData?.match) {
+      const match = matchData.match;
+      
+      // Check game type and redirect if not poker
+      const gameHistory = match.gameHistory || null;
+      const gameType = gameHistory?.gameType;
+      
+      // Log for debugging
+      console.log('🎮 TournamentView game type detection:', {
+        matchId: match.id,
+        hasGameHistory: !!gameHistory,
+        gameType: gameType,
+        rawGameHistory: gameHistory
+      });
+      
+      // Redirect based on game type
+      if (gameType === 'poker' || !gameType) {
+        // Redirect poker games to dedicated poker view
+        navigate(`/tournament/${match.id}/poker`);
+        return;
+      } else if (gameType === 'reverse-hangman') {
+        navigate(`/tournament/${match.id}/hangman-server`);
+        return;
+      } else if (gameType === 'connect4') {
+        navigate(`/tournament/${match.id}/connect4`);
+        return;
       }
-    };
+      
+      // Transform match data to tournament format
+      const tournamentData = {
+        id: match.id,
+        name: match.tournament?.name || `Match ${match.id.slice(0, 8)}`,
+        status: match.status === 'SCHEDULED' ? 'waiting' : match.status === 'IN_PROGRESS' ? 'in-progress' : 'completed',
+        gameType: gameType,
+        config: {
+          startingChips: 100000, // 100k chips as requested
+          blindStructure: 'normal', // Normal speed
+          maxHands: 20, // 20 hands as requested
+          speed: 'normal',
+          mode: 'balanced' // Balanced mode
+        },
+        players: match.participants.map((participant: any) => ({
+          id: participant.bot.id,
+          name: participant.bot.name,
+          aiModel: participant.bot.modelType,
+          strategy: participant.bot.prompt,
+          status: 'playing',
+          isReady: true,
+          joinedAt: match.createdAt,
+          avatar: participant.bot.avatar,
+          seat: participant.position
+        })),
+        totalPrize: 0,
+        participants: match.participants.length,
+        currentRound: 'Main Event',
+        viewers: Math.floor(Math.random() * 1000) + 500,
+        maxPlayers: 4,
+        minPlayers: 4,
+        isPublic: true,
+        createdBy: 'system',
+        createdAt: match.createdAt
+      };
+      
+      setTournament(tournamentData);
+      setIsLoading(false);
+      
+      // Generate player configs from match participants
+      const configs = match.participants.map((participant: any) => ({
+        id: participant.bot.id,
+        name: participant.bot.name,
+        avatar: participant.bot.avatar,
+        aiModel: participant.bot.modelType
+      }));
+      setPlayerConfigs(configs);
+    }
+  }, [matchData, navigate]);
 
-    loadTournament();
+  // Update config when tournament data is loaded
+  useEffect(() => {
+    if (tournament && playerConfigs.length > 0) {
+      // Update config with standardized settings and player configurations
+      updateConfig({ 
+        playerConfigs,
+        startingChips: 100000,
+        blindStructure: 'normal',
+        maxHands: 20,
+        speed: 'normal',
+        mode: 'balanced'
+      });
+    }
+  }, [tournament, playerConfigs, updateConfig]);
 
-    return () => {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
-      }
-    };
-  }, [id, navigate]);
+  // Handle loading and error states
+  useEffect(() => {
+    if (matchError) {
+      console.error('🚨 Match loading error:', matchError);
+      const errorMessage = matchError.message || 'Failed to load match data. Please try again.';
+      setLoadingError(errorMessage);
+      setIsLoading(false);
+    }
+  }, [matchError]);
+
+  // Update loading state
+  useEffect(() => {
+    setIsLoading(matchLoading);
+  }, [matchLoading]);
 
   // Sync local state with config
   useEffect(() => {
@@ -368,7 +401,10 @@ const TournamentView = () => {
                 </svg>
               </div>
               <h2 className="text-xl font-semibold mb-2">Unable to Load Tournament</h2>
-              <p className="text-muted-foreground mb-4">{loadingError || 'Tournament not found'}</p>
+              <p className="text-muted-foreground mb-4">{loadingError || 'Failed to load match data. Please try again.'}</p>
+              {id && (
+                <p className="text-sm text-muted-foreground mb-4">Match ID: {id}</p>
+              )}
               <div className="space-y-2">
                 <Button onClick={() => navigate('/tournaments')} className="w-full">
                   Go to Tournaments
@@ -391,7 +427,14 @@ const TournamentView = () => {
   }
 
   if (!tournament) {
-    return null;
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Card className="p-8 text-center max-w-md">
+          <Loader2 className="animate-spin h-8 w-8 mx-auto mb-4" />
+          <p className="text-muted-foreground">Initializing game...</p>
+        </Card>
+      </div>
+    );
   }
 
   return (
@@ -413,7 +456,7 @@ const TournamentView = () => {
       {/* Achievement Notifications */}
       <AchievementNotification 
         events={gameState.recentAchievementEvents} 
-        players={new Map(gameState.players.map(p => [p.id, { name: p.name, avatar: p.avatar }]))}
+        players={new Map(gameState.players.map(p => [p.id, { name: p.name, avatar: p.avatar }] as [string, { name: string; avatar: string }]))}
       />
       
       <div className="container mx-auto px-4 py-8">
@@ -493,16 +536,17 @@ const TournamentView = () => {
         
         {/* Combined Leaderboard Popup - renders outside of main content flow */}
         <CombinedLeaderboard
-          players={new Map(gameState.players.map(p => [p.id, { id: p.id, name: p.name, avatar: p.avatar }]))}
+          players={new Map(gameState.players.map(p => [p.id, { id: p.id, name: p.name, avatar: p.avatar }] as [string, { id: string; name: string; avatar: string }]))}
           getPointLeaderboard={getPointLeaderboard}
-          currentChips={new Map(gameState.players.map(p => [p.id, p.chips]))}
+          currentChips={new Map(gameState.players.map(p => [p.id, p.chips] as [string, number]))}
           currentHandNumber={getCurrentHandNumber()}
           mode={selectedTournamentMode}
           startingChips={config?.startingChips || 10000}
         />
 
-        {/* Game Setup Phase */}
-        {currentGameState === 'setup' && isInitialized && (
+        
+        {/* Game Configuration Panel - Disabled for auto-start */}
+        {currentGameState === 'setup' && isInitialized && false && (
           <Card className="mb-8">
             <CardHeader>
               <CardTitle className="flex items-center justify-between">
@@ -828,272 +872,24 @@ const TournamentView = () => {
               </div>
             </CardHeader>
             <CardContent>
-            {isInitialized && (
-              <div className="poker-table-container relative bg-gradient-to-br from-green-800 to-green-900 rounded-xl p-4 min-h-[600px] overflow-hidden">
-                {/* Poker Table Felt */}
-                <div className="absolute inset-8 bg-green-700 rounded-full opacity-90 shadow-inner"></div>
-                
-                {/* Community Cards */}
-                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-10">
-                  <div className="text-center mb-4">
-                    <div className="text-white text-lg font-bold mb-2">
-                      Pot: {formatChips(gameState.pot)} chips
-                    </div>
-                    <div className="flex gap-2 justify-center">
-                      {[0, 1, 2, 3, 4].map((index) => {
-                        const card = gameState.communityCards[index];
-                        const showCard = shouldShowCard(index, gameState.phase, gameState.communityCards.length);
-                        
-                        if (showCard && card) {
-                          const { rank, suit } = getCardDisplayValue(card);
-                          const color = getCardColor(card);
-                          return (
-                            <div
-                              key={index}
-                              className="w-12 h-16 bg-white rounded border-2 border-gray-300 flex items-center justify-center font-bold shadow-lg transition-all duration-500"
-                            >
-                              <span className={`text-lg ${color === 'red' ? 'text-red-600' : 'text-black'}`}>
-                                {rank}{suit}
-                              </span>
-                            </div>
-                          );
-                        }
-                        
-                        return (
-                          <div
-                            key={index}
-                            className="w-12 h-16 bg-blue-800 rounded border-2 border-blue-600 shadow-lg opacity-50"
-                          />
-                        );
-                      })}
-                    </div>
-                    <div className="text-green-200 text-sm mt-2">
-                      {getPhaseDisplayName(gameState.phase)}
-                    </div>
-                    {gameState.currentBet > 0 && (
-                      <div className="text-yellow-300 text-sm mt-1">
-                        Current Bet: {formatChips(gameState.currentBet)} chips
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Players */}
-                {gameState.players.map((player, index) => {
-                  const isCurrentPlayer = gameState.currentPlayer?.id === player.id;
-                  const hasWon = gameState.winners.some(w => w.playerId === player.id);
-                  const isThinking = gameState.currentAIThinking === player.id;
-                  const position = getPlayerPosition(index, gameState.players.length);
-                  
-                  const aiDecision = gameState.aiDecisionHistory?.get(player.id);
-                  
-                  return (
-                    <TooltipProvider key={player.id}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <div
-                            className={`absolute ${position} z-20`}
-                            onMouseEnter={() => setHoveredPlayerId(player.id)}
-                            onMouseLeave={() => setHoveredPlayerId(null)}
-                          >
-                      <Card className={`${
-                        gameState.players.length > 6 ? 'w-28' : 
-                        gameState.players.length > 4 ? 'w-32' : 'w-36'
-                      } transition-all duration-300 ${
-                        getPlayerStatusColor(isCurrentPlayer, player.folded, player.allIn, hasWon)
-                      }`}>
-                        <CardContent className="p-2">
-                          {/* Compact header with avatar and name */}
-                          <div className="flex items-center gap-2 mb-1">
-                            <img 
-                              src={player.avatar} 
-                              alt={player.name}
-                              className="w-8 h-8 rounded-full"
-                            />
-                            <div className="flex-1 min-w-0">
-                              <div className="font-semibold text-xs truncate">{player.name}</div>
-                              <div className="text-xs text-muted-foreground">
-                                ${formatChips(player.chips)}
-                              </div>
-                              {(() => {
-                                const playerPoints = getPlayerPoints(player.id);
-                                if (playerPoints && playerPoints.total > 0) {
-                                  return (
-                                    <div className="text-[10px] text-purple-400 font-medium">
-                                      {playerPoints.total} pts
-                                    </div>
-                                  );
-                                }
-                                return null;
-                              })()}
-                            </div>
-                            {isThinking && (
-                              <Zap className="h-3 w-3 text-yellow-400 animate-pulse flex-shrink-0" />
-                            )}
-                          </div>
-                          
-                          {/* Compact Cards */}
-                          <div className="flex gap-0.5 mb-1 justify-center">
-                            {player.cards.length > 0 && player.cards.map((card, cardIndex) => {
-                              const showCard = gameState.phase === 'showdown' || !player.isAI || hoveredPlayerId === player.id;
-                              if (showCard) {
-                                const { rank, suit } = getCardDisplayValue(card);
-                                const color = getCardColor(card);
-                                return (
-                                  <div
-                                    key={cardIndex}
-                                    className="w-6 h-8 bg-white rounded border flex items-center justify-center text-[10px] font-bold shadow-sm"
-                                  >
-                                    <span className={color === 'red' ? 'text-red-600' : 'text-black'}>
-                                      {rank}{suit}
-                                    </span>
-                                  </div>
-                                );
-                              }
-                              return (
-                                <div
-                                  key={cardIndex}
-                                  className="w-6 h-8 bg-blue-800 rounded border border-blue-600 shadow-sm"
-                                />
-                              );
-                            })}
-                          </div>
-                          
-                          {/* Action display */}
-                          <div className="text-center">
-                            {player.folded ? (
-                              <span className="text-xs text-muted-foreground">Folded</span>
-                            ) : player.allIn ? (
-                              <span className="text-xs text-red-400 font-semibold">All-In</span>
-                            ) : aiDecision ? (
-                              <span className="text-xs font-medium">
-                                {aiDecision.action.type === 'check' ? 'Check' :
-                                 aiDecision.action.type === 'call' ? 'Call' :
-                                 aiDecision.action.type === 'raise' ? `Raise $${(aiDecision.action as PokerAction).amount}` :
-                                 aiDecision.action.type === 'bet' ? `Bet $${(aiDecision.action as PokerAction).amount}` :
-                                 aiDecision.action.type === 'all-in' ? 'All-In' :
-                                 aiDecision.action.type}
-                              </span>
-                            ) : player.bet > 0 ? (
-                              <span className="text-xs text-yellow-400">Bet ${formatChips(player.bet)}</span>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">Waiting</span>
-                            )}
-                          </div>
-                          
-                          {/* Winner display */}
-                          {hasWon && (
-                            <div className="mt-1 text-[10px] text-yellow-400 font-bold text-center">
-                              Won ${formatChips(gameState.winners.find(w => w.playerId === player.id)?.amount || 0)}
-                            </div>
-                          )}
-                        </CardContent>
-                      </Card>
-                    </div>
-                  </TooltipTrigger>
-                  {player.isAI && aiDecision && (
-                    <TooltipContent side="top" className="max-w-lg p-0 border-0">
-                      <div className="bg-background/95 backdrop-blur border rounded-lg shadow-lg max-h-96 overflow-hidden">
-                        <div className="sticky top-0 bg-background border-b px-4 py-3">
-                          <div className="font-semibold text-lg">{player.name}'s Thinking</div>
-                          <div className="text-xs text-muted-foreground">
-                            {aiDecision.metadata?.personality || 'AI Analysis'}
-                          </div>
-                        </div>
-                        <div className="overflow-y-auto max-h-80 px-4 py-3 space-y-3">
-                          {/* Action Taken */}
-                          <div className="font-medium text-sm">
-                            Action: {aiDecision.action.type.toUpperCase()}
-                            {(aiDecision.action as PokerAction).amount && ` $${(aiDecision.action as PokerAction).amount}`}
-                          </div>
-                          
-                          {/* Main Reasoning */}
-                          <div className="space-y-2">
-                            <div className="text-sm font-medium">Reasoning:</div>
-                            <div className="text-sm whitespace-pre-wrap">{aiDecision.reasoning}</div>
-                          </div>
-                          
-                          {/* Confidence Level */}
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm text-muted-foreground">Confidence:</span>
-                            <div className="flex-1 bg-secondary rounded-full h-2">
-                              <div 
-                                className="bg-primary h-2 rounded-full transition-all duration-300"
-                                style={{ width: `${(aiDecision.confidence * 100).toFixed(0)}%` }}
-                              />
-                            </div>
-                            <span className="text-sm font-medium">{(aiDecision.confidence * 100).toFixed(0)}%</span>
-                          </div>
-                          
-                          {/* Detailed Analysis if available */}
-                          {aiDecision.metadata && (
-                            <>
-                              <div className="border-t pt-3 space-y-2">
-                                <div className="text-sm font-medium">Detailed Analysis:</div>
-                                
-                                {/* Hand Evaluation */}
-                                {aiDecision.metadata.cardEvaluation && (
-                                  <div className="text-sm">
-                                    <span className="text-muted-foreground">Hand: </span>
-                                    {aiDecision.metadata.cardEvaluation}
-                                  </div>
-                                )}
-                                
-                                {/* Mathematical Breakdown */}
-                                {aiDecision.metadata.mathBreakdown && (
-                                  <div className="text-sm whitespace-pre-wrap">
-                                    <span className="text-muted-foreground">Math: </span>
-                                    {aiDecision.metadata.mathBreakdown}
-                                  </div>
-                                )}
-                                
-                                {/* Bluffing Status */}
-                                {aiDecision.metadata.isBluffing !== undefined && (
-                                  <div className="text-sm">
-                                    <span className="text-muted-foreground">Bluffing: </span>
-                                    <span className={aiDecision.metadata.isBluffing ? 'text-orange-500' : 'text-green-500'}>
-                                      {aiDecision.metadata.isBluffing ? 'Yes - Attempting to deceive' : 'No - Playing honestly'}
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
-                            </>
-                          )}
-                          
-                          {/* Model Info */}
-                          <div className="border-t pt-3 text-xs text-muted-foreground">
-                            {aiDecision.metadata?.modelUsed ? `Powered by ${aiDecision.metadata.modelUsed}` : 'Using fallback logic'}
-                          </div>
-                        </div>
-                      </div>
-                    </TooltipContent>
-                  )}
-                </Tooltip>
-              </TooltipProvider>
-            );
-          })}
-
-                {/* Game Info Overlay */}
-                <div className="absolute bottom-4 left-4 right-4 flex justify-between items-end">
-                  <div className="text-white">
-                    <div className="text-sm opacity-75">
-                      {gameState.phase !== 'waiting' ? getPhaseDisplayName(gameState.phase) : 'Ready to Start'}
-                    </div>
-                    {gameState.isHandComplete && (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={startNewHand}
-                        className="mt-2"
-                      >
-                        Start New Hand
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-              </CardContent>
+              {isInitialized && (
+                <PokerTable
+                  players={gameState.players}
+                  communityCards={gameState.communityCards}
+                  pot={gameState.pot}
+                  currentBet={gameState.currentBet}
+                  phase={gameState.phase}
+                  currentPlayer={gameState.currentPlayer}
+                  winners={gameState.winners}
+                  isHandComplete={gameState.isHandComplete}
+                  currentAIThinking={gameState.currentAIThinking}
+                  aiDecisionHistory={gameState.aiDecisionHistory}
+                  onStartNewHand={startNewHand}
+                  viewers={tournament?.viewers || 0}
+                  getPlayerPoints={getPlayerPoints}
+                />
+              )}
+            </CardContent>
             </Card>
 
           {/* AI Thinking Panel - Below Poker Table */}
@@ -1108,7 +904,19 @@ const TournamentView = () => {
                     }
                   : null
               }
-              recentDecisions={getCurrentHandDecisions()}
+              recentDecisions={Array.from(getCurrentHandDecisions().entries()).map(([playerId, decision]) => {
+                const player = gameState.players.find(p => p.id === playerId);
+                return {
+                  handNumber: getCurrentHandNumber(),
+                  playerId,
+                  playerName: player?.name || '',
+                  playerCards: player?.cards || [],
+                  decision,
+                  gamePhase: gameState.phase,
+                  communityCards: gameState.communityCards,
+                  timestamp: Date.now()
+                };
+              })}
               thinkingTimeLeft={thinkingTimeLeft}
               maxThinkingTime={
                 config?.speed === 'thinking' ? 2 : 

@@ -6,7 +6,7 @@ import { Card } from '@/components/ui/card';
 import { toast } from 'sonner';
 import { ReverseHangmanBoard } from '@/components/game/reverse-hangman/ReverseHangmanBoard';
 import { PromptGenerationAnimation } from '@/components/game/reverse-hangman/PromptGenerationAnimation';
-import { useReverseHangmanGame } from '@/hooks/useReverseHangmanGame';
+import { useServerSideReverseHangman as useReverseHangmanGame } from '@/hooks/useServerSideReverseHangman';
 import { Tournament } from '@/types/tournament';
 
 export default function ReverseHangmanView() {
@@ -86,7 +86,7 @@ export default function ReverseHangmanView() {
     startRound,
     animationPhase,
     animationOutput
-  } = useReverseHangmanGame({ tournament });
+  } = useReverseHangmanGame({ tournament: tournament! });
   
   // Show loading state
   if (isLoading && !loadingError) {

@@ -14,11 +14,54 @@ import { createContext } from './config/context';
 // import { setupWebSocketServer } from './websocket/server';
 import { prisma } from './config/database';
 import Redis from 'ioredis';
-import { QueueService } from './services/queueService';
-import { TransactionService } from './services/transactionService';
-import { gameManagerService } from './services/gameManagerService';
+import { initializeGameManagerService, getGameManagerService } from './services/gameManagerService';
 import { logWalletConfig } from './config/wallets';
 import { PubSub } from 'graphql-subscriptions';
+import { initializeServices, getQueueService, getTransactionService } from './services';
+import { fileLoggerService } from './services/fileLoggerService';
+
+// Override console methods to capture backend logs
+const originalConsole = {
+  log: console.log.bind(console),
+  warn: console.warn.bind(console),
+  error: console.error.bind(console),
+  info: console.info.bind(console),
+  debug: console.debug.bind(console),
+};
+
+const captureLog = (level: 'log' | 'warn' | 'error' | 'info' | 'debug') => {
+  return (...args: any[]) => {
+    // Always call original console method
+    originalConsole[level](...args);
+    
+    // Log to file
+    fileLoggerService.addLog({
+      timestamp: new Date().toISOString(),
+      level,
+      source: 'backend',
+      message: args.map(arg => {
+        if (typeof arg === 'object') {
+          try {
+            return JSON.stringify(arg, null, 2);
+          } catch {
+            return String(arg);
+          }
+        }
+        return String(arg);
+      }).join(' '),
+      data: args.length > 1 ? args : args[0],
+      stack: level === 'error' && args[0] instanceof Error ? args[0].stack : undefined
+    });
+  };
+};
+
+console.log = captureLog('log');
+console.warn = captureLog('warn');
+console.error = captureLog('error');
+console.info = captureLog('info');
+console.debug = captureLog('debug');
+
+console.log('🎮 Backend logging initialized');
 
 // Create Redis client with error handling
 const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
@@ -37,9 +80,19 @@ redis.on('error', (err: any) => {
 
 const pubsub = new PubSub();
 
+// Ensure asyncIterator is available on PubSub
+if (typeof (pubsub as any).asyncIterator !== 'function') {
+  console.log('⚠️ PubSub asyncIterator not found, patching...');
+  (pubsub as any).asyncIterator = function(triggers: string | string[]) {
+    return this.asyncIterableIterator ? this.asyncIterableIterator(triggers) : this.asyncIterator(triggers);
+  };
+}
+
 // Initialize services
-const queueService = new QueueService(prisma, redis);
-const transactionService = new TransactionService(prisma);
+initializeServices(prisma, redis, pubsub);
+initializeGameManagerService(pubsub);
+
+console.log('🔍 Enhanced debugging enabled for queue and match flow');
 
 async function startServer() {
   const app = express();
@@ -48,8 +101,8 @@ async function startServer() {
   // const WS_PORT = process.env.WS_PORT || 4001;
 
   // Global middleware
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
   const schema = makeExecutableSchema({
     typeDefs,
@@ -108,6 +161,15 @@ async function startServer() {
         },
       },
     ],
+    formatError: (formattedError, error) => {
+      console.error('GraphQL Error:', {
+        message: formattedError.message,
+        path: formattedError.path,
+        extensions: formattedError.extensions,
+        originalError: error
+      });
+      return formattedError;
+    },
   });
 
   await apolloServer.start();
@@ -117,6 +179,8 @@ async function startServer() {
     cors<cors.CorsRequest>({
       origin: ['http://localhost:5173', 'http://localhost:8080', 'http://localhost:8081'],
       credentials: true,
+      allowedHeaders: ['Content-Type', 'Authorization', 'x-wallet-address', 'x-bot-prompt'],
+      exposedHeaders: ['Authorization'],
     }),
     expressMiddleware(apolloServer, {
       context: async ({ req }) => createContext({ req: req as any, prisma, redis, pubsub }),
@@ -170,12 +234,20 @@ async function startServer() {
       // Redis not available, already logged
     }
     
+    // Clean up any stuck matches from previous runs
+    await getQueueService().cleanupStuckMatches();
+    console.log('🧹 Cleaned up stuck matches');
+    
     // Start queue matchmaking service
-    queueService.startMatchmaking();
+    getQueueService().startMatchmaking();
     console.log('🎮 Queue matchmaking service started');
     
+    // Ensure demo bots are in queue
+    await getQueueService().ensureDemoBots();
+    console.log('🤖 Demo bots queue status checked');
+    
     // Start transaction monitoring
-    transactionService.startMonitoring();
+    getTransactionService().startMonitoring();
     console.log('💰 Transaction monitoring service started');
     
     // Game manager service is initialized as a singleton
@@ -189,8 +261,8 @@ async function startServer() {
     console.log('SIGTERM signal received: closing HTTP server');
     
     // Stop services
-    queueService.stopMatchmaking();
-    await gameManagerService.shutdown();
+    getQueueService().stopMatchmaking();
+    await getGameManagerService().shutdown();
     
     httpServer.close();
     await prisma.$disconnect();

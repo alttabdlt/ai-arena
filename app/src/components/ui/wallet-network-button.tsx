@@ -28,13 +28,15 @@ import {
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
+import { useHypeBalance } from '@/hooks/useHypeBalance';
 import { cn } from '@/lib/utils';
 
 export function WalletNetworkButton() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const { disconnect } = useDisconnect();
-  const { user, isAuthenticated, login, logout } = useAuth();
+  const { user, isAuthenticated, isLoggingIn, login, logout } = useAuth();
+  const { formatted: hypeBalance, symbol, isLoading: balanceLoading } = useHypeBalance();
 
   const handleCopyAddress = (address: string) => {
     navigator.clipboard.writeText(address);
@@ -69,12 +71,6 @@ export function WalletNetworkButton() {
           (!authenticationStatus ||
             authenticationStatus === 'authenticated');
 
-        // Auto-login when wallet connects
-        useEffect(() => {
-          if (connected && !isAuthenticated) {
-            login();
-          }
-        }, [connected, isAuthenticated, login]);
 
         if (!ready) {
           return (
@@ -149,6 +145,11 @@ export function WalletNetworkButton() {
                     <span className="text-sm font-medium">
                       {shortenAddress(account.address)}
                     </span>
+                    {!balanceLoading && (
+                      <Badge variant="secondary" className="text-xs font-mono">
+                        {hypeBalance} {symbol}
+                      </Badge>
+                    )}
                   </div>
                   
                   <ChevronDown className="h-4 w-4 text-muted-foreground group-hover:text-foreground transition-colors" />
@@ -223,13 +224,11 @@ export function WalletNetworkButton() {
                   </Button>
                 </div>
               </DropdownMenuItem>
-              {account.displayBalance && (
-                <DropdownMenuItem disabled>
-                  <span className="text-sm text-muted-foreground">
-                    Balance: {account.displayBalance}
-                  </span>
-                </DropdownMenuItem>
-              )}
+              <DropdownMenuItem disabled>
+                <span className="text-sm text-muted-foreground">
+                  Balance: {balanceLoading ? <Loader2 className="h-3 w-3 animate-spin inline" /> : `${hypeBalance} ${symbol}`}
+                </span>
+              </DropdownMenuItem>
               
               {!isAuthenticated && (
                 <DropdownMenuItem onClick={login} className="text-primary">

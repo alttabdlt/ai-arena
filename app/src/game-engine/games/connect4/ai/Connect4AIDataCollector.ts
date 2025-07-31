@@ -10,7 +10,8 @@ export class Connect4AIDataCollector extends BaseGameDataCollector<Connect4GameS
   collectGameSpecificData(state: Connect4GameState, playerId: string): Record<string, any> {
     const player = state.players.find(p => p.id === playerId) as Connect4GamePlayer;
     const validColumns = this.getValidColumns(state);
-    const boardMetrics = this.calculateBoardMetrics(state, player.playerNumber);
+    // Connect4 should only have 2 players, so we cast to ensure type safety
+    const boardMetrics = this.calculateBoardMetrics(state, player.playerNumber as 1 | 2);
 
     return {
       board: state.board, // Keep original board format, not formatted
@@ -48,15 +49,17 @@ export class Connect4AIDataCollector extends BaseGameDataCollector<Connect4GameS
     const history: GameHistoryEntry[] = [];
     if (state.lastMove) {
       history.push({
+        turn: state.turnCount,
+        playerId: state.lastMove.playerId,
         action: {
           type: 'place',
-          column: state.lastMove.col,
+          column: state.lastMove.column,
           playerId: state.lastMove.playerId,
           timestamp: new Date()
         },
         result: {
           valid: true,
-          changes: [`Player placed disc in column ${state.lastMove.col}`]
+          changes: [`Player placed disc in column ${state.lastMove.column}`]
         }
       });
     }
@@ -75,7 +78,8 @@ export class Connect4AIDataCollector extends BaseGameDataCollector<Connect4GameS
     const validColumns = this.getValidColumns(state);
 
     // Calculate board metrics
-    const boardMetrics = this.calculateBoardMetrics(state, player.playerNumber);
+    // Connect4 should only have 2 players, so we cast to ensure type safety
+    const boardMetrics = this.calculateBoardMetrics(state, player.playerNumber as 1 | 2);
 
     return {
       gameType: 'connect4',

@@ -70,37 +70,43 @@ export function DecisionHistory({ history, currentHandNumber }: DecisionHistoryP
                         </Badge>
                       </div>
                       
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm">Action:</span>
-                        <Badge variant="secondary">
-                          {entry.decision.action.type.toUpperCase()}
-                          {entry.decision.action.amount && ` $${entry.decision.action.amount}`}
-                        </Badge>
-                      </div>
-                      
-                      {/* Player Cards */}
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground">Hand:</span>
-                        <div className="flex gap-1">
-                          {entry.playerCards.map((card, cardIdx) => {
-                            const { rank, suit } = getCardDisplayValue(card as PokerCard);
-                            const color = getCardColor(card as PokerCard);
-                            return (
-                              <div
-                                key={cardIdx}
-                                className="w-8 h-10 bg-white rounded border flex items-center justify-center text-xs font-bold shadow-sm"
-                              >
-                                <span className={color === 'red' ? 'text-red-600' : 'text-black'}>
-                                  {rank}{suit}
-                                </span>
-                              </div>
-                            );
-                          })}
+                      {entry.decision?.action && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm">Action:</span>
+                          <Badge variant="secondary">
+                            {entry.decision.action.type ? 
+                              entry.decision.action.type.toUpperCase() : 
+                              'UNKNOWN'}
+                            {entry.decision.action.amount && ` $${entry.decision.action.amount}`}
+                          </Badge>
                         </div>
-                      </div>
+                      )}
                       
-                      {/* Community Cards */}
-                      {entry.communityCards.length > 0 && (
+                      {/* Player Cards - Only for poker games */}
+                      {entry.playerCards && entry.playerCards.length > 0 && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground">Hand:</span>
+                          <div className="flex gap-1">
+                            {entry.playerCards.map((card, cardIdx) => {
+                              const { rank, suit } = getCardDisplayValue(card as PokerCard);
+                              const color = getCardColor(card as PokerCard);
+                              return (
+                                <div
+                                  key={cardIdx}
+                                  className="w-8 h-10 bg-white rounded border flex items-center justify-center text-xs font-bold shadow-sm"
+                                >
+                                  <span className={color === 'red' ? 'text-red-600' : 'text-black'}>
+                                    {rank}{suit}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Community Cards - Only for poker games */}
+                      {entry.communityCards && entry.communityCards.length > 0 && (
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-muted-foreground">Board:</span>
                           <div className="flex gap-1">
@@ -122,14 +128,16 @@ export function DecisionHistory({ history, currentHandNumber }: DecisionHistoryP
                         </div>
                       )}
                       
-                      <details className="cursor-pointer">
-                        <summary className="text-xs text-muted-foreground hover:text-foreground">
-                          View reasoning...
-                        </summary>
-                        <div className="mt-2 p-2 bg-background rounded text-xs whitespace-pre-wrap">
-                          {entry.decision.reasoning}
-                        </div>
-                      </details>
+                      {entry.decision && entry.decision.reasoning && (
+                        <details className="cursor-pointer">
+                          <summary className="text-xs text-muted-foreground hover:text-foreground">
+                            View reasoning...
+                          </summary>
+                          <div className="mt-2 p-2 bg-background rounded text-xs whitespace-pre-wrap">
+                            {entry.decision.reasoning}
+                          </div>
+                        </details>
+                      )}
                     </div>
                   ))}
                 </div>

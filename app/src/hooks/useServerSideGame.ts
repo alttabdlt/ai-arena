@@ -144,6 +144,12 @@ export function useServerSideGame({
 
   // Initialize game
   const initializeGame = useCallback(async () => {
+    // Prevent double initialization
+    if (isInitialized) {
+      console.log('Game already initialized, skipping...');
+      return;
+    }
+
     try {
       const result = await createGame({
         variables: {
@@ -181,12 +187,20 @@ export function useServerSideGame({
 
         toast.success('Game initialized on server');
       }
-    } catch (err) {
+    } catch (err: any) {
+      // Check if error is due to game already existing
+      if (err.message && err.message.includes('already')) {
+        console.log('Game already exists, marking as initialized');
+        setIsInitialized(true);
+        setIsActive(true);
+        return;
+      }
+      
       console.error('Failed to initialize game:', err);
       onError?.(err as Error);
       toast.error('Failed to initialize game');
     }
-  }, [gameId, gameType, players, createGame, addSpectator, startGame, onStateUpdate, onError]);
+  }, [gameId, gameType, players, createGame, addSpectator, startGame, onStateUpdate, onError, isInitialized]);
 
   // Pause/resume game
   const toggleGamePause = useCallback(async () => {

@@ -4,6 +4,7 @@ export const GET_QUEUE_STATUS = gql`
   query GetQueueStatus {
     queueStatus {
       totalInQueue
+      totalMatched
       averageWaitTime
       nextMatchTime
       queueTypes {
@@ -23,6 +24,7 @@ export const GET_USER_BOTS_IN_QUEUE = gql`
       avatar
       modelType
       isActive
+      isDemo
       queuePosition
       stats {
         wins
@@ -64,10 +66,11 @@ export const QUEUE_UPDATE_SUBSCRIPTION = gql`
   subscription QueueUpdate {
     queueUpdate {
       id
-      botId
       queueType
       status
       enteredAt
+      matchId
+      gameType
       bot {
         id
         name

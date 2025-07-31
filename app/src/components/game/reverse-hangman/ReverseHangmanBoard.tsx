@@ -36,7 +36,7 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
 }) => {
   const [mistakes, setMistakes] = useState<Mistake[]>([]);
   const [isRevealing, setIsRevealing] = useState(false);
-  const attemptsRemaining = gameState.maxAttempts - gameState.attempts.length;
+  const attemptsRemaining = gameState.maxAttempts - (gameState.attempts?.length || 0);
   
   // Debug logging - commented out to reduce console spam
   // useEffect(() => {
@@ -44,7 +44,7 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
   //     phase: gameState.phase,
   //     hasCurrentPromptPair: !!gameState.currentPromptPair,
   //     promptPair: gameState.currentPromptPair,
-  //     attempts: gameState.attempts.length,
+  //     attempts: gameState.attempts?.length || 0,
   //     maxAttempts: gameState.maxAttempts,
   //     roundNumber: gameState.roundNumber,
   //     isGameOver: ['won', 'lost', 'round-complete'].includes(gameState.phase)
@@ -66,13 +66,13 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
   
   // Detect mistakes when new attempts are made
   useEffect(() => {
-    if (gameState.attempts.length > 0) {
+    if (gameState.attempts && gameState.attempts.length > 0) {
       const lastAttempt = gameState.attempts[gameState.attempts.length - 1];
       const previousAttempts = gameState.attempts.slice(0, -1);
       
       const mistake = MistakeDetector.detectMistakes(
         lastAttempt,
-        gameState.attempts.length,
+        gameState.attempts?.length || 0,
         gameState.currentPromptPair,
         previousAttempts
       );
@@ -81,10 +81,10 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
         setMistakes(prev => [...prev, mistake]);
       }
     }
-  }, [gameState.attempts.length]);
+  }, [gameState.attempts?.length]);
   
   const getAttemptIcon = (attemptIndex: number) => {
-    if (attemptIndex < gameState.attempts.length) {
+    if (attemptIndex < (gameState.attempts?.length || 0)) {
       return '❌';
     } else if (attemptIndex < gameState.maxAttempts) {
       return '⭕';
@@ -126,7 +126,7 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
       )}
 
       {/* Progress Bar */}
-      {gameState.attempts.length > 0 && (
+      {gameState.attempts && gameState.attempts.length > 0 && (
         <div className="max-w-md mx-auto">
           <MatchProgressBar
             matchPercentage={gameState.attempts[gameState.attempts.length - 1].matchPercentage}
@@ -169,10 +169,10 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
       )}
 
       {/* Previous Attempts */}
-      {gameState.attempts.length > 0 && (
+      {gameState.attempts && gameState.attempts.length > 0 && (
         <div className="space-y-3">
           <h3 className="text-lg font-semibold">Previous Attempts:</h3>
-          {gameState.attempts.map((attempt, index) => (
+          {gameState.attempts?.map((attempt, index) => (
             <div key={index} className="bg-white p-4 rounded border border-gray-200">
               <div className="space-y-3">
                 <div className="flex justify-between items-start">
@@ -181,7 +181,7 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
                     <div className="mt-1">
                       <AnimatedWordReveal
                         text={attempt.guess}
-                        isRevealing={index === gameState.attempts.length - 1 && isRevealing}
+                        isRevealing={index === (gameState.attempts?.length || 0) - 1 && isRevealing}
                         onRevealComplete={() => setIsRevealing(false)}
                       />
                     </div>
@@ -271,7 +271,7 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
           </div>
           {gameState.phase === 'won' && gameState.endTime && (
             <div className="text-sm text-gray-900">
-              <p>Solved in {gameState.attempts.length} attempt{gameState.attempts.length !== 1 ? 's' : ''}</p>
+              <p>Solved in {gameState.attempts?.length || 0} attempt{(gameState.attempts?.length || 0) !== 1 ? 's' : ''}</p>
               <p>Time: {Math.round((gameState.endTime.getTime() - gameState.startTime.getTime()) / 1000)}s</p>
             </div>
           )}

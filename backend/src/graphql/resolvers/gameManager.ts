@@ -1,4 +1,4 @@
-import { gameManagerService } from '../../services/gameManagerService';
+import { getGameManagerService } from '../../services/gameManagerService';
 import { withFilter } from 'graphql-subscriptions';
 import { PubSub } from 'graphql-subscriptions';
 
@@ -12,19 +12,22 @@ interface TypedPubSub extends PubSub {
   asyncIterator<T = any>(triggers: string | string[]): PubSubAsyncIterator<T>;
 }
 
+// Get gameManagerService instance
+const gameManagerService = () => getGameManagerService();
+
 export const gameManagerResolvers = {
   Query: {
     activeGames: async () => {
-      return gameManagerService.getActiveGames().map(transformGameInstance);
+      return gameManagerService().getActiveGames().map(transformGameInstance);
     },
     
     gameById: async (_: any, { gameId }: { gameId: string }) => {
-      const game = gameManagerService.getGameById(gameId);
+      const game = gameManagerService().getGameById(gameId);
       return game ? transformGameInstance(game) : null;
     },
     
     gameStats: async () => {
-      const stats = gameManagerService.getGameStats();
+      const stats = gameManagerService().getGameStats();
       return {
         totalGames: stats.total,
         activeGames: stats.active,
@@ -56,35 +59,35 @@ export const gameManagerResolvers = {
         turnCount: 0,
       };
       
-      const game = await gameManagerService.createGame(gameId, gameType, players, initialState);
+      const game = await gameManagerService().createGame(gameId, gameType, players, initialState);
       return transformGameInstance(game);
     },
     
     startGame: async (_: any, { gameId }: { gameId: string }) => {
-      await gameManagerService.startGame(gameId);
-      const game = gameManagerService.getGameById(gameId);
+      await gameManagerService().startGame(gameId);
+      const game = gameManagerService().getGameById(gameId);
       return transformGameInstance(game!);
     },
     
     pauseGame: async (_: any, { gameId }: { gameId: string }) => {
-      await gameManagerService.pauseGame(gameId);
-      const game = gameManagerService.getGameById(gameId);
+      await gameManagerService().pauseGame(gameId);
+      const game = gameManagerService().getGameById(gameId);
       return transformGameInstance(game!);
     },
     
     resumeGame: async (_: any, { gameId }: { gameId: string }) => {
-      await gameManagerService.resumeGame(gameId);
-      const game = gameManagerService.getGameById(gameId);
+      await gameManagerService().resumeGame(gameId);
+      const game = gameManagerService().getGameById(gameId);
       return transformGameInstance(game!);
     },
     
     addSpectator: async (_: any, { gameId, userId }: { gameId: string; userId: string }) => {
-      await gameManagerService.addSpectator(gameId, userId);
+      await gameManagerService().addSpectator(gameId, userId);
       return true;
     },
     
     removeSpectator: async (_: any, { gameId, userId }: { gameId: string; userId: string }) => {
-      await gameManagerService.removeSpectator(gameId, userId);
+      await gameManagerService().removeSpectator(gameId, userId);
       return true;
     },
   },
@@ -92,7 +95,7 @@ export const gameManagerResolvers = {
   Subscription: {
     gameStateUpdate: {
       subscribe: withFilter(
-        () => (gameManagerService.getPubSub() as TypedPubSub).asyncIterator(['GAME_UPDATE']),
+        (_: any, __: any, ctx: any) => (ctx.pubsub as TypedPubSub).asyncIterator(['GAME_UPDATE']),
         (payload, variables) => {
           return payload.gameId === variables.gameId && payload.type === 'state';
         }
@@ -107,7 +110,7 @@ export const gameManagerResolvers = {
     
     gameEvent: {
       subscribe: withFilter(
-        () => (gameManagerService.getPubSub() as TypedPubSub).asyncIterator(['GAME_UPDATE']),
+        (_: any, __: any, ctx: any) => (ctx.pubsub as TypedPubSub).asyncIterator(['GAME_UPDATE']),
         (payload, variables) => {
           return payload.gameId === variables.gameId && (payload.type === 'event' || payload.type === 'decision');
         }
@@ -122,7 +125,7 @@ export const gameManagerResolvers = {
     },
     
     allGameUpdates: {
-      subscribe: () => (gameManagerService.getPubSub() as TypedPubSub).asyncIterator(['GAME_UPDATE']),
+      subscribe: (_: any, __: any, ctx: any) => (ctx.pubsub as TypedPubSub).asyncIterator(['GAME_UPDATE']),
       resolve: (payload: any) => ({
         gameId: payload.gameId,
         type: mapUpdateType(payload.type),
@@ -135,6 +138,12 @@ export const gameManagerResolvers = {
 
 // Helper functions
 function transformGameInstance(game: any) {
+  // Ensure we don't include non-serializable properties
+  const cleanState = {
+    ...game.state,
+    // Remove any potential non-serializable properties from state
+  };
+  
   return {
     id: game.id,
     type: game.type.toUpperCase().replace('-', '_'),
@@ -146,10 +155,10 @@ function transformGameInstance(game: any) {
       model: p.aiModel || null,
       status: getPlayerStatus(p)
     })) || [],
-    spectatorCount: game.spectators.size,
+    spectatorCount: game.spectators?.size || 0,
     createdAt: game.createdAt || new Date(),
     lastActivity: game.lastActivity,
-    gameState: JSON.stringify(game.state)
+    gameState: JSON.stringify(cleanState)
   };
 }
 

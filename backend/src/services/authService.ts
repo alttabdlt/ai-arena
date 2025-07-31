@@ -55,9 +55,14 @@ export class AuthService {
       expiresIn: this.REFRESH_TOKEN_EXPIRY,
     } as SignOptions);
 
-    // Store refresh token in Redis
-    const sessionKey = `${this.SESSION_PREFIX}${user.id}`;
-    await this.redis.set(sessionKey, refreshToken, 'EX', 7 * 24 * 60 * 60); // 7 days
+    // Store refresh token in Redis with error handling
+    try {
+      const sessionKey = `${this.SESSION_PREFIX}${user.id}`;
+      await this.redis.set(sessionKey, refreshToken, 'EX', 7 * 24 * 60 * 60); // 7 days
+    } catch (error) {
+      console.error('Redis error when storing refresh token:', error);
+      // Continue without Redis - tokens will still work but refresh won't be validated against Redis
+    }
 
     return { accessToken, refreshToken };
   }
@@ -75,16 +80,24 @@ export class AuthService {
     try {
       const payload = verify(token, this.JWT_REFRESH_SECRET) as AuthTokenPayload;
       
-      // Check if token exists in Redis
-      const sessionKey = `${this.SESSION_PREFIX}${payload.userId}`;
-      const storedToken = await this.redis.get(sessionKey);
-      
-      if (storedToken !== token) {
-        return null;
+      // Check if token exists in Redis with error handling
+      try {
+        const sessionKey = `${this.SESSION_PREFIX}${payload.userId}`;
+        const storedToken = await this.redis.get(sessionKey);
+        
+        if (storedToken !== token) {
+          console.log('Refresh token not found in Redis or mismatch');
+          return null;
+        }
+      } catch (redisError) {
+        console.error('Redis error when verifying refresh token:', redisError);
+        // If Redis is down, allow the token through based on JWT verification alone
+        console.log('Redis unavailable, proceeding with JWT verification only');
       }
 
       return payload;
     } catch (error) {
+      console.error('JWT verification error:', error);
       return null;
     }
   }

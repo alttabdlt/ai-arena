@@ -70,7 +70,8 @@ export class ReverseHangmanGameManager extends BaseGameManager<ReverseHangmanGam
       // For mixed difficulty, randomly select a difficulty for each round
       const difficulties: ('easy' | 'medium' | 'hard' | 'expert')[] = ['easy', 'medium', 'hard', 'expert'];
       roundDifficulty = difficulties[Math.floor(Math.random() * difficulties.length)];
-    } else if (this.config.difficulty && this.config.difficulty !== 'mixed') {
+    } else if (this.config.difficulty) {
+      // If we reach here, difficulty is one of the non-mixed values
       roundDifficulty = this.config.difficulty as 'easy' | 'medium' | 'hard' | 'expert';
     }
     

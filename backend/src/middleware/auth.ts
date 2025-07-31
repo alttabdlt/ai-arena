@@ -25,25 +25,30 @@ export async function extractUserFromRequest(
     return null;
   }
 
-  const authService = new AuthService(prisma, redis);
-  const payload = await authService.verifyAccessToken(token);
+  try {
+    const authService = new AuthService(prisma, redis);
+    const payload = await authService.verifyAccessToken(token);
 
-  if (!payload) {
+    if (!payload) {
+      return null;
+    }
+
+    // Verify user still exists
+    const user = await prisma.user.findUnique({
+      where: { id: payload.userId },
+    });
+
+    if (!user) {
+      return null;
+    }
+
+    return {
+      id: user.id,
+      address: user.address,
+      role: user.role,
+    };
+  } catch (error) {
+    console.error('Error during auth extraction:', error);
     return null;
   }
-
-  // Verify user still exists
-  const user = await prisma.user.findUnique({
-    where: { id: payload.userId },
-  });
-
-  if (!user) {
-    return null;
-  }
-
-  return {
-    id: user.id,
-    address: user.address,
-    role: user.role,
-  };
 }

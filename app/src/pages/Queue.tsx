@@ -1,343 +1,502 @@
 import { useState, useEffect } from 'react';
-import { useQuery, useMutation, useSubscription } from '@apollo/client';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { useNavigate } from 'react-router-dom';
+import { useQuery, useSubscription } from '@apollo/client';
+import { motion, AnimatePresence } from 'framer-motion';
+import SlotMachineTitle from '@/components/SlotMachineTitle';
+import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { useAuth } from '@/contexts/AuthContext';
+import { Button } from '@/components/ui/button';
+import { Loader2, Users, Zap, Trophy, Clock, Wifi, WifiOff } from 'lucide-react';
+import { GameType, GAME_TYPE_INFO } from '@/types/tournament';
+import { GET_QUEUE_STATUS, QUEUE_UPDATE_SUBSCRIPTION } from '@/graphql/queries/queue';
 import { useToast } from '@/hooks/use-toast';
-import { 
-  Clock, 
-  Users, 
-  Timer, 
-  AlertCircle, 
-  Zap, 
-  Trophy, 
-  Bot,
-  LogOut,
-  Loader2,
-  Info
-} from 'lucide-react';
-import { GET_QUEUE_STATUS, GET_USER_BOTS_IN_QUEUE, GET_QUEUED_BOTS, QUEUE_UPDATE_SUBSCRIPTION } from '@/graphql/queries/queue';
-import { LEAVE_QUEUE } from '@/graphql/mutations/queue';
-import { formatDistanceToNow } from 'date-fns';
+import { useWebSocketStatus } from '@/hooks/useWebSocketStatus';
+import { gql } from '@apollo/client';
+import { useAuth } from '@/contexts/AuthContext';
 
-interface QueuedBot {
-  id: string;
-  name: string;
-  avatar: string;
-  modelType: string;
-  queuePosition?: number;
-  stats: {
-    wins: number;
-    losses: number;
-    winRate: number;
-  };
-  queueEntries?: Array<{
-    id: string;
-    queueType: string;
-    status: string;
-    enteredAt: string;
-    expiresAt: string;
-  }>;
-  creator?: {
-    address: string;
-    username?: string;
-  };
-}
-
-export default function Queue() {
-  const { user, isAuthenticated } = useAuth();
+const Queue = () => {
+  const navigate = useNavigate();
   const { toast } = useToast();
-  const [selectedTab, setSelectedTab] = useState('my-bots');
-
-  // Queries
-  const { data: queueStatus, loading: statusLoading } = useQuery(GET_QUEUE_STATUS, {
-    pollInterval: 5000, // Poll every 5 seconds
-  });
-
-  const { data: userBots, loading: botsLoading, refetch: refetchUserBots } = useQuery(GET_USER_BOTS_IN_QUEUE, {
-    variables: { address: user?.address },
-    skip: !user?.address,
-    pollInterval: 5000,
-  });
-
-  const { data: queuedBots, loading: queuedLoading } = useQuery(GET_QUEUED_BOTS, {
-    variables: { limit: 20 },
-    pollInterval: 10000,
-  });
-
-  // Mutations
-  const [leaveQueue] = useMutation(LEAVE_QUEUE, {
-    onCompleted: () => {
+  const { isAuthenticated, isAuthReady } = useAuth();
+  const [selectedGame, setSelectedGame] = useState<GameType | null>(null);
+  const [isMatching, setIsMatching] = useState(false);
+  const [backendGameType, setBackendGameType] = useState<GameType | null>(null);
+  const [pendingMatchRoute, setPendingMatchRoute] = useState<string | null>(null);
+  const [matchedBots, setMatchedBots] = useState<any[]>([]);
+  const { isConnected, reconnectAttempts } = useWebSocketStatus();
+  
+  // Check authentication and redirect if not authenticated
+  useEffect(() => {
+    if (isAuthReady && !isAuthenticated) {
+      console.log('⚠️ User not authenticated, redirecting to home');
       toast({
-        title: 'Left queue',
-        description: 'Your bot has been removed from the queue',
-      });
-      refetchUserBots();
-    },
-    onError: (error) => {
-      toast({
-        title: 'Error',
-        description: error.message,
+        title: 'Authentication Required',
+        description: 'Please connect your wallet to join the queue',
         variant: 'destructive',
       });
+      navigate('/');
+    }
+  }, [isAuthReady, isAuthenticated, navigate, toast]);
+  
+  // Debug state changes
+  useEffect(() => {
+    console.log('🎮 Queue state update:', {
+      selectedGame,
+      isMatching,
+      backendGameType,
+      pendingMatchRoute,
+      matchedBots: matchedBots.map(b => ({ id: b.id, name: b.name }))
+    });
+  }, [selectedGame, isMatching, backendGameType, pendingMatchRoute, matchedBots]);
+  
+  // Query queue status
+  const { data: queueData, loading } = useQuery(GET_QUEUE_STATUS, {
+    pollInterval: 1000, // Fast polling while on this page
+  });
+  
+  // Subscribe to queue updates
+  const { data: queueUpdate, loading: subLoading, error: subError } = useSubscription(QUEUE_UPDATE_SUBSCRIPTION, {
+    skip: false,
+    fetchPolicy: 'no-cache',
+    onData: ({ data }) => {
+      console.log('📡 Queue subscription onData callback:', {
+        hasData: !!data,
+        dataStructure: data,
+        dataKeys: data ? Object.keys(data) : [],
+        timestamp: new Date().toISOString()
+      });
+      
+      // Handle different data structures - Apollo sometimes wraps the data
+      const subscriptionData = data?.data || data;
+      const update = subscriptionData?.queueUpdate;
+      
+      if (update) {
+        console.log('🔄 Processing subscription update:', {
+          status: update.status,
+          matchId: update.matchId,
+          gameType: update.gameType,
+          botName: update.bot?.name,
+          botId: update.bot?.id
+        });
+        
+        // Add bot to matched list if MATCHED
+        if (update.status === 'MATCHED' && update.bot) {
+          setMatchedBots(prev => {
+            const exists = prev.some(bot => bot.id === update.bot.id);
+            if (!exists) {
+              return [...prev, update.bot];
+            }
+            return prev;
+          });
+        }
+        
+        // Store backend game type immediately (only once)
+        if (update.gameType && !backendGameType) {
+          console.log('🎯 Setting game type from subscription:', update.gameType);
+          setBackendGameType(prevGameType => {
+            // Double-check in the setter to prevent race conditions
+            if (!prevGameType) {
+              return update.gameType as GameType;
+            }
+            return prevGameType;
+          });
+        }
+        
+        // Store match route immediately (only once)
+        if (update.status === 'MATCHED' && update.matchId && update.gameType && !pendingMatchRoute) {
+          const GAME_ROUTES: Record<string, string> = {
+            'poker': '/poker',
+            'reverse-hangman': '/hangman-server',
+            'connect4': '/connect4'
+          };
+          
+          const routeSuffix = GAME_ROUTES[update.gameType] || '';
+          const route = `/tournament/${update.matchId}${routeSuffix}`;
+          console.log('🛣️ Setting pending match route:', route);
+          setPendingMatchRoute(prevRoute => {
+            // Double-check in the setter to prevent race conditions
+            if (!prevRoute) {
+              return route;
+            }
+            return prevRoute;
+          });
+        }
+      }
+    },
+    onError: (error) => {
+      console.error('❌ Queue subscription error:', {
+        message: error.message,
+        graphQLErrors: error.graphQLErrors,
+        networkError: error.networkError,
+        stack: error.stack
+      });
+    },
+    onComplete: () => {
+      console.log('✅ Queue subscription complete');
     },
   });
-
-  // Subscribe to queue updates
-  const { data: queueUpdate } = useSubscription(QUEUE_UPDATE_SUBSCRIPTION);
-
+  
+  // Debug subscription data deeply
   useEffect(() => {
     if (queueUpdate) {
-      // Refetch data when queue updates
-      refetchUserBots();
+      console.log('🔍 Raw subscription data:', JSON.stringify(queueUpdate, null, 2));
     }
-  }, [queueUpdate, refetchUserBots]);
-
-  const handleLeaveQueue = async (botId: string) => {
-    try {
-      await leaveQueue({ variables: { botId } });
-    } catch (error) {
-      console.error('Failed to leave queue:', error);
+  }, [queueUpdate]);
+  
+  // Log subscription status
+  useEffect(() => {
+    console.log('🔌 Queue subscription status:', {
+      loading: subLoading,
+      error: subError,
+      hasData: !!queueUpdate,
+      queueUpdate
+    });
+  }, [subLoading, subError, queueUpdate]);
+  
+  // Check if enough players and redirect if not
+  useEffect(() => {
+    // Skip this check on initial load to allow subscriptions to arrive
+    if (!queueData || loading) return;
+    
+    const totalInQueue = queueData?.queueStatus?.totalInQueue || 0;
+    
+    // Check if we were already matched (came here with a matchId in subscription)
+    const isAlreadyMatched = queueUpdate?.queueUpdate?.status === 'MATCHED' && queueUpdate?.queueUpdate?.matchId;
+    
+    // Check URL params - if we came here with a match being created, don't redirect
+    const urlParams = new URLSearchParams(window.location.search);
+    const isMatchCreating = urlParams.get('matchCreating') === 'true';
+    
+    // Check if we're in the middle of matching
+    const isMatchingInProgress = isMatching || selectedGame !== null;
+    
+    console.log('🔍 Queue page check:', {
+      totalInQueue,
+      isAlreadyMatched,
+      isMatchCreating,
+      isMatchingInProgress,
+      queueUpdate: queueUpdate?.queueUpdate
+    });
+    
+    // Only redirect if not enough players AND we're not already matched AND not creating a match AND not in matching process
+    if (totalInQueue < 4 && !isAlreadyMatched && !isMatchCreating && !isMatchingInProgress) {
+      // Give a longer delay to allow subscription updates to arrive
+      const redirectTimer = setTimeout(() => {
+        // Double-check before redirecting
+        const currentTotalInQueue = queueData?.queueStatus?.totalInQueue || 0;
+        if (currentTotalInQueue < 4 && !isMatching) {
+          console.log('⚠️ Redirecting - not enough players');
+          toast({
+            title: 'Not enough players',
+            description: 'Need 4 players to start a match',
+            variant: 'destructive',
+          });
+          navigate('/');
+        }
+      }, 3000); // 3 second delay instead of 1
+      
+      return () => clearTimeout(redirectTimer);
+    }
+  }, [queueData, queueUpdate, navigate, toast, loading, isMatching, selectedGame]);
+  
+  // Check URL parameters on mount and reset state
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const isMatchCreating = urlParams.get('matchCreating') === 'true';
+    console.log('🌐 Queue page mounted:', {
+      isMatchCreating,
+      totalInQueue: queueData?.queueStatus?.totalInQueue,
+      isLoading: loading
+    });
+    
+    // Clear previous match data on mount
+    setMatchedBots([]);
+    setBackendGameType(null);
+    setPendingMatchRoute(null);
+    setSelectedGame(null);
+    setIsMatching(false);
+  }, []);
+  
+  // Handle game selection
+  const handleGameSelected = (gameType: GameType) => {
+    console.log('🎮 handleGameSelected called with:', gameType);
+    setSelectedGame(gameType);
+    setIsMatching(true);
+    
+    // Show matching animation
+    toast({
+      title: `${GAME_TYPE_INFO[gameType].name} selected!`,
+      description: 'Creating match...',
+    });
+    
+    // Check if we have a pending match route to navigate to
+    if (pendingMatchRoute) {
+      console.log('🎰 Slot machine animation complete, navigating to:', pendingMatchRoute);
+      // Small delay to let the toast show
+      setTimeout(() => {
+        console.log('🚀 Actually navigating now to:', pendingMatchRoute);
+        navigate(pendingMatchRoute);
+      }, 500);
+    } else {
+      console.log('⚠️ No pending match route available yet');
     }
   };
-
-  const myBotsInQueue = userBots?.bots?.filter((bot: QueuedBot) => 
-    bot.queueEntries?.some(entry => entry.status === 'WAITING')
-  ) || [];
-
-  const formatWaitTime = (seconds: number) => {
-    if (seconds < 60) return `${seconds}s`;
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-    return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
-  };
-
+  
+  // Handle queue updates for match creation
+  useEffect(() => {
+    console.log('🔄 Queue update effect triggered (should be minimal now):', {
+      hasQueueUpdate: !!queueUpdate,
+      backendGameType,
+      pendingMatchRoute,
+      selectedGame
+    });
+    
+    // If slot machine already completed and we have a route, navigate
+    if (selectedGame && pendingMatchRoute) {
+      console.log('🎰 Slot machine completed and route available, navigating');
+      setTimeout(() => {
+        navigate(pendingMatchRoute);
+      }, 500);
+    }
+  }, [queueUpdate, navigate, selectedGame, pendingMatchRoute, backendGameType]);
+  
+  // Fallback: Check for active matches via polling when WebSocket is disconnected
+  useEffect(() => {
+    if (!isConnected && selectedGame) {
+      console.log('🔄 WebSocket disconnected, using polling fallback');
+      
+      // Poll more aggressively when disconnected
+      const pollInterval = setInterval(() => {
+        // Re-fetch queue status
+        if (queueData?.queueStatus?.totalMatched && queueData.queueStatus.totalMatched >= 4) {
+          console.log('🎮 Match likely created (4+ matched), attempting navigation');
+          // Give backend time to create match
+          setTimeout(() => {
+            // Navigate to bots page as fallback
+            toast({
+              title: 'Match may have been created',
+              description: 'Check your bots page for active matches',
+            });
+            navigate('/bots');
+          }, 3000);
+          clearInterval(pollInterval);
+        }
+      }, 2000);
+      
+      return () => clearInterval(pollInterval);
+    }
+  }, [isConnected, selectedGame, queueData, navigate, toast]);
+  
+  if (loading || !isAuthReady) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+  
+  const totalInQueue = queueData?.queueStatus?.totalInQueue || 0;
+  
   return (
     <div className="min-h-screen bg-background">
-      <div className="container mx-auto px-4 py-8">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">Queue Status</h1>
-          <p className="text-muted-foreground">
-            Monitor queue positions and estimated wait times for upcoming matches
+      {/* Background effects */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-40 -right-40 w-80 h-80 bg-primary/20 rounded-full blur-3xl animate-pulse" />
+        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-accent/20 rounded-full blur-3xl animate-pulse" />
+      </div>
+      
+      <div className="relative z-10 container mx-auto px-4 py-8">
+        {/* WebSocket Status */}
+        {!isConnected && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="fixed top-4 right-4 z-50"
+          >
+            <Card className="p-3 bg-destructive/10 border-destructive/20">
+              <div className="flex items-center gap-2 text-destructive">
+                <WifiOff className="h-4 w-4" />
+                <span className="text-sm font-medium">
+                  WebSocket disconnected
+                  {reconnectAttempts > 0 && ` (Retry ${reconnectAttempts})`}
+                </span>
+              </div>
+            </Card>
+          </motion.div>
+        )}
+        
+        {/* Header */}
+        <div className="text-center mb-8">
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-green-500/10 rounded-full border border-green-500/20 mb-6"
+          >
+            <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse" />
+            <span className="text-green-500 font-medium">Match Ready!</span>
+          </motion.div>
+          
+          <h1 className="text-4xl md:text-5xl font-bold mb-4 bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+            Game Selection
+          </h1>
+          <p className="text-xl text-muted-foreground">
+            {totalInQueue} players ready • Starting match...
           </p>
         </div>
-
-        {/* Queue Overview */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Total in Queue</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <span className="text-2xl font-bold">{queueStatus?.queueStatus?.totalInQueue || 0}</span>
-                <Users className="h-4 w-4 text-muted-foreground" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Average Wait</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <span className="text-2xl font-bold">
-                  {formatWaitTime(queueStatus?.queueStatus?.averageWaitTime || 0)}
-                </span>
-                <Clock className="h-4 w-4 text-muted-foreground" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Next Match</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <span className="text-2xl font-bold">
-                  {queueStatus?.queueStatus?.nextMatchTime 
-                    ? formatDistanceToNow(new Date(queueStatus.queueStatus.nextMatchTime), { addSuffix: true })
-                    : 'Soon'}
-                </span>
-                <Timer className="h-4 w-4 text-muted-foreground" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">My Bots in Queue</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between">
-                <span className="text-2xl font-bold">{myBotsInQueue.length}</span>
-                <Bot className="h-4 w-4 text-muted-foreground" />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Queue Types */}
-        {queueStatus?.queueStatus?.queueTypes && (
-          <Card className="mb-8">
-            <CardHeader>
-              <CardTitle>Queue Distribution</CardTitle>
-              <CardDescription>Bots waiting in each queue type</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {queueStatus.queueStatus.queueTypes.map((queueType: any) => (
-                  <div key={queueType.type} className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium">{queueType.type}</span>
-                        <Badge variant="secondary">{queueType.count} bots</Badge>
+        
+        {/* Players in queue */}
+        <Card className="mb-8 p-6 bg-muted/5 backdrop-blur-sm border-primary/20">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-lg font-semibold flex items-center gap-2">
+              <Users className="h-5 w-5 text-primary" />
+              Players Ready
+            </h3>
+            <Badge variant="secondary" className="bg-green-500/10 text-green-500">
+              {totalInQueue}/4 Players
+            </Badge>
+          </div>
+          
+          <div className="grid grid-cols-4 gap-4">
+            {[...Array(4)].map((_, i) => {
+              const bot = matchedBots[i];
+              return (
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: i * 0.1 }}
+                  className={`p-4 rounded-lg border ${
+                    bot || i < totalInQueue 
+                      ? 'bg-primary/10 border-primary/20' 
+                      : 'bg-muted/10 border-border'
+                  }`}
+                >
+                  <div className="flex items-center justify-center">
+                    {bot ? (
+                      <div className="text-center">
+                        <div className="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center mx-auto mb-2">
+                          <span className="text-2xl">
+                            {bot.avatar && !bot.avatar.startsWith('bot-') ? bot.avatar : '🤖'}
+                          </span>
+                        </div>
+                        <p className="text-xs font-medium">{bot.name}</p>
+                        <p className="text-xs text-muted-foreground opacity-75">
+                          {bot.creator?.address === '0x0000000000000000000000000000000000000001' ? 'Demo Bot' : 'Player Bot'}
+                        </p>
                       </div>
-                      <span className="text-sm text-muted-foreground">
-                        ~{formatWaitTime(queueType.estimatedWaitTime)} wait
-                      </span>
-                    </div>
-                    <Progress value={(queueType.count / queueStatus.queueStatus.totalInQueue) * 100} />
+                    ) : i < totalInQueue ? (
+                      <div className="text-center">
+                        <div className="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center mx-auto mb-2">
+                          <Trophy className="h-6 w-6 text-primary" />
+                        </div>
+                        <p className="text-xs text-muted-foreground">Player {i + 1}</p>
+                      </div>
+                    ) : (
+                      <div className="text-center opacity-50">
+                        <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-2">
+                          <Users className="h-6 w-6 text-muted-foreground" />
+                        </div>
+                        <p className="text-xs text-muted-foreground">Waiting...</p>
+                      </div>
+                    )}
                   </div>
-                ))}
+                </motion.div>
+              );
+            })}
+          </div>
+        </Card>
+        
+        {/* Game Selection */}
+        <AnimatePresence mode="wait">
+          {!selectedGame && !isMatching ? (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+            >
+              <SlotMachineTitle 
+                onGameSelected={handleGameSelected}
+                className="max-w-2xl mx-auto"
+                preSelectedGame={backendGameType || undefined}
+                autoStartDelay={500}
+              />
+            </motion.div>
+          ) : (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="text-center space-y-6"
+            >
+              <div className="inline-flex items-center gap-3 px-6 py-3 bg-primary/10 rounded-full">
+                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                <span className="text-lg font-medium">Creating match...</span>
               </div>
-            </CardContent>
-          </Card>
+              
+              {selectedGame && (
+                <div className="space-y-2">
+                  <p className="text-2xl font-bold">
+                    {GAME_TYPE_INFO[selectedGame].icon} {GAME_TYPE_INFO[selectedGame].name}
+                  </p>
+                  <p className="text-muted-foreground">
+                    Preparing tournament setup...
+                  </p>
+                </div>
+              )}
+              
+              <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                <Clock className="h-4 w-4" />
+                <span>This will take a few seconds</span>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        
+        {/* Auto-start hint */}
+        {!selectedGame && !isMatching && totalInQueue >= 4 && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.5 }}
+            className="text-center mt-8"
+          >
+            <p className="text-sm text-muted-foreground">
+              Game selection will start automatically in a moment...
+            </p>
+          </motion.div>
         )}
-
-        {/* Tabs for My Bots vs All Queued Bots */}
-        <Tabs value={selectedTab} onValueChange={setSelectedTab}>
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="my-bots">My Bots</TabsTrigger>
-            <TabsTrigger value="all-bots">All Queued Bots</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="my-bots" className="mt-6">
-            {!isAuthenticated ? (
-              <Alert>
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>
-                  Please connect your wallet and authenticate to view your bots in queue.
-                </AlertDescription>
-              </Alert>
-            ) : botsLoading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin" />
-              </div>
-            ) : myBotsInQueue.length === 0 ? (
-              <Alert>
-                <Info className="h-4 w-4" />
-                <AlertDescription>
-                  You don't have any bots in the queue. Deploy a bot to start competing!
-                </AlertDescription>
-              </Alert>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {myBotsInQueue.map((bot: QueuedBot) => {
-                  const queueEntry = bot.queueEntries?.find(e => e.status === 'WAITING');
-                  if (!queueEntry) return null;
-
-                  return (
-                    <Card key={bot.id}>
-                      <CardHeader>
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            <div className="text-2xl">{bot.avatar}</div>
-                            <div>
-                              <CardTitle className="text-lg">{bot.name}</CardTitle>
-                              <CardDescription className="flex items-center gap-2">
-                                <Badge variant="outline" className="text-xs">
-                                  {bot.modelType.replace('_', ' ')}
-                                </Badge>
-                                <span className="text-xs">
-                                  Position #{bot.queuePosition || 'TBD'}
-                                </span>
-                              </CardDescription>
-                            </div>
-                          </div>
-                        </div>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="space-y-3">
-                          <div className="flex items-center justify-between text-sm">
-                            <span className="text-muted-foreground">Queue Type</span>
-                            <Badge>{queueEntry.queueType}</Badge>
-                          </div>
-                          <div className="flex items-center justify-between text-sm">
-                            <span className="text-muted-foreground">Entered</span>
-                            <span>{formatDistanceToNow(new Date(queueEntry.enteredAt), { addSuffix: true })}</span>
-                          </div>
-                          <div className="flex items-center justify-between text-sm">
-                            <span className="text-muted-foreground">Expires</span>
-                            <span>{formatDistanceToNow(new Date(queueEntry.expiresAt), { addSuffix: true })}</span>
-                          </div>
-                          <div className="pt-2">
-                            <Button
-                              onClick={() => handleLeaveQueue(bot.id)}
-                              variant="outline"
-                              size="sm"
-                              className="w-full"
-                            >
-                              <LogOut className="h-4 w-4 mr-2" />
-                              Leave Queue
-                            </Button>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  );
-                })}
-              </div>
-            )}
-          </TabsContent>
-
-          <TabsContent value="all-bots" className="mt-6">
-            {queuedLoading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin" />
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                {queuedBots?.queuedBots?.map((bot: QueuedBot, index: number) => (
-                  <Card key={bot.id}>
-                    <CardHeader className="pb-3">
-                      <div className="flex items-center gap-3">
-                        <div className="text-2xl">{bot.avatar}</div>
-                        <div className="flex-1 min-w-0">
-                          <CardTitle className="text-base truncate">{bot.name}</CardTitle>
-                          <CardDescription className="text-xs">
-                            <Badge variant="outline" className="text-xs">
-                              {bot.modelType.replace('_', ' ')}
-                            </Badge>
-                          </CardDescription>
-                        </div>
-                        <Badge variant="secondary" className="ml-auto">
-                          #{index + 1}
-                        </Badge>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="pt-0">
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">Win Rate</span>
-                        <span className="font-medium">{bot.stats.winRate.toFixed(1)}%</span>
-                      </div>
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">Record</span>
-                        <span>{bot.stats.wins}W - {bot.stats.losses}L</span>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            )}
-          </TabsContent>
-        </Tabs>
+        
+        {/* Debug button - remove in production */}
+        {process.env.NODE_ENV === 'development' && (
+          <div className="fixed bottom-4 right-4 space-y-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                console.log('🧪 Manual test: Setting game type');
+                setBackendGameType('reverse-hangman' as GameType);
+                setPendingMatchRoute('/tournament/test-match/hangman-server');
+              }}
+            >
+              Test Set Game
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                // Get the latest match ID from backend logs
+                const testMatchId = prompt('Enter match ID from backend logs:');
+                if (testMatchId) {
+                  navigate(`/tournament/${testMatchId}/hangman-server`);
+                }
+              }}
+            >
+              Go to Match
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );
-}
+};
+
+export default Queue;

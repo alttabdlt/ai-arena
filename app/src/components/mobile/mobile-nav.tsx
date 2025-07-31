@@ -13,7 +13,8 @@ import {
   Scale,
   Activity,
   LayoutDashboard,
-  HelpCircle
+  HelpCircle,
+  Code2
 } from 'lucide-react';
 
 const navItems = [
@@ -21,8 +22,8 @@ const navItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/tournaments', icon: Trophy, label: 'Tournaments' },
   { to: '/bots', icon: Activity, label: 'Bots' },
-  { to: '/queue', icon: Users, label: 'Queue' },
   { to: '/deploy', icon: Rocket, label: 'Deploy Bot' },
+  { to: '/docs', icon: Code2, label: 'Developer Docs' },
   { to: '/learn', icon: BookOpen, label: 'Learn' },
   { to: '/legal', icon: Scale, label: 'Legal' }
 ];

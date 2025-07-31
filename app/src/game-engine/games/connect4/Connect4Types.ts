@@ -10,7 +10,7 @@ export const CONNECT4_ROWS = 8;
 export const CONNECT4_COLS = 8;
 export const WINNING_LENGTH = 4;
 
-export type Connect4Cell = 0 | 1 | 2; // 0 = empty, 1 = player1, 2 = player2
+export type Connect4Cell = 0 | 1 | 2 | 3 | 4; // 0 = empty, 1 = player1, 2 = player2, 3 = player3, 4 = player4
 export type Connect4Board = Connect4Cell[][];
 
 export interface Connect4GameState extends IGameState {
@@ -39,7 +39,7 @@ export interface Connect4GameConfig extends IGameConfig {
 }
 
 export interface Connect4GamePlayer extends IGamePlayer {
-  playerNumber: 1 | 2; // Which player number they are
+  playerNumber: 1 | 2 | 3 | 4; // Which player number they are
   wins: number;
   totalMoves: number;
   timeouts: number;

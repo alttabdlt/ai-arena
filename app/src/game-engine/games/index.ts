@@ -16,7 +16,23 @@ const aiModels = new Map<string, AIModelConfig>([
     maxTokens: 1000,
     temperature: 0.7
   }],
+  ['GPT_4O', {
+    id: 'gpt-4o',
+    name: 'GPT-4o',
+    provider: 'openai',
+    model: 'gpt-4o',
+    maxTokens: 1000,
+    temperature: 0.7
+  }],
   ['claude-3-5-sonnet', {
+    id: 'claude-3-5-sonnet',
+    name: 'Claude 3.5 Sonnet',
+    provider: 'anthropic',
+    model: 'claude-3-5-sonnet-20241022',
+    maxTokens: 1000,
+    temperature: 0.7
+  }],
+  ['CLAUDE_3_5_SONNET', {
     id: 'claude-3-5-sonnet',
     name: 'Claude 3.5 Sonnet',
     provider: 'anthropic',
@@ -32,7 +48,24 @@ const aiModels = new Map<string, AIModelConfig>([
     maxTokens: 1000,
     temperature: 0.7
   }],
+  ['CLAUDE_3_OPUS', {
+    id: 'claude-3-opus',
+    name: 'Claude 3 Opus',
+    provider: 'anthropic',
+    model: 'claude-3-opus-20240229',
+    maxTokens: 1000,
+    temperature: 0.7
+  }],
   ['deepseek-chat', {
+    id: 'deepseek-chat',
+    name: 'DeepSeek Chat',
+    provider: 'custom',
+    model: 'deepseek-chat',
+    endpoint: import.meta.env.VITE_DEEPSEEK_API_URL,
+    maxTokens: 1000,
+    temperature: 0.7
+  }],
+  ['DEEPSEEK_CHAT', {
     id: 'deepseek-chat',
     name: 'DeepSeek Chat',
     provider: 'custom',

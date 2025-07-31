@@ -18,6 +18,8 @@ interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  isLoggingIn: boolean;
+  isAuthReady: boolean;
   login: () => Promise<void>;
   logout: () => Promise<void>;
   refreshAuth: () => Promise<void>;
@@ -32,6 +34,9 @@ const USER_KEY = 'ai-arena-user';
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [lastLoginAttempt, setLastLoginAttempt] = useState<number>(0);
   
   const { address, isConnected } = useAccount();
   const { data: walletClient } = useWalletClient();
@@ -51,6 +56,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const parsedUser = JSON.parse(storedUser);
         setUser(parsedUser);
+        setIsAuthReady(true);
         
         // Auth headers are automatically set by authLink in apollo-client.ts
       } catch (error) {
@@ -81,6 +87,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       return;
     }
+
+    // Prevent concurrent login attempts
+    if (isLoggingIn) {
+      console.log('Login already in progress, skipping...');
+      return;
+    }
+
+    // Debounce: prevent rapid successive login attempts
+    const now = Date.now();
+    if (now - lastLoginAttempt < 2000) { // 2 second minimum between attempts
+      console.log('Login attempt too soon after previous attempt, skipping...');
+      return;
+    }
+
+    setIsLoggingIn(true);
+    setLastLoginAttempt(now);
 
     try {
       // Request nonce
@@ -119,12 +141,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       
       setUser(authUser);
 
-      // Auth headers are automatically set by authLink in apollo-client.ts
+      // Refetch active queries without clearing auth context
+      await apolloClient.refetchQueries({
+        include: 'active',
+      });
+      
+      // Increased delay to ensure auth headers are fully propagated
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      // Mark auth as ready
+      setIsAuthReady(true);
 
       toast({
         title: 'Authentication successful',
         description: 'You are now logged in',
       });
+      
+      setIsLoggingIn(false);
     } catch (error: any) {
       console.error('Login error:', error);
       toast({
@@ -132,8 +165,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         description: error.message || 'Failed to authenticate',
         variant: 'destructive',
       });
+      
+      setIsLoggingIn(false);
     }
-  }, [isConnected, address, walletClient, requestNonce, connectWallet, toast]);
+  }, [isConnected, address, walletClient, requestNonce, connectWallet, toast, isLoggingIn, lastLoginAttempt]);
 
   const logout = useCallback(async () => {
     try {
@@ -148,6 +183,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem(USER_KEY);
     
     setUser(null);
+    setIsAuthReady(false);
 
     // Auth headers are automatically cleared by authLink when token is removed from localStorage
 
@@ -205,12 +241,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [isConnected, user, logout]);
 
+  // Auto login when wallet connects
+  useEffect(() => {
+    if (isConnected && address && !user && !isLoggingIn && walletClient) {
+      // Reduced delay for faster auto-login
+      const loginTimer = setTimeout(() => {
+        // Double-check conditions before login
+        if (isConnected && !user && !isLoggingIn) {
+          console.log('Auto-login triggered for address:', address);
+          login();
+        }
+      }, 100); // Minimal delay to ensure wallet is ready
+      
+      return () => clearTimeout(loginTimer);
+    }
+  }, [isConnected, address, user, isLoggingIn, walletClient, login]);
+
   return (
     <AuthContext.Provider
       value={{
         user,
         isAuthenticated: !!user,
         isLoading,
+        isLoggingIn,
+        isAuthReady,
         login,
         logout,
         refreshAuth,

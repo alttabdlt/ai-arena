@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GameType, GAME_TYPE_INFO } from '@/types/tournament';
 import { Button } from '@/components/ui/button';
@@ -7,61 +7,109 @@ import { cn } from '@/lib/utils';
 interface SlotMachineTitleProps {
   onGameSelected: (gameType: GameType) => void;
   className?: string;
+  autoStartDelay?: number;
+  preSelectedGame?: GameType;
 }
 
-const SlotMachineTitle: React.FC<SlotMachineTitleProps> = ({ onGameSelected, className }) => {
+const SlotMachineTitle: React.FC<SlotMachineTitleProps> = ({ 
+  onGameSelected, 
+  className,
+  autoStartDelay = 2000,
+  preSelectedGame
+}) => {
   const [isSpinning, setIsSpinning] = useState(false);
   const [currentGameIndex, setCurrentGameIndex] = useState(0);
   const [selectedGame, setSelectedGame] = useState<GameType | null>(null);
   const [spinSpeed, setSpinSpeed] = useState(50); // milliseconds between changes
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isSlowingDownRef = useRef(false);
+  const hasProcessedGameRef = useRef(false);
   
-  const enabledGames = Object.entries(GAME_TYPE_INFO)
+  const enabledGames = useMemo(() => Object.entries(GAME_TYPE_INFO)
     .filter(([_, info]) => !info.disabled)
-    .map(([key, info]) => ({ key: key as GameType, ...info }));
+    .map(([key, info]) => ({ key: key as GameType, ...info })), []);
 
   const startSpinning = () => {
     if (isSpinning || selectedGame) return;
     
+    // Reset refs for new spin
+    hasProcessedGameRef.current = false;
+    isSlowingDownRef.current = false;
+    
     setIsSpinning(true);
     setSpinSpeed(50);
     
-    const targetIndex = Math.floor(Math.random() * enabledGames.length);
-    const targetGame = enabledGames[targetIndex];
-    
-    let currentSpeed = 50;
-    const totalDuration = 4000; // 4 seconds total
-    const startTime = Date.now();
+    // For continuous spinning, we don't set a target initially
+    // We'll check for preSelectedGame during the spin
+    let spinStartTime = Date.now();
+    let continuousSpinning = true;
     
     const spin = () => {
-      const elapsed = Date.now() - startTime;
-      const progress = elapsed / totalDuration;
-      
-      // Exponential slowdown
-      currentSpeed = 50 + (450 * Math.pow(progress, 3));
-      
-      setCurrentGameIndex(prev => (prev + 1) % enabledGames.length);
-      
-      if (elapsed >= totalDuration) {
-        // Stop at target game
-        setCurrentGameIndex(targetIndex);
-        setSelectedGame(targetGame.key);
-        setIsSpinning(false);
+      // Check if we now have a preSelectedGame
+      if (preSelectedGame && continuousSpinning && !isSlowingDownRef.current) {
+        // We have a target! Start slowing down to land on it
+        continuousSpinning = false;
+        isSlowingDownRef.current = true;
+        hasProcessedGameRef.current = true;
         
+        const targetIndex = enabledGames.findIndex(g => g.key === preSelectedGame);
+        const targetGame = enabledGames[targetIndex];
+        
+        if (targetIndex === -1) {
+          console.error('Invalid preSelectedGame:', preSelectedGame);
+          isSlowingDownRef.current = false;
+          return;
+        }
+        
+        // Start a new spin sequence to land on target
+        let currentSpeed = 50;
+        const slowdownDuration = 3000; // 3 seconds to slow down and stop
+        const slowdownStart = Date.now();
+        
+        const slowdownSpin = () => {
+          const elapsed = Date.now() - slowdownStart;
+          const progress = elapsed / slowdownDuration;
+          
+          // Exponential slowdown
+          currentSpeed = 50 + (450 * Math.pow(progress, 3));
+          
+          setCurrentGameIndex(prev => (prev + 1) % enabledGames.length);
+          
+          if (elapsed >= slowdownDuration) {
+            // Stop at target game
+            setCurrentGameIndex(targetIndex);
+            setSelectedGame(targetGame.key);
+            setIsSpinning(false);
+            isSlowingDownRef.current = false;
+            
+            if (intervalRef.current) {
+              clearInterval(intervalRef.current);
+              intervalRef.current = null;
+            }
+            
+            // Trigger game selection after a brief pause
+            setTimeout(() => {
+              onGameSelected(targetGame.key);
+            }, 1500);
+          } else {
+            // Continue slowing down
+            if (intervalRef.current) {
+              clearInterval(intervalRef.current);
+            }
+            intervalRef.current = setTimeout(slowdownSpin, currentSpeed);
+          }
+        };
+        
+        slowdownSpin();
+      } else if (continuousSpinning) {
+        // Continue spinning at constant speed
+        setCurrentGameIndex(prev => (prev + 1) % enabledGames.length);
+        
+        // Schedule next spin
         if (intervalRef.current) {
           clearInterval(intervalRef.current);
         }
-        
-        // Trigger game selection after a brief pause
-        setTimeout(() => {
-          onGameSelected(targetGame.key);
-        }, 1500);
-      } else {
-        // Schedule next spin with new speed
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current);
-        }
-        intervalRef.current = setTimeout(spin, currentSpeed);
+        intervalRef.current = setTimeout(spin, 100); // Constant speed for continuous spin
       }
     };
     
@@ -76,6 +124,80 @@ const SlotMachineTitle: React.FC<SlotMachineTitleProps> = ({ onGameSelected, cla
       }
     };
   }, []);
+  
+  // Auto-start effect - start spinning immediately on mount
+  useEffect(() => {
+    if (!isSpinning && !selectedGame) {
+      const timer = setTimeout(() => {
+        startSpinning();
+      }, autoStartDelay || 500); // Default 500ms delay
+      
+      return () => clearTimeout(timer);
+    }
+  }, []); // Only run on mount
+  
+  // Watch for preSelectedGame changes
+  useEffect(() => {
+    // If we're already spinning and we just received a preSelectedGame, we need to land on it
+    if (isSpinning && preSelectedGame && !selectedGame && !isSlowingDownRef.current && !hasProcessedGameRef.current) {
+      console.log('🎯 Received preSelectedGame while spinning:', preSelectedGame);
+      
+      // Mark that we're processing this game to prevent duplicates
+      isSlowingDownRef.current = true;
+      hasProcessedGameRef.current = true;
+      
+      // Find the target game index
+      const targetIndex = enabledGames.findIndex(g => g.key === preSelectedGame);
+      if (targetIndex === -1) {
+        console.error('Invalid preSelectedGame:', preSelectedGame);
+        isSlowingDownRef.current = false;
+        return;
+      }
+      
+      // Start slowing down to land on the target
+      const targetGame = enabledGames[targetIndex];
+      let currentSpeed = 50;
+      const slowdownDuration = 2000; // 2 seconds to slow down and stop
+      const slowdownStart = Date.now();
+      
+      // Clear any existing interval
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      
+      const slowdownSpin = () => {
+        const elapsed = Date.now() - slowdownStart;
+        const progress = elapsed / slowdownDuration;
+        
+        // Exponential slowdown
+        currentSpeed = 50 + (450 * Math.pow(progress, 3));
+        
+        setCurrentGameIndex(prev => (prev + 1) % enabledGames.length);
+        
+        if (elapsed >= slowdownDuration) {
+          // Stop at target game
+          console.log('🎰 Landing on game:', targetGame.key);
+          setCurrentGameIndex(targetIndex);
+          setSelectedGame(targetGame.key);
+          setIsSpinning(false);
+          isSlowingDownRef.current = false;
+          
+          // Trigger game selection after a brief pause
+          setTimeout(() => {
+            console.log('🚀 Calling onGameSelected with:', targetGame.key);
+            onGameSelected(targetGame.key);
+          }, 1000);
+        } else {
+          // Continue slowing down
+          intervalRef.current = setTimeout(slowdownSpin, currentSpeed);
+        }
+      };
+      
+      // Start the slowdown sequence
+      slowdownSpin();
+    }
+  }, [preSelectedGame, isSpinning, selectedGame, enabledGames]);
 
   const currentGame = enabledGames[currentGameIndex];
 
@@ -157,6 +279,7 @@ const SlotMachineTitle: React.FC<SlotMachineTitleProps> = ({ onGameSelected, cla
             size="lg"
             onClick={startSpinning}
             disabled={isSpinning}
+            data-slot-machine-start
             className={cn(
               "min-w-[200px] relative overflow-hidden",
               isSpinning && "animate-pulse"

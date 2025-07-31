@@ -76,18 +76,12 @@ export const DEMO_BOTS: DemoBot[] = [
   { 
     name: "PokerPro", 
     model: "deepseek-chat", 
-    strategy: "Aggressive poker specialist with deep understanding of pot odds",
+    strategy: "Aggressive specialist with deep understanding of game theory",
     avatar: "/avatars/pokerpro.png"
   },
   { 
-    name: "BluffMaster", 
-    model: "deepseek-chat", 
-    strategy: "Masters the art of deception and psychological warfare",
-    avatar: "/avatars/bluffmaster.png"
-  },
-  { 
     name: "Calculator", 
-    model: "deepseek-chat", 
+    model: "gpt-4o", 
     strategy: "Pure mathematical approach to every decision",
     avatar: "/avatars/calculator.png"
   },
@@ -98,28 +92,10 @@ export const DEMO_BOTS: DemoBot[] = [
     avatar: "/avatars/intuition.png"
   },
   { 
-    name: "Rookie", 
-    model: "gpt-4o", 
-    strategy: "Still learning but shows flashes of brilliance",
-    avatar: "/avatars/rookie.png"
-  },
-  { 
     name: "Veteran", 
     model: "claude-3-5-sonnet", 
-    strategy: "Decades of experience in high-stakes games",
+    strategy: "Decades of experience across all game types",
     avatar: "/avatars/veteran.png"
-  },
-  { 
-    name: "WildCard", 
-    model: "deepseek-chat", 
-    strategy: "Completely unpredictable chaos agent",
-    avatar: "/avatars/wildcard.png"
-  },
-  { 
-    name: "ZenMaster", 
-    model: "claude-3-opus", 
-    strategy: "Calm, collected, and impossibly patient",
-    avatar: "/avatars/zenmaster.png"
   }
 ];
 
@@ -136,8 +112,8 @@ export const GAME_TYPE_INFO: Record<GameType, {
     name: 'Texas Hold\'em Poker',
     description: 'Classic poker with big blinds, bluffs, and all-ins',
     icon: '🃏',
-    minPlayers: 2,
-    maxPlayers: 8,
+    minPlayers: 4,
+    maxPlayers: 4,
     defaultConfig: {
       startingChips: 10000,
       blindStructure: 'standard',
@@ -149,8 +125,8 @@ export const GAME_TYPE_INFO: Record<GameType, {
     name: 'Reverse Engineering',
     description: 'Guess the prompt that created the AI output',
     icon: '🔍',
-    minPlayers: 1,
-    maxPlayers: 8,
+    minPlayers: 4,
+    maxPlayers: 4,
     defaultConfig: {
       maxRounds: 5,
       timeLimit: 120
@@ -160,12 +136,12 @@ export const GAME_TYPE_INFO: Record<GameType, {
     name: 'Connect 4',
     description: 'Drop colored discs to connect four in a row',
     icon: '🔴',
-    minPlayers: 2,
-    maxPlayers: 2,
+    minPlayers: 4,
+    maxPlayers: 4,
     defaultConfig: {
-      timeLimit: 60,
-      boardWidth: 7,
-      boardHeight: 6,
+      timeLimit: 30,
+      boardWidth: 8,
+      boardHeight: 8,
       connectToWin: 4,
       enableGravity: true
     }
@@ -174,8 +150,8 @@ export const GAME_TYPE_INFO: Record<GameType, {
     name: 'Chess',
     description: 'The classic game of strategy (Coming Soon)',
     icon: '♟️',
-    minPlayers: 2,
-    maxPlayers: 2,
+    minPlayers: 4,
+    maxPlayers: 4,
     defaultConfig: {},
     disabled: true
   },
@@ -183,8 +159,8 @@ export const GAME_TYPE_INFO: Record<GameType, {
     name: 'Go',
     description: 'Ancient board game of territory (Coming Soon)',
     icon: '⚫',
-    minPlayers: 2,
-    maxPlayers: 2,
+    minPlayers: 4,
+    maxPlayers: 4,
     defaultConfig: {},
     disabled: true
   }

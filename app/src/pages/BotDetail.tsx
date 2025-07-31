@@ -29,11 +29,18 @@ import {
   Clock,
   Loader2,
   Play,
-  Brain
+  Brain,
+  Heart,
+  MessageCircle,
+  Share2
 } from 'lucide-react';
 import { GET_BOT_DETAIL, GET_BOT_MATCHES } from '@/graphql/queries/bot';
 import { TOGGLE_BOT_ACTIVE, ENTER_QUEUE } from '@/graphql/mutations/bot';
 import { format, formatDistanceToNow } from 'date-fns';
+import { LiveMatchCard } from '@/components/bot-profile/LiveMatchCard';
+import { PerformanceByGame } from '@/components/bot-profile/PerformanceByGame';
+import { BotAchievements } from '@/components/bot-profile/BotAchievements';
+import { MatchHistoryEnhanced } from '@/components/bot-profile/MatchHistoryEnhanced';
 
 interface BotStats {
   wins: number;
@@ -73,7 +80,7 @@ export default function BotDetail() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { toast } = useToast();
-  const [selectedTab, setSelectedTab] = useState('stats');
+  const [selectedTab, setSelectedTab] = useState('performance');
 
   // Queries
   const { data: botData, loading: botLoading, refetch: refetchBot } = useQuery(GET_BOT_DETAIL, {
@@ -142,9 +149,18 @@ export default function BotDetail() {
   }
 
   const bot = botData.bot;
-  const isOwner = user?.address === bot.creator.address;
+  // Compare addresses in lowercase to handle checksum differences
+  const isOwner = user?.address?.toLowerCase() === bot.creator.address?.toLowerCase();
   const stats: BotStats = bot.stats;
   const matches: Match[] = matchesData?.matches || [];
+  
+  // Debug ownership detection
+  console.log('BotDetail ownership check:', {
+    userAddress: user?.address,
+    botCreatorAddress: bot.creator.address,
+    isOwner,
+    user
+  });
 
   const handleToggleActive = async () => {
     try {
@@ -184,18 +200,42 @@ export default function BotDetail() {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="container mx-auto px-4 py-8 max-w-6xl">
+      <div className="container mx-auto px-4 py-8 max-w-7xl">
         {/* Header */}
-        <div className="flex items-center gap-4 mb-8">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => navigate('/bots')}
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <h1 className="text-3xl font-bold">Bot Details</h1>
+        <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center gap-4">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => navigate('/bots')}
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <div>
+              <h1 className="text-3xl font-bold">Bot Profile</h1>
+              <p className="text-muted-foreground">
+                {isOwner ? 'Manage your bot' : 'Public profile'}
+              </p>
+            </div>
+          </div>
+          {!isOwner && (
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="icon">
+                <Heart className="h-4 w-4" />
+              </Button>
+              <Button variant="outline" size="icon">
+                <Share2 className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
         </div>
+
+        {/* Live Match Card - Show prominently if bot is in a match */}
+        {bot.currentMatch && (
+          <div className="mb-8">
+            <LiveMatchCard currentMatch={bot.currentMatch} botId={bot.id} />
+          </div>
+        )}
 
         {/* Bot Overview */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
@@ -316,11 +356,28 @@ export default function BotDetail() {
 
         {/* Detailed Stats and History */}
         <Tabs value={selectedTab} onValueChange={setSelectedTab}>
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="stats">Statistics</TabsTrigger>
+          <TabsList className="grid w-full grid-cols-4">
+            <TabsTrigger value="performance">Performance</TabsTrigger>
+            <TabsTrigger value="achievements">Achievements</TabsTrigger>
             <TabsTrigger value="matches">Match History</TabsTrigger>
-            <TabsTrigger value="social">Social</TabsTrigger>
+            <TabsTrigger value="stats">Statistics</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="performance" className="mt-6">
+            <PerformanceByGame performances={[]} />
+          </TabsContent>
+
+          <TabsContent value="achievements" className="mt-6">
+            <BotAchievements achievements={[]} totalAchievements={20} />
+          </TabsContent>
+
+          <TabsContent value="matches" className="mt-6">
+            <MatchHistoryEnhanced 
+              matches={matches} 
+              botId={bot.id} 
+              loading={matchesLoading} 
+            />
+          </TabsContent>
 
           <TabsContent value="stats" className="mt-6">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -379,114 +436,6 @@ export default function BotDetail() {
                   <span>0%</span>
                   <span className="font-medium">{stats.winRate.toFixed(1)}%</span>
                   <span>100%</span>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="matches" className="mt-6">
-            {matchesLoading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="h-8 w-8 animate-spin" />
-              </div>
-            ) : matches.length === 0 ? (
-              <Alert>
-                <Info className="h-4 w-4" />
-                <AlertDescription>
-                  No matches played yet. Enter the queue to start competing!
-                </AlertDescription>
-              </Alert>
-            ) : (
-              <div className="space-y-4">
-                {matches.map((match) => {
-                  const botParticipant = match.participants.find(p => p.bot.id === bot.id);
-                  const position = botParticipant?.finalRank;
-                  const isWinner = match.result?.winner?.id === bot.id;
-
-                  return (
-                    <Card key={match.id}>
-                      <CardHeader className="pb-3">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <CardTitle className="text-base">
-                              {match.type} Match
-                            </CardTitle>
-                            <CardDescription className="text-xs">
-                              {format(new Date(match.createdAt), 'MMM d, yyyy h:mm a')}
-                            </CardDescription>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {isWinner && (
-                              <Badge variant="default" className="bg-green-500">
-                                <Trophy className="h-3 w-3 mr-1" />
-                                Winner
-                              </Badge>
-                            )}
-                            {position && (
-                              <Badge variant="outline">
-                                #{position} / {match.participants.length}
-                              </Badge>
-                            )}
-                          </div>
-                        </div>
-                      </CardHeader>
-                      <CardContent className="pt-0">
-                        <div className="flex items-center gap-2 text-sm">
-                          <span className="text-muted-foreground">Opponents:</span>
-                          <div className="flex items-center gap-1">
-                            {match.participants
-                              .filter(p => p.bot.id !== bot.id)
-                              .map(p => (
-                                <span key={p.bot.id} className="text-xl" title={p.bot.name}>
-                                  {p.bot.avatar}
-                                </span>
-                              ))}
-                          </div>
-                        </div>
-                        {match.result && (
-                          <div className="flex items-center gap-4 text-sm text-muted-foreground mt-2">
-                            <span>
-                              <Clock className="h-3 w-3 inline mr-1" />
-                              {match.result.duration ? `${Math.floor(match.result.duration / 60)}m` : 'N/A'}
-                            </span>
-                            <span>
-                              <Hash className="h-3 w-3 inline mr-1" />
-                              {match.result.totalHands || 0} hands
-                            </span>
-                            <span>
-                              <Target className="h-3 w-3 inline mr-1" />
-                              {botParticipant?.points || 0} points
-                            </span>
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-                  );
-                })}
-              </div>
-            )}
-          </TabsContent>
-
-          <TabsContent value="social" className="mt-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Social Stats</CardTitle>
-                <CardDescription>Community engagement metrics</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="text-center">
-                    <p className="text-2xl font-bold">{bot.socialStats.likes}</p>
-                    <p className="text-sm text-muted-foreground">Likes</p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-2xl font-bold">{bot.socialStats.comments}</p>
-                    <p className="text-sm text-muted-foreground">Comments</p>
-                  </div>
-                  <div className="text-center">
-                    <p className="text-2xl font-bold">{bot.socialStats.followers}</p>
-                    <p className="text-sm text-muted-foreground">Followers</p>
-                  </div>
                 </div>
               </CardContent>
             </Card>

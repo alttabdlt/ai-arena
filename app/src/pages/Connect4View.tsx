@@ -1,84 +1,76 @@
 import * as React from 'react';
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useQuery } from '@apollo/client';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { toast } from 'sonner';
 import { Connect4Board } from '@/components/game/connect4/Connect4Board';
 import { Connect4Status } from '@/components/game/connect4/Connect4Status';
 import { Connect4DecisionHistory } from '@/components/game/connect4/Connect4DecisionHistory';
-import { useConnect4Game } from '@/hooks/useConnect4Game';
-import { Tournament } from '@/types/tournament';
+import { useServerSideConnect4 } from '@/hooks/useServerSideConnect4';
+import { GET_MATCH } from '@/graphql/queries/bot';
 import { ArrowLeft, Zap, Trophy, Timer } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Connect4TournamentManager } from '@/components/game/connect4/Connect4TournamentManager';
 
 export default function Connect4View() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const [tournament, setTournament] = useState<Tournament | null>(null);
-  const [loadingError, setLoadingError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    let timeoutId: NodeJS.Timeout;
-    
-    const loadTournament = async () => {
-      try {
-        // Set a timeout for loading
-        timeoutId = setTimeout(() => {
-          setLoadingError('Tournament loading timed out. The tournament data may be missing.');
-          setIsLoading(false);
-        }, 5000);
-
-        // Load tournament from sessionStorage
-        const tournamentData = sessionStorage.getItem(`tournament-${id}`);
-        
-        if (!tournamentData) {
-          setLoadingError('Tournament not found. It may have been removed or expired.');
-          clearTimeout(timeoutId);
-          setIsLoading(false);
-          return;
-        }
-
-        const loadedTournament = JSON.parse(tournamentData);
-        if (loadedTournament.gameType !== 'connect4') {
-          setLoadingError(`This tournament is for ${loadedTournament.gameType}, not Connect 4.`);
-          clearTimeout(timeoutId);
-          setIsLoading(false);
-          
-          // Redirect to correct game view after a short delay
-          setTimeout(() => {
-            if (loadedTournament.gameType === 'poker') {
-              navigate(`/tournament/${id}`);
-            } else if (loadedTournament.gameType === 'reverse-hangman') {
-              navigate(`/tournament/${id}/hangman`);
-            } else {
-              navigate('/tournaments');
-            }
-          }, 2000);
-          return;
-        }
-
-        setTournament(loadedTournament);
-        clearTimeout(timeoutId);
-        setIsLoading(false);
-      } catch (error) {
-        console.error('Error loading tournament:', error);
-        setLoadingError('Failed to load tournament data.');
-        clearTimeout(timeoutId);
-        setIsLoading(false);
+  const [showTournamentView, setShowTournamentView] = useState(true);
+  
+  // Load match data from GraphQL
+  const { data: matchData, loading: matchLoading, error: matchError } = useQuery(GET_MATCH, {
+    variables: { id },
+    skip: !id,
+    onCompleted: (data) => {
+      console.log('🎮 Connect4 match data loaded:', {
+        matchId: id,
+        hasMatch: !!data?.match,
+        matchStatus: data?.match?.status,
+        gameType: data?.match?.gameHistory?.gameType
+      });
+      
+      // Check if this is the correct game type
+      const gameHistory = data?.match?.gameHistory;
+      const gameType = gameHistory?.gameType;
+      
+      console.log('🎮 Connect4View game type detection:', {
+        matchId: id,
+        hasGameHistory: !!gameHistory,
+        gameType: gameType,
+        rawGameHistory: gameHistory
+      });
+      
+      // If gameHistory exists but gameType is not connect4, redirect
+      if (gameHistory && (!gameType || gameType !== 'connect4')) {
+        console.log(`Wrong or missing game type: ${gameType}, redirecting to poker...`);
+        navigate(`/tournament/${id}`);
+        return;
       }
-    };
-
-    loadTournament();
-
-    return () => {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
+      
+      // If gameType is specified and not connect4, redirect to correct view
+      if (gameType && gameType !== 'connect4') {
+        console.log(`Wrong game type: ${gameType}, redirecting...`);
+        if (gameType === 'poker') {
+          navigate(`/tournament/${id}`);
+        } else if (gameType === 'reverse-hangman') {
+          navigate(`/tournament/${id}/hangman-server`);
+        }
       }
-    };
-  }, [id, navigate]);
+    },
+    onError: (error) => {
+      console.error('❌ Connect4 match query error:', error);
+    }
+  });
 
-  // Always call the hook to respect React's rules
+  // Check if this is actually a Connect4 game
+  // Only consider it a Connect4 game if explicitly marked as such or no gameHistory exists yet
+  const gameHistory = matchData?.match?.gameHistory;
+  const gameType = gameHistory?.gameType;
+  const isConnect4Game = gameType === 'connect4' || (!gameHistory && matchData?.match);
+
+  // Use server-side Connect4 hook
   const {
     gameState,
     isAIThinking,
@@ -88,8 +80,12 @@ export default function Connect4View() {
     isDraw,
     isGameComplete,
     stats,
-    decisionHistory
-  } = useConnect4Game({ tournament });
+    decisionHistory,
+    isInitialized
+  } = useServerSideConnect4({ 
+    gameId: isConnect4Game ? (id || '') : '', 
+    tournament: isConnect4Game ? matchData?.match : null
+  });
   
   // Debug logging
   useEffect(() => {
@@ -119,7 +115,7 @@ export default function Connect4View() {
   }, [gameState, isAIThinking, currentPlayer, isGameComplete, stats]);
   
   // Show loading state
-  if (isLoading && !loadingError) {
+  if (matchLoading) {
     return (
       <div className="min-h-screen bg-background">
         <div className="container mx-auto px-4 py-8">
@@ -134,7 +130,7 @@ export default function Connect4View() {
           
           <Card className="p-8">
             <div className="text-center">
-              <h2 className="text-2xl font-bold mb-4">Loading Tournament...</h2>
+              <h2 className="text-2xl font-bold mb-4">Loading Match...</h2>
               <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full mx-auto"></div>
             </div>
           </Card>
@@ -144,7 +140,7 @@ export default function Connect4View() {
   }
 
   // Show error state
-  if (loadingError || !tournament) {
+  if (matchError || !matchData?.match) {
     return (
       <div className="min-h-screen bg-background">
         <div className="container mx-auto px-4 py-8">
@@ -159,8 +155,8 @@ export default function Connect4View() {
           
           <Card className="p-8">
             <div className="text-center">
-              <h2 className="text-2xl font-bold mb-4 text-destructive">Error Loading Tournament</h2>
-              <p className="text-muted-foreground mb-6">{loadingError || 'Tournament not found'}</p>
+              <h2 className="text-2xl font-bold mb-4 text-destructive">Error Loading Match</h2>
+              <p className="text-muted-foreground mb-6">{matchError?.message || 'Match not found'}</p>
               <Button onClick={() => navigate('/tournaments')}>
                 Return to Tournaments
               </Button>
@@ -170,6 +166,8 @@ export default function Connect4View() {
       </div>
     );
   }
+
+  const match = matchData.match;
 
   // Main game view
   return (
@@ -186,146 +184,115 @@ export default function Connect4View() {
           </Button>
           
           <div className="text-center">
-            <h1 className="text-3xl font-bold">{tournament.name}</h1>
+            <h1 className="text-3xl font-bold">{match.tournament?.name || `Match ${match.id.slice(0, 8)}`}</h1>
             <p className="text-muted-foreground">Connect 4 Tournament</p>
           </div>
 
           <div className="flex items-center gap-2">
             <Timer className="h-5 w-5 text-muted-foreground" />
             <span className="text-sm">
-              {tournament.config.timeLimit}s per move
+              30s per move
             </span>
           </div>
         </div>
 
-        {/* Game Area */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Main Game Board */}
-          <div className="lg:col-span-2">
+        {/* Connect4 Tournament View */}
+        <div className="space-y-6">
+          {/* Tournament Info - Simple display for now */}
+          {match.tournament && (
             <Card className="p-6">
-              {gameState && gameState.board && Array.isArray(gameState.board) && gameState.board.length > 0 ? (
-                <>
-                  <Connect4Board
-                    board={gameState.board}
-                    onColumnClick={makeMove}
-                    isAIThinking={isAIThinking}
-                    disabled={isGameComplete || isAIThinking}
-                    winningCells={gameState.winningCells}
-                  />
-                  
-                  {/* Game Status */}
-                  <div className="mt-6">
-                    <Connect4Status
-                      currentPlayer={currentPlayer}
-                      isAIThinking={isAIThinking}
-                      winner={winner}
-                      isDraw={isDraw}
-                      players={tournament.players}
-                    />
-                  </div>
-                </>
-              ) : (
-                <div className="text-center py-12">
-                  <p className="text-muted-foreground mb-4">
-                    {!gameState ? 'Initializing game state...' :
-                     !gameState.board ? 'Waiting for board initialization...' :
-                     !Array.isArray(gameState.board) ? 'Invalid board format...' :
-                     'Setting up game board...'}
-                  </p>
-                  <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full mx-auto"></div>
-                  {/* Debug info */}
-                  <div className="mt-4 text-xs text-muted-foreground">
-                    <p>Debug: gameState exists: {!!gameState ? 'Yes' : 'No'}</p>
-                    <p>Debug: board exists: {!!(gameState?.board) ? 'Yes' : 'No'}</p>
-                    <p>Debug: board is array: {Array.isArray(gameState?.board) ? 'Yes' : 'No'}</p>
-                    <p>Debug: board length: {gameState?.board?.length || 'N/A'}</p>
-                  </div>
-                </div>
-              )}
-            </Card>
-          </div>
-
-          {/* Side Panel */}
-          <div className="space-y-4">
-            {/* Players */}
-            <Card className="p-4">
-              <h3 className="font-semibold mb-3 flex items-center gap-2">
-                <Trophy className="h-4 w-4" />
-                Players
-              </h3>
-              <div className="space-y-2">
-                {tournament.players.map((player, index) => (
-                  <div 
-                    key={player.id}
-                    className={`flex items-center justify-between p-2 rounded ${
-                      currentPlayer?.id === player.id ? 'bg-primary/10' : ''
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div className={`w-3 h-3 rounded-full ${
-                        index === 0 ? 'bg-red-500' : 'bg-yellow-500'
-                      }`} />
-                      <span className="font-medium">{player.name}</span>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-bold">Connect4 Tournament</h2>
+                <Badge variant="outline">
+                  {gameHistory?.round === 'semifinal' ? 'Semifinal' : 
+                   gameHistory?.round === 'final' ? 'Final' : 'Match'}
+                </Badge>
+              </div>
+              
+              {/* Current Match Participants */}
+              <div className="grid grid-cols-2 gap-4">
+                {match.participants?.map((p: any, idx: number) => (
+                  <div key={p.bot.id} className="flex items-center gap-2 p-3 rounded-lg bg-muted/50">
+                    <div className={`w-4 h-4 rounded-full ${idx === 0 ? 'bg-red-500' : 'bg-yellow-500'}`} />
+                    <div className="flex-1">
+                      <p className="font-medium">{p.bot.name}</p>
+                      <p className="text-xs text-muted-foreground">{p.bot.modelType}</p>
                     </div>
-                    <span className="text-xs text-muted-foreground">
-                      {player.aiModel}
-                    </span>
+                    {winner === p.bot.id && <Trophy className="h-4 w-4 text-primary" />}
                   </div>
                 ))}
               </div>
             </Card>
+          )}
+          
+          {/* Current Match View */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Game Board */}
+            <div className="lg:col-span-2">
+              {gameState && gameState.board ? (
+                <Connect4Board
+                  board={gameState.board}
+                  onColumnClick={makeMove || (() => {})}
+                  isAIThinking={isAIThinking || false}
+                  disabled={isGameComplete}
+                  winningCells={gameState.winningCells}
+                />
+              ) : (
+                <Card className="p-8">
+                  <div className="text-center">
+                    <h3 className="text-xl font-semibold mb-2">Waiting for game to start...</h3>
+                    <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full mx-auto"></div>
+                  </div>
+                </Card>
+              )}
+            </div>
 
-            {/* Game Stats */}
-            <Card className="p-4">
-              <h3 className="font-semibold mb-3 flex items-center gap-2">
-                <Zap className="h-4 w-4" />
-                Game Stats
-              </h3>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Moves</span>
-                  <span>{stats.moveCount}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Time per Move</span>
-                  <span>{tournament.config.timeLimit}s</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Board Size</span>
-                  <span>
-                    {gameState?.board ? `${gameState.board[0]?.length || 0}×${gameState.board.length}` : '8×8'}
-                  </span>
-                </div>
-              </div>
-            </Card>
-
-            {/* AI Decision History */}
-            <Connect4DecisionHistory 
-              decisions={decisionHistory}
-              currentMoveNumber={stats.moveCount}
-            />
-
-            {/* Game Complete Actions */}
-            {isGameComplete && (
+            {/* Game Info */}
+            <div className="space-y-4">
+              {/* Current Match Info */}
               <Card className="p-4">
-                <h3 className="font-semibold mb-3">Game Complete!</h3>
+                <h3 className="font-semibold mb-3">
+                  {gameHistory?.round === 'semifinal' ? 'Semifinal Match' : 
+                   gameHistory?.round === 'final' ? 'Final Match' : 'Match'}
+                </h3>
                 <div className="space-y-2">
-                  <Button 
-                    className="w-full"
-                    onClick={() => navigate('/tournaments')}
-                  >
-                    Back to Tournaments
-                  </Button>
-                  <Button 
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => navigate('/tournaments/create')}
-                  >
-                    Create New Tournament
-                  </Button>
+                  {match.participants.map((p: any, idx: number) => (
+                    <div key={p.bot.id} className="flex items-center gap-2">
+                      <div className={`w-4 h-4 rounded-full ${idx === 0 ? 'bg-red-500' : 'bg-yellow-500'}`} />
+                      <span className="text-sm">{p.bot.name}</span>
+                      {winner === p.bot.id && <Trophy className="h-3 w-3 text-primary ml-auto" />}
+                    </div>
+                  ))}
                 </div>
               </Card>
-            )}
+
+              {/* Game Status */}
+              {gameState && (
+                <Connect4Status
+                  gameState={gameState}
+                  isAIThinking={isAIThinking || false}
+                  currentPlayer={currentPlayer}
+                  winner={winner ? {
+                    id: winner,
+                    name: matchData?.match?.participants?.find((p: any) => p.bot.id === winner)?.bot.name || 'Unknown',
+                    color: matchData?.match?.participants?.findIndex((p: any) => p.bot.id === winner) === 0 ? 'red' : 'yellow',
+                    isAI: true,
+                    aiModel: matchData?.match?.participants?.find((p: any) => p.bot.id === winner)?.bot.modelType
+                  } : null}
+                  isDraw={isDraw || false}
+                  isComplete={isGameComplete || false}
+                  stats={stats}
+                />
+              )}
+
+              {/* Decision History */}
+              {decisionHistory && decisionHistory.length > 0 && (
+                <Connect4DecisionHistory
+                  decisions={decisionHistory}
+                  currentMoveNumber={gameState?.moveCount || 0}
+                />
+              )}
+            </div>
           </div>
         </div>
       </div>

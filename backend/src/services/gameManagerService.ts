@@ -3,16 +3,23 @@ import { prisma } from '../config/database';
 import { aiService } from './aiService';
 import Redis from 'ioredis';
 import { GameEngineAdapter, GameEngineAdapterFactory } from './gameEngineAdapter';
+import { fileLoggerService } from './fileLoggerService';
+import { getConnect4TournamentService } from './connect4TournamentService';
+import { formatTimestamp } from '../utils/dateFormatter';
 
 export interface GameInstance {
   id: string;
-  type: 'poker' | 'reverse-hangman' | 'chess' | 'go';
+  type: 'poker' | 'reverse-hangman' | 'connect4' | 'chess' | 'go';
   state: any;
   players: string[];
   spectators: Set<string>;
   status: 'waiting' | 'active' | 'paused' | 'completed';
   lastActivity: Date;
   loopInterval?: NodeJS.Timeout;
+  frontendReady: boolean;
+  frontendReadyTimeout?: NodeJS.Timeout;
+  aiThinking: Set<string>; // Track which players have pending AI decisions
+  processingTurn: boolean; // Lock to prevent concurrent turn processing
 }
 
 interface GameUpdate {
@@ -29,8 +36,8 @@ class GameManagerService {
   private cleanupInterval?: NodeJS.Timeout;
   private adapters: Map<string, GameEngineAdapter> = new Map();
 
-  constructor() {
-    this.pubsub = new PubSub();
+  constructor(pubsub?: PubSub) {
+    this.pubsub = pubsub || new PubSub();
     this.redis = new Redis({
       host: process.env.REDIS_HOST || 'localhost',
       port: parseInt(process.env.REDIS_PORT || '6379'),
@@ -39,6 +46,7 @@ class GameManagerService {
     // Initialize game adapters
     this.adapters.set('poker', GameEngineAdapterFactory.create('poker'));
     this.adapters.set('reverse-hangman', GameEngineAdapterFactory.create('reverse-hangman'));
+    this.adapters.set('connect4', GameEngineAdapterFactory.create('connect4'));
 
     // Start cleanup interval
     this.startCleanupProcess();
@@ -51,6 +59,18 @@ class GameManagerService {
     initialState: any
   ): Promise<GameInstance> {
     console.log(`Creating game: ${gameId} of type ${type} with ${players.length} players`);
+    
+    // Start file logging for this game
+    fileLoggerService.startGameLogging(type, gameId);
+    
+    // Log to file
+    fileLoggerService.addLog({
+      timestamp: formatTimestamp(),
+      level: 'info',
+      source: 'backend',
+      message: `Creating game: ${gameId} of type ${type} with ${players.length} players`,
+      data: { gameId, type, players, initialState }
+    });
 
     const game: GameInstance = {
       id: gameId,
@@ -60,6 +80,9 @@ class GameManagerService {
       spectators: new Set(),
       status: 'waiting',
       lastActivity: new Date(),
+      frontendReady: false,
+      aiThinking: new Set(),
+      processingTurn: false,
     };
 
     this.games.set(gameId, game);
@@ -67,11 +90,12 @@ class GameManagerService {
     // Store in Redis for persistence
     await this.saveGameState(gameId, game);
 
-    // Store in database for history
-    await prisma.tournament.update({
+    // Update match status in database
+    await prisma.match.update({
       where: { id: gameId },
       data: {
-        status: 'LIVE'
+        status: 'IN_PROGRESS',
+        startedAt: new Date(),
       },
     });
 
@@ -89,12 +113,22 @@ class GameManagerService {
       return;
     }
 
-    console.log(`Starting game loop for ${gameId}`);
+    console.log(`Starting game ${gameId}, waiting for frontend...`);
     game.status = 'active';
     game.lastActivity = new Date();
 
-    // Start the game loop based on game type
-    this.startGameLoop(game);
+    // Set a timeout for frontend readiness
+    game.frontendReadyTimeout = setTimeout(() => {
+      console.warn(`Frontend ready timeout for game ${gameId}, starting anyway`);
+      game.frontendReady = true;
+      this.startGameLoop(game);
+    }, 30000); // 30 second timeout
+
+    // If frontend is already ready, start immediately
+    if (game.frontendReady) {
+      clearTimeout(game.frontendReadyTimeout);
+      this.startGameLoop(game);
+    }
 
     // Notify subscribers
     this.publishUpdate({
@@ -126,6 +160,15 @@ class GameManagerService {
           return;
         }
 
+        // Check if a turn is already being processed
+        if (game.processingTurn) {
+          console.log(`Game ${game.id} is already processing a turn, skipping this iteration`);
+          return;
+        }
+
+        // Lock turn processing
+        game.processingTurn = true;
+
         // Update last activity
         game.lastActivity = new Date();
 
@@ -135,6 +178,9 @@ class GameManagerService {
       } catch (error) {
         console.error(`Error in game loop for ${game.id}:`, error);
         // Don't stop the loop on error, just log it
+      } finally {
+        // Always unlock turn processing
+        game.processingTurn = false;
       }
     }, loopDelay);
   }
@@ -149,6 +195,9 @@ class GameManagerService {
       case 'reverse-hangman':
         await this.processReverseHangmanTurn(game);
         break;
+      case 'connect4':
+        await this.processConnect4Turn(game);
+        break;
       case 'chess':
       case 'go':
         // TODO: Implement other game types
@@ -159,11 +208,26 @@ class GameManagerService {
     // Save updated state
     await this.saveGameState(game.id, game);
 
-    // Publish state update
+    // Publish state update with proper structure
+    const stateData = game.type === 'poker' ? {
+      state: {
+        ...game.state,
+        gameSpecific: {
+          bettingRound: game.state.phase,
+          communityCards: game.state.communityCards,
+          pot: game.state.pot,
+          currentBet: game.state.currentBet,
+          handComplete: game.state.phase === 'complete' || game.state.phase === 'showdown',
+          winners: game.state.winners || [],
+          handNumber: game.state.handNumber || 1
+        }
+      }
+    } : { state: game.state };
+    
     this.publishUpdate({
       gameId: game.id,
       type: 'state',
-      data: { state: game.state },
+      data: stateData,
       timestamp: new Date(),
     });
   }
@@ -185,6 +249,8 @@ class GameManagerService {
         if (winner) {
           console.log(`Game ${game.id} completed. Winner: ${winner}`);
         }
+        // Handle game completion (including auto-requeue for demo bots)
+        await this.handleGameComplete(game);
       }
       return;
     }
@@ -196,6 +262,14 @@ class GameManagerService {
 
     // Get valid actions
     const validActions = adapter.getValidActions(game.state, currentTurn);
+    
+    // Publish thinking start event
+    this.publishUpdate({
+      gameId: game.id,
+      type: 'event',
+      data: { event: 'thinking_start', playerId: currentTurn },
+      timestamp: new Date(),
+    });
     
     // Get AI decision
     try {
@@ -211,6 +285,14 @@ class GameManagerService {
         data: { playerId: currentTurn, decision },
         timestamp: new Date(),
       });
+      
+      // Publish thinking complete event
+      this.publishUpdate({
+        gameId: game.id,
+        type: 'event',
+        data: { event: 'thinking_complete', playerId: currentTurn },
+        timestamp: new Date(),
+      });
     } catch (error) {
       console.error(`AI decision failed for player ${currentTurn}:`, error);
       // Apply default fold action
@@ -219,6 +301,90 @@ class GameManagerService {
         playerId: currentTurn,
         timestamp: new Date().toISOString()
       });
+    }
+  }
+
+  private async processConnect4Turn(game: GameInstance): Promise<void> {
+    const adapter = this.adapters.get('connect4');
+    if (!adapter) {
+      console.error('Connect4 adapter not found');
+      return;
+    }
+
+    const currentTurn = adapter.getCurrentTurn(game.state);
+    
+    if (!currentTurn || adapter.isGameComplete(game.state)) {
+      // Check if game is complete
+      if (adapter.isGameComplete(game.state)) {
+        game.status = 'completed';
+        const winner = adapter.getWinner(game.state);
+        if (winner) {
+          console.log(`Game ${game.id} completed. Winner: ${winner}`);
+        }
+        // Handle game completion (including auto-requeue for demo bots)
+        await this.handleGameComplete(game);
+      }
+      return;
+    }
+
+    const currentPlayer = game.state.players.find((p: any) => p.id === currentTurn);
+    if (!currentPlayer || !currentPlayer.isAI) {
+      return;
+    }
+
+    // Check if this AI is already thinking
+    if (game.aiThinking.has(currentTurn)) {
+      console.log(`AI ${currentTurn} is already thinking, skipping turn processing`);
+      return;
+    }
+
+    // Get valid actions
+    const validActions = adapter.getValidActions(game.state, currentTurn);
+    
+    // Mark AI as thinking
+    game.aiThinking.add(currentTurn);
+    
+    // Publish thinking start event
+    this.publishUpdate({
+      gameId: game.id,
+      type: 'event',
+      data: { event: 'thinking_start', playerId: currentTurn },
+      timestamp: new Date(),
+    });
+    
+    // Get AI decision
+    try {
+      const decision = await this.getAIDecision(game, currentTurn, validActions);
+      
+      // Apply decision to game state using adapter
+      game.state = adapter.processAction(game.state, decision);
+
+      // Publish decision event
+      this.publishUpdate({
+        gameId: game.id,
+        type: 'decision',
+        data: { playerId: currentTurn, decision },
+        timestamp: new Date(),
+      });
+      
+      // Publish thinking complete event
+      this.publishUpdate({
+        gameId: game.id,
+        type: 'event',
+        data: { event: 'thinking_complete', playerId: currentTurn },
+        timestamp: new Date(),
+      });
+    } catch (error) {
+      console.error(`AI decision failed for player ${currentTurn}:`, error);
+      // Apply timeout action
+      game.state = adapter.processAction(game.state, { 
+        type: 'timeout', 
+        playerId: currentTurn,
+        timestamp: new Date().toISOString()
+      });
+    } finally {
+      // Always clear thinking state
+      game.aiThinking.delete(currentTurn);
     }
   }
 
@@ -239,6 +405,8 @@ class GameManagerService {
         if (winner) {
           console.log(`Game ${game.id} completed. Winner: ${winner}`);
         }
+        // Handle game completion (including auto-requeue for demo bots)
+        await this.handleGameComplete(game);
       }
       return;
     }
@@ -276,6 +444,23 @@ class GameManagerService {
     }
   }
 
+  private normalizeModelName(model: string): string {
+    // Convert database format (UPPERCASE_UNDERSCORE) to aiService format (lowercase-hyphen)
+    const modelMap: { [key: string]: string } = {
+      'DEEPSEEK_CHAT': 'deepseek-chat',
+      'CLAUDE_3_5_SONNET': 'claude-3-5-sonnet',
+      'CLAUDE_3_OPUS': 'claude-3-opus',
+      'GPT_4O': 'gpt-4o',
+      // Also support already normalized names
+      'deepseek-chat': 'deepseek-chat',
+      'claude-3-5-sonnet': 'claude-3-5-sonnet',
+      'claude-3-opus': 'claude-3-opus',
+      'gpt-4o': 'gpt-4o',
+    };
+    
+    return modelMap[model] || model;
+  }
+
   private async getAIDecision(game: GameInstance, playerId: string, validActions: any[]): Promise<any> {
     console.log(`Getting AI decision for player ${playerId} in game ${game.id}`);
     
@@ -296,7 +481,7 @@ class GameManagerService {
             gameState,
             playerState,
             game.state.players.length - 1, // opponents count
-            player.aiModel,
+            this.normalizeModelName(player.aiModel) as 'gpt-4o' | 'deepseek-chat' | 'claude-3-5-sonnet' | 'claude-3-opus',
             player.aiStrategy || 'Play optimal poker strategy'
           );
 
@@ -304,7 +489,9 @@ class GameManagerService {
             action: decision.action,
             amount: decision.amount,
             playerId,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            reasoning: decision.reasoning,
+            confidence: decision.confidence
           };
         }
 
@@ -317,7 +504,7 @@ class GameManagerService {
             playerId,
             gameState,
             playerState,
-            player.aiModel,
+            this.normalizeModelName(player.aiModel) as 'gpt-4o' | 'deepseek-chat' | 'claude-3-5-sonnet' | 'claude-3-opus',
             player.aiStrategy || 'Analyze the output and guess the original prompt'
           );
 
@@ -326,6 +513,29 @@ class GameManagerService {
             guess: decision.prompt_guess,
             playerId,
             timestamp: new Date().toISOString()
+          };
+        }
+
+        case 'connect4': {
+          // Prepare game state for Connect4 AI
+          const gameState = this.prepareConnect4GameState(game.state);
+          const playerState = this.prepareConnect4PlayerState(game.state, playerId);
+          
+          const decision = await aiService.getConnect4Decision(
+            playerId,
+            gameState,
+            playerState,
+            this.normalizeModelName(player.aiModel) as 'gpt-4o' | 'deepseek-chat' | 'claude-3-5-sonnet' | 'claude-3-opus',
+            player.aiStrategy || 'Play optimal Connect4 strategy'
+          );
+
+          return {
+            type: 'place',
+            column: decision.column,
+            playerId,
+            timestamp: new Date().toISOString(),
+            reasoning: decision.reasoning,
+            confidence: decision.confidence
           };
         }
 
@@ -473,6 +683,71 @@ class GameManagerService {
     };
   }
 
+  private prepareConnect4GameState(state: any): any {
+    // Get valid columns by checking which columns have space
+    const validColumns: number[] = [];
+    for (let col = 0; col < state.board[0].length; col++) {
+      let hasSpace = false;
+      for (let row = 0; row < state.board.length; row++) {
+        if (state.board[row][col] === null || state.board[row][col] === 0) {
+          hasSpace = true;
+          break;
+        }
+      }
+      if (hasSpace) {
+        validColumns.push(col);
+      }
+    }
+
+    return {
+      board: state.board,
+      move_count: state.moveCount || 0,
+      valid_columns: validColumns,
+      phase: state.phase || 'playing'
+    };
+  }
+
+  private prepareConnect4PlayerState(state: any, playerId: string): any {
+    const playerIndex = state.players.findIndex((p: any) => p.id === playerId);
+    const player = state.players[playerIndex];
+    if (!player) {
+      throw new Error(`Player ${playerId} not found`);
+    }
+
+    const playerNumber = playerIndex + 1; // Convert to 1-based
+    const opponentNumber = playerNumber === 1 ? 2 : 1;
+
+    // Count pieces for each player
+    let playerPieces = 0;
+    let opponentPieces = 0;
+    for (let row = 0; row < state.board.length; row++) {
+      for (let col = 0; col < state.board[0].length; col++) {
+        if (state.board[row][col] === playerNumber) {
+          playerPieces++;
+        } else if (state.board[row][col] === opponentNumber) {
+          opponentPieces++;
+        }
+      }
+    }
+
+    return {
+      player_number: playerNumber,
+      pieces_on_board: playerPieces,
+      opponent_pieces: opponentPieces,
+      board_metrics: {
+        center_control: 0, // Simplified for now
+        edge_pieces: 0
+      },
+      threat_analysis: {
+        can_win_next: [],
+        must_block: []
+      },
+      calculations: {
+        board_fullness: ((playerPieces + opponentPieces) / (state.board.length * state.board[0].length)) * 100
+      }
+    };
+  }
+
   async pauseGame(gameId: string): Promise<void> {
     const game = this.games.get(gameId);
     if (!game) {
@@ -564,6 +839,7 @@ class GameManagerService {
       ...game,
       spectators: Array.from(game.spectators),
       loopInterval: undefined, // Don't serialize the interval
+      frontendReadyTimeout: undefined, // Don't serialize the timeout
     };
 
     await this.redis.set(
@@ -590,6 +866,8 @@ class GameManagerService {
         return 2000; // 2 seconds per turn
       case 'reverse-hangman':
         return 3000; // 3 seconds per turn
+      case 'connect4':
+        return 5000; // 5 seconds per turn - increased to prevent race conditions
       case 'chess':
       case 'go':
         return 5000; // 5 seconds per turn
@@ -629,6 +907,247 @@ class GameManagerService {
     }
   }
 
+  private async handleGameComplete(game: GameInstance): Promise<void> {
+    console.log(`Handling game completion for ${game.id}`);
+    
+    try {
+      // Handle Connect4 tournament progression
+      if (game.type === 'connect4') {
+        const adapter = this.adapters.get('connect4');
+        const winner = adapter?.getWinner(game.state);
+        
+        if (winner) {
+          const connect4TournamentService = getConnect4TournamentService(prisma, this.pubsub);
+          const nextMatch = await connect4TournamentService.handleMatchComplete(game.id, winner);
+          
+          // If there's a next match (finals), start it
+          if (nextMatch) {
+            await this.createGame(
+              nextMatch.id,
+              'connect4',
+              [nextMatch.player1Id, nextMatch.player2Id],
+              nextMatch.gameState
+            );
+            await this.startGame(nextMatch.id);
+            console.log(`Started Connect4 finals match ${nextMatch.id}`);
+          }
+        }
+      }
+      
+      // Update match status in database
+      await prisma.match.update({
+        where: { id: game.id },
+        data: {
+          status: 'COMPLETED',
+          completedAt: new Date(),
+        },
+      });
+
+      // Get all bots that participated in this tournament
+      const participants = await prisma.matchParticipant.findMany({
+        where: { matchId: game.id },
+        include: { bot: true },
+      });
+
+      // Auto-requeue demo bots
+      for (const participant of participants) {
+        if (participant.bot.isDemo) {
+          console.log(`Auto re-queueing demo bot: ${participant.bot.name}`);
+          
+          // Check if bot is already in queue
+          const existingEntry = await prisma.queueEntry.findFirst({
+            where: {
+              botId: participant.botId,
+              status: 'WAITING',
+            },
+          });
+
+          if (!existingEntry) {
+            // Add demo bot back to queue
+            await prisma.queueEntry.create({
+              data: {
+                botId: participant.botId,
+                queueType: 'STANDARD',
+                priority: 0,
+                status: 'WAITING',
+                enteredAt: new Date(),
+                expiresAt: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000), // 1 year expiry
+              },
+            });
+            console.log(`Demo bot ${participant.bot.name} re-queued successfully`);
+          }
+        }
+      }
+
+      // Clear game loop interval
+      if (game.loopInterval) {
+        clearInterval(game.loopInterval);
+        game.loopInterval = undefined;
+      }
+
+      // Publish completion event
+      this.publishUpdate({
+        gameId: game.id,
+        type: 'event',
+        data: { 
+          event: 'game_completed',
+          status: 'completed',
+          winner: this.adapters.get(game.type)?.getWinner(game.state) || null,
+        },
+        timestamp: new Date(),
+      });
+    } catch (error) {
+      console.error(`Error handling game completion for ${game.id}:`, error);
+    }
+  }
+
+  async signalFrontendReady(matchId: string): Promise<boolean> {
+    const game = this.games.get(matchId);
+    if (!game) {
+      console.error(`Game ${matchId} not found for frontend ready signal`);
+      return false;
+    }
+
+    if (game.frontendReady) {
+      console.log(`Frontend already marked as ready for game ${matchId}`);
+      return true;
+    }
+
+    console.log(`Frontend ready signal received for game ${matchId}`);
+    game.frontendReady = true;
+
+    // Clear the timeout if it exists
+    if (game.frontendReadyTimeout) {
+      clearTimeout(game.frontendReadyTimeout);
+      game.frontendReadyTimeout = undefined;
+    }
+
+    // If game is active but not yet started, start the game loop now
+    if (game.status === 'active' && !game.loopInterval) {
+      console.log(`Starting game loop for ${matchId} now that frontend is ready`);
+      this.startGameLoop(game);
+    }
+
+    return true;
+  }
+  
+  async startReverseHangmanRound(matchId: string, difficulty: string): Promise<boolean> {
+    const game = this.games.get(matchId);
+    if (!game) {
+      console.error(`Game ${matchId} not found for starting reverse hangman round`);
+      return false;
+    }
+
+    if (game.type !== 'reverse-hangman') {
+      console.error(`Game ${matchId} is not a reverse hangman game`);
+      return false;
+    }
+
+    console.log(`Starting reverse hangman round for game ${matchId} with difficulty: ${difficulty}`);
+    
+    // Generate prompt/output pair based on difficulty
+    const promptPair = this.generatePromptPair(difficulty);
+    
+    // Update game state with selected difficulty and prompt pair
+    game.state.selectedDifficulty = difficulty;
+    game.state.phase = 'playing';
+    game.state.currentPromptPair = promptPair;
+    game.state.targetPrompt = promptPair.prompt;
+    game.state.generatedOutput = promptPair.output;
+    game.state.attempts = []; // Reset attempts for new round
+    
+    // Save state
+    await this.saveGameState(matchId, game);
+    
+    // Publish state update to notify frontend
+    this.publishUpdate({
+      gameId: matchId,
+      type: 'event',
+      data: { 
+        event: 'round_started',
+        difficulty,
+        phase: 'playing',
+        output: promptPair.output
+      },
+      timestamp: new Date(),
+    });
+
+    // If game loop isn't running, start it now
+    if (!game.loopInterval) {
+      this.startGameLoop(game);
+    }
+
+    return true;
+  }
+
+  private generatePromptPair(difficulty: string): { prompt: string; output: string; category: string } {
+    // Sample prompt/output pairs for different difficulties
+    const promptPairs = {
+      easy: [
+        {
+          prompt: "What is the capital of France?",
+          output: "The capital of France is Paris.",
+          category: "geography"
+        },
+        {
+          prompt: "List three primary colors.",
+          output: "The three primary colors are:\n1. Red\n2. Blue\n3. Yellow",
+          category: "art"
+        },
+        {
+          prompt: "What is 2 plus 2?",
+          output: "2 + 2 = 4",
+          category: "math"
+        }
+      ],
+      medium: [
+        {
+          prompt: "Write a haiku about cherry blossoms.",
+          output: "Cherry blossoms bloom\nPetals dance on gentle breeze\nSpring's beauty unfolds",
+          category: "poetry"
+        },
+        {
+          prompt: "Explain the water cycle in simple terms.",
+          output: "The water cycle is the continuous movement of water on Earth. Water evaporates from oceans and lakes into the air, forms clouds through condensation, falls back as precipitation (rain or snow), and flows back to the oceans through rivers and groundwater.",
+          category: "science"
+        },
+        {
+          prompt: "Create a simple recipe for chocolate chip cookies.",
+          output: "Mix 2 cups flour, 1 cup butter, 3/4 cup sugar, 3/4 cup brown sugar, 2 eggs, 1 tsp vanilla, 1 tsp baking soda, and 2 cups chocolate chips. Drop spoonfuls on a baking sheet and bake at 375°F for 10 minutes until golden brown.",
+          category: "cooking"
+        }
+      ],
+      hard: [
+        {
+          prompt: "Analyze the themes in Shakespeare's Hamlet and their relevance today.",
+          output: "Hamlet explores timeless themes that remain deeply relevant: the paralysis of overthinking in decision-making, the corrupting nature of power and revenge, the complexity of familial relationships, and the universal struggle with mortality and purpose. In our modern context, Hamlet's indecision mirrors contemporary anxiety and analysis paralysis, while the play's examination of truth versus appearance resonates in our era of misinformation and social media facades.",
+          category: "literature"
+        },
+        {
+          prompt: "Design a sustainable urban transportation system for a city of 500000 people.",
+          output: "A comprehensive sustainable transportation system would integrate: 1) An electric light rail network connecting major districts with 15-minute frequencies, 2) Protected bicycle lanes forming a 200km network with bike-sharing stations every 500m, 3) Electric bus rapid transit on dedicated lanes for cross-city routes, 4) Pedestrian-priority zones in commercial centers with car-free streets, 5) Park-and-ride facilities at city edges connected to rail stations, and 6) A unified digital payment system across all modes. This multi-modal approach would reduce car dependency by 60% and cut transport emissions by 70% within 10 years.",
+          category: "urban planning"
+        }
+      ],
+      expert: [
+        {
+          prompt: "Derive the Black-Scholes equation and explain its assumptions and limitations in modern financial markets.",
+          output: "The Black-Scholes equation derives from Ito's lemma applied to a geometric Brownian motion model of stock prices. Starting with dS = μSdt + σSdW, we construct a risk-free portfolio combining the option and underlying stock. Through dynamic hedging and no-arbitrage arguments, we arrive at: ∂V/∂t + ½σ²S²∂²V/∂S² + rS∂V/∂S - rV = 0. Key assumptions include: constant volatility and risk-free rate, log-normal price distribution, no transaction costs or taxes, perfect liquidity, and no dividends. Modern limitations include: volatility smile contradicting constant volatility, jump risk during crises, liquidity constraints during stress periods, and behavioral factors affecting rationality. Post-2008 modifications incorporate stochastic volatility, jump diffusion processes, and counterparty risk adjustments.",
+          category: "finance"
+        }
+      ]
+    };
+    
+    const pairs = promptPairs[difficulty as keyof typeof promptPairs] || promptPairs.medium;
+    const selected = pairs[Math.floor(Math.random() * pairs.length)];
+    
+    return {
+      prompt: selected.prompt,
+      output: selected.output,
+      category: selected.category
+    };
+  }
+
   async shutdown(): Promise<void> {
     console.log('Shutting down GameManagerService');
     
@@ -640,6 +1159,9 @@ class GameManagerService {
     for (const game of this.games.values()) {
       if (game.loopInterval) {
         clearInterval(game.loopInterval);
+      }
+      if (game.frontendReadyTimeout) {
+        clearTimeout(game.frontendReadyTimeout);
       }
     }
 
@@ -684,5 +1206,17 @@ class GameManagerService {
   }
 }
 
-// Singleton instance
-export const gameManagerService = new GameManagerService();
+// Singleton instance - will be initialized with pubsub from index.ts
+let gameManagerService: GameManagerService;
+
+export function initializeGameManagerService(pubsub: PubSub) {
+  gameManagerService = new GameManagerService(pubsub);
+  return gameManagerService;
+}
+
+export function getGameManagerService(): GameManagerService {
+  if (!gameManagerService) {
+    throw new Error('GameManagerService not initialized. Call initializeGameManagerService first.');
+  }
+  return gameManagerService;
+}

@@ -8,9 +8,12 @@ export function LoggingIndicator() {
   useEffect(() => {
     // Listen for new logs
     const handleNewLog = () => {
-      setLogCount(prev => prev + 1);
-      setShowPulse(true);
-      setTimeout(() => setShowPulse(false), 500);
+      // Defer state updates to avoid updating during another component's render
+      setTimeout(() => {
+        setLogCount(prev => prev + 1);
+        setShowPulse(true);
+        setTimeout(() => setShowPulse(false), 500);
+      }, 0);
     };
 
     window.addEventListener('debug-log-added', handleNewLog);

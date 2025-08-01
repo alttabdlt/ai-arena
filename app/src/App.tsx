@@ -14,6 +14,7 @@ import { debugLogger, setApolloClient } from "@/services/debugLogger";
 import { useEffect } from "react";
 import { useInteractionLogger } from "@/hooks/useInteractionLogger";
 import { LoggingIndicator } from "@/components/LoggingIndicator";
+import { GameErrorBoundary } from "@/components/ErrorBoundary";
 import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
 import Bots from "./pages/Bots";
@@ -85,11 +86,11 @@ const App = () => {
             <Route path="/tournaments" element={<Tournaments />} />
             <Route path="/tournaments/create" element={<CreateTournament />} />
             <Route path="/tournaments/:id/waiting" element={<WaitingRoom />} />
-            <Route path="/tournament/:id" element={<TournamentView />} />
-            <Route path="/tournament/:id/poker" element={<PokerView />} />
-            <Route path="/tournament/:id/hangman" element={<ReverseHangmanView />} />
-            <Route path="/tournament/:id/hangman-server" element={<ReverseHangmanServerView />} />
-            <Route path="/tournament/:id/connect4" element={<Connect4View />} />
+            <Route path="/tournament/:id" element={<GameErrorBoundary><TournamentView /></GameErrorBoundary>} />
+            <Route path="/tournament/:id/poker" element={<GameErrorBoundary><PokerView /></GameErrorBoundary>} />
+            <Route path="/tournament/:id/hangman" element={<GameErrorBoundary><ReverseHangmanView /></GameErrorBoundary>} />
+            <Route path="/tournament/:id/hangman-server" element={<GameErrorBoundary><ReverseHangmanServerView /></GameErrorBoundary>} />
+            <Route path="/tournament/:id/connect4" element={<GameErrorBoundary><Connect4View /></GameErrorBoundary>} />
             
             {/* Bot System */}
             <Route path="/bots" element={<Bots />} />

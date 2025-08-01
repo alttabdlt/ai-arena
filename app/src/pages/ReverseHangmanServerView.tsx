@@ -10,7 +10,7 @@ import { ReverseHangmanBoard } from '@/components/game/reverse-hangman/ReverseHa
 import { PromptGenerationAnimation } from '@/components/game/reverse-hangman/PromptGenerationAnimation';
 import { useServerSideReverseHangman } from '@/hooks/useServerSideReverseHangman';
 import { Tournament } from '@/types/tournament';
-import { Pause, Play } from 'lucide-react';
+import { GameHeader } from '@/components/game/GameHeader';
 
 export default function ReverseHangmanServerView() {
   const { id } = useParams();
@@ -174,25 +174,18 @@ export default function ReverseHangmanServerView() {
   if (showDifficultySelect && (!gameState || gameState.phase === 'waiting')) {
     return (
       <div className="min-h-screen bg-background">
+        <GameHeader
+          tournamentName={tournament?.name || `Match ${id?.slice(0, 8)}`}
+          matchId={id || ''}
+          totalPrize={1000000}
+          playerCount={tournament?.players.length || 4}
+          viewerCount={tournament?.viewers || Math.floor(Math.random() * 500) + 100}
+          currentRound="Round 1"
+          gameType="reverse-hangman"
+          status={tournament?.status as 'waiting' | 'in-progress' | 'completed' || 'waiting'}
+          onBack={() => navigate('/tournaments')}
+        />
         <div className="container mx-auto px-4 py-8">
-          <div className="flex items-center justify-between mb-4">
-            <Button 
-              variant="outline" 
-              onClick={() => navigate('/tournaments')}
-            >
-              Back to Tournaments
-            </Button>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">Server-Side Execution</span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={toggleGamePause}
-              >
-                {isActive ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-              </Button>
-            </div>
-          </div>
           
           <div className="max-w-4xl mx-auto">
             <Card className="p-8">
@@ -240,25 +233,18 @@ export default function ReverseHangmanServerView() {
   if ((animationPhase === 'generating' || (animationPhase === 'revealing' && !gameState))) {
     return (
       <div className="min-h-screen bg-background">
+        <GameHeader
+          tournamentName={tournament?.name || `Match ${id?.slice(0, 8)}`}
+          matchId={id || ''}
+          totalPrize={1000000}
+          playerCount={tournament?.players.length || 4}
+          viewerCount={tournament?.viewers || Math.floor(Math.random() * 500) + 100}
+          currentRound="Round 1"
+          gameType="reverse-hangman"
+          status={tournament?.status as 'waiting' | 'in-progress' | 'completed' || 'in-progress'}
+          onBack={() => navigate('/tournaments')}
+        />
         <div className="container mx-auto px-4 py-8">
-          <div className="flex items-center justify-between mb-4">
-            <Button 
-              variant="outline" 
-              onClick={() => navigate('/tournaments')}
-            >
-              Back to Tournaments
-            </Button>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">Server-Side Execution</span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={toggleGamePause}
-              >
-                {isActive ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-              </Button>
-            </div>
-          </div>
           
           <PromptGenerationAnimation
             phase={animationPhase}
@@ -272,28 +258,18 @@ export default function ReverseHangmanServerView() {
   // Main game view
   return (
     <div className="min-h-screen bg-background">
+      <GameHeader
+        tournamentName={tournament?.name || `Match ${id?.slice(0, 8)}`}
+        matchId={id || ''}
+        totalPrize={1000000}
+        playerCount={tournament?.players.length || 4}
+        viewerCount={tournament?.viewers || Math.floor(Math.random() * 500) + 100}
+        currentRound={`Round ${tournamentStats.currentRound} of ${tournamentStats.totalRounds}`}
+        gameType="reverse-hangman"
+        status={tournament?.status as 'waiting' | 'in-progress' | 'completed' || 'in-progress'}
+        onBack={() => navigate('/tournaments')}
+      />
       <div className="container mx-auto px-4 py-8">
-        <div className="flex items-center justify-between mb-4">
-          <Button 
-            variant="outline" 
-            onClick={() => navigate('/tournaments')}
-          >
-            Back to Tournaments
-          </Button>
-          <div className="flex items-center gap-4">
-            <span className="text-sm text-muted-foreground">
-              Round {tournamentStats.currentRound} of {tournamentStats.totalRounds}
-            </span>
-            <span className="text-sm text-muted-foreground">Server-Side Execution</span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={toggleGamePause}
-            >
-              {isActive ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-            </Button>
-          </div>
-        </div>
 
         {gameState && (
           <ReverseHangmanBoard

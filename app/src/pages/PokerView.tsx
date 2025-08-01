@@ -4,32 +4,18 @@ import { GET_MATCH } from '@/graphql/queries/bot';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
-import { Eye, Users, Trophy, Activity, Play, Pause, Zap, Timer, Brain, History, ChevronDown, ChevronUp, Sparkles, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { PokerTable } from '@/components/game/poker/PokerTable';
 import { useState, useEffect, useRef } from 'react';
 import { useServerSidePoker } from '@/hooks/useServerSidePoker';
 import { AIThinkingPanel } from '@/components/AIThinkingPanel';
 import { DecisionHistory } from '@/components/DecisionHistory';
 import { StyleBonusNotification } from '@/components/StyleBonusNotification';
-import { AIEvaluationPanel } from '@/components/AIEvaluationPanel';
 import { HandMisreadAlert } from '@/components/HandMisreadAlert';
 import { PointNotification } from '@/components/PointNotification';
 import { AchievementNotification } from '@/components/AchievementNotification';
 import { CombinedLeaderboard } from '@/components/CombinedLeaderboard';
-import { useModelEvaluations } from '@/hooks/useModelEvaluation';
+import { GameHeader } from '@/components/game/GameHeader';
 import { IPlayerConfig as PlayerConfig } from '@/game-engine/core/interfaces';
 import type { PokerAction } from '@/game-engine/games/poker';
 import botGambler from '@/assets/bot-gambler.png';
@@ -87,9 +73,6 @@ const PokerView = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [thinkingTimeLeft, setThinkingTimeLeft] = useState(60);
   const thinkingTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const [showAIThinking, setShowAIThinking] = useState(true);
-  const [showDecisionHistory, setShowDecisionHistory] = useState(true);
-  const [showAIEvaluation, setShowAIEvaluation] = useState(true);
   const [playerConfigs, setPlayerConfigs] = useState<PlayerConfig[]>([]);
   const [selectedTournamentMode, setSelectedTournamentMode] = useState<'STYLE_MASTER' | 'BALANCED' | 'CLASSIC'>('BALANCED');
   
@@ -121,9 +104,6 @@ const PokerView = () => {
     gameId: id || '', 
     tournament: matchData?.match || null
   });
-  
-  // Fetch AI evaluation data
-  const { evaluations } = useModelEvaluations();
   
   // Mock tournament-specific functions not in server-side hook
   const setTournamentMode = (mode: any) => setSelectedTournamentMode(mode);
@@ -285,140 +265,23 @@ const PokerView = () => {
   return (
     <div className="min-h-screen bg-gray-900 text-white">
       {/* Header */}
-      <div className="bg-gray-800 border-b border-gray-700 p-4">
-        <div className="container mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Button 
-              variant="ghost" 
-              onClick={() => navigate('/tournaments')}
-              className="text-gray-400 hover:text-white"
-            >
-              ← Back
-            </Button>
-            <div>
-              <h1 className="text-2xl font-bold flex items-center gap-2">
-                {tournament.name}
-                <Badge className="bg-green-900 text-green-100">Live</Badge>
-              </h1>
-              <div className="flex items-center gap-4 text-sm text-gray-400 mt-1">
-                <span className="flex items-center gap-1">
-                  <Trophy className="h-4 w-4" />
-                  ${tournament.totalPrize.toLocaleString()} Prize Pool
-                </span>
-                <span className="flex items-center gap-1">
-                  <Users className="h-4 w-4" />
-                  {tournament.participants} Players
-                </span>
-                <span className="flex items-center gap-1">
-                  <Eye className="h-4 w-4" />
-                  {tournament.viewers} Viewers
-                </span>
-                <span className="flex items-center gap-1">
-                  <Activity className="h-4 w-4" />
-                  {tournament.currentRound}
-                </span>
-              </div>
-            </div>
-          </div>
-          
-          {/* Controls */}
-          <div className="flex items-center gap-4">
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={showAIThinking ? () => setShowAIThinking(false) : () => setShowAIThinking(true)}
-                    className={showAIThinking ? "bg-blue-900 text-blue-100" : ""}
-                  >
-                    <Brain className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {showAIThinking ? "Hide AI Thinking" : "Show AI Thinking"}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={showDecisionHistory ? () => setShowDecisionHistory(false) : () => setShowDecisionHistory(true)}
-                    className={showDecisionHistory ? "bg-blue-900 text-blue-100" : ""}
-                  >
-                    <History className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {showDecisionHistory ? "Hide Decision History" : "Show Decision History"}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={showAIEvaluation ? () => setShowAIEvaluation(false) : () => setShowAIEvaluation(true)}
-                    className={showAIEvaluation ? "bg-blue-900 text-blue-100" : ""}
-                  >
-                    <Sparkles className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {showAIEvaluation ? "Hide AI Evaluation" : "Show AI Evaluation"}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-
-            <Select value={gameSpeed} onValueChange={(value: any) => changeSpeed(value)}>
-              <SelectTrigger className="w-32">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="slow">
-                  <div className="flex items-center gap-2">
-                    <Timer className="h-4 w-4" />
-                    Slow
-                  </div>
-                </SelectItem>
-                <SelectItem value="normal">
-                  <div className="flex items-center gap-2">
-                    <Zap className="h-4 w-4" />
-                    Normal
-                  </div>
-                </SelectItem>
-                <SelectItem value="fast">
-                  <div className="flex items-center gap-2">
-                    <Zap className="h-4 w-4 text-yellow-500" />
-                    Fast
-                  </div>
-                </SelectItem>
-              </SelectContent>
-            </Select>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={isPaused ? resumeGame : pauseGame}
-            >
-              {isPaused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
-            </Button>
-          </div>
-        </div>
-      </div>
+      <GameHeader
+        tournamentName={tournament.name}
+        matchId={tournament.id}
+        totalPrize={tournament.totalPrize}
+        playerCount={tournament.participants}
+        viewerCount={tournament.viewers}
+        currentRound={tournament.currentRound}
+        gameType="poker"
+        status={tournament.status as 'waiting' | 'in-progress' | 'completed'}
+        onBack={() => navigate('/tournaments')}
+      />
 
       {/* Main Content */}
       <div className="container mx-auto p-4">
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
           {/* Poker Table - Main Area */}
-          <div className="lg:col-span-3">
+          <div className="xl:col-span-2">
             <Card className="bg-gray-800 border-gray-700">
               <CardContent className="p-6">
                 <PokerTable
@@ -427,13 +290,13 @@ const PokerView = () => {
                   pot={gameState.pot}
                   currentBet={gameState.currentBet}
                   phase={gameState.phase}
-                  currentPlayer={gameState.players.find(p => p.id === gameState.currentTurn) || null}
+                  currentPlayer={gameState.currentPlayer}
                   winners={gameState.winners}
                   isHandComplete={gameState.isHandComplete}
-                  currentAIThinking={currentThinking?.playerId || null}
-                  aiDecisionHistory={new Map()}
-                  onStartNewHand={() => {}}
-                  viewers={0}
+                  currentAIThinking={gameState.currentAIThinking}
+                  aiDecisionHistory={gameState.aiDecisionHistory}
+                  onStartNewHand={startNewHand}
+                  viewers={tournament.viewers}
                   getPlayerPoints={getPlayerPoints}
                 />
               </CardContent>
@@ -456,8 +319,8 @@ const PokerView = () => {
 
           {/* Right Sidebar */}
           <div className="space-y-4">
-            {/* AI Thinking Panel */}
-            {showAIThinking && gameState.currentAIThinking && (
+            {/* AI Thinking Panel - Always visible when AI is thinking */}
+            {gameState.currentAIThinking && (
               <AIThinkingPanel
                 currentThinking={{
                   playerId: gameState.currentAIThinking,
@@ -470,21 +333,11 @@ const PokerView = () => {
               />
             )}
 
-            {/* Decision History */}
-            {showDecisionHistory && (
-              <DecisionHistory
-                history={getDecisionHistory()}
-                currentHandNumber={getCurrentHandNumber()}
-              />
-            )}
-
-            {/* AI Evaluation Panel */}
-            {showAIEvaluation && (
-              <AIEvaluationPanel
-                evaluations={evaluations}
-                currentHandNumber={gameState.handNumber}
-              />
-            )}
+            {/* Decision History - Always visible */}
+            <DecisionHistory
+              history={getDecisionHistory()}
+              currentHandNumber={getCurrentHandNumber()}
+            />
           </div>
         </div>
       </div>

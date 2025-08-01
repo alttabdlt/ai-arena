@@ -10,9 +10,10 @@ import { Connect4Status } from '@/components/game/connect4/Connect4Status';
 import { Connect4DecisionHistory } from '@/components/game/connect4/Connect4DecisionHistory';
 import { useServerSideConnect4 } from '@/hooks/useServerSideConnect4';
 import { GET_MATCH } from '@/graphql/queries/bot';
-import { ArrowLeft, Zap, Trophy, Timer } from 'lucide-react';
+import { Trophy } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Connect4TournamentManager } from '@/components/game/connect4/Connect4TournamentManager';
+import { GameHeader } from '@/components/game/GameHeader';
 
 export default function Connect4View() {
   const { id } = useParams();
@@ -104,7 +105,6 @@ export default function Connect4View() {
             onClick={() => navigate('/tournaments')}
             className="mb-4"
           >
-            <ArrowLeft className="mr-2 h-4 w-4" />
             Back to Tournaments
           </Button>
           
@@ -129,7 +129,6 @@ export default function Connect4View() {
             onClick={() => navigate('/tournaments')}
             className="mb-4"
           >
-            <ArrowLeft className="mr-2 h-4 w-4" />
             Back to Tournaments
           </Button>
           
@@ -154,27 +153,17 @@ export default function Connect4View() {
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-8">
         {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <Button 
-            variant="outline" 
-            onClick={() => navigate('/tournaments')}
-          >
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back
-          </Button>
-          
-          <div className="text-center">
-            <h1 className="text-3xl font-bold">{match.tournament?.name || `Match ${match.id.slice(0, 8)}`}</h1>
-            <p className="text-muted-foreground">Connect 4 Tournament</p>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Timer className="h-5 w-5 text-muted-foreground" />
-            <span className="text-sm">
-              30s per move
-            </span>
-          </div>
-        </div>
+        <GameHeader
+          tournamentName={match.tournament?.name || `Match ${match.id.slice(0, 8)}`}
+          matchId={match.id}
+          totalPrize={1000000}
+          playerCount={match.participants.length}
+          viewerCount={Math.floor(Math.random() * 500) + 100}
+          currentRound={gameHistory?.round === 'semifinal' ? 'Semifinal' : gameHistory?.round === 'final' ? 'Final' : 'Round 1'}
+          gameType="connect4"
+          status={match.status === 'SCHEDULED' ? 'waiting' : match.status === 'IN_PROGRESS' ? 'in-progress' : 'completed'}
+          onBack={() => navigate('/tournaments')}
+        />
 
         {/* Connect4 Tournament View */}
         <div className="space-y-6">

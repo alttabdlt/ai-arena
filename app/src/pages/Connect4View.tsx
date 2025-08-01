@@ -87,32 +87,12 @@ export default function Connect4View() {
     tournament: isConnect4Game ? matchData?.match : null
   });
   
-  // Debug logging
+  // Debug logging - minimal
   useEffect(() => {
-    console.log('Connect4View state:', {
-      hasGameState: !!gameState,
-      board: gameState?.board,
-      boardLength: gameState?.board?.length,
-      boardFirstRow: gameState?.board?.[0],
-      isAIThinking,
-      currentPlayer,
-      isGameComplete,
-      moveCount: stats?.moveCount
-    });
-    
-    // Additional debug: log the exact board structure
-    if (gameState?.board) {
-      console.log('Board structure check:', {
-        isArray: Array.isArray(gameState.board),
-        boardType: typeof gameState.board,
-        firstRowType: typeof gameState.board[0],
-        sample: gameState.board[0]?.[0],
-        fullBoard: gameState.board
-      });
-    } else {
-      console.log('No board in gameState:', gameState);
+    if (decisionHistory.length > 0) {
+      console.log(`Connect4: ${decisionHistory.length} AI decisions recorded`);
     }
-  }, [gameState, isAIThinking, currentPlayer, isGameComplete, stats]);
+  }, [decisionHistory]);
   
   // Show loading state
   if (matchLoading) {
@@ -269,9 +249,8 @@ export default function Connect4View() {
               {/* Game Status */}
               {gameState && (
                 <Connect4Status
-                  gameState={gameState}
-                  isAIThinking={isAIThinking || false}
                   currentPlayer={currentPlayer}
+                  isAIThinking={isAIThinking || false}
                   winner={winner ? {
                     id: winner,
                     name: matchData?.match?.participants?.find((p: any) => p.bot.id === winner)?.bot.name || 'Unknown',
@@ -280,18 +259,15 @@ export default function Connect4View() {
                     aiModel: matchData?.match?.participants?.find((p: any) => p.bot.id === winner)?.bot.modelType
                   } : null}
                   isDraw={isDraw || false}
-                  isComplete={isGameComplete || false}
-                  stats={stats}
+                  players={gameState.players || []}
                 />
               )}
 
               {/* Decision History */}
-              {decisionHistory && decisionHistory.length > 0 && (
-                <Connect4DecisionHistory
-                  decisions={decisionHistory}
-                  currentMoveNumber={gameState?.moveCount || 0}
-                />
-              )}
+              <Connect4DecisionHistory
+                decisions={decisionHistory || []}
+                currentMoveNumber={gameState?.moveCount || 0}
+              />
             </div>
           </div>
         </div>

@@ -1286,9 +1286,10 @@ Respond with JSON: {action: 'guess_prompt', prompt_guess: 'your refined guess he
 
 Game board representation:
 - '_' = empty space
-- 'X' = your pieces
-- 'O' = opponent pieces
+- 'X' = ${playerState.player_number === 1 ? 'your pieces' : 'opponent pieces'}
+- 'O' = ${playerState.player_number === 2 ? 'your pieces' : 'opponent pieces'}
 - Board is shown with row 0 at the top and row 7 at the bottom (8x8 grid)
+You are player ${playerState.player_number}, playing as ${playerState.player_number === 1 ? 'X' : 'O'}.
 
 Column numbering:
 - Columns are numbered 0-7 internally (8 columns total)
@@ -1508,9 +1509,9 @@ Respond with valid JSON format:
       throw new Error('AI decision missing required column field');
     }
     
-    // Ensure column is a valid number
+    // Ensure column is a valid number (8x8 board, so columns 0-7 are valid)
     const column = parseInt(decision.column);
-    if (isNaN(column) || column < 0 || column > 6) {
+    if (isNaN(column) || column < 0 || column > 7) {
       console.error(`[${reqId}] ❌ Invalid column value:`, decision.column);
       throw new Error(`Invalid column value: ${decision.column}`);
     }

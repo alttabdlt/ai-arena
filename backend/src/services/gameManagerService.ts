@@ -356,6 +356,16 @@ class GameManagerService {
     try {
       const decision = await this.getAIDecision(game, currentTurn, validActions);
       
+      // Log Connect4 decision details
+      console.log('Connect4 AI decision received:', {
+        playerId: currentTurn,
+        column: decision.column,
+        reasoning: decision.reasoning,
+        confidence: decision.confidence,
+        hasReasoning: !!decision.reasoning,
+        reasoningLength: decision.reasoning?.length
+      });
+      
       // Apply decision to game state using adapter
       game.state = adapter.processAction(game.state, decision);
 
@@ -684,6 +694,14 @@ class GameManagerService {
   }
 
   private prepareConnect4GameState(state: any): any {
+    // Log the board state being sent to AI
+    console.log('Preparing Connect4 game state for AI:');
+    console.log('Board dimensions:', state.board.length, 'x', state.board[0]?.length);
+    console.log('Board state:');
+    state.board.forEach((row: any[], index: number) => {
+      console.log(`Row ${index}:`, row.map(cell => cell === 0 ? '_' : cell === 1 ? 'X' : cell === 2 ? 'O' : '?').join(' '));
+    });
+    
     // Get valid columns by checking which columns have space
     const validColumns: number[] = [];
     for (let col = 0; col < state.board[0].length; col++) {
@@ -699,9 +717,20 @@ class GameManagerService {
       }
     }
 
+    // Convert board to X/O format for AI
+    const convertedBoard = state.board.map((row: any[]) => 
+      row.map(cell => {
+        if (cell === 0 || cell === null) return '_';
+        if (cell === 1) return 'X';
+        if (cell === 2) return 'O';
+        return '?';
+      })
+    );
+
     return {
-      board: state.board,
+      board: convertedBoard,
       move_count: state.moveCount || 0,
+      last_move: state.lastMove || null,
       valid_columns: validColumns,
       phase: state.phase || 'playing'
     };
@@ -720,32 +749,160 @@ class GameManagerService {
     // Count pieces for each player
     let playerPieces = 0;
     let opponentPieces = 0;
+    let centerControl = 0;
+    let edgePieces = 0;
+    
     for (let row = 0; row < state.board.length; row++) {
       for (let col = 0; col < state.board[0].length; col++) {
         if (state.board[row][col] === playerNumber) {
           playerPieces++;
+          // Check center columns (3 and 4 for 8x8 board)
+          if (col === 3 || col === 4) {
+            centerControl++;
+          }
+          // Check edge columns
+          if (col === 0 || col === 7) {
+            edgePieces++;
+          }
         } else if (state.board[row][col] === opponentNumber) {
           opponentPieces++;
         }
       }
     }
 
+    // Check for threats - where can win or must block
+    const canWinNext = this.checkWinningMoves(state.board, playerNumber);
+    const mustBlock = this.checkWinningMoves(state.board, opponentNumber);
+
     return {
       player_number: playerNumber,
       pieces_on_board: playerPieces,
       opponent_pieces: opponentPieces,
       board_metrics: {
-        center_control: 0, // Simplified for now
-        edge_pieces: 0
+        center_control: centerControl,
+        edge_pieces: edgePieces,
+        connected_sequences: this.countConnectedSequences(state.board, playerNumber)
       },
       threat_analysis: {
-        can_win_next: [],
-        must_block: []
+        can_win_next: canWinNext,
+        must_block: mustBlock
       },
       calculations: {
-        board_fullness: ((playerPieces + opponentPieces) / (state.board.length * state.board[0].length)) * 100
+        board_fullness: ((playerPieces + opponentPieces) / (state.board.length * state.board[0].length)) * 100,
+        has_immediate_win: canWinNext.length > 0,
+        has_immediate_threat: mustBlock.length > 0
       }
     };
+  }
+
+  private checkWinningMoves(board: any[][], playerNumber: number): number[] {
+    const winningColumns: number[] = [];
+    
+    // Check each column
+    for (let col = 0; col < board[0].length; col++) {
+      // Find the row where a piece would land
+      let row = -1;
+      for (let r = board.length - 1; r >= 0; r--) {
+        if (board[r][col] === 0 || board[r][col] === null) {
+          row = r;
+          break;
+        }
+      }
+      
+      // If column is full, skip
+      if (row === -1) continue;
+      
+      // Temporarily place the piece
+      board[row][col] = playerNumber;
+      
+      // Check if this creates a win
+      if (this.checkWinAt(board, row, col, playerNumber)) {
+        winningColumns.push(col);
+      }
+      
+      // Remove the temporary piece
+      board[row][col] = 0;
+    }
+    
+    return winningColumns;
+  }
+
+  private checkWinAt(board: any[][], row: number, col: number, playerNumber: number): boolean {
+    // Check all four directions
+    const directions = [
+      { dr: 0, dc: 1 },  // Horizontal
+      { dr: 1, dc: 0 },  // Vertical
+      { dr: 1, dc: 1 },  // Diagonal down-right
+      { dr: 1, dc: -1 }  // Diagonal down-left
+    ];
+    
+    for (const { dr, dc } of directions) {
+      let count = 1;
+      
+      // Check positive direction
+      let r = row + dr;
+      let c = col + dc;
+      while (r >= 0 && r < board.length && c >= 0 && c < board[0].length && board[r][c] === playerNumber) {
+        count++;
+        r += dr;
+        c += dc;
+      }
+      
+      // Check negative direction
+      r = row - dr;
+      c = col - dc;
+      while (r >= 0 && r < board.length && c >= 0 && c < board[0].length && board[r][c] === playerNumber) {
+        count++;
+        r -= dr;
+        c -= dc;
+      }
+      
+      if (count >= 4) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+
+  private countConnectedSequences(board: any[][], playerNumber: number): Record<string, number> {
+    const sequences = { two: 0, three: 0 };
+    const visited = new Set<string>();
+    
+    for (let row = 0; row < board.length; row++) {
+      for (let col = 0; col < board[0].length; col++) {
+        if (board[row][col] === playerNumber) {
+          // Check all directions
+          const directions = [
+            { dr: 0, dc: 1 },  // Horizontal
+            { dr: 1, dc: 0 },  // Vertical
+            { dr: 1, dc: 1 },  // Diagonal down-right
+            { dr: 1, dc: -1 }  // Diagonal down-left
+          ];
+          
+          for (const { dr, dc } of directions) {
+            const key = `${row},${col},${dr},${dc}`;
+            if (visited.has(key)) continue;
+            
+            let count = 1;
+            let r = row + dr;
+            let c = col + dc;
+            
+            while (r >= 0 && r < board.length && c >= 0 && c < board[0].length && board[r][c] === playerNumber) {
+              visited.add(`${r},${c},${dr},${dc}`);
+              count++;
+              r += dr;
+              c += dc;
+            }
+            
+            if (count === 2) sequences.two++;
+            else if (count === 3) sequences.three++;
+          }
+        }
+      }
+    }
+    
+    return sequences;
   }
 
   async pauseGame(gameId: string): Promise<void> {

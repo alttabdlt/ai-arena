@@ -9,6 +9,7 @@ import { isHexString } from 'ethers';
 import { Prisma, QueueType } from '@prisma/client';
 import { PubSub } from 'graphql-subscriptions';
 import { gameManagerResolvers } from './gameManager';
+import { economyResolvers } from './economy';
 import { getQueueService } from '../../services';
 import { getGameManagerService } from '../../services/gameManagerService';
 
@@ -336,6 +337,9 @@ export const resolvers = {
     
     // Game Manager queries
     ...gameManagerResolvers.Query,
+    
+    // Economy queries
+    ...economyResolvers.Query,
   },
 
   Mutation: {
@@ -1184,6 +1188,9 @@ export const resolvers = {
     
     // Game Manager mutations
     ...gameManagerResolvers.Mutation,
+    
+    // Economy mutations
+    ...economyResolvers.Mutation,
   },
 
   Subscription: {
@@ -1221,6 +1228,9 @@ export const resolvers = {
     
     // Game Manager subscriptions
     ...gameManagerResolvers.Subscription,
+    
+    // Economy subscriptions
+    ...economyResolvers.Subscription,
   },
 
   Bot: {
@@ -1237,6 +1247,40 @@ export const resolvers = {
         return JSON.parse(bot.stats);
       }
       return bot.stats;
+    },
+    equipment: async (bot: any, _: any, ctx: Context) => {
+      if (bot.equipment) return bot.equipment;
+      return ctx.prisma.botEquipment.findMany({
+        where: { botId: bot.id },
+      });
+    },
+    house: async (bot: any, _: any, ctx: Context) => {
+      if (bot.house) return bot.house;
+      return ctx.prisma.botHouse.findUnique({
+        where: { botId: bot.id },
+        include: { furniture: true },
+      });
+    },
+    activityScore: async (bot: any, _: any, ctx: Context) => {
+      if (bot.activityScore) return bot.activityScore;
+      return ctx.prisma.botActivityScore.findUnique({
+        where: { botId: bot.id },
+      });
+    },
+    lootboxRewards: async (bot: any, _: any, ctx: Context) => {
+      if (bot.lootboxRewards) return bot.lootboxRewards;
+      return ctx.prisma.lootboxReward.findMany({
+        where: { botId: bot.id },
+        orderBy: { createdAt: 'desc' },
+      });
+    },
+    robbingPower: async (bot: any) => {
+      const { economyService } = await import('../../services/economyService');
+      return economyService.calculateRobbingPower(bot.id);
+    },
+    defenseLevel: async (bot: any) => {
+      const { economyService } = await import('../../services/economyService');
+      return economyService.calculateDefenseLevel(bot.id);
     },
     queuePosition: async (bot: any, _: any, ctx: Context) => {
       const entry = await ctx.prisma.queueEntry.findFirst({
@@ -1335,6 +1379,15 @@ export const resolvers = {
       return match.status || 'SCHEDULED';
     },
   },
+  
+  // Economy type resolvers
+  BotEquipment: economyResolvers.BotEquipment,
+  BotHouse: economyResolvers.BotHouse,
+  Furniture: economyResolvers.Furniture,
+  RobberyLog: economyResolvers.RobberyLog,
+  BotActivityScore: economyResolvers.BotActivityScore,
+  LootboxReward: economyResolvers.LootboxReward,
+  Trade: economyResolvers.Trade,
 };
 
 function getOrderBy(sort: string): any {

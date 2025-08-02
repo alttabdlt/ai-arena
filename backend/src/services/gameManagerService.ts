@@ -1371,6 +1371,10 @@ class GameManagerService {
         }
       }
       
+      // Get final rankings from the game adapter
+      const adapter = this.adapters.get(game.type);
+      const finalRankings = adapter?.getFinalRankings ? adapter.getFinalRankings(game.state) : [];
+      
       // Update match status in database
       await prisma.match.update({
         where: { id: game.id },
@@ -1379,12 +1383,52 @@ class GameManagerService {
           completedAt: new Date(),
         },
       });
+      
+      // Update participant rankings
+      if (finalRankings.length > 0) {
+        for (const ranking of finalRankings) {
+          await prisma.matchParticipant.updateMany({
+            where: {
+              matchId: game.id,
+              botId: ranking.playerId,
+            },
+            data: {
+              finalRank: ranking.rank,
+              points: ranking.points || 0,
+            },
+          });
+        }
+      }
 
       // Get all bots that participated in this tournament
       const participants = await prisma.matchParticipant.findMany({
         where: { matchId: game.id },
         include: { bot: true },
+        orderBy: { finalRank: 'asc' },
       });
+      
+      // Generate lootbox rewards for all participants
+      try {
+        const { economyService } = await import('./economyService');
+        const totalParticipants = participants.length;
+        
+        for (const participant of participants) {
+          // Skip demo bots from getting lootboxes
+          if (participant.bot.isDemo) {
+            continue;
+          }
+          
+          // Calculate performance based on final rank (1st place = 1.0, last place = 0.0)
+          const performance = participant.finalRank 
+            ? 1 - ((participant.finalRank - 1) / (totalParticipants - 1))
+            : 0.5; // Default to 0.5 if no rank
+          
+          await economyService.generateMatchLootbox(game.id, participant.botId, performance);
+          console.log(`Generated lootbox for ${participant.bot.name} with performance ${performance.toFixed(2)}`);
+        }
+      } catch (error) {
+        console.error('Error generating lootbox rewards:', error);
+      }
 
       // Auto-requeue demo bots
       for (const participant of participants) {

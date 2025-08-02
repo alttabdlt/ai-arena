@@ -1,4 +1,4 @@
-import { Connect4GameState, Connect4GameAction } from '@/game-engine/games/connect4/Connect4Types';
+import { Connect4GameState, Connect4GameAction } from '@game/engine/games/connect4/Connect4Types';
 
 export interface Connect4TestScenario {
   id: string;

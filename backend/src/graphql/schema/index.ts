@@ -1,6 +1,7 @@
 import { gql } from 'graphql-tag';
+import { economyTypeDefs } from './economy';
 
-export const typeDefs = gql`
+const baseTypeDefs = gql`
   scalar DateTime
   scalar JSON
 
@@ -40,6 +41,14 @@ export const typeDefs = gql`
     currentMatch: Match
     createdAt: DateTime!
     updatedAt: DateTime!
+    
+    # Economy fields
+    equipment: [BotEquipment!]!
+    house: BotHouse
+    activityScore: BotActivityScore
+    lootboxRewards: [LootboxReward!]!
+    robbingPower: Int!
+    defenseLevel: Int!
   }
   
   type BotStats {
@@ -1072,3 +1081,6 @@ export const typeDefs = gql`
     analysis: Connect4Analysis!
   }
 `;
+
+// Export merged type definitions
+export const typeDefs = [baseTypeDefs, economyTypeDefs];

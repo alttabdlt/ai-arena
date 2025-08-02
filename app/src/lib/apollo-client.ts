@@ -5,7 +5,7 @@ import { getMainDefinition } from '@apollo/client/utilities';
 import { setContext } from '@apollo/client/link/context';
 import { RetryLink } from '@apollo/client/link/retry';
 import { onError } from '@apollo/client/link/error';
-import { formatTimestamp } from '@/utils/dateFormatter';
+import { formatTimestamp } from '@shared/utils/dateFormatter';
 
 // HTTP connection to the API
 const httpLink = createHttpLink({

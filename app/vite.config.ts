@@ -28,6 +28,13 @@ export default defineConfig(({ mode }) => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "@game": path.resolve(__dirname, "./src/modules/game"),
+      "@bot": path.resolve(__dirname, "./src/modules/bot"),
+      "@tournament": path.resolve(__dirname, "./src/modules/tournament"),
+      "@auth": path.resolve(__dirname, "./src/modules/auth"),
+      "@queue": path.resolve(__dirname, "./src/modules/queue"),
+      "@shared": path.resolve(__dirname, "./src/shared"),
+      "@ui": path.resolve(__dirname, "./src/shared/components/ui"),
     },
   },
 }));

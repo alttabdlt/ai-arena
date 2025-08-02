@@ -1,25 +1,25 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useSubscription } from '@apollo/client';
-import { useAuth } from '@/contexts/AuthContext';
+import { useAuth } from '@auth/contexts/AuthContext';
 import { useAccount } from 'wagmi';
-import InteractiveGlobe from '@/components/globe/InteractiveGlobe';
-import SlotMachineTitle from '@/components/SlotMachineTitle';
-import PortalTransition from '@/components/PortalTransition';
-import { QueuePositionTracker } from '@/components/queue/queue-position-tracker';
-import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import InteractiveGlobe from '@shared/components/globe/InteractiveGlobe';
+import SlotMachineTitle from '@shared/components/animations/SlotMachineTitle';
+import PortalTransition from '@shared/components/animations/PortalTransition';
+import { QueuePositionTracker } from '@queue/components/queue-position-tracker';
+import { Button } from '@ui/button';
+import { Card } from '@ui/card';
+import { Badge } from '@ui/badge';
+import { Alert, AlertDescription } from '@ui/alert';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from '@ui/select';
 import { Trophy, Globe, Gamepad2, Bot, Loader2, X, CheckCircle2, Clock } from 'lucide-react';
-import { Tournament } from '@/types/tournament';
+import { Tournament } from '@shared/types/tournament';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GET_USER_BOTS } from '@/graphql/queries/user';
 import { GET_QUEUE_STATUS } from '@/graphql/queries/queue';
@@ -27,12 +27,12 @@ import { ENTER_QUEUE, LEAVE_QUEUE } from '@/graphql/mutations/queue';
 import { QUEUE_UPDATE_SUBSCRIPTION } from '@/graphql/queries/queue';
 import { SET_TEST_GAME_TYPE } from '@/graphql/mutations/test';
 import { START_DEBUG_LOGGING } from '@/graphql/mutations/debug';
-import { useToast } from '@/hooks/use-toast';
-import { LootboxAnimation } from '@/components/lootbox/LootboxAnimation';
-import { useLootbox } from '@/components/lootbox/hooks/useLootbox';
-import { debugLogger } from '@/services/debugLogger';
-import { DebugLogViewer } from '@/components/DebugLogViewer';
-import { DebugSubscriptionListener } from '@/components/DebugSubscriptionListener';
+import { useToast } from '@shared/hooks/use-toast';
+import { LootboxAnimation } from '@shared/components/animations/LootboxAnimation';
+import { useLootbox } from '@shared/hooks/useLootbox';
+import { debugLogger } from '@shared/services/debugLogger';
+import { DebugLogViewer } from '@shared/components/DebugLogViewer';
+import { DebugSubscriptionListener } from '@shared/components/DebugSubscriptionListener';
 
 const Index = () => {
   const navigate = useNavigate();

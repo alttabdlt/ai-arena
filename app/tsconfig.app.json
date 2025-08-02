@@ -23,7 +23,14 @@
 
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@game/*": ["./src/modules/game/*"],
+      "@bot/*": ["./src/modules/bot/*"],
+      "@tournament/*": ["./src/modules/tournament/*"],
+      "@auth/*": ["./src/modules/auth/*"],
+      "@queue/*": ["./src/modules/queue/*"],
+      "@shared/*": ["./src/shared/*"],
+      "@ui/*": ["./src/shared/components/ui/*"]
     }
   },
   "include": ["src"]

@@ -6,6 +6,7 @@ export interface GameEngineAdapter {
   isGameComplete(gameState: any): boolean;
   getWinner(gameState: any): string | null;
   getCurrentTurn(gameState: any): string | null;
+  getFinalRankings?(gameState: any): Array<{ playerId: string; rank: number; points?: number }>;
 }
 
 export class PokerEngineAdapter implements GameEngineAdapter {
@@ -249,6 +250,36 @@ export class PokerEngineAdapter implements GameEngineAdapter {
     
     return phases[currentIndex + 1] || 'handComplete';
   }
+  
+  getFinalRankings(gameState: any): Array<{ playerId: string; rank: number; points?: number }> {
+    const { players } = gameState;
+    
+    // Sort players by chip count (descending)
+    const sortedPlayers = [...players].sort((a, b) => b.chips - a.chips);
+    
+    const rankings = [];
+    let currentRank = 1;
+    let previousChips = -1;
+    
+    for (let i = 0; i < sortedPlayers.length; i++) {
+      const player = sortedPlayers[i];
+      
+      // Handle ties - players with same chips get same rank
+      if (player.chips !== previousChips) {
+        currentRank = i + 1;
+      }
+      
+      rankings.push({
+        playerId: player.id,
+        rank: currentRank,
+        points: player.chips
+      });
+      
+      previousChips = player.chips;
+    }
+    
+    return rankings;
+  }
 }
 
 export class ReverseHangmanEngineAdapter implements GameEngineAdapter {
@@ -345,6 +376,36 @@ export class ReverseHangmanEngineAdapter implements GameEngineAdapter {
     
     const similarity = (matches / Math.max(guessWords.length, correctWords.length)) * 100;
     return Math.round(similarity);
+  }
+  
+  getFinalRankings(gameState: any): Array<{ playerId: string; rank: number; points?: number }> {
+    const { players } = gameState;
+    
+    // Sort players by total score (descending)
+    const sortedPlayers = [...players].sort((a, b) => b.totalScore - a.totalScore);
+    
+    const rankings = [];
+    let currentRank = 1;
+    let previousScore = -1;
+    
+    for (let i = 0; i < sortedPlayers.length; i++) {
+      const player = sortedPlayers[i];
+      
+      // Handle ties - players with same score get same rank
+      if (player.totalScore !== previousScore) {
+        currentRank = i + 1;
+      }
+      
+      rankings.push({
+        playerId: player.id,
+        rank: currentRank,
+        points: player.totalScore
+      });
+      
+      previousScore = player.totalScore;
+    }
+    
+    return rankings;
   }
 }
 
@@ -514,6 +575,44 @@ export class Connect4EngineAdapter implements GameEngineAdapter {
     }
     
     return count >= 4;
+  }
+  
+  getFinalRankings(gameState: any): Array<{ playerId: string; rank: number; points?: number }> {
+    const { players, winner } = gameState;
+    
+    const rankings = [];
+    
+    // In Connect4, it's winner-takes-all
+    if (winner) {
+      // Winner gets rank 1
+      rankings.push({
+        playerId: winner,
+        rank: 1,
+        points: 100
+      });
+      
+      // All other players get rank 2
+      for (const player of players) {
+        if (player.id !== winner) {
+          rankings.push({
+            playerId: player.id,
+            rank: 2,
+            points: 0
+          });
+        }
+      }
+    } else {
+      // Draw - all players get rank 1
+      for (const player of players) {
+        rankings.push({
+          playerId: player.id,
+          rank: 1,
+          points: 50
+        });
+      }
+    }
+    
+    return rankings;
   }
 }
 

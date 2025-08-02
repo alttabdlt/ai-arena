@@ -64,6 +64,16 @@ model Bot {
   comments        Comment[]
   likes           Like[]
   
+  // Economy relations
+  equipment       BotEquipment[]
+  house           BotHouse?
+  activityScore   BotActivityScore?
+  lootboxRewards  LootboxReward[]
+  initiatedTrades Trade[]          @relation("initiator")
+  receivedTrades  Trade[]          @relation("receiver")
+  robberyAttempts RobberyLog[]     @relation("robber")
+  robberyDefenses RobberyLog[]     @relation("victim")
+  
   @@index([creatorId])
   @@index([createdAt])
   @@index([isActive])
@@ -118,6 +128,7 @@ model Match {
   aiDecisions     AIDecision[]
   tournament      Tournament?      @relation(fields: [tournamentId], references: [id])
   tournamentId    String?
+  lootboxRewards  LootboxReward[]
   
   @@index([status])
   @@index([type])
@@ -314,4 +325,148 @@ enum AchievementRarity {
   RARE
   EPIC
   LEGENDARY
+}
+
+// Economy System Enums
+enum EquipmentType {
+  WEAPON
+  ARMOR
+  TOOL
+  ACCESSORY
+}
+
+enum ItemRarity {
+  COMMON
+  UNCOMMON
+  RARE
+  EPIC
+  LEGENDARY
+}
+
+enum FurnitureType {
+  DECORATION
+  FUNCTIONAL
+  DEFENSIVE
+  TROPHY
+}
+
+// Economy System Models
+model BotEquipment {
+  id              String           @id @default(cuid())
+  botId           String
+  bot             Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
+  name            String
+  equipmentType   EquipmentType
+  rarity          ItemRarity
+  powerBonus      Int              @default(0)
+  defenseBonus    Int              @default(0)
+  equipped        Boolean          @default(false)
+  metadata        Json             @default("{}")
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  
+  @@index([botId])
+  @@index([equipped])
+}
+
+model BotHouse {
+  id              String           @id @default(cuid())
+  botId           String           @unique
+  bot             Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
+  houseScore      Int              @default(100)
+  defenseLevel    Int              @default(1)
+  lastRobbed      DateTime?
+  robberyCooldown DateTime?
+  worldPosition   Json             @default("{\"x\": 0, \"y\": 0}")
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  
+  furniture       Furniture[]
+  
+  @@index([botId])
+}
+
+model Furniture {
+  id              String           @id @default(cuid())
+  houseId         String
+  house           BotHouse         @relation(fields: [houseId], references: [id], onDelete: Cascade)
+  name            String
+  furnitureType   FurnitureType
+  rarity          ItemRarity
+  scoreBonus      Int              @default(0)
+  defenseBonus    Int              @default(0)
+  position        Json             @default("{\"x\": 0, \"y\": 0, \"rotation\": 0}")
+  metadata        Json             @default("{}")
+  createdAt       DateTime         @default(now())
+  
+  @@index([houseId])
+}
+
+model RobberyLog {
+  id              String           @id @default(cuid())
+  robberBotId     String
+  robberBot       Bot              @relation("robber", fields: [robberBotId], references: [id], onDelete: Cascade)
+  victimBotId     String
+  victimBot       Bot              @relation("victim", fields: [victimBotId], references: [id], onDelete: Cascade)
+  success         Boolean
+  powerUsed       Int
+  defenseFaced    Int
+  lootValue       Int              @default(0)
+  itemsStolen     Json             @default("[]")
+  timestamp       DateTime         @default(now())
+  
+  @@index([robberBotId])
+  @@index([victimBotId])
+  @@index([timestamp])
+}
+
+model BotActivityScore {
+  id                  String           @id @default(cuid())
+  botId               String           @unique
+  bot                 Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
+  matchesPlayed       Int              @default(0)
+  lootboxesOpened     Int              @default(0)
+  socialInteractions  Int              @default(0)
+  successfulRobberies Int              @default(0)
+  defenseSuccesses    Int              @default(0)
+  tradesCompleted     Int              @default(0)
+  lastActive          DateTime         @default(now())
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  
+  @@index([botId])
+}
+
+model LootboxReward {
+  id                String           @id @default(cuid())
+  matchId           String
+  match             Match            @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  botId             String
+  bot               Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
+  lootboxRarity     ItemRarity
+  equipmentRewards  Json             @default("[]")
+  furnitureRewards  Json             @default("[]")
+  currencyReward    Int              @default(0)
+  opened            Boolean          @default(false)
+  openedAt          DateTime?
+  createdAt         DateTime         @default(now())
+  
+  @@index([botId])
+  @@index([matchId])
+}
+
+model Trade {
+  id                String           @id @default(cuid())
+  initiatorBotId    String
+  initiatorBot      Bot              @relation("initiator", fields: [initiatorBotId], references: [id], onDelete: Cascade)
+  receiverBotId     String
+  receiverBot       Bot              @relation("receiver", fields: [receiverBotId], references: [id], onDelete: Cascade)
+  offeredItems      Json             @default("[]")
+  requestedItems    Json             @default("[]")
+  status            String           @default("pending")
+  completedAt       DateTime?
+  createdAt         DateTime         @default(now())
+  
+  @@index([initiatorBotId])
+  @@index([receiverBotId])
 }

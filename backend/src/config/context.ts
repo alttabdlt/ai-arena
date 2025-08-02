@@ -13,7 +13,7 @@ export interface Context {
   user?: AuthenticatedUser | null;
 }
 
-let pubsub: PubSub;
+export let pubsub: PubSub;
 
 export function initializePubSub() {
   if (!pubsub) {

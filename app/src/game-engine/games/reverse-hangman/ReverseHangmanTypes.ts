@@ -32,6 +32,9 @@ export interface ReverseHangmanPlayer extends IGamePlayer {
   guessHistory: GuessAttempt[];
   roundsWon: number;
   totalScore: number;
+  currentRoundAttempts: number; // Track attempts for current round
+  hasCompletedRound: boolean; // Track if player finished their turn
+  roundScore?: number; // Number of attempts used in current round (lower is better)
 }
 
 export interface ReverseHangmanAction extends IGameAction {
@@ -48,6 +51,8 @@ export interface ReverseHangmanGameState extends IGameState {
   roundNumber: number;
   maxRounds: number;
   animationPhase?: 'idle' | 'selecting' | 'sending' | 'processing' | 'generating' | 'revealing' | 'complete';
+  allPlayersCompleted: boolean; // Track if all players finished their attempts
+  roundWinner?: string; // Player ID who won the round (fewest attempts)
 }
 
 export interface ReverseHangmanGameConfig extends IGameConfig {

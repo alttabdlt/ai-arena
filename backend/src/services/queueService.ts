@@ -895,6 +895,7 @@ export class QueueService {
             burnt: [],
             actionHistory: { preflop: [], flop: [], turn: [], river: [] },
             lastAction: null,
+            speed: 'normal', // Add speed setting for visualization timing
           };
           break;
           
@@ -903,10 +904,16 @@ export class QueueService {
             id: match.id,
             tournamentId: tournament.id,
             gameType: 'reverse-hangman',
-            players,
-            currentTurn: 0,
+            players: players.map((player: any) => ({
+              ...player,
+              isAI: true,
+              guessHistory: [],
+              roundsWon: 0,
+              totalScore: 0
+            })),
+            currentTurn: players[0].id,
             phase: 'waiting',
-            roundNumber: 1,
+            roundNumber: 0,
             maxRounds: 3,
             attempts: [],
             maxAttempts: 6,

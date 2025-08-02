@@ -14,6 +14,8 @@ import { Trophy } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Connect4TournamentManager } from '@/components/game/connect4/Connect4TournamentManager';
 import { GameHeader } from '@/components/game/GameHeader';
+import { LootboxAnimation } from '@/components/lootbox/LootboxAnimation';
+import { useLootbox } from '@/components/lootbox/hooks/useLootbox';
 
 export default function Connect4View() {
   const { id } = useParams();
@@ -94,6 +96,25 @@ export default function Connect4View() {
       console.log(`Connect4: ${decisionHistory.length} AI decisions recorded`);
     }
   }, [decisionHistory]);
+  
+  // Lootbox integration
+  const { isOpen, openLootbox, closeLootbox, generateReward } = useLootbox({
+    winnerId: winner?.id || '',
+    gameType: 'connect4',
+    onRewardReceived: (reward) => {
+      console.log('Connect4 winner received lootbox reward:', reward);
+    }
+  });
+  
+  // Show lootbox when game has a winner
+  useEffect(() => {
+    if (winner && isGameComplete && !isOpen) {
+      // Delay slightly to let the winning animation finish
+      setTimeout(() => {
+        openLootbox();
+      }, 2000);
+    }
+  }, [winner?.id, isGameComplete]);
   
   // Show loading state
   if (matchLoading) {
@@ -261,6 +282,18 @@ export default function Connect4View() {
           </div>
         </div>
       </div>
+      
+      {/* Lootbox Animation */}
+      {winner && (
+        <LootboxAnimation
+          isOpen={isOpen}
+          onClose={closeLootbox}
+          onOpen={generateReward}
+          gameType="connect4"
+          winnerId={winner.id}
+          winnerName={winner.name}
+        />
+      )}
     </div>
   );
 }

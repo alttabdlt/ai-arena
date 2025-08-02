@@ -2,7 +2,6 @@ import * as React from 'react';
 import { useState, useEffect } from 'react';
 import { AnimatedWordReveal } from './AnimatedWordReveal';
 import { MatchProgressBar } from './MatchProgressBar';
-import { EnhancedAIThinking } from './EnhancedAIThinking';
 import { MistakeDisplay } from './MistakeDisplay';
 import type { ReverseHangmanGameState as ReverseHangmanState, GuessAttempt } from '@/game-engine/games/reverse-hangman/ReverseHangmanTypes';
 
@@ -36,7 +35,26 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
 }) => {
   const [mistakes, setMistakes] = useState<Mistake[]>([]);
   const [isRevealing, setIsRevealing] = useState(false);
-  const attemptsRemaining = gameState.maxAttempts - (gameState.attempts?.length || 0);
+  const attemptsRemaining = (gameState.maxAttempts || 6) - (gameState.attempts?.length || 0);
+  
+  // Detect mistakes when new attempts are made
+  useEffect(() => {
+    if (gameState.attempts && gameState.attempts.length > 0 && gameState.currentPromptPair) {
+      const lastAttempt = gameState.attempts[gameState.attempts.length - 1];
+      const previousAttempts = gameState.attempts.slice(0, -1);
+      
+      const mistake = MistakeDetector.detectMistakes(
+        lastAttempt,
+        gameState.attempts?.length || 0,
+        gameState.currentPromptPair,
+        previousAttempts
+      );
+      
+      if (mistake) {
+        setMistakes(prev => [...prev, mistake]);
+      }
+    }
+  }, [gameState.attempts?.length, gameState.currentPromptPair]);
   
   // Debug logging - commented out to reduce console spam
   // useEffect(() => {
@@ -52,41 +70,29 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
   // }, [gameState]);
   
   // Show loading state if game is not ready
-  if (!gameState.currentPromptPair || gameState.phase === 'waiting') {
+  if (!gameState.currentPromptPair || gameState.phase === 'waiting' || gameState.phase === 'selecting') {
     return (
       <div className="max-w-4xl mx-auto p-6">
         <div className="text-center py-12">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-lg text-gray-700">Preparing game...</p>
+          <p className="text-lg text-gray-700">
+            {gameState.phase === 'selecting' ? 'Generating prompt...' : 
+             gameState.phase === 'playing' ? 'Loading game state...' : 
+             'Preparing game...'}
+          </p>
           <p className="text-sm text-gray-600 mt-2">Phase: {gameState.phase}</p>
+          {gameState.phase === 'playing' && !gameState.currentPromptPair && (
+            <p className="text-sm text-yellow-600 mt-2">Waiting for prompt generation...</p>
+          )}
         </div>
       </div>
     );
   }
   
-  // Detect mistakes when new attempts are made
-  useEffect(() => {
-    if (gameState.attempts && gameState.attempts.length > 0) {
-      const lastAttempt = gameState.attempts[gameState.attempts.length - 1];
-      const previousAttempts = gameState.attempts.slice(0, -1);
-      
-      const mistake = MistakeDetector.detectMistakes(
-        lastAttempt,
-        gameState.attempts?.length || 0,
-        gameState.currentPromptPair,
-        previousAttempts
-      );
-      
-      if (mistake) {
-        setMistakes(prev => [...prev, mistake]);
-      }
-    }
-  }, [gameState.attempts?.length]);
-  
   const getAttemptIcon = (attemptIndex: number) => {
     if (attemptIndex < (gameState.attempts?.length || 0)) {
       return '❌';
-    } else if (attemptIndex < gameState.maxAttempts) {
+    } else if (attemptIndex < (gameState.maxAttempts || 6)) {
       return '⭕';
     }
     return null;
@@ -114,16 +120,6 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
           </p>
         )}
       </div>
-      
-      {/* Show animation during selecting phase */}
-      {gameState.phase === 'selecting' && (
-        <div className="text-center py-8">
-          <div className="animate-pulse">
-            <p className="text-lg font-semibold text-primary">Generating prompt...</p>
-            <p className="text-sm text-gray-600 mt-2">Preparing your challenge</p>
-          </div>
-        </div>
-      )}
 
       {/* Progress Bar */}
       {gameState.attempts && gameState.attempts.length > 0 && (
@@ -131,7 +127,7 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
           <MatchProgressBar
             matchPercentage={gameState.attempts[gameState.attempts.length - 1].matchPercentage}
             attemptsUsed={gameState.attempts.length}
-            maxAttempts={gameState.maxAttempts}
+            maxAttempts={gameState.maxAttempts || 6}
             matchType={gameState.attempts[gameState.attempts.length - 1].matchType}
           />
         </div>
@@ -139,7 +135,7 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
 
       {/* Attempts Indicator */}
       <div className="flex justify-center space-x-2">
-        {Array.from({ length: gameState.maxAttempts }).map((_, i) => (
+        {Array.from({ length: gameState.maxAttempts || 6 }).map((_, i) => (
           <div key={i} className="text-2xl">
             {getAttemptIcon(i)}
           </div>
@@ -149,9 +145,10 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
       {/* Output Display */}
       {gameState.currentPromptPair && (
         <div className="bg-gray-50 rounded-lg p-6">
-          <h3 className="text-lg font-semibold mb-3 text-gray-900">AI Output:</h3>
+          <h3 className="text-lg font-semibold mb-3 text-gray-900">AI Output Generated!</h3>
+          <p className="text-sm text-gray-600 mb-2">Can you guess the original prompt?</p>
           <div className="bg-white p-4 rounded border border-gray-300 whitespace-pre-wrap text-gray-900 font-medium">
-            {gameState.currentPromptPair.output}
+            {gameState.currentPromptPair.output || 'Loading output...'}
           </div>
         </div>
       )}
@@ -168,11 +165,18 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
         </div>
       )}
 
-      {/* Previous Attempts */}
-      {gameState.attempts && gameState.attempts.length > 0 && (
+      {/* Current Player's Attempts */}
+      {gameState.attempts && gameState.currentTurn && (
         <div className="space-y-3">
-          <h3 className="text-lg font-semibold">Previous Attempts:</h3>
-          {gameState.attempts?.map((attempt, index) => (
+          <h3 className="text-lg font-semibold">
+            {gameState.players.find(p => p.id === gameState.currentTurn)?.name}'s Attempts:
+          </h3>
+          {(() => {
+            // Filter attempts for current player only
+            const currentPlayer = gameState.players.find(p => p.id === gameState.currentTurn) as any;
+            const playerAttempts = currentPlayer?.guessHistory || [];
+            
+            return playerAttempts.map((attempt: any, index: number) => (
             <div key={index} className="bg-white p-4 rounded border border-gray-200">
               <div className="space-y-3">
                 <div className="flex justify-between items-start">
@@ -253,7 +257,29 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
                 )}
               </div>
             </div>
-          ))}
+          ));
+          })()}
+        </div>
+      )}
+
+      {/* Hangman Pattern Display - Show current progress */}
+      {gameState.attempts && gameState.attempts.length > 0 && gameState.currentTurn && (
+        <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-4 text-center">
+          <h3 className="text-lg font-semibold mb-2">Current Pattern:</h3>
+          {(() => {
+            const currentPlayer = gameState.players.find(p => p.id === gameState.currentTurn) as any;
+            const lastAttempt = currentPlayer?.guessHistory?.[currentPlayer.guessHistory.length - 1];
+            const pattern = lastAttempt?.matchDetails?.positionTemplate || '_ _ _ _ _ _';
+            
+            return (
+              <div className="font-mono text-2xl tracking-wider text-gray-900">
+                {pattern}
+              </div>
+            );
+          })()}
+          <p className="text-sm text-gray-600 mt-2">
+            Words you've correctly guessed will appear in the pattern above
+          </p>
         </div>
       )}
 
@@ -272,20 +298,14 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
           {gameState.phase === 'won' && gameState.endTime && (
             <div className="text-sm text-gray-900">
               <p>Solved in {gameState.attempts?.length || 0} attempt{(gameState.attempts?.length || 0) !== 1 ? 's' : ''}</p>
-              <p>Time: {Math.round((gameState.endTime.getTime() - gameState.startTime.getTime()) / 1000)}s</p>
+              {gameState.endTime && gameState.startTime && (
+                <p>Time: {Math.round((new Date(gameState.endTime).getTime() - new Date(gameState.startTime).getTime()) / 1000)}s</p>
+              )}
             </div>
           )}
         </div>
       )}
 
-      {/* AI Thinking Indicator */}
-      {isAIThinking && currentAgent && (
-        <EnhancedAIThinking
-          isThinking={isAIThinking}
-          agentName={currentAgent.name}
-          personality={currentAgent.personality as any || 'detective'}
-        />
-      )}
       
       {/* Mistake Display */}
       {mistakes.length > 0 && currentAgent && (

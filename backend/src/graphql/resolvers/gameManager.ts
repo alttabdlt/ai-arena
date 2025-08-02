@@ -117,10 +117,10 @@ export const gameManagerResolvers = {
       ),
       resolve: (payload: any) => ({
         gameId: payload.gameId,
-        event: payload.type === 'decision' ? 'player_decision' : payload.data.event,
-        playerId: payload.data.playerId,
-        data: JSON.stringify(payload.data),
-        timestamp: payload.timestamp
+        event: payload.type === 'decision' ? 'player_decision' : (payload.data?.event || 'unknown'),
+        playerId: payload.data?.playerId || payload.data?.decision?.playerId || null,
+        data: JSON.stringify(payload.data || {}),
+        timestamp: payload.timestamp || new Date().toISOString()
       })
     },
     

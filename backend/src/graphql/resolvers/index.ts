@@ -566,6 +566,50 @@ export const resolvers = {
       return true;
     },
     
+    leaveGame: async (_: any, { gameId }: { gameId: string }, ctx: Context) => {
+      if (!ctx.user) {
+        throw new Error('Not authenticated');
+      }
+      
+      const gameManagerService = getGameManagerService();
+      const activeViewers = await gameManagerService.removeViewer(gameId, ctx.user.id);
+      
+      return {
+        success: true,
+        message: 'Left game successfully',
+        activeViewers
+      };
+    },
+    
+    joinGame: async (_: any, { gameId }: { gameId: string }, ctx: Context) => {
+      if (!ctx.user) {
+        throw new Error('Not authenticated');
+      }
+      
+      const gameManagerService = getGameManagerService();
+      const activeViewers = await gameManagerService.addViewer(gameId, ctx.user.id);
+      
+      return {
+        success: true,
+        message: 'Joined game successfully',
+        activeViewers
+      };
+    },
+
+    updateGameSpeed: async (_: any, { gameId, speed }: { gameId: string; speed: string }, ctx: Context) => {
+      if (!ctx.user) {
+        throw new Error('Not authenticated');
+      }
+      
+      const gameManagerService = getGameManagerService();
+      await gameManagerService.updateGameSpeed(gameId, speed);
+      
+      return {
+        success: true,
+        message: 'Game speed updated successfully'
+      };
+    },
+    
     startDebugLogging: async (_: any, { gameType, matchId }: { gameType: string; matchId?: string }) => {
       const { fileLoggerService } = await import('../../services/fileLoggerService');
       fileLoggerService.startGameLogging(gameType, matchId);

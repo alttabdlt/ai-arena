@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Trophy, Clock, Hash, Target, Users, TrendingUp, Filter } from 'lucide-react';
+import { Trophy, Clock, Target, Users, TrendingUp, Filter } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 
 interface Match {
@@ -21,14 +21,11 @@ interface Match {
     finalRank?: number;
     points: number;
   }>;
-  result?: {
-    winner?: {
-      id: string;
-      name: string;
-    };
-    duration?: number;
-    totalHands?: number;
+  winner?: {
+    id: string;
+    name: string;
   };
+  gameHistory?: any;
 }
 
 interface MatchHistoryEnhancedProps {
@@ -60,7 +57,7 @@ export function MatchHistoryEnhanced({ matches, botId, loading = false }: MatchH
   const filteredMatches = matches.filter(match => {
     const gameTypeMatch = filterGame === 'all' || match.type.toLowerCase() === filterGame;
     const botParticipant = match.participants.find(p => p.bot.id === botId);
-    const isWinner = match.result?.winner?.id === botId;
+    const isWinner = match.winner?.id === botId;
     
     let resultMatch = true;
     if (filterResult === 'wins') {
@@ -75,7 +72,7 @@ export function MatchHistoryEnhanced({ matches, botId, loading = false }: MatchH
   }).slice(0, showLimit);
 
   const getMatchOutcome = (match: Match) => {
-    const isWinner = match.result?.winner?.id === botId;
+    const isWinner = match.winner?.id === botId;
     const botParticipant = match.participants.find(p => p.bot.id === botId);
     const position = botParticipant?.finalRank;
     
@@ -168,27 +165,16 @@ export function MatchHistoryEnhanced({ matches, botId, loading = false }: MatchH
                     </div>
                   </div>
                   
-                  {match.result && (
-                    <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                      <span className="flex items-center gap-1">
-                        <Clock className="h-3 w-3" />
-                        {match.result.duration ? 
-                          `${Math.floor(match.result.duration / 60)}m ${match.result.duration % 60}s` : 
-                          'Quick match'
-                        }
-                      </span>
-                      {match.result.totalHands && (
-                        <span className="flex items-center gap-1">
-                          <Hash className="h-3 w-3" />
-                          {match.result.totalHands} hands
-                        </span>
-                      )}
-                      <span className="flex items-center gap-1">
-                        <Users className="h-3 w-3" />
-                        {match.participants.length} players
-                      </span>
-                    </div>
-                  )}
+                  <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <Clock className="h-3 w-3" />
+                      {match.completedAt ? formatDistanceToNow(new Date(match.completedAt), { addSuffix: false }) : 'In progress'}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Users className="h-3 w-3" />
+                      {match.participants.length} players
+                    </span>
+                  </div>
                 </div>
               </div>
             );

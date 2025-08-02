@@ -239,6 +239,25 @@ class GameManagerService {
       return;
     }
 
+    // Check if current hand is complete but game should continue
+    if (game.state.phase === 'handComplete' && game.state.handComplete) {
+      // Check if game should truly end
+      if (adapter.isGameComplete(game.state)) {
+        game.status = 'completed';
+        const winner = adapter.getWinner(game.state);
+        if (winner) {
+          console.log(`Game ${game.id} completed. Winner: ${winner}`);
+        }
+        // Handle game completion (including auto-requeue for demo bots)
+        await this.handleGameComplete(game);
+        return;
+      }
+      
+      // Otherwise, start a new hand
+      await this.startNewPokerHand(game);
+      return;
+    }
+
     const currentTurn = adapter.getCurrentTurn(game.state);
     
     if (!currentTurn || adapter.isGameComplete(game.state)) {
@@ -271,18 +290,65 @@ class GameManagerService {
       timestamp: new Date(),
     });
     
+    // Get speed setting from game state (default to 'normal' if not set)
+    const gameSpeed = game.state.speed || 'normal';
+    
+    // Add delay based on game speed for better visualization
+    const speedDelays: Record<string, number> = {
+      'fast': 500,      // 0.5 seconds
+      'normal': 1000,   // 1 second
+      'thinking': 2000  // 2 seconds
+    };
+    const visualizationDelay = speedDelays[gameSpeed] || 1000;
+    
+    // Wait before getting AI decision for better pacing
+    await new Promise(resolve => setTimeout(resolve, visualizationDelay));
+    
     // Get AI decision
     try {
       const decision = await this.getAIDecision(game, currentTurn, validActions);
       
+      // Debug: Log state before processing action
+      const oldPhase = game.state.phase;
+      const oldCommunityCards = game.state.communityCards?.length || 0;
+      const oldCurrentTurn = game.state.currentTurn;
+      const oldHasActed = currentPlayer.hasActed;
+      
       // Apply decision to game state using adapter
       game.state = adapter.processAction(game.state, decision);
+      
+      // Debug: Log state changes after action
+      const newPhase = game.state.phase;
+      const newCommunityCards = game.state.communityCards?.length || 0;
+      const newCurrentTurn = game.state.currentTurn;
+      const activePlayers = game.state.players.filter((p: any) => !p.folded);
+      
+      console.log(`🎯 [Poker] Action processed:`, {
+        playerId: currentTurn,
+        playerName: currentPlayer.name,
+        action: decision.action,
+        handNumber: game.state.handNumber,
+        phaseTransition: oldPhase !== newPhase ? `${oldPhase} → ${newPhase}` : oldPhase,
+        turnChanged: oldCurrentTurn !== newCurrentTurn,
+        hasActedChanged: `${oldHasActed} → ${currentPlayer.hasActed}`,
+        communityCardsDealt: newCommunityCards - oldCommunityCards,
+        totalCommunityCards: newCommunityCards,
+        currentBet: game.state.currentBet,
+        pot: game.state.pot,
+        activePlayers: activePlayers.length,
+        activePlayerNames: activePlayers.map((p: any) => p.name)
+      });
 
-      // Publish decision event
+      // Publish decision event with hand number for poker games
+      const decisionData: any = { playerId: currentTurn, decision };
+      if (game.type === 'poker' && game.state.handNumber) {
+        decisionData.handNumber = game.state.handNumber;
+      }
+      
       this.publishUpdate({
         gameId: game.id,
         type: 'decision',
-        data: { playerId: currentTurn, decision },
+        data: decisionData,
         timestamp: new Date(),
       });
       
@@ -293,15 +359,180 @@ class GameManagerService {
         data: { event: 'thinking_complete', playerId: currentTurn },
         timestamp: new Date(),
       });
+      
+      // CRITICAL: Publish updated state after AI action
+      // This was missing and causing community cards not to show!
+      const stateData = game.type === 'poker' ? {
+        state: {
+          ...game.state,
+          gameSpecific: {
+            bettingRound: game.state.phase,
+            communityCards: game.state.communityCards,
+            pot: game.state.pot,
+            currentBet: game.state.currentBet,
+            handComplete: game.state.phase === 'complete' || game.state.phase === 'showdown' || game.state.handComplete,
+            winners: game.state.winners || [],
+            handNumber: game.state.handNumber || 1
+          }
+        }
+      } : { state: game.state };
+      
+      this.publishUpdate({
+        gameId: game.id,
+        type: 'state',
+        data: stateData,
+        timestamp: new Date(),
+      });
+      
+      // Add delay after AI decision to prevent API rate limiting
+      // This gives time for the AI service to process and prevents overwhelming the API
+      const postDecisionDelay = gameSpeed === 'fast' ? 1000 : 2000; // 1s for fast, 2s for normal/thinking
+      console.log(`⏱️ [Poker] Waiting ${postDecisionDelay}ms after AI decision before next turn`);
+      await new Promise(resolve => setTimeout(resolve, postDecisionDelay));
+      
+      // Clear AI thinking status
+      game.aiThinking.delete(currentTurn);
+      console.log(`✅ [Poker] AI ${currentPlayer.name} finished thinking. Still thinking: ${game.aiThinking.size} players`);
     } catch (error) {
       console.error(`AI decision failed for player ${currentTurn}:`, error);
+      
+      // Clear AI thinking status even on error
+      game.aiThinking.delete(currentTurn);
+      console.log(`❌ [Poker] AI ${currentPlayer.name} failed, cleared thinking status. Still thinking: ${game.aiThinking.size} players`);
       // Apply default fold action
       game.state = adapter.processAction(game.state, { 
         action: 'fold', 
         playerId: currentTurn,
         timestamp: new Date().toISOString()
       });
+      
+      // Also publish state after error/fold
+      const errorStateData = game.type === 'poker' ? {
+        state: {
+          ...game.state,
+          gameSpecific: {
+            bettingRound: game.state.phase,
+            communityCards: game.state.communityCards,
+            pot: game.state.pot,
+            currentBet: game.state.currentBet,
+            handComplete: game.state.phase === 'complete' || game.state.phase === 'showdown' || game.state.handComplete,
+            winners: game.state.winners || [],
+            handNumber: game.state.handNumber || 1
+          }
+        }
+      } : { state: game.state };
+      
+      this.publishUpdate({
+        gameId: game.id,
+        type: 'state',
+        data: errorStateData,
+        timestamp: new Date(),
+      });
     }
+  }
+
+  private async startNewPokerHand(game: GameInstance): Promise<void> {
+    console.log(`Starting new poker hand for game ${game.id}`);
+    
+    // Add delay between hands for better pacing
+    const betweenHandDelay = 3000; // 3 seconds between hands
+    console.log(`⏱️ [Poker] Waiting ${betweenHandDelay}ms before starting hand ${(game.state.handNumber || 1) + 1}`);
+    await new Promise(resolve => setTimeout(resolve, betweenHandDelay));
+    
+    // Increment hand number
+    const newHandNumber = (game.state.handNumber || 1) + 1;
+    
+    // Reset players for new hand
+    const playersWithChips = game.state.players.filter((p: any) => p.chips > 0);
+    
+    // Rotate dealer position
+    const currentDealerPos = game.state.dealerPosition || 0;
+    const newDealerPos = (currentDealerPos + 1) % playersWithChips.length;
+    
+    // Calculate blind positions
+    const smallBlindPos = (newDealerPos + 1) % playersWithChips.length;
+    const bigBlindPos = (newDealerPos + 2) % playersWithChips.length;
+    
+    // Create and shuffle new deck
+    const deck = this.createShuffledDeck();
+    
+    // Deal hole cards to each player
+    playersWithChips.forEach((player: any, index: number) => {
+      player.holeCards = [deck.pop(), deck.pop()];
+      player.folded = false;
+      player.bet = 0;
+      player.totalBet = 0;
+      player.isAllIn = false;
+      player.hasActed = false;
+      
+      // Post blinds
+      if (index === smallBlindPos) {
+        const smallBlind = Math.min(game.state.smallBlind, player.chips);
+        player.bet = smallBlind;
+        player.totalBet = smallBlind;
+        player.chips -= smallBlind;
+      } else if (index === bigBlindPos) {
+        const bigBlind = Math.min(game.state.bigBlind, player.chips);
+        player.bet = bigBlind;
+        player.totalBet = bigBlind;
+        player.chips -= bigBlind;
+      }
+    });
+    
+    // Update game state for new hand
+    game.state.handNumber = newHandNumber;
+    game.state.dealerPosition = newDealerPos;
+    game.state.smallBlindPosition = smallBlindPos;
+    game.state.bigBlindPosition = bigBlindPos;
+    game.state.currentTurn = playersWithChips[(bigBlindPos + 1) % playersWithChips.length].id;
+    game.state.communityCards = [];
+    game.state.pot = game.state.smallBlind + game.state.bigBlind;
+    game.state.currentBet = game.state.bigBlind;
+    game.state.minRaise = game.state.bigBlind * 2;
+    game.state.phase = 'preflop';
+    game.state.deck = deck;
+    game.state.burnt = [];
+    game.state.actionHistory = { preflop: [], flop: [], turn: [], river: [] };
+    game.state.lastAction = null;
+    game.state.handComplete = false;
+    game.state.winners = [];
+    
+    console.log(`Started hand ${newHandNumber} with ${playersWithChips.length} players`);
+    
+    // Publish hand start event
+    this.publishUpdate({
+      gameId: game.id,
+      type: 'event',
+      data: { 
+        event: 'hand_started',
+        handNumber: newHandNumber,
+        playersCount: playersWithChips.length
+      },
+      timestamp: new Date(),
+    });
+    
+    // Update state
+    // Publishing state will be handled by processGameTurn after this returns
+  }
+  
+  private createShuffledDeck(): string[] {
+    const suits = ['♠', '♥', '♦', '♣'];
+    const ranks = ['2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A'];
+    const deck: string[] = [];
+    
+    for (const suit of suits) {
+      for (const rank of ranks) {
+        deck.push(rank + suit);
+      }
+    }
+    
+    // Shuffle using Fisher-Yates algorithm
+    for (let i = deck.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [deck[i], deck[j]] = [deck[j], deck[i]];
+    }
+    
+    return deck;
   }
 
   private async processConnect4Turn(game: GameInstance): Promise<void> {
@@ -343,6 +574,7 @@ class GameManagerService {
     
     // Mark AI as thinking
     game.aiThinking.add(currentTurn);
+    console.log(`🤖 [Poker] AI ${currentPlayer.name} (${currentTurn}) marked as thinking. Currently thinking: ${game.aiThinking.size} players`);
     
     // Publish thinking start event
     this.publishUpdate({
@@ -369,11 +601,16 @@ class GameManagerService {
       // Apply decision to game state using adapter
       game.state = adapter.processAction(game.state, decision);
 
-      // Publish decision event
+      // Publish decision event with hand number for poker games
+      const decisionData: any = { playerId: currentTurn, decision };
+      if (game.type === 'poker' && game.state.handNumber) {
+        decisionData.handNumber = game.state.handNumber;
+      }
+      
       this.publishUpdate({
         gameId: game.id,
         type: 'decision',
-        data: { playerId: currentTurn, decision },
+        data: decisionData,
         timestamp: new Date(),
       });
       
@@ -436,11 +673,16 @@ class GameManagerService {
       // Apply decision to game state using adapter
       game.state = adapter.processAction(game.state, decision);
 
-      // Publish decision event
+      // Publish decision event with hand number for poker games
+      const decisionData: any = { playerId: currentTurn, decision };
+      if (game.type === 'poker' && game.state.handNumber) {
+        decisionData.handNumber = game.state.handNumber;
+      }
+      
       this.publishUpdate({
         gameId: game.id,
         type: 'decision',
-        data: { playerId: currentTurn, decision },
+        data: decisionData,
         timestamp: new Date(),
       });
     } catch (error) {
@@ -655,22 +897,38 @@ class GameManagerService {
   }
 
   private prepareReverseHangmanGameState(state: any): any {
+    // Extract the actual output from currentPromptPair
+    const output = state.currentPromptPair?.output || state.generatedOutput || state.currentOutput || '';
+    const targetWordCount = state.currentPromptPair?.prompt ? 
+      state.currentPromptPair.prompt.split(' ').length : 10;
+    
+    console.log('prepareReverseHangmanGameState:', {
+      hasPromptPair: !!state.currentPromptPair,
+      output: output.substring(0, 100) + '...',
+      targetWordCount,
+      attempts: state.attempts?.length || 0
+    });
+    
     return {
       game_type: 'reverse_hangman',
-      output_shown: state.currentOutput || state.currentPromptPair?.output || '',
+      output_shown: output,
       constraints: {
-        max_word_count: state.maxWordCount || 10,
-        exact_word_count: state.exactWordCount || 0,
-        difficulty: state.difficulty || 'medium',
-        category: state.category || 'general',
-        max_attempts: state.maxAttempts || 10
+        max_word_count: targetWordCount + 5,
+        exact_word_count: targetWordCount,
+        difficulty: state.currentPromptPair?.difficulty || state.difficulty || 'medium',
+        category: state.currentPromptPair?.category || state.category || 'general',
+        max_attempts: state.maxAttempts || 6
       },
       previous_guesses: (state.attempts || []).map((attempt: any, index: number) => ({
         attempt_number: index + 1,
         prompt_guess: attempt.guess || '',
         similarity_score: attempt.matchPercentage || 0,
         feedback: attempt.feedback || '',
-        match_details: attempt.matchDetails || null
+        match_details: attempt.matchDetails || null,
+        matched_words: attempt.matchDetails?.matchedWords || [],
+        missing_words: attempt.matchDetails?.missingWords || [],
+        extra_words: attempt.matchDetails?.extraWords || [],
+        semantic_matches: attempt.matchDetails?.semanticMatches || []
       })),
       game_phase: state.phase || 'playing',
       time_elapsed_seconds: Math.floor((Date.now() - (state.startTime || Date.now())) / 1000)
@@ -991,6 +1249,28 @@ class GameManagerService {
     }
   }
 
+  async updateGameSpeed(gameId: string, speed: string): Promise<void> {
+    const game = this.games.get(gameId);
+    if (!game) {
+      throw new Error(`Game ${gameId} not found`);
+    }
+
+    // Update the game state with new speed
+    game.state.speed = speed;
+    console.log(`Updated game ${gameId} speed to: ${speed}`);
+
+    // Save updated state
+    await this.saveGameState(gameId, game);
+
+    // Publish speed update event
+    this.publishUpdate({
+      gameId,
+      type: 'event',
+      data: { event: 'speed_changed', speed },
+      timestamp: new Date(),
+    });
+  }
+
   private async saveGameState(gameId: string, game: GameInstance): Promise<void> {
     const gameData = {
       ...game,
@@ -1020,7 +1300,7 @@ class GameManagerService {
   private getLoopDelay(gameType: GameInstance['type']): number {
     switch (gameType) {
       case 'poker':
-        return 2000; // 2 seconds per turn
+        return 3000; // 3 seconds per turn - increased to better handle AI response times
       case 'reverse-hangman':
         return 3000; // 3 seconds per turn
       case 'connect4':
@@ -1029,7 +1309,7 @@ class GameManagerService {
       case 'go':
         return 5000; // 5 seconds per turn
       default:
-        return 2000;
+        return 3000; // Default to 3 seconds
     }
   }
 
@@ -1216,7 +1496,15 @@ class GameManagerService {
     // Save state
     await this.saveGameState(matchId, game);
     
-    // Publish state update to notify frontend
+    // Publish full state update first
+    this.publishUpdate({
+      gameId: matchId,
+      type: 'state',
+      data: { state: game.state },
+      timestamp: new Date(),
+    });
+    
+    // Then publish event to notify frontend
     this.publishUpdate({
       gameId: matchId,
       type: 'event',
@@ -1360,6 +1648,88 @@ class GameManagerService {
   // Export pubsub for GraphQL subscriptions
   getPubSub(): PubSub {
     return this.pubsub;
+  }
+  
+  // Viewer management methods
+  async addViewer(gameId: string, userId: string): Promise<number> {
+    const game = this.games.get(gameId);
+    if (!game) {
+      throw new Error(`Game ${gameId} not found`);
+    }
+    
+    game.spectators.add(userId);
+    game.lastActivity = new Date();
+    
+    // Notify other viewers
+    this.publishUpdate({
+      gameId,
+      type: 'event',
+      timestamp: new Date(),
+      data: JSON.stringify({
+        event: 'viewer-joined',
+        userId,
+        activeViewers: game.spectators.size
+      })
+    });
+    
+    fileLoggerService.addLog({
+      timestamp: formatTimestamp(),
+      level: 'info',
+      source: 'backend',
+      message: `User ${userId} joined game ${gameId}. Active viewers: ${game.spectators.size}`
+    });
+    
+    await this.saveGameState(gameId, game);
+    return game.spectators.size;
+  }
+  
+  async removeViewer(gameId: string, userId: string): Promise<number> {
+    const game = this.games.get(gameId);
+    if (!game) {
+      return 0; // Game might have been cleaned up
+    }
+    
+    game.spectators.delete(userId);
+    game.lastActivity = new Date();
+    
+    // Notify other viewers
+    this.publishUpdate({
+      gameId,
+      type: 'event',
+      timestamp: new Date(),
+      data: JSON.stringify({
+        event: 'viewer-left',
+        userId,
+        activeViewers: game.spectators.size
+      })
+    });
+    
+    fileLoggerService.addLog({
+      timestamp: formatTimestamp(),
+      level: 'info',
+      source: 'backend',
+      message: `User ${userId} left game ${gameId}. Active viewers: ${game.spectators.size}`
+    });
+    
+    await this.saveGameState(gameId, game);
+    return game.spectators.size;
+  }
+  
+  async getUserActiveGames(userId: string): Promise<GameInstance[]> {
+    const activeGames = [];
+    
+    // Check in-memory games
+    for (const [_, game] of this.games) {
+      if (game.status !== 'completed' && 
+          (game.players.includes(userId) || game.spectators.has(userId))) {
+        activeGames.push(game);
+      }
+    }
+    
+    // Could also check Redis for games not in memory
+    // This would require maintaining a user->games index
+    
+    return activeGames;
   }
 }
 

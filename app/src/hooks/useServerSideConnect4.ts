@@ -3,6 +3,7 @@ import { useSubscription, gql, useMutation } from '@apollo/client';
 import { Connect4GameState } from '@/game-engine/games/connect4/Connect4Types';
 import { SIGNAL_FRONTEND_READY } from '@/graphql/mutations/queue';
 import { Connect4Decision } from '@/components/game/connect4/Connect4DecisionHistory';
+import { LEAVE_GAME, JOIN_GAME } from '@/graphql/mutations/game';
 
 // GraphQL subscription for game state updates
 const GAME_STATE_UPDATE = gql`
@@ -45,7 +46,10 @@ interface UseServerSideConnect4Options {
 
 export function useServerSideConnect4({ gameId, tournament }: UseServerSideConnect4Options) {
   const [signalFrontendReady] = useMutation(SIGNAL_FRONTEND_READY);
+  const [joinGame] = useMutation(JOIN_GAME);
+  const [leaveGame] = useMutation(LEAVE_GAME);
   const hasSignaledReady = useRef(false);
+  const hasJoinedGame = useRef(false);
   const [gameState, setGameState] = useState<Connect4GameState | null>(null);
   const [isInitialized, setIsInitialized] = useState(false);
   const [isActive, setIsActive] = useState(false);
@@ -69,6 +73,33 @@ export function useServerSideConnect4({ gameId, tournament }: UseServerSideConne
   useEffect(() => {
     tournamentRef.current = tournament;
   }, [tournament]);
+  
+  // Join game when component mounts and leave when unmounts
+  useEffect(() => {
+    if (gameId && tournament && !hasJoinedGame.current) {
+      hasJoinedGame.current = true;
+      
+      joinGame({
+        variables: { gameId }
+      }).then(result => {
+        console.log('✅ Joined Connect4 game:', gameId, 'Active viewers:', result.data?.joinGame?.activeViewers);
+      }).catch(error => {
+        console.error('❌ Failed to join Connect4 game:', error);
+      });
+    }
+    
+    // Cleanup function - leave game when component unmounts
+    return () => {
+      if (gameId && hasJoinedGame.current) {
+        console.log('👋 Leaving Connect4 game:', gameId);
+        leaveGame({
+          variables: { gameId }
+        }).catch(error => {
+          console.error('❌ Failed to leave Connect4 game:', error);
+        });
+      }
+    };
+  }, [gameId, tournament, joinGame, leaveGame]);
 
   // Subscribe to game state updates
   const { data: stateData, error: stateError } = useSubscription(GAME_STATE_UPDATE, {
@@ -149,9 +180,18 @@ export function useServerSideConnect4({ gameId, tournament }: UseServerSideConne
 
       // Create game state
       const newGameState: Connect4GameState = {
+        // Required IGameState properties
+        gameId: gameId,
+        phase: backendState.phase || 'playing',
+        startTime: tournament?.startedAt ? new Date(tournament.startedAt) : new Date(),
+        endTime: tournament?.completedAt ? new Date(tournament.completedAt) : undefined,
+        currentTurn: currentPlayerId,
+        turnCount: backendState.moveCount || 0,
+        players: players,
+        
+        // Connect4-specific properties
         board: backendState.board || Array(8).fill(null).map(() => Array(8).fill(null)),
         currentPlayerIndex: currentPlayerIndex,
-        players: players,
         winner: backendState.winner || null,
         winningCells: backendState.winningCells || null,
         gamePhase: backendState.phase || 'playing',
@@ -174,7 +214,7 @@ export function useServerSideConnect4({ gameId, tournament }: UseServerSideConne
     } catch (error) {
       console.error('Error transforming Connect4 backend state:', error);
     }
-  }, [tournament]);
+  }, [tournament, gameId]);
 
   // Handle game events
   const handleGameEvent = useCallback((event: any) => {

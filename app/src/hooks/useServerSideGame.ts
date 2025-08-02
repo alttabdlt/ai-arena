@@ -111,12 +111,35 @@ export function useServerSideGame({
     onSubscriptionData: ({ subscriptionData }) => {
       if (subscriptionData.data?.gameStateUpdate) {
         const update = subscriptionData.data.gameStateUpdate;
+        console.log('Game state update received:', {
+          gameId: update.gameId,
+          type: update.type,
+          dataLength: update.data?.length
+        });
         try {
           const parsedData = JSON.parse(update.data);
-          setGameState(parsedData.state);
-          onStateUpdate?.(parsedData.state);
+          
+          // Handle different update types
+          if (update.type === 'STATE_CHANGE' || update.type === 'state') {
+            console.log('Parsed game state:', {
+              phase: parsedData.state?.phase,
+              hasCurrentPromptPair: !!parsedData.state?.currentPromptPair,
+              roundNumber: parsedData.state?.roundNumber
+            });
+            setGameState(parsedData.state);
+            onStateUpdate?.(parsedData.state);
+          } else if (update.type === 'decision') {
+            console.log('Decision update received:', parsedData);
+            // Forward decision events as game events
+            onEvent?.({
+              event: 'player_decision',
+              playerId: parsedData.playerId,
+              decision: parsedData.decision,
+              timestamp: update.timestamp
+            });
+          }
         } catch (err) {
-          console.error('Failed to parse game state:', err);
+          console.error('Failed to parse game state:', err, 'Raw data:', update.data);
         }
       }
     }
@@ -128,22 +151,34 @@ export function useServerSideGame({
     onSubscriptionData: ({ subscriptionData }) => {
       if (subscriptionData.data?.gameEvent) {
         const event = subscriptionData.data.gameEvent;
+        console.log('Game event received:', {
+          gameId: event.gameId,
+          eventType: event.event,
+          playerId: event.playerId,
+          hasData: !!event.data
+        });
         try {
-          const parsedData = JSON.parse(event.data);
-          onEvent?.({
+          let eventPayload = {
             event: event.event,
-            playerId: event.playerId,
-            ...parsedData
-          });
+            playerId: event.playerId
+          };
+          
+          if (event.data) {
+            const parsedData = JSON.parse(event.data);
+            eventPayload = { ...eventPayload, ...parsedData };
+          }
+          
+          console.log('Processed event payload:', eventPayload);
+          onEvent?.(eventPayload);
         } catch (err) {
-          console.error('Failed to parse game event:', err);
+          console.error('Failed to parse game event:', err, 'Raw data:', event.data);
         }
       }
     }
   });
 
   // Initialize game
-  const initializeGame = useCallback(async () => {
+  const initializeGame = useCallback(async (skipCreate = false) => {
     // Prevent double initialization
     if (isInitialized) {
       console.log('Game already initialized, skipping...');
@@ -151,42 +186,51 @@ export function useServerSideGame({
     }
 
     try {
-      const result = await createGame({
-        variables: {
-          gameId,
-          type: gameType,
-          players
-        }
-      });
-
-      if (result.data?.createGame) {
-        const game = result.data.createGame;
-        setIsInitialized(true);
-        
-        // Parse initial game state
-        if (game.gameState) {
-          const initialState = JSON.parse(game.gameState);
-          setGameState(initialState);
-          onStateUpdate?.(initialState);
-        }
-
-        // Add as spectator
-        await addSpectator({
+      // For games created during matchmaking, skip the create step
+      if (!skipCreate) {
+        const result = await createGame({
           variables: {
             gameId,
-            userId: userIdRef.current
+            type: gameType,
+            players
           }
         });
-        spectatorAddedRef.current = true;
 
-        // Start the game
+        if (result.data?.createGame) {
+          const game = result.data.createGame;
+          setIsInitialized(true);
+          
+          // Parse initial game state
+          if (game.gameState) {
+            const initialState = JSON.parse(game.gameState);
+            setGameState(initialState);
+            onStateUpdate?.(initialState);
+          }
+        }
+      } else {
+        // Game already exists, just mark as initialized
+        console.log('Connecting to existing game:', gameId);
+        setIsInitialized(true);
+      }
+
+      // Add as spectator
+      await addSpectator({
+        variables: {
+          gameId,
+          userId: userIdRef.current
+        }
+      });
+      spectatorAddedRef.current = true;
+
+      // Only start game if we created it
+      if (!skipCreate) {
         await startGame({
           variables: { gameId }
         });
-        setIsActive(true);
-
-        toast.success('Game initialized on server');
       }
+      
+      setIsActive(true);
+      toast.success(skipCreate ? 'Connected to game' : 'Game initialized on server');
     } catch (err: any) {
       // Check if error is due to game already existing
       if (err.message && err.message.includes('already')) {

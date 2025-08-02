@@ -17,7 +17,7 @@ export const setApolloClient = (client: any) => {
 
 class DebugLogger {
   private logs: LogEntry[] = [];
-  private maxLogs = 2000; // Reduced to prevent memory issues
+  private maxLogs = 1000; // Further reduced for better performance
   private isCapturing = false;
   private gameType: string | null = null;
   private logBatch: LogEntry[] = [];
@@ -67,7 +67,7 @@ class DebugLogger {
               }
               return String(arg);
             }).join(' '),
-            data: args.length > 1 ? args : args[0],
+            data: args.length > 1 ? args : (typeof args[0] === 'string' ? undefined : args[0]),
           };
 
           // Capture stack trace for errors
@@ -88,6 +88,12 @@ class DebugLogger {
   }
 
   startCapture(gameType: string) {
+    // Disable capture in production for performance
+    if (import.meta.env.PROD) {
+      console.log('Debug logging disabled in production');
+      return;
+    }
+    
     this.gameType = gameType;
     this.logs = []; // Clear previous logs
     this.isCapturing = true;
@@ -176,8 +182,8 @@ class DebugLogger {
       this.addToBatch(entry);
     }
     
-    // Save to localStorage less frequently (every 500 logs)
-    if (this.logs.length % 500 === 0) {
+    // Save to localStorage less frequently (every 200 logs)
+    if (this.logs.length % 200 === 0) {
       this.saveLogsToStorage();
     }
   }
@@ -218,12 +224,12 @@ class DebugLogger {
   private addToBatch(entry: LogEntry) {
     this.logBatch.push(entry);
     
-    // Send batch if it reaches 50 logs
-    if (this.logBatch.length >= 50) {
+    // Send batch if it reaches 20 logs
+    if (this.logBatch.length >= 20) {
       this.sendBatch();
     } else if (!this.batchTimer) {
-      // Start timer to send batch after 2 seconds
-      this.batchTimer = setTimeout(() => this.sendBatch(), 2000);
+      // Start timer to send batch after 5 seconds
+      this.batchTimer = setTimeout(() => this.sendBatch(), 5000);
     }
   }
   
@@ -316,8 +322,8 @@ class DebugLogger {
       const sessionId = localStorage.getItem('debugLoggerSession') || 
                        `${this.gameType}-${new Date().toISOString().replace(/[:.]/g, '-')}`;
       
-      // Keep only last 1000 logs to prevent quota issues
-      const logsToSave = this.logs.slice(-1000);
+      // Keep only last 500 logs to prevent quota issues
+      const logsToSave = this.logs.slice(-500);
       
       const logData = {
         sessionId,
@@ -413,7 +419,7 @@ class DebugLogger {
       // Clear sessions list
       localStorage.removeItem('debugLogSessions');
       
-      console.log(`🧹 Cleared ${keysToRemove.length} old debug log entries from localStorage`);
+      // console.log(`🧹 Cleared ${keysToRemove.length} old debug log entries from localStorage`);
     } catch (e) {
       // Ignore errors
     }
@@ -501,15 +507,15 @@ if (typeof window !== 'undefined') {
     console.log(`💾 Downloading logs for session ${sessionId}`);
   };
   
-  console.log('🐛 Debug Logger initialized. Available commands:');
-  console.log('  - window.getLogs() - Get current logs as array');
-  console.log('  - window.exportLogs() - Export logs as formatted text');
-  console.log('  - window.saveLogs() - Download current logs to file');
-  console.log('  - window.getSessions() - List all saved debug sessions');
-  console.log('  - window.loadSession(sessionId) - Load logs from a saved session');
-  console.log('  - window.downloadSession(sessionId) - Download logs from a saved session');
-  console.log('  - window.clearDebugStorage() - Clear all debug logs from localStorage');
-  console.log('  - Press Ctrl/Cmd + D to toggle debug viewer');
+  // console.log('🐛 Debug Logger initialized. Available commands:');
+  // console.log('  - window.getLogs() - Get current logs as array');
+  // console.log('  - window.exportLogs() - Export logs as formatted text');
+  // console.log('  - window.saveLogs() - Download current logs to file');
+  // console.log('  - window.getSessions() - List all saved debug sessions');
+  // console.log('  - window.loadSession(sessionId) - Load logs from a saved session');
+  // console.log('  - window.downloadSession(sessionId) - Download logs from a saved session');
+  // console.log('  - window.clearDebugStorage() - Clear all debug logs from localStorage');
+  // console.log('  - Press Ctrl/Cmd + D to toggle debug viewer');
   
   // Add clear storage command
   (window as any).clearDebugStorage = () => {

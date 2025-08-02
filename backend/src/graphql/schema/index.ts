@@ -221,6 +221,11 @@ export const typeDefs = gql`
     # Test mode mutations
     setTestGameType(gameType: String): Boolean!
     
+    # Game viewer management
+    leaveGame(gameId: String!): GameViewerResponse!
+    joinGame(gameId: String!): GameViewerResponse!
+    updateGameSpeed(gameId: String!, speed: String!): GameViewerResponse!
+    
     # Debug logging control
     startDebugLogging(gameType: String!, matchId: String): Boolean!
     stopDebugLogging: Boolean!
@@ -441,6 +446,12 @@ export const typeDefs = gql`
     type: GameType!
     count: Int!
     active: Int!
+  }
+  
+  type GameViewerResponse {
+    success: Boolean!
+    message: String!
+    activeViewers: Int!
   }
 
   type GameUpdate {

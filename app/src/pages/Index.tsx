@@ -28,6 +28,8 @@ import { QUEUE_UPDATE_SUBSCRIPTION } from '@/graphql/queries/queue';
 import { SET_TEST_GAME_TYPE } from '@/graphql/mutations/test';
 import { START_DEBUG_LOGGING } from '@/graphql/mutations/debug';
 import { useToast } from '@/hooks/use-toast';
+import { LootboxAnimation } from '@/components/lootbox/LootboxAnimation';
+import { useLootbox } from '@/components/lootbox/hooks/useLootbox';
 import { debugLogger } from '@/services/debugLogger';
 import { DebugLogViewer } from '@/components/DebugLogViewer';
 import { DebugSubscriptionListener } from '@/components/DebugSubscriptionListener';
@@ -43,6 +45,15 @@ const Index = () => {
   const [selectedGameType, setSelectedGameType] = useState<string | null>(null);
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
   const [isInQueue, setIsInQueue] = useState(false);
+  
+  // Lootbox test integration
+  const { isOpen, openLootbox, closeLootbox, generateReward } = useLootbox({
+    winnerId: 'test-winner',
+    gameType: 'poker',
+    onRewardReceived: (reward) => {
+      console.log('Test lootbox reward:', reward);
+    }
+  });
   const [queueEntryId, setQueueEntryId] = useState<string | null>(null);
   const [pendingPlayAction, setPendingPlayAction] = useState(false);
   const [showDebugLogs, setShowDebugLogs] = useState(false);
@@ -327,7 +338,7 @@ const Index = () => {
       return;
     }
     
-    console.log(`🎮 Entering queue with bot ${botId} for user ${user.address}`);
+    // console.log(`🎮 Entering queue with bot ${botId} for user ${user.address}`);
     
     try {
       await enterQueue({
@@ -337,7 +348,7 @@ const Index = () => {
         },
       });
       
-      console.log(`✅ Successfully entered queue with bot ${botId}`);
+      // console.log(`✅ Successfully entered queue with bot ${botId}`);
       
       // Update state immediately to show queue widget
       setSelectedBotId(botId);
@@ -351,7 +362,7 @@ const Index = () => {
       // Check current queue status to see if we have enough players
       const currentQueueStatus = queueStatusData?.queueStatus;
       if (currentQueueStatus && currentQueueStatus.totalInQueue >= 3) {
-        console.log(`🚀 Queue has ${currentQueueStatus.totalInQueue + 1} players (including new entry), match will be created soon`);
+        // console.log(`🚀 Queue has ${currentQueueStatus.totalInQueue + 1} players (including new entry), match will be created soon`);
         
         // Navigate to queue page with a flag indicating match is being created
         setTimeout(() => {
@@ -718,6 +729,14 @@ const Index = () => {
               >
                 🔴 Connect4
               </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={openLootbox}
+                className="text-xs bg-gradient-to-r from-yellow-500 to-amber-600 hover:from-yellow-600 hover:to-amber-700 text-white"
+              >
+                🎁 Test Lootbox
+              </Button>
             </div>
             <Button
               size="sm"
@@ -731,6 +750,16 @@ const Index = () => {
           </div>
         </Card>
       </div>
+      
+      {/* Lootbox Test Animation */}
+      <LootboxAnimation
+        isOpen={isOpen}
+        onClose={closeLootbox}
+        onOpen={generateReward}
+        gameType="poker"
+        winnerId="test-winner"
+        winnerName="Test Winner"
+      />
     </div>
   );
 };

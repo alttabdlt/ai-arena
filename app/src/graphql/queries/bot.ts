@@ -71,14 +71,11 @@ export const GET_BOT_MATCHES = gql`
         finalRank
         points
       }
-      result {
-        winner {
-          id
-          name
-        }
-        duration
-        totalHands
+      winner {
+        id
+        name
       }
+      gameHistory
     }
   }
 `;

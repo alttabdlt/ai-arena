@@ -109,7 +109,10 @@ export class ReverseHangmanGameEngine extends BaseGameEngine<ReverseHangmanGameS
       ...player,
       guessHistory: [],
       roundsWon: 0,
-      totalScore: 0
+      totalScore: 0,
+      currentRoundAttempts: 0,
+      hasCompletedRound: false,
+      roundScore: undefined
     }));
 
     return {
@@ -124,7 +127,9 @@ export class ReverseHangmanGameEngine extends BaseGameEngine<ReverseHangmanGameS
       maxAttempts: this.maxAttempts,
       roundNumber: 0,
       maxRounds: 5,
-      animationPhase: 'idle'
+      animationPhase: 'idle',
+      allPlayersCompleted: false,
+      roundWinner: undefined
     };
   }
 
@@ -165,9 +170,26 @@ export class ReverseHangmanGameEngine extends BaseGameEngine<ReverseHangmanGameS
       this.state.currentPromptPair = promptPair;
     }
     
+    // Reset round state
     this.state.attempts = [];
     this.state.phase = 'selecting';
-    this.state.animationPhase = 'selecting';
+    this.state.animationPhase = 'generating';
+    this.state.currentPromptPair = promptPair;
+    this.state.allPlayersCompleted = false;
+    this.state.roundWinner = undefined;
+    
+    // Reset all players for new round
+    this.state.players.forEach(player => {
+      (player as ReverseHangmanPlayer).currentRoundAttempts = 0;
+      (player as ReverseHangmanPlayer).hasCompletedRound = false;
+      (player as ReverseHangmanPlayer).roundScore = undefined;
+      (player as ReverseHangmanPlayer).currentGuess = undefined;
+    });
+    
+    // Set first player as current turn
+    if (this.state.players.length > 0) {
+      this.state.currentTurn = this.state.players[0].id;
+    }
     
     // Emit animation phase event with output
     this.context.eventBus.emit({
@@ -254,6 +276,21 @@ export class ReverseHangmanGameEngine extends BaseGameEngine<ReverseHangmanGameS
       throw new Error('No prompt pair available');
     }
 
+    const player = this.state.players.find(p => p.id === playerId) as ReverseHangmanPlayer;
+    if (!player) {
+      throw new Error('Player not found');
+    }
+
+    // Check if it's actually this player's turn
+    if (this.state.currentTurn !== playerId) {
+      throw new Error('Not this player\'s turn');
+    }
+
+    // Check if player has already completed their round
+    if (player.hasCompletedRound) {
+      throw new Error('Player has already completed their attempts for this round');
+    }
+
     const matchResult = this.promptMatcher.match(guess, this.state.currentPromptPair.prompt);
     
     const attempt: GuessAttempt = {
@@ -265,13 +302,11 @@ export class ReverseHangmanGameEngine extends BaseGameEngine<ReverseHangmanGameS
       matchDetails: matchResult.details
     };
 
+    // Add to global attempts and player's history
     this.state.attempts.push(attempt);
-    
-    const player = this.state.players.find(p => p.id === playerId) as ReverseHangmanPlayer;
-    if (player) {
-      player.guessHistory.push(attempt);
-      player.currentGuess = guess;
-    }
+    player.guessHistory.push(attempt);
+    player.currentGuess = guess;
+    player.currentRoundAttempts++;
 
     // Emit guess event
     this.context.eventBus.emit({
@@ -280,22 +315,30 @@ export class ReverseHangmanGameEngine extends BaseGameEngine<ReverseHangmanGameS
       playerId,
       data: {
         attempt,
-        attemptsRemaining: this.maxAttempts - this.state.attempts.length
+        playerAttempts: player.currentRoundAttempts,
+        maxAttempts: this.maxAttempts
       }
     });
 
     if (attempt.isCorrect) {
-      this.handleRoundWin(playerId);
-    } else if (this.state.attempts.length >= this.maxAttempts) {
-      this.handleRoundLoss();
+      // Player got it right - they complete with their current attempt count
+      player.hasCompletedRound = true;
+      player.roundScore = player.currentRoundAttempts;
+      console.log(`🎯 Player ${player.name} got it right in ${player.currentRoundAttempts} attempts!`);
+      
+      // Move to next player or end round if all completed
+      this.advanceToNextPlayer();
+    } else if (player.currentRoundAttempts >= this.maxAttempts) {
+      // Player used all attempts without getting it right
+      player.hasCompletedRound = true;
+      player.roundScore = this.maxAttempts + 1; // Penalty score for not getting it
+      console.log(`❌ Player ${player.name} used all ${this.maxAttempts} attempts without success`);
+      
+      // Move to next player or end round if all completed
+      this.advanceToNextPlayer();
     } else {
-      // Game continues - in single player, keep the same player's turn
-      // The turn stays with the same player for the entire round
-      console.log('Guess made, continuing with same player:', {
-        playerId,
-        attemptsRemaining: this.maxAttempts - this.state.attempts.length,
-        currentTurn: this.state.currentTurn
-      });
+      // Player continues with more attempts
+      console.log(`🔄 Player ${player.name} continues: attempt ${player.currentRoundAttempts}/${this.maxAttempts}`);
     }
   }
 
@@ -365,6 +408,83 @@ export class ReverseHangmanGameEngine extends BaseGameEngine<ReverseHangmanGameS
     if (this.state.roundNumber >= this.state.maxRounds) {
       this.handleGameEnd();
     }
+  }
+
+  private advanceToNextPlayer(): void {
+    // Check if all players have completed their attempts
+    const allCompleted = this.state.players.every(p => (p as ReverseHangmanPlayer).hasCompletedRound);
+    
+    if (allCompleted) {
+      // All players finished - determine winner and end round
+      this.determineRoundWinnerAndEnd();
+    } else {
+      // Find next player who hasn't completed yet
+      const currentPlayerIndex = this.state.players.findIndex(p => p.id === this.state.currentTurn);
+      let nextPlayerIndex = (currentPlayerIndex + 1) % this.state.players.length;
+      
+      // Find next uncompleted player
+      while ((this.state.players[nextPlayerIndex] as ReverseHangmanPlayer).hasCompletedRound) {
+        nextPlayerIndex = (nextPlayerIndex + 1) % this.state.players.length;
+      }
+      
+      const nextPlayer = this.state.players[nextPlayerIndex];
+      this.state.currentTurn = nextPlayer.id;
+      
+      console.log(`🔄 Turn advanced to: ${nextPlayer.name}`);
+      
+      // Emit turn change event
+      this.context.eventBus.emit({
+        type: 'turn:changed',
+        timestamp: new Date(),
+        playerId: nextPlayer.id,
+        data: {
+          currentTurn: nextPlayer.id,
+          playerName: nextPlayer.name
+        }
+      });
+    }
+  }
+
+  private determineRoundWinnerAndEnd(): void {
+    // Find player with lowest score (fewest attempts)
+    const completedPlayers = this.state.players
+      .filter(p => (p as ReverseHangmanPlayer).hasCompletedRound)
+      .map(p => p as ReverseHangmanPlayer);
+    
+    if (completedPlayers.length === 0) {
+      console.error('No completed players found');
+      return;
+    }
+    
+    // Sort by score (lower is better)
+    completedPlayers.sort((a, b) => (a.roundScore || 999) - (b.roundScore || 999));
+    const winner = completedPlayers[0];
+    
+    this.state.roundWinner = winner.id;
+    this.state.allPlayersCompleted = true;
+    winner.roundsWon++;
+    
+    console.log(`🏆 Round ${this.state.roundNumber} winner: ${winner.name} (${winner.roundScore} attempts)`);
+    
+    // Emit round completion event
+    this.context.eventBus.emit({
+      type: 'round:complete',
+      timestamp: new Date(),
+      playerId: winner.id,
+      data: {
+        winnerId: winner.id,
+        winnerName: winner.name,
+        attempts: winner.roundScore,
+        roundNumber: this.state.roundNumber,
+        playerScores: completedPlayers.map(p => ({
+          playerId: p.id,
+          playerName: p.name,
+          attempts: p.roundScore
+        }))
+      }
+    });
+    
+    this.completeRound();
   }
 
   protected validateGameSpecificAction(action: ReverseHangmanAction): IGameValidationResult {

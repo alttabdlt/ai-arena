@@ -86,11 +86,15 @@ export class PokerEngineAdapter implements GameEngineAdapter {
     // Check if only one player remains active (everyone else folded)
     const activePlayers = newState.players.filter((p: any) => !p.folded);
     if (activePlayers.length === 1) {
-      // End the hand immediately
-      newState.phase = 'complete';
+      // End the hand (not the game)
+      newState.phase = 'handComplete';
       newState.winners = [{ playerId: activePlayers[0].id, amount: newState.pot }];
       // Award pot to the last remaining player
       activePlayers[0].chips += newState.pot;
+      
+      // Prepare for next hand - this will be handled by the game manager
+      newState.handComplete = true;
+      
       return newState;
     }
     
@@ -100,26 +104,48 @@ export class PokerEngineAdapter implements GameEngineAdapter {
     // Check if betting round is complete
     if (this.isBettingRoundComplete(newState)) {
       newState.phase = this.getNextPhase(newState.phase);
-      newState.currentBet = 0;
-      newState.players.forEach((p: any) => {
-        p.bet = 0;
-        p.hasActed = false; // Reset for new betting round
-      });
       
-      // Deal community cards for next phase
-      if (newState.phase === 'flop' && newState.deck) {
-        // Burn one card and deal 3
-        newState.burnt = newState.burnt || [];
-        newState.burnt.push(newState.deck.pop());
-        newState.communityCards = [
-          newState.deck.pop(),
-          newState.deck.pop(),
-          newState.deck.pop()
-        ];
-      } else if ((newState.phase === 'turn' || newState.phase === 'river') && newState.deck) {
-        // Burn one card and deal 1
-        newState.burnt.push(newState.deck.pop());
-        newState.communityCards.push(newState.deck.pop());
+      // Handle showdown
+      if (newState.phase === 'showdown') {
+        // For now, award pot to the last active player (proper hand evaluation needed)
+        const activePlayers = newState.players.filter((p: any) => !p.folded);
+        if (activePlayers.length > 0) {
+          // TODO: Implement proper hand evaluation
+          // For now, just pick the first active player as winner
+          const winner = activePlayers[0];
+          newState.winners = [{ playerId: winner.id, amount: newState.pot }];
+          winner.chips += newState.pot;
+          newState.handComplete = true;
+        }
+      } else if (newState.phase === 'handComplete') {
+        // Hand is complete
+        newState.handComplete = true;
+      } else {
+        // Continue to next betting round
+        newState.currentBet = 0;
+        newState.players.forEach((p: any) => {
+          p.bet = 0;
+          p.hasActed = false; // Reset for new betting round
+        });
+        
+        // Deal community cards for next phase
+        if (newState.phase === 'flop' && newState.deck) {
+          // Burn one card and deal 3
+          newState.burnt = newState.burnt || [];
+          newState.burnt.push(newState.deck.pop());
+          // Ensure communityCards is empty before dealing flop
+          newState.communityCards = [];
+          newState.communityCards.push(
+            newState.deck.pop(),
+            newState.deck.pop(),
+            newState.deck.pop()
+          );
+        } else if ((newState.phase === 'turn' || newState.phase === 'river') && newState.deck) {
+          // Burn one card and deal 1
+          newState.burnt = newState.burnt || [];
+          newState.burnt.push(newState.deck.pop());
+          newState.communityCards.push(newState.deck.pop());
+        }
       }
     }
     
@@ -157,10 +183,15 @@ export class PokerEngineAdapter implements GameEngineAdapter {
   }
   
   isGameComplete(gameState: any): boolean {
-    const { players, phase } = gameState;
-    const activePlayers = players.filter((p: any) => !p.folded && p.chips > 0);
+    const { players, phase, handNumber } = gameState;
+    const playersWithChips = players.filter((p: any) => p.chips > 0);
     
-    return activePlayers.length <= 1 || phase === 'complete';
+    // Game is complete when:
+    // 1. Only one player has chips left
+    // 2. Maximum number of hands (20) has been reached
+    // 3. Phase is explicitly set to 'complete' (for error cases)
+    const maxHands = 20;
+    return playersWithChips.length <= 1 || (handNumber && handNumber >= maxHands) || phase === 'complete';
   }
   
   getWinner(gameState: any): string | null {
@@ -176,6 +207,10 @@ export class PokerEngineAdapter implements GameEngineAdapter {
   }
   
   getCurrentTurn(gameState: any): string | null {
+    // No current turn if hand is complete
+    if (gameState.phase === 'handComplete' || gameState.handComplete) {
+      return null;
+    }
     return gameState.currentTurn;
   }
   
@@ -206,7 +241,13 @@ export class PokerEngineAdapter implements GameEngineAdapter {
   private getNextPhase(currentPhase: string): string {
     const phases = ['preflop', 'flop', 'turn', 'river', 'showdown'];
     const currentIndex = phases.indexOf(currentPhase);
-    return phases[currentIndex + 1] || 'complete';
+    
+    // After showdown, move to handComplete (not complete)
+    if (currentPhase === 'showdown') {
+      return 'handComplete';
+    }
+    
+    return phases[currentIndex + 1] || 'handComplete';
   }
 }
 

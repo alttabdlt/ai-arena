@@ -21,7 +21,6 @@ import { Eye, Users, Trophy, Activity, Play, Pause, Zap, Timer, Brain, History, 
 import { PokerTable } from '@/components/game/poker/PokerTable';
 import { useState, useEffect, useRef } from 'react';
 import { useServerSidePoker } from '@/hooks/useServerSidePoker';
-import { AIThinkingPanel } from '@/components/AIThinkingPanel';
 import { DecisionHistory } from '@/components/DecisionHistory';
 import { StyleBonusNotification } from '@/components/StyleBonusNotification';
 import { AIEvaluationPanel } from '@/components/AIEvaluationPanel';
@@ -77,8 +76,6 @@ const TournamentView = () => {
   } | null>(null);
   const [loadingError, setLoadingError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [thinkingTimeLeft, setThinkingTimeLeft] = useState(60);
-  const thinkingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [showAIThinking, setShowAIThinking] = useState(true);
   const [showDecisionHistory, setShowDecisionHistory] = useState(true);
   const [showAIEvaluation, setShowAIEvaluation] = useState(true);
@@ -305,46 +302,6 @@ const TournamentView = () => {
     }
   }, [tournament?.players, config?.playerCount]);
 
-  // Handle thinking timer
-  useEffect(() => {
-    if (gameState.currentAIThinking) {
-      // Set initial time based on speed setting
-      const initialTime = config?.speed === 'thinking' ? 2 : 
-                        config?.speed === 'fast' ? 0.5 : 
-                        1; // normal
-      setThinkingTimeLeft(initialTime);
-      
-      if (thinkingTimerRef.current) {
-        clearInterval(thinkingTimerRef.current);
-      }
-      
-      // For fast mode, use smaller intervals
-      const interval = config?.speed === 'fast' ? 50 : 100; // 50ms for fast, 100ms otherwise
-      
-      thinkingTimerRef.current = setInterval(() => {
-        setThinkingTimeLeft(prev => {
-          const decrement = interval / 1000; // Convert to seconds
-          if (prev <= decrement) {
-            if (thinkingTimerRef.current) {
-              clearInterval(thinkingTimerRef.current);
-            }
-            return 0;
-          }
-          return prev - decrement;
-        });
-      }, interval);
-    } else {
-      if (thinkingTimerRef.current) {
-        clearInterval(thinkingTimerRef.current);
-      }
-    }
-    
-    return () => {
-      if (thinkingTimerRef.current) {
-        clearInterval(thinkingTimerRef.current);
-      }
-    };
-  }, [gameState.currentAIThinking, config?.speed]);
 
   // Cleanup on unmount to prevent orphaned games
   useEffect(() => {
@@ -892,39 +849,6 @@ const TournamentView = () => {
             </CardContent>
             </Card>
 
-          {/* AI Thinking Panel - Below Poker Table */}
-          {(config?.showAIThinking ?? true) && showAIThinking && (
-            <AIThinkingPanel
-              currentThinking={
-                gameState.currentAIThinking
-                  ? {
-                      playerId: gameState.currentAIThinking,
-                      playerName: gameState.players.find(p => p.id === gameState.currentAIThinking)?.name || '',
-                      decision: gameState.aiDecisionHistory?.get(gameState.currentAIThinking) || null,
-                    }
-                  : null
-              }
-              recentDecisions={Array.from(getCurrentHandDecisions().entries()).map(([playerId, decision]) => {
-                const player = gameState.players.find(p => p.id === playerId);
-                return {
-                  handNumber: getCurrentHandNumber(),
-                  playerId,
-                  playerName: player?.name || '',
-                  playerCards: player?.cards || [],
-                  decision,
-                  gamePhase: gameState.phase,
-                  communityCards: gameState.communityCards,
-                  timestamp: Date.now()
-                };
-              })}
-              thinkingTimeLeft={thinkingTimeLeft}
-              maxThinkingTime={
-                config?.speed === 'thinking' ? 2 : 
-                config?.speed === 'fast' ? 0.5 : 
-                1
-              }
-            />
-          )}
 
           {/* Decision History - Below AI Thinking Panel */}
           {(config?.showDecisionHistory ?? true) && showDecisionHistory && (

@@ -263,26 +263,6 @@ export function Connect4Board({
         </div>
       </motion.div>
 
-      {/* Loading indicator */}
-      <AnimatePresence>
-        {isAIThinking && (
-          <motion.div 
-            className="mt-4 text-center"
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-          >
-            <div className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-              <motion.div 
-                className="h-4 w-4 border-2 border-primary border-t-transparent rounded-full"
-                animate={{ rotate: 360 }}
-                transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-              />
-              AI is thinking...
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }

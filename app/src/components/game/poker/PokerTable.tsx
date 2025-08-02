@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -54,6 +54,18 @@ export const PokerTable: React.FC<PokerTableProps> = ({
   getPlayerPoints
 }) => {
   const [hoveredPlayerId, setHoveredPlayerId] = useState<string | null>(null);
+
+  // Debug logging
+  useEffect(() => {
+    if (communityCards.length > 0 || phase === 'flop' || phase === 'turn' || phase === 'river') {
+      console.log('🎴 [PokerTable] Rendering with:', {
+        phase,
+        communityCards,
+        communityCardsLength: communityCards.length,
+        pot
+      });
+    }
+  }, [communityCards, phase, pot]);
 
   return (
     <Card>
@@ -197,8 +209,8 @@ export const PokerTable: React.FC<PokerTableProps> = ({
                               <span className="text-xs font-medium">
                                 {aiDecision.action.type === 'check' ? 'Check' :
                                  aiDecision.action.type === 'call' ? 'Call' :
-                                 aiDecision.action.type === 'raise' ? `Raise $${(aiDecision.action as PokerAction).amount}` :
-                                 aiDecision.action.type === 'bet' ? `Bet $${(aiDecision.action as PokerAction).amount}` :
+                                 aiDecision.action.type === 'raise' ? ((aiDecision.action as PokerAction).amount !== undefined ? `Raise $${(aiDecision.action as PokerAction).amount}` : 'Raise') :
+                                 aiDecision.action.type === 'bet' ? ((aiDecision.action as PokerAction).amount !== undefined ? `Bet $${(aiDecision.action as PokerAction).amount}` : 'Bet') :
                                  aiDecision.action.type === 'all-in' ? 'All-In' :
                                  aiDecision.action.type}
                               </span>

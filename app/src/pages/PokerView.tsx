@@ -6,9 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Loader2 } from 'lucide-react';
 import { PokerTable } from '@/components/game/poker/PokerTable';
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useServerSidePoker } from '@/hooks/useServerSidePoker';
-import { AIThinkingPanel } from '@/components/AIThinkingPanel';
 import { DecisionHistory } from '@/components/DecisionHistory';
 import { StyleBonusNotification } from '@/components/StyleBonusNotification';
 import { HandMisreadAlert } from '@/components/HandMisreadAlert';
@@ -21,6 +20,8 @@ import type { PokerAction } from '@/game-engine/games/poker';
 import botGambler from '@/assets/bot-gambler.png';
 import botTerminator from '@/assets/bot-terminator.png';
 import botZenMaster from '@/assets/bot-zen-master.png';
+import { LootboxAnimation } from '@/components/lootbox/LootboxAnimation';
+import { useLootbox } from '@/components/lootbox/hooks/useLootbox';
 
 const PokerView = () => {
   const { id } = useParams();
@@ -71,8 +72,6 @@ const PokerView = () => {
   } | null>(null);
   const [loadingError, setLoadingError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [thinkingTimeLeft, setThinkingTimeLeft] = useState(60);
-  const thinkingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [playerConfigs, setPlayerConfigs] = useState<PlayerConfig[]>([]);
   const [selectedTournamentMode, setSelectedTournamentMode] = useState<'STYLE_MASTER' | 'BALANCED' | 'CLASSIC'>('BALANCED');
   
@@ -111,6 +110,30 @@ const PokerView = () => {
   const getAchievementProgress = () => ({ unlocked: 0, total: 0, percentage: 0 });
   const getAllAchievements = () => [];
   const getTotalAchievementPoints = () => 0;
+  
+  // Check for game winner (only one player with chips)
+  const gameWinner = gameState.players.filter(p => p.chips > 0).length === 1 
+    ? gameState.players.find(p => p.chips > 0)
+    : null;
+  
+  // Lootbox integration
+  const { isOpen, openLootbox, closeLootbox, generateReward } = useLootbox({
+    winnerId: gameWinner?.id || '',
+    gameType: 'poker',
+    onRewardReceived: (reward) => {
+      console.log('Poker winner received lootbox reward:', reward);
+    }
+  });
+  
+  // Show lootbox when game has a winner
+  useEffect(() => {
+    if (gameWinner && !isOpen) {
+      // Delay slightly to let the final hand complete animation finish
+      setTimeout(() => {
+        openLootbox();
+      }, 2000);
+    }
+  }, [gameWinner?.id]);
 
   // Generate default player configurations
   const generateDefaultPlayerConfigs = (count: number, defaultModel: PlayerConfig['aiModel'] = 'gpt-4o'): PlayerConfig[] => {
@@ -200,38 +223,6 @@ const PokerView = () => {
     }
   }, [matchData]);
 
-  // Update thinking timer
-  useEffect(() => {
-    if (gameState.currentAIThinking) {
-      setThinkingTimeLeft(60);
-      
-      if (thinkingTimerRef.current) {
-        clearInterval(thinkingTimerRef.current);
-      }
-      
-      thinkingTimerRef.current = setInterval(() => {
-        setThinkingTimeLeft(prev => {
-          if (prev <= 1) {
-            if (thinkingTimerRef.current) {
-              clearInterval(thinkingTimerRef.current);
-            }
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    } else {
-      if (thinkingTimerRef.current) {
-        clearInterval(thinkingTimerRef.current);
-      }
-    }
-    
-    return () => {
-      if (thinkingTimerRef.current) {
-        clearInterval(thinkingTimerRef.current);
-      }
-    };
-  }, [gameState.currentAIThinking]);
 
   // Show loading state
   if (matchLoading || isLoading) {
@@ -311,7 +302,7 @@ const PokerView = () => {
               }]))}
               getPointLeaderboard={getPointLeaderboard}
               currentChips={new Map(gameState.players.map(p => [p.id, p.chips]))}
-              currentHandNumber={gameState.handNumber}
+              currentHandNumber={getCurrentHandNumber()}
               mode={'BALANCED'}
               startingChips={10000}
             />
@@ -319,19 +310,6 @@ const PokerView = () => {
 
           {/* Right Sidebar */}
           <div className="space-y-4">
-            {/* AI Thinking Panel - Always visible when AI is thinking */}
-            {gameState.currentAIThinking && (
-              <AIThinkingPanel
-                currentThinking={{
-                  playerId: gameState.currentAIThinking,
-                  playerName: gameState.players.find(p => p.id === gameState.currentAIThinking)?.name || 'Unknown',
-                  decision: null
-                }}
-                recentDecisions={[]}
-                thinkingTimeLeft={thinkingTimeLeft}
-                maxThinkingTime={30}
-              />
-            )}
 
             {/* Decision History - Always visible */}
             <DecisionHistory
@@ -352,6 +330,18 @@ const PokerView = () => {
         events={gameState.recentAchievementEvents || []}
         players={new Map(gameState.players.map(p => [p.id, { name: p.name, avatar: p.avatar || '' }]))}
       />
+      
+      {/* Lootbox Animation */}
+      {gameWinner && (
+        <LootboxAnimation
+          isOpen={isOpen}
+          onClose={closeLootbox}
+          onOpen={generateReward}
+          gameType="poker"
+          winnerId={gameWinner.id}
+          winnerName={gameWinner.name}
+        />
+      )}
     </div>
   );
 };

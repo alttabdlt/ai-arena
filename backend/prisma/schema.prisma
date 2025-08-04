@@ -45,15 +45,24 @@ model Session {
 
 model Bot {
   id              String           @id @default(cuid())
+  tokenId         Int              @unique // Unique NFT-like token ID
   name            String
   avatar          String           // preset avatar identifier
   prompt          String           @db.VarChar(1000) // 1000 char strategy
+  personality     BotPersonality   @default(WORKER) // Crime metaverse personality
   isDemo          Boolean          @default(false) // System demo bots
   modelType       AIModel          // gpt-4o, claude-3-5-sonnet, etc.
   creatorId       String
   creator         User             @relation(fields: [creatorId], references: [id])
   isActive        Boolean          @default(true)
   stats           Json             @default("{}") // wins, losses, earnings
+  
+  // Metaverse integration
+  metaverseAgentId String?         // AI Town agent ID
+  currentZone     String?          // Current zone (casino, darkAlley, suburb)
+  metaversePosition Json?          @default("{}") // {x: number, y: number, worldInstanceId: string}
+  lastZoneChange  DateTime?        // Track zone transitions
+  
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   
@@ -74,9 +83,14 @@ model Bot {
   robberyAttempts RobberyLog[]     @relation("robber")
   robberyDefenses RobberyLog[]     @relation("victim")
   
+  // Metaverse sync
+  botSync         BotSync?
+  
   @@index([creatorId])
   @@index([createdAt])
   @@index([isActive])
+  @@index([metaverseAgentId])
+  @@index([tokenId])
 }
 
 model DeploymentTransaction {
@@ -350,6 +364,20 @@ enum FurnitureType {
   TROPHY
 }
 
+enum BotPersonality {
+  CRIMINAL
+  GAMBLER
+  WORKER
+}
+
+enum SyncStatus {
+  PENDING
+  SYNCING
+  SYNCED
+  FAILED
+  DISABLED
+}
+
 // Economy System Models
 model BotEquipment {
   id              String           @id @default(cuid())
@@ -469,4 +497,32 @@ model Trade {
   
   @@index([initiatorBotId])
   @@index([receiverBotId])
+}
+
+// Bot synchronization tracking between AI Arena and AI Town
+model BotSync {
+  id                String           @id @default(cuid())
+  botId             String           @unique
+  bot               Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
+  
+  // Sync status
+  syncStatus        SyncStatus       @default(PENDING)
+  lastSyncedAt      DateTime?
+  syncErrors        Json             @default("[]") // Array of error messages
+  
+  // AI Town references
+  convexWorldId     String?          // Convex world ID
+  convexAgentId     String?          // Convex agent ID (e.g., "a:1")
+  convexPlayerId    String?          // Convex player ID (e.g., "p:1")
+  
+  // Sync metadata
+  personalityMapped Boolean          @default(false) // Whether personality was translated
+  positionSynced    Boolean          @default(false) // Whether position is synced
+  statsSynced       Boolean          @default(false) // Whether stats are synced
+  
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  
+  @@index([syncStatus])
+  @@index([lastSyncedAt])
 }

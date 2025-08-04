@@ -6,6 +6,9 @@ import { data as f5SpritesheetData } from './spritesheets/f5';
 import { data as f6SpritesheetData } from './spritesheets/f6';
 import { data as f7SpritesheetData } from './spritesheets/f7';
 import { data as f8SpritesheetData } from './spritesheets/f8';
+import { data as criminal1SpritesheetData } from './spritesheets/criminal1';
+import { data as gambler1SpritesheetData } from './spritesheets/gambler1';
+import { data as worker1SpritesheetData } from './spritesheets/worker1';
 
 export const Descriptions = [
   // {
@@ -66,53 +69,95 @@ export const Descriptions = [
   // },
 ];
 
+export const CrimeDescriptions = [
+  {
+    name: 'Viper',
+    character: 'criminal1',
+    identity: `Viper is a ruthless criminal mastermind who grew up on the streets. He trusts no one and sees every interaction as an opportunity to gain power. He's quick to violence and never forgets a slight. He runs protection rackets and is always looking for the next big score.`,
+    plan: 'You want to build a criminal empire through intimidation and violence.',
+    personality: 'CRIMINAL',
+  },
+  {
+    name: 'Lucky Dice',
+    character: 'gambler1',
+    identity: `Lucky Dice is a professional gambler who believes fortune favors the bold. He's charming and charismatic but completely addicted to the thrill of risk. He'll bet on anything and always thinks the next hand will be the big win. He owes money to dangerous people but can't stop rolling the dice.`,
+    plan: 'You want to win big and prove that luck is on your side.',
+    personality: 'GAMBLER',
+  },
+  {
+    name: 'Joe',
+    character: 'worker1',
+    identity: `Joe is an honest worker trying to make ends meet in a corrupt city. He works multiple jobs to support his family and avoids trouble whenever possible. He's tired but determined, believing that hard work will eventually pay off despite the criminals and gamblers around him.`,
+    plan: 'You want to earn enough honest money to move to the suburbs.',
+    personality: 'WORKER',
+  },
+];
+
 export const characters = [
   {
     name: 'f1',
-    textureUrl: '/ai-town/assets/32x32folk.png',
+    textureUrl: '/assets/32x32folk.png',
     spritesheetData: f1SpritesheetData,
     speed: 0.1,
   },
   {
     name: 'f2',
-    textureUrl: '/ai-town/assets/32x32folk.png',
+    textureUrl: '/assets/32x32folk.png',
     spritesheetData: f2SpritesheetData,
     speed: 0.1,
   },
   {
     name: 'f3',
-    textureUrl: '/ai-town/assets/32x32folk.png',
+    textureUrl: '/assets/32x32folk.png',
     spritesheetData: f3SpritesheetData,
     speed: 0.1,
   },
   {
     name: 'f4',
-    textureUrl: '/ai-town/assets/32x32folk.png',
+    textureUrl: '/assets/32x32folk.png',
     spritesheetData: f4SpritesheetData,
     speed: 0.1,
   },
   {
     name: 'f5',
-    textureUrl: '/ai-town/assets/32x32folk.png',
+    textureUrl: '/assets/32x32folk.png',
     spritesheetData: f5SpritesheetData,
     speed: 0.1,
   },
   {
     name: 'f6',
-    textureUrl: '/ai-town/assets/32x32folk.png',
+    textureUrl: '/assets/32x32folk.png',
     spritesheetData: f6SpritesheetData,
     speed: 0.1,
   },
   {
     name: 'f7',
-    textureUrl: '/ai-town/assets/32x32folk.png',
+    textureUrl: '/assets/32x32folk.png',
     spritesheetData: f7SpritesheetData,
     speed: 0.1,
   },
   {
     name: 'f8',
-    textureUrl: '/ai-town/assets/32x32folk.png',
+    textureUrl: '/assets/32x32folk.png',
     spritesheetData: f8SpritesheetData,
+    speed: 0.1,
+  },
+  {
+    name: 'criminal1',
+    textureUrl: '/assets/crime-characters.png',
+    spritesheetData: criminal1SpritesheetData,
+    speed: 0.1,
+  },
+  {
+    name: 'gambler1',
+    textureUrl: '/assets/crime-characters.png',
+    spritesheetData: gambler1SpritesheetData,
+    speed: 0.1,
+  },
+  {
+    name: 'worker1',
+    textureUrl: '/assets/crime-characters.png',
+    spritesheetData: worker1SpritesheetData,
     speed: 0.1,
   },
 ];

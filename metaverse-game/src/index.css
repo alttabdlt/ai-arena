@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+html, body, #root {
+  height: 100%;
+}
+
 @font-face {
   font-family: 'Upheaval Pro';
   src: url(/assets/fonts/upheaval_pro.ttf);
@@ -44,30 +48,7 @@ body {
     rgb(var(--background-start-rgb));
 }
 
-.game-background {
-  background: linear-gradient(rgba(41, 41, 41, 0.8), rgba(41, 41, 41, 0.8)),
-    url(../assets/background.webp);
-  background-blend-mode: hard-light;
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size: cover;
-  background-attachment: fixed;
-}
-
-.game-title {
-  background: linear-gradient(to bottom, #fec742, #dd7c42);
-  background-clip: text;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0px 0.08em 0px #6e2146);
-}
-
-.game-frame {
-  border-width: 36px;
-  border-image-source: url(../assets/ui/frame.svg);
-  border-image-repeat: stretch;
-  border-image-slice: 25%;
-}
+/* Removed unused game styles for cleaner layout */
 
 .game-progress-bar {
   border: 5px solid rgb(23, 20, 33);
@@ -86,11 +67,6 @@ body {
   animation: moveStripes 0.5s linear infinite;
 }
 
-@media screen and (min-width: 640px) {
-  .game-frame {
-    border-width: 48px;
-  }
-}
 
 .shadow-solid {
   text-shadow: 0 0.1em 0 rgba(0, 0, 0, 0.5);

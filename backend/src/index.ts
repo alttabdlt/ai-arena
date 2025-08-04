@@ -11,7 +11,7 @@ import cors from 'cors';
 import { typeDefs } from './graphql/schema';
 import { resolvers } from './graphql/resolvers';
 import { createContext } from './config/context';
-// import { setupWebSocketServer } from './websocket/server';
+import { setupWebSocketServer } from './websocket/server';
 import { prisma } from './config/database';
 import Redis from 'ioredis';
 import { initializeGameManagerService, getGameManagerService } from './services/gameManagerService';
@@ -19,6 +19,7 @@ import { logWalletConfig } from './config/wallets';
 import { PubSub } from 'graphql-subscriptions';
 import { initializeServices, getQueueService, getTransactionService } from './services';
 import { fileLoggerService } from './services/fileLoggerService';
+import { botSyncService } from './services/botSyncService';
 
 // Override console methods to capture backend logs
 const originalConsole = {
@@ -98,7 +99,7 @@ async function startServer() {
   const app = express();
   const httpServer = createServer(app);
   const PORT = process.env.PORT || 4000;
-  // const WS_PORT = process.env.WS_PORT || 4001;
+  const WS_PORT = process.env.WS_PORT || 4001;
 
   // Global middleware
   app.use(express.json({ limit: '50mb' }));
@@ -220,7 +221,7 @@ async function startServer() {
     });
   });
 
-  // const customWsServer = setupWebSocketServer(parseInt(WS_PORT.toString()));
+  const customWsServer = setupWebSocketServer(parseInt(WS_PORT.toString()));
 
   httpServer.listen(PORT, async () => {
     console.log(`🚀 Server ready at http://localhost:${PORT}/graphql`);
@@ -253,6 +254,13 @@ async function startServer() {
     // Game manager service is initialized as a singleton
     console.log('🎮 Game manager service ready');
     
+    // Start bot sync service
+    await botSyncService.start();
+    console.log('🤖 Bot sync service started');
+    
+    // Log WebSocket server info
+    console.log(`🔌 Custom WebSocket server ready at ws://localhost:${WS_PORT}`);
+    
     // Log wallet configuration
     logWalletConfig();
   });
@@ -263,8 +271,10 @@ async function startServer() {
     // Stop services
     getQueueService().stopMatchmaking();
     await getGameManagerService().shutdown();
+    botSyncService.stop();
     
     httpServer.close();
+    customWsServer.close();
     await prisma.$disconnect();
     
     // Disconnect Redis if connected

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation } from '@apollo/client';
 import { Button } from '@ui/button';
@@ -9,6 +9,7 @@ import { Progress } from '@ui/progress';
 import { Alert, AlertDescription } from '@ui/alert';
 import { useAuth } from '@auth/contexts/AuthContext';
 import { useToast } from '@shared/hooks/use-toast';
+import { StardewSpriteSelector, BotPersonality } from '@/services/stardewSpriteSelector';
 import { 
   ArrowLeft, 
   TrendingUp, 
@@ -81,6 +82,8 @@ export default function BotDetail() {
   const { user } = useAuth();
   const { toast } = useToast();
   const [selectedTab, setSelectedTab] = useState('performance');
+  const [spriteData, setSpriteData] = useState<{ imageData: string } | null>(null);
+  const [spriteSelector] = useState(() => new StardewSpriteSelector());
 
   // Queries
   const { data: botData, loading: botLoading, refetch: refetchBot } = useQuery(GET_BOT_DETAIL, {
@@ -88,10 +91,9 @@ export default function BotDetail() {
     skip: !id,
   });
 
-  const { data: matchesData, loading: matchesLoading } = useQuery(GET_BOT_MATCHES, {
-    variables: { botId: id, limit: 20 },
-    skip: !id,
-  });
+  // TODO: Add matches query when available in backend
+  const matchesLoading = false;
+  const matchesData = null;
 
   // Mutations
   const [toggleBotActive] = useMutation(TOGGLE_BOT_ACTIVE, {
@@ -128,6 +130,31 @@ export default function BotDetail() {
     },
   });
 
+  const bot = botData?.bot;
+  const isOwner = user?.address?.toLowerCase() === bot?.creator?.address?.toLowerCase();
+  const stats: BotStats | undefined = bot?.stats;
+  const matches: Match[] = matchesData?.matches || [];
+
+  // Generate sprite when bot data is loaded
+  useEffect(() => {
+    if (bot && bot.personality) {
+      // If bot has existing avatar, use it
+      if (bot.avatar && bot.avatar.startsWith('data:image')) {
+        setSpriteData({ imageData: bot.avatar });
+      } else {
+        // Generate sprite based on personality
+        spriteSelector.selectSprite(
+          bot.personality as BotPersonality,
+          bot.id
+        ).then(sprite => {
+          setSpriteData({ imageData: sprite.imageData });
+        }).catch(error => {
+          console.error('Failed to generate sprite:', error);
+        });
+      }
+    }
+  }, [bot, spriteSelector]);
+
   if (botLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -136,7 +163,7 @@ export default function BotDetail() {
     );
   }
 
-  if (!botData?.bot) {
+  if (!bot) {
     return (
       <div className="min-h-screen bg-background">
         <div className="container mx-auto px-4 py-8">
@@ -147,12 +174,6 @@ export default function BotDetail() {
       </div>
     );
   }
-
-  const bot = botData.bot;
-  // Compare addresses in lowercase to handle checksum differences
-  const isOwner = user?.address?.toLowerCase() === bot.creator.address?.toLowerCase();
-  const stats: BotStats = bot.stats;
-  const matches: Match[] = matchesData?.matches || [];
   
   // Debug ownership detection
   console.log('BotDetail ownership check:', {
@@ -243,7 +264,26 @@ export default function BotDetail() {
             <CardHeader>
               <div className="flex items-start justify-between">
                 <div className="flex items-center gap-4">
-                  <div className="text-4xl">{bot.avatar}</div>
+                  {/* Bot Sprite Display */}
+                  <div className="relative">
+                    {spriteData && spriteData.imageData ? (
+                      <div 
+                        className="w-16 h-16 bg-muted rounded-lg flex items-center justify-center"
+                        style={{ imageRendering: 'pixelated' }}
+                      >
+                        <img 
+                          src={spriteData.imageData}
+                          alt={bot.name}
+                          className="w-full h-full object-contain"
+                          style={{ imageRendering: 'pixelated' }}
+                        />
+                      </div>
+                    ) : (
+                      <div className="w-16 h-16 bg-muted rounded-lg flex items-center justify-center">
+                        <Bot className="h-8 w-8 text-muted-foreground" />
+                      </div>
+                    )}
+                  </div>
                   <div>
                     <CardTitle className="text-2xl">{bot.name}</CardTitle>
                     <CardDescription>
@@ -289,21 +329,21 @@ export default function BotDetail() {
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">Win Rate</span>
-                  <span className={`text-2xl font-bold ${getWinRateColor(stats.winRate)}`}>
-                    {stats.winRate.toFixed(1)}%
+                  <span className={`text-2xl font-bold ${getWinRateColor(stats?.winRate || 0)}`}>
+                    {(stats?.winRate || 0).toFixed(1)}%
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">Record</span>
-                  <span className="font-medium">{stats.wins}W - {stats.losses}L</span>
+                  <span className="font-medium">{stats?.wins || 0}W - {stats?.losses || 0}L</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">Avg Position</span>
-                  <span className="font-medium">#{stats.avgFinishPosition.toFixed(1)}</span>
+                  <span className="font-medium">#{(stats?.avgFinishPosition || 0).toFixed(1)}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">Total Earnings</span>
-                  <span className="font-medium">{stats.earnings} HYPE</span>
+                  <span className="font-medium">{stats?.earnings || '0'} HYPE</span>
                 </div>
                 
                 {bot.queuePosition && (
@@ -387,8 +427,8 @@ export default function BotDetail() {
                 </CardHeader>
                 <CardContent>
                   <div className="flex items-center justify-between">
-                    <span className="text-2xl font-bold">{stats.wins}</span>
-                    {stats.wins > stats.losses ? (
+                    <span className="text-2xl font-bold">{stats?.wins || 0}</span>
+                    {(stats?.wins || 0) > (stats?.losses || 0) ? (
                       <TrendingUp className="h-6 w-6 text-green-500" />
                     ) : (
                       <TrendingDown className="h-6 w-6 text-red-500" />
@@ -404,7 +444,7 @@ export default function BotDetail() {
                 </CardHeader>
                 <CardContent>
                   <div className="flex items-center justify-between">
-                    <span className="text-2xl font-bold">{stats.wins + stats.losses}</span>
+                    <span className="text-2xl font-bold">{(stats?.wins || 0) + (stats?.losses || 0)}</span>
                     <Activity className="h-6 w-6 text-primary" />
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">Total Matches</p>
@@ -417,7 +457,7 @@ export default function BotDetail() {
                 </CardHeader>
                 <CardContent>
                   <div className="flex items-center justify-between">
-                    <span className="text-2xl font-bold">{stats.earnings}</span>
+                    <span className="text-2xl font-bold">{stats?.earnings || '0'}</span>
                     <DollarSign className="h-6 w-6 text-yellow-500" />
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">HYPE Earned</p>
@@ -431,10 +471,10 @@ export default function BotDetail() {
                 <CardDescription>Overall performance across all matches</CardDescription>
               </CardHeader>
               <CardContent>
-                <Progress value={stats.winRate} className="h-3" />
+                <Progress value={stats?.winRate || 0} className="h-3" />
                 <div className="flex justify-between text-sm text-muted-foreground mt-2">
                   <span>0%</span>
-                  <span className="font-medium">{stats.winRate.toFixed(1)}%</span>
+                  <span className="font-medium">{(stats?.winRate || 0).toFixed(1)}%</span>
                   <span>100%</span>
                 </div>
               </CardContent>

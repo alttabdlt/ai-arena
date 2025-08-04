@@ -8,18 +8,18 @@ import * as gentlesplash from '../../data/animations/gentlesplash.json';
 import * as windmill from '../../data/animations/windmill.json';
 
 const animations = {
-  'campfire.json': { spritesheet: campfire, url: '/ai-town/assets/spritesheets/campfire.png' },
+  'campfire.json': { spritesheet: campfire, url: '/assets/spritesheets/campfire.png' },
   'gentlesparkle.json': {
     spritesheet: gentlesparkle,
-    url: '/ai-town/assets/spritesheets/gentlesparkle32.png',
+    url: '/assets/spritesheets/gentlesparkle32.png',
   },
   'gentlewaterfall.json': {
     spritesheet: gentlewaterfall,
-    url: '/ai-town/assets/spritesheets/gentlewaterfall32.png',
+    url: '/assets/spritesheets/gentlewaterfall32.png',
   },
-  'windmill.json': { spritesheet: windmill, url: '/ai-town/assets/spritesheets/windmill.png' },
+  'windmill.json': { spritesheet: windmill, url: '/assets/spritesheets/windmill.png' },
   'gentlesplash.json': { spritesheet: gentlesplash,
-    url: '/ai-town/assets/spritesheets/gentlewaterfall32.png',},
+    url: '/assets/spritesheets/gentlewaterfall32.png',},
 };
 
 export const PixiStaticMap = PixiComponent('StaticMap', {
@@ -40,8 +40,23 @@ export const PixiStaticMap = PixiComponent('StaticMap', {
         );
       }
     }
-    const screenxtiles = map.bgTiles[0].length;
-    const screenytiles = map.bgTiles[0][0].length;
+    // Use the actual map dimensions from the WorldMap object
+    const screenxtiles = map.width;      // Width in tiles
+    const screenytiles = map.height;     // Height in tiles
+
+    console.log('Map debugging:', {
+      tileSetUrl: map.tileSetUrl,
+      tileSetDimX: map.tileSetDimX, 
+      tileSetDimY: map.tileSetDimY,
+      tileDim: map.tileDim,
+      numxtiles,
+      numytiles,
+      totalTiles: tiles.length,
+      screenxtiles,
+      screenytiles,
+      bgLayersCount: map.bgTiles.length,
+      objectLayersCount: map.objectTiles.length
+    });
 
     const container = new PIXI.Container();
     const allLayers = [...map.bgTiles, ...map.objectTiles];
@@ -55,15 +70,26 @@ export const PixiStaticMap = PixiComponent('StaticMap', {
 
       // Add all layers of backgrounds.
       for (const layer of allLayers) {
-        const tileIndex = layer[x][y];
+        const tileIndex = layer[y][x]; // Map is stored as [y][x] (row-major order)
         // Some layers may not have tiles at this location.
         if (tileIndex === -1) continue;
+        
+        if (x < 5 && y < 5) { // Debug first few tiles
+          console.log(`Tile at (${x},${y}): index ${tileIndex}, total tiles: ${tiles.length}`);
+        }
+        
+        if (tileIndex >= tiles.length) {
+          console.warn(`Tile index ${tileIndex} out of range! Max: ${tiles.length - 1} at (${x},${y})`);
+          continue;
+        }
         const ctile = new PIXI.Sprite(tiles[tileIndex]);
         ctile.x = xPx;
         ctile.y = yPx;
         container.addChild(ctile);
       }
     }
+    
+    // Debug grid overlay removed - crime-tiles.png has built-in borders
 
     // TODO: Add layers.
     const spritesBySheet = new Map<string, AnimatedSprite[]>();

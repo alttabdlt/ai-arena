@@ -8,6 +8,7 @@ import { serializedWorld } from './world';
 import { serializedWorldMap } from './worldMap';
 import { serializedConversation } from './conversation';
 import { conversationId, playerId } from './ids';
+import { ZoneType, zonePortals, instanceConfig } from './zoneConfig';
 
 export const aiTownTables = {
   // This table has a single document that stores all players, conversations, and agents. This
@@ -76,4 +77,79 @@ export const aiTownTables = {
     .index('edge', ['worldId', 'player1', 'player2', 'ended'])
     .index('conversation', ['worldId', 'player1', 'conversationId'])
     .index('playerHistory', ['worldId', 'player1', 'ended']),
+  
+  // Zone management tables for the crime metaverse
+  zones: defineTable({
+    zoneType: ZoneType,
+    name: v.string(),
+    mapId: v.id('maps'),
+    maxPlayers: v.number(),
+    maxBots: v.number(),
+    currentPlayers: v.number(),
+    currentBots: v.number(),
+  }).index('zoneType', ['zoneType']),
+  
+  // World instances per zone for scaling
+  worldInstances: defineTable({
+    zoneType: ZoneType,
+    worldId: v.id('worlds'),
+    instanceNumber: v.number(),
+    status: v.union(v.literal('active'), v.literal('full'), v.literal('maintenance')),
+    currentPlayers: v.number(),
+    currentBots: v.number(),
+    serverRegion: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index('zoneWorld', ['zoneType', 'worldId'])
+    .index('status', ['status', 'zoneType']),
+  
+  // Portal connections between zones
+  zonePortals: defineTable(zonePortals)
+    .index('fromZone', ['fromZone'])
+    .index('toZone', ['toZone']),
+  
+  // Track player zone transitions
+  playerZoneHistory: defineTable({
+    playerId: playerId,
+    fromZone: v.optional(ZoneType),
+    toZone: ZoneType,
+    timestamp: v.number(),
+    worldInstanceId: v.id('worldInstances'),
+  }).index('player', ['playerId', 'timestamp']),
+  
+  // Activity logs for bots
+  activityLogs: defineTable({
+    worldId: v.id('worlds'),
+    playerId: playerId,
+    agentId: v.optional(v.string()),
+    aiArenaBotId: v.optional(v.string()),
+    timestamp: v.number(),
+    type: v.union(
+      v.literal('zone_change'),
+      v.literal('conversation_start'),
+      v.literal('conversation_end'),
+      v.literal('robbery_attempt'),
+      v.literal('combat'),
+      v.literal('knocked_out'),
+      v.literal('hospital_recovery'),
+      v.literal('activity_start'),
+      v.literal('activity_end'),
+      v.literal('item_collected'),
+      v.literal('trade'),
+      v.literal('message')
+    ),
+    description: v.string(),
+    emoji: v.optional(v.string()),
+    details: v.optional(v.object({
+      zone: v.optional(v.string()),
+      targetPlayer: v.optional(playerId),
+      success: v.optional(v.boolean()),
+      amount: v.optional(v.number()),
+      item: v.optional(v.string()),
+      message: v.optional(v.string()),
+    })),
+  })
+    .index('player', ['worldId', 'playerId', 'timestamp'])
+    .index('agent', ['worldId', 'agentId', 'timestamp'])
+    .index('aiArenaBotId', ['worldId', 'aiArenaBotId', 'timestamp']),
 };

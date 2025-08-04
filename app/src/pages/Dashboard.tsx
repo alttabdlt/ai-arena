@@ -28,11 +28,17 @@ import {
 } from 'lucide-react';
 import { GET_USER_STATS, GET_USER_BOTS, GET_PLATFORM_STATS } from '@/graphql/queries/user';
 import { GET_TOP_BOTS } from '@/graphql/queries/bot';
+import { BotCard } from '@/components/bot/BotCard';
+import { useMutation } from '@apollo/client';
+import { ENTER_QUEUE } from '@/graphql/mutations/queue';
+import { TOGGLE_BOT_ACTIVE } from '@/graphql/mutations/bot';
+import { useToast } from '@shared/hooks/use-toast';
 
 export default function Dashboard() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { address } = useAccount();
+  const { toast } = useToast();
   const defaultTab = searchParams.get('tab') || 'overview';
   const [activeTab, setActiveTab] = useState(defaultTab);
 
@@ -74,6 +80,15 @@ export default function Dashboard() {
 
   const activeBots = userBots.filter((bot: any) => bot.isActive).length;
   const queuedBots = userBots.filter((bot: any) => bot.queuePosition).length;
+  
+  // Mutations
+  const [enterQueue] = useMutation(ENTER_QUEUE, {
+    refetchQueries: ['GetUserBots']
+  });
+  
+  const [toggleBotActive] = useMutation(TOGGLE_BOT_ACTIVE, {
+    refetchQueries: ['GetUserBots']
+  });
   const totalGames = userBots.reduce((acc: number, bot: any) => acc + bot.stats.wins + bot.stats.losses, 0);
   const totalWins = userBots.reduce((acc: number, bot: any) => acc + bot.stats.wins, 0);
   const winRate = totalGames > 0 ? (totalWins / totalGames * 100).toFixed(1) : '0.0';
@@ -287,66 +302,92 @@ export default function Dashboard() {
               </Card>
             </div>
 
-            {/* Your Bots */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center justify-between">
-                  <span>Your Bots</span>
-                  <Bot className="h-5 w-5 text-muted-foreground" />
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {loading ? (
-                  <div className="flex justify-center py-8">
-                    <Loader2 className="h-6 w-6 animate-spin" />
-                  </div>
-                ) : userBots.length > 0 ? (
-                  <div className="space-y-3">
-                    {userBots.slice(0, 5).map((bot: any) => (
-                      <div key={bot.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/50 hover:bg-muted cursor-pointer" onClick={() => navigate(`/bot/${bot.id}`)}>
-                        <div className="flex items-center gap-3">
-                          <img 
-                            src={bot.avatar || '/default-bot-avatar.png'} 
-                            alt={bot.name}
-                            className="w-10 h-10 rounded-full"
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).src = '/default-bot-avatar.png';
-                            }}
-                          />
-                          <div>
-                            <p className="font-medium">{bot.name}</p>
-                            <p className="text-sm text-muted-foreground">
-                              {bot.stats.wins}W / {bot.stats.losses}L
-                            </p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Badge variant={bot.isActive ? "default" : "secondary"}>
-                            {bot.isActive ? 'Active' : 'Inactive'}
-                          </Badge>
-                          {bot.queuePosition && (
-                            <Badge variant="outline">#{bot.queuePosition}</Badge>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                    {userBots.length > 5 && (
-                      <Button variant="outline" className="w-full" onClick={() => navigate('/bots')}>
-                        View All {userBots.length} Bots
-                      </Button>
-                    )}
-                  </div>
-                ) : (
-                  <div className="text-center py-8">
-                    <Bot className="h-12 w-12 text-muted-foreground mx-auto mb-2" />
-                    <p className="text-muted-foreground mb-4">You haven't deployed any bots yet</p>
-                    <Button onClick={() => navigate('/deploy')} className="btn-gaming">
+            {/* Your Bots Grid */}
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <h2 className="text-2xl font-bold">Your Bot Collection</h2>
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline">
+                    <Bot className="h-3 w-3 mr-1" />
+                    {userBots.length} Total
+                  </Badge>
+                  <Badge variant="default">
+                    <Activity className="h-3 w-3 mr-1" />
+                    {activeBots} Active
+                  </Badge>
+                  {queuedBots > 0 && (
+                    <Badge variant="secondary">
+                      <Clock className="h-3 w-3 mr-1" />
+                      {queuedBots} Queued
+                    </Badge>
+                  )}
+                </div>
+              </div>
+
+              {loading ? (
+                <div className="flex justify-center py-16">
+                  <Loader2 className="h-8 w-8 animate-spin" />
+                </div>
+              ) : userBots.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                  {userBots.map((bot: any) => (
+                    <BotCard
+                      key={bot.id}
+                      bot={bot}
+                      onQueue={async () => {
+                        try {
+                          await enterQueue({
+                            variables: {
+                              botId: bot.id,
+                              queueType: 'STANDARD'
+                            }
+                          });
+                          toast({
+                            title: "Bot Queued!",
+                            description: `${bot.name} has been added to the tournament queue.`,
+                          });
+                        } catch (error: any) {
+                          toast({
+                            title: "Queue Failed",
+                            description: error.message || "Failed to queue bot",
+                            variant: "destructive"
+                          });
+                        }
+                      }}
+                      onManage={async () => {
+                        try {
+                          await toggleBotActive({
+                            variables: { botId: bot.id }
+                          });
+                          toast({
+                            title: bot.isActive ? "Bot Deactivated" : "Bot Activated",
+                            description: `${bot.name} has been ${bot.isActive ? 'deactivated' : 'activated'}.`,
+                          });
+                        } catch (error: any) {
+                          toast({
+                            title: "Toggle Failed",
+                            description: error.message || "Failed to toggle bot status",
+                            variant: "destructive"
+                          });
+                        }
+                      }}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <Card>
+                  <CardContent className="py-16 text-center">
+                    <Bot className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
+                    <h3 className="text-xl font-semibold mb-2">No Bots Yet</h3>
+                    <p className="text-muted-foreground mb-6">Deploy your first bot to start competing in tournaments</p>
+                    <Button onClick={() => navigate('/deploy')} size="lg" className="btn-gaming">
+                      <Bot className="mr-2 h-4 w-4" />
                       Deploy Your First Bot
                     </Button>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
           </TabsContent>
 
           <TabsContent value="performance">

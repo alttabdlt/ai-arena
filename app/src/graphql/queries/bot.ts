@@ -4,10 +4,12 @@ export const GET_BOT_DETAIL = gql`
   query GetBotDetail($id: String!) {
     bot(id: $id) {
       id
+      tokenId
       name
       avatar
       prompt
       modelType
+      personality
       isActive
       isDemo
       createdAt
@@ -122,9 +124,11 @@ export const GET_TOP_BOTS = gql`
   query GetTopBots($limit: Int) {
     topBots(limit: $limit) {
       id
+      tokenId
       name
       avatar
       modelType
+      personality
       isActive
       isDemo
       createdAt
@@ -217,6 +221,62 @@ export const GET_MATCH = gql`
             losses
             winRate
           }
+        }
+      }
+    }
+  }
+`;
+
+export const GET_METAVERSE_BOTS = gql`
+  query GetMetaverseBots($limit: Int) {
+    bots(limit: $limit) {
+      id
+      name
+      avatar
+      personality
+      isActive
+      stats {
+        wins
+        losses
+      }
+      metaverseAgentId
+      currentZone
+      metaversePosition {
+        x
+        y
+        worldInstanceId
+      }
+      lastZoneChange
+      botSync {
+        syncStatus
+        lastSyncedAt
+        convexWorldId
+      }
+    }
+  }
+`;
+
+export const GET_BOT_WITH_HOUSE = gql`
+  query GetBotWithHouse($id: String!) {
+    bot(id: $id) {
+      id
+      tokenId
+      name
+      house {
+        id
+        houseScore
+        defenseLevel
+        furniture {
+          id
+          name
+          furnitureType
+          rarity
+          scoreBonus
+          defenseBonus
+          position
+          size
+          synergies
+          description
         }
       }
     }

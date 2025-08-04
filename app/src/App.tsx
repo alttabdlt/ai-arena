@@ -34,6 +34,7 @@ import Legal from "./pages/Legal";
 import DeveloperDocs from "./pages/DeveloperDocs";
 import Queue from "@queue/pages/Queue";
 import NotFound from "./pages/NotFound";
+import HouseEditor from "./pages/HouseEditor";
 
 const App = () => {
   // Start interaction logging
@@ -94,6 +95,7 @@ const App = () => {
             {/* Bot System */}
             <Route path="/bots" element={<Bots />} />
             <Route path="/bot/:id" element={<BotDetail />} />
+            <Route path="/bot/:botId/house" element={<HouseEditor />} />
             <Route path="/deploy" element={<Deploy />} />
             
             {/* Platform Features */}

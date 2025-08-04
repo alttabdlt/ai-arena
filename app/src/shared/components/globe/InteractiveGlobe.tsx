@@ -1,6 +1,8 @@
 import React, { useRef, useEffect, useState } from 'react';
 import Globe from 'react-globe.gl';
+import { useQuery } from '@apollo/client';
 import { Tournament } from '@shared/types/tournament';
+import { GET_METAVERSE_BOTS } from '@/graphql/queries/bot';
 
 interface GlobePoint {
   lat: number;
@@ -8,9 +10,12 @@ interface GlobePoint {
   size: number;
   color: string;
   name: string;
-  type: 'tournament' | 'bot';
+  type: 'tournament' | 'bot' | 'metaverse-bot';
   id: string;
   intensity?: number;
+  personality?: string;
+  zone?: string;
+  syncStatus?: string;
 }
 
 interface GlobeArc {
@@ -28,18 +33,45 @@ interface InteractiveGlobeProps {
   tournaments?: Tournament[];
   onLocationClick?: (lat: number, lng: number) => void;
   onZoomComplete?: () => void;
+  globeRef?: React.MutableRefObject<any>;
+  enableZoom?: boolean;
 }
+
+// Zone to coordinate mapping
+const ZONE_COORDINATES = {
+  casino: { lat: 36.1699, lng: -115.1398 }, // Las Vegas
+  darkAlley: { lat: 40.7128, lng: -74.0060 }, // NYC
+  suburb: { lat: 34.0522, lng: -118.2437 }, // LA
+  downtown: { lat: 41.8781, lng: -87.6298 }, // Chicago
+  underground: { lat: 51.5074, lng: -0.1278 } // London
+};
+
+// Personality colors
+const PERSONALITY_COLORS = {
+  CRIMINAL: '#ff0000',
+  GAMBLER: '#ffd700',
+  WORKER: '#00ff00'
+};
 
 const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({ 
   tournaments = [], 
   onLocationClick,
-  onZoomComplete 
+  onZoomComplete,
+  globeRef,
+  enableZoom = true
 }) => {
-  const globeEl = useRef<any>(null); // Globe.gl doesn't export proper types
+  const internalGlobeRef = useRef<any>(null); // Globe.gl doesn't export proper types
+  const globeEl = globeRef || internalGlobeRef;
   const [points, setPoints] = useState<GlobePoint[]>([]);
   const [arcs, setArcs] = useState<GlobeArc[]>([]);
   const [globeReady, setGlobeReady] = useState(false);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+
+  // Fetch metaverse bots
+  const { data: metaverseData } = useQuery(GET_METAVERSE_BOTS, {
+    variables: { limit: 500 },
+    pollInterval: 5000 // Poll every 5 seconds
+  });
 
   // Generate random coordinates for demo purposes
   const generateRandomCoordinates = () => {
@@ -83,21 +115,34 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
         };
       });
 
-    // Add some random bot creation points for visual effect
-    const botPoints: GlobePoint[] = Array.from({ length: 10 }, (_, i) => {
-      const coords = generateRandomCoordinates();
-      return {
-        ...coords,
-        size: 0.8,
-        color: '#ffffff',
-        name: `Bot ${i + 1}`,
-        type: 'bot' as const,
-        id: `bot-${i}`,
-        intensity: Math.random() * 0.5
-      };
-    });
+    // Create points for metaverse bots
+    const metaverseBotPoints: GlobePoint[] = [];
+    if (metaverseData?.bots) {
+      metaverseData.bots.forEach((bot: any) => {
+        if (bot.currentZone && ZONE_COORDINATES[bot.currentZone as keyof typeof ZONE_COORDINATES]) {
+          const zoneCoords = ZONE_COORDINATES[bot.currentZone as keyof typeof ZONE_COORDINATES];
+          // Add slight randomization to avoid exact overlap
+          const offsetLat = (Math.random() - 0.5) * 2;
+          const offsetLng = (Math.random() - 0.5) * 2;
+          
+          metaverseBotPoints.push({
+            lat: zoneCoords.lat + offsetLat,
+            lng: zoneCoords.lng + offsetLng,
+            size: 0.6,
+            color: PERSONALITY_COLORS[bot.personality as keyof typeof PERSONALITY_COLORS] || '#ffffff',
+            name: bot.name,
+            type: 'metaverse-bot' as const,
+            id: bot.id,
+            intensity: bot.botSync?.syncStatus === 'SYNCED' ? 0.8 : 0.3,
+            personality: bot.personality,
+            zone: bot.currentZone,
+            syncStatus: bot.botSync?.syncStatus
+          });
+        }
+      });
+    }
 
-    setPoints([...tournamentPoints, ...botPoints]);
+    setPoints([...tournamentPoints, ...metaverseBotPoints]);
 
     // Create arcs between some points for visual effect
     const connectionArcs: GlobeArc[] = [];
@@ -114,7 +159,7 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
       });
     }
     setArcs(connectionArcs);
-  }, [tournaments]);
+  }, [tournaments, metaverseData]);
 
   // Configure globe on mount
   useEffect(() => {
@@ -132,24 +177,43 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
     }
   }, [globeReady]);
 
-  const handlePointClick = (point: GlobePoint) => {
-    if (onLocationClick) {
-      // Zoom to the clicked point
+  const zoomToLocation = (lat: number, lng: number, altitude: number = 0.5) => {
+    if (globeEl.current && enableZoom) {
       globeEl.current.pointOfView({
-        lat: point.lat,
-        lng: point.lng,
-        altitude: 0.5
+        lat,
+        lng,
+        altitude
       }, 2000);
 
       // Call callback after zoom animation
       setTimeout(() => {
-        onLocationClick(point.lat, point.lng);
         if (onZoomComplete) {
           onZoomComplete();
         }
       }, 2000);
     }
   };
+
+  const handlePointClick = (point: GlobePoint) => {
+    if (onLocationClick && enableZoom) {
+      zoomToLocation(point.lat, point.lng);
+      onLocationClick(point.lat, point.lng);
+    }
+  };
+
+  // Expose zoom method to parent
+  React.useImperativeHandle(globeRef, () => ({
+    zoomToLocation,
+    resetView: () => {
+      if (globeEl.current) {
+        globeEl.current.pointOfView({
+          lat: 0,
+          lng: 0,
+          altitude: 2.5
+        }, 1000);
+      }
+    }
+  }), [enableZoom]);
 
   const handleGlobeReady = () => {
     setGlobeReady(true);
@@ -171,12 +235,22 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
         backgroundColor="rgba(0,0,0,0)"
         pointsData={points}
         pointAltitude={0.01}
-        pointRadius={0.5}
-        pointColor={(d: any) => d?.type === 'tournament' ? '#ffaa00' : '#ffffff'}
+        pointRadius={(d: any) => d?.type === 'tournament' ? 0.5 : 0.3}
+        pointColor={(d: any) => {
+          if (d?.type === 'tournament') return '#ffaa00';
+          if (d?.type === 'metaverse-bot') return d.color || '#ffffff';
+          return '#ffffff';
+        }}
         pointLabel={(d: any) => d ? `
           <div style="color: white; background: rgba(0,0,0,0.8); padding: 4px 8px; border-radius: 4px;">
             <div style="font-weight: bold;">${d.name || 'Unknown'}</div>
-            <div style="font-size: 12px;">${d.type === 'tournament' ? 'Live Tournament' : 'Bot Created'}</div>
+            ${d.type === 'tournament' ? 
+              '<div style="font-size: 12px;">Live Tournament</div>' : 
+              d.type === 'metaverse-bot' ? 
+              `<div style="font-size: 12px;">Zone: ${d.zone || 'Unknown'}</div>
+               <div style="font-size: 12px;">Personality: ${d.personality || 'Unknown'}</div>` :
+              '<div style="font-size: 12px;">Bot Created</div>'
+            }
           </div>
         ` : ''}
         onPointClick={handlePointClick}

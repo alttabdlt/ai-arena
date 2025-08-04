@@ -10,6 +10,7 @@ import { Prisma, QueueType } from '@prisma/client';
 import { PubSub } from 'graphql-subscriptions';
 import { gameManagerResolvers } from './gameManager';
 import { economyResolvers } from './economy';
+import { metaverseSyncResolvers } from './metaverseSync';
 import { getQueueService } from '../../services';
 import { getGameManagerService } from '../../services/gameManagerService';
 
@@ -340,6 +341,9 @@ export const resolvers = {
     
     // Economy queries
     ...economyResolvers.Query,
+    
+    // Metaverse sync queries
+    ...metaverseSyncResolvers.Query,
   },
 
   Mutation: {
@@ -376,13 +380,30 @@ export const resolvers = {
       
       // Create bot and deployment transaction in a transaction
       const bot = await ctx.prisma.$transaction(async (prisma) => {
+        // Generate a unique token ID
+        // Use timestamp + random number for uniqueness
+        const timestamp = Date.now();
+        const random = Math.floor(Math.random() * 1000000);
+        const tokenId = parseInt(`${timestamp}${random}`.slice(-9)); // Take last 9 digits to fit in Int
+        
+        // Verify tokenId is unique (very unlikely to collide, but check anyway)
+        const existingBot = await prisma.bot.findUnique({
+          where: { tokenId }
+        });
+        
+        if (existingBot) {
+          throw new Error('Token ID collision, please try again');
+        }
+        
         // Create the bot
         const newBot = await prisma.bot.create({
           data: {
+            tokenId,
             name: input.name,
             avatar: input.avatar,
             prompt: promptValidation.sanitized,
             modelType: input.modelType,
+            personality: input.personality || 'WORKER', // Default to WORKER if not provided
             creatorId: ctx.user!.id,
             isActive: true,
             stats: {
@@ -409,17 +430,8 @@ export const resolvers = {
           },
         });
         
-        // Automatically add to standard queue
-        await prisma.queueEntry.create({
-          data: {
-            botId: newBot.id,
-            queueType: 'STANDARD',
-            priority: 0,
-            status: 'WAITING',
-            enteredAt: new Date(),
-            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours
-          },
-        });
+        // Note: Removed automatic queuing - bots must be manually queued by users
+        // This allows users to manage their bots before entering tournaments
         
         return newBot;
       });
@@ -1191,6 +1203,9 @@ export const resolvers = {
     
     // Economy mutations
     ...economyResolvers.Mutation,
+    
+    // Metaverse sync mutations
+    ...metaverseSyncResolvers.Mutation,
   },
 
   Subscription: {
@@ -1281,6 +1296,40 @@ export const resolvers = {
     defenseLevel: async (bot: any) => {
       const { economyService } = await import('../../services/economyService');
       return economyService.calculateDefenseLevel(bot.id);
+    },
+    // Metaverse integration
+    metaversePosition: (bot: any) => {
+      // Handle null or empty position
+      if (!bot.metaversePosition) {
+        return null;
+      }
+      
+      // Parse JSON string if needed
+      let position = bot.metaversePosition;
+      if (typeof position === 'string') {
+        try {
+          position = JSON.parse(position);
+        } catch {
+          return null;
+        }
+      }
+      
+      // Ensure all required fields exist with defaults
+      if (position && typeof position === 'object') {
+        return {
+          x: position.x || 0,
+          y: position.y || 0,
+          worldInstanceId: position.worldInstanceId || 'default'
+        };
+      }
+      
+      return null;
+    },
+    botSync: async (bot: any, _: any, ctx: Context) => {
+      if (bot.botSync) return bot.botSync;
+      return ctx.prisma.botSync.findUnique({
+        where: { botId: bot.id },
+      });
     },
     queuePosition: async (bot: any, _: any, ctx: Context) => {
       const entry = await ctx.prisma.queueEntry.findFirst({

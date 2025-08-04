@@ -70,6 +70,55 @@ export const ACTIVITIES = [
   { description: 'gardening', emoji: '🥕', duration: 60_000 },
 ];
 
+// Crime metaverse activities by zone
+export const CRIME_ACTIVITIES = {
+  casino: [
+    { description: 'gambling at the slots', emoji: '🎰', duration: 45_000, personality: 'GAMBLER' },
+    { description: 'playing poker', emoji: '🃏', duration: 90_000, personality: 'GAMBLER' },
+    { description: 'making shady deals', emoji: '🤝', duration: 60_000, personality: 'CRIMINAL' },
+    { description: 'counting winnings', emoji: '💰', duration: 30_000, personality: 'WORKER' },
+  ],
+  darkAlley: [
+    { description: 'planning a robbery', emoji: '🔫', duration: 45_000, personality: 'CRIMINAL' },
+    { description: 'selling stolen goods', emoji: '💼', duration: 60_000, personality: 'CRIMINAL' },
+    { description: 'hiding in shadows', emoji: '🌑', duration: 30_000, personality: 'WORKER' },
+    { description: 'rolling dice in the alley', emoji: '🎲', duration: 40_000, personality: 'GAMBLER' },
+  ],
+  suburb: [
+    { description: 'decorating the house', emoji: '🏠', duration: 60_000, personality: 'WORKER' },
+    { description: 'upgrading security', emoji: '🔒', duration: 45_000, personality: 'WORKER' },
+    { description: 'hosting a party', emoji: '🎉', duration: 90_000, personality: 'GAMBLER' },
+    { description: 'casing houses', emoji: '👀', duration: 30_000, personality: 'CRIMINAL' },
+  ],
+  downtown: [
+    { description: 'window shopping', emoji: '🛍️', duration: 45_000, personality: 'WORKER' },
+    { description: 'meeting contacts', emoji: '🤵', duration: 60_000, personality: 'CRIMINAL' },
+    { description: 'street performance', emoji: '🎭', duration: 50_000, personality: 'GAMBLER' },
+    { description: 'people watching', emoji: '👁️', duration: 30_000, personality: 'WORKER' },
+  ],
+  underground: [
+    { description: 'fighting in the ring', emoji: '🥊', duration: 60_000, personality: 'CRIMINAL' },
+    { description: 'betting on fights', emoji: '💸', duration: 45_000, personality: 'GAMBLER' },
+    { description: 'training combat skills', emoji: '⚔️', duration: 90_000, personality: 'CRIMINAL' },
+    { description: 'working as medic', emoji: '🏥', duration: 60_000, personality: 'WORKER' },
+  ],
+};
+
+// Combat and robbery cooldowns
+export const ROBBERY_COOLDOWN = 5 * 60_000; // 5 minutes between robbery attempts
+export const COMBAT_COOLDOWN = 3 * 60_000; // 3 minutes between fights
+export const HOSPITAL_RECOVERY = 2 * 60_000; // 2 minutes in hospital after knockout
+export const REVENGE_MEMORY_DURATION = 24 * 60 * 60_000; // Remember robberies for 24 hours
+
+// Crime success rates
+export const BASE_ROBBERY_SUCCESS = 0.3; // 30% base chance
+export const BASE_COMBAT_SUCCESS = 0.5; // 50% base chance
+export const PERSONALITY_BONUS = {
+  CRIMINAL: { robbery: 0.2, combat: 0.3 },
+  GAMBLER: { robbery: 0.1, combat: 0.1 },
+  WORKER: { robbery: -0.1, combat: -0.2 },
+};
+
 export const ENGINE_ACTION_DURATION = 30000;
 
 // Bound the number of pathfinding searches we do per game step.

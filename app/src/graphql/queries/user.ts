@@ -52,12 +52,14 @@ export const GET_USER_BOTS = gql`
   query GetUserBots($address: String!) {
     bots(filter: { creatorAddress: $address }) {
       id
+      tokenId
       name
       avatar
       modelType
       isActive
       isDemo
       createdAt
+      personality
       stats {
         wins
         losses
@@ -66,6 +68,38 @@ export const GET_USER_BOTS = gql`
         avgFinishPosition
       }
       queuePosition
+      equipment {
+        id
+        name
+        equipmentType
+        rarity
+        powerBonus
+        defenseBonus
+        equipped
+      }
+      house {
+        id
+        houseScore
+        defenseLevel
+        furniture {
+          id
+          name
+          furnitureType
+          rarity
+          scoreBonus
+          defenseBonus
+        }
+      }
+      lootboxRewards {
+        id
+        lootboxRarity
+        opened
+        openedAt
+        createdAt
+        equipmentRewards
+        furnitureRewards
+        currencyReward
+      }
     }
   }
 `;

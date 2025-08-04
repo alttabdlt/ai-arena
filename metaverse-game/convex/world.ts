@@ -255,3 +255,41 @@ export const previousConversation = query({
     return null;
   },
 });
+
+
+// Query activity logs for a player
+export const getActivityLogs = query({
+  args: {
+    worldId: v.id("worlds"),
+    playerId: v.optional(playerId),
+    aiArenaBotId: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const { worldId, playerId, aiArenaBotId, limit = 50 } = args;
+
+    let query;
+    if (aiArenaBotId) {
+      query = ctx.db
+        .query("activityLogs")
+        .withIndex("aiArenaBotId", (q) => 
+          q.eq("worldId", worldId).eq("aiArenaBotId", aiArenaBotId)
+        );
+    } else if (playerId) {
+      query = ctx.db
+        .query("activityLogs")
+        .withIndex("player", (q) => 
+          q.eq("worldId", worldId).eq("playerId", playerId)
+        );
+    } else {
+      // Return empty array if no specific filter
+      return [];
+    }
+
+    const logs = await query
+      .order("desc")
+      .take(limit);
+
+    return logs;
+  },
+});

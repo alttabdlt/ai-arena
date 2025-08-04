@@ -63,7 +63,7 @@ export function useInteractionLogger() {
       console.log('📋 Selection changed:', {
         name: select.name || select.id || 'unnamed',
         value: select.value,
-        selectedText: select.selectedOptions[0]?.text,
+        selectedText: select.selectedOptions?.[0]?.text || '',
         timestamp: new Date().toISOString()
       });
     };

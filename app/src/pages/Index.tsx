@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useSubscription } from '@apollo/client';
 import { useAuth } from '@auth/contexts/AuthContext';
@@ -27,6 +27,8 @@ import { ENTER_QUEUE, LEAVE_QUEUE } from '@/graphql/mutations/queue';
 import { QUEUE_UPDATE_SUBSCRIPTION } from '@/graphql/queries/queue';
 import { SET_TEST_GAME_TYPE } from '@/graphql/mutations/test';
 import { START_DEBUG_LOGGING } from '@/graphql/mutations/debug';
+import { GET_METAVERSE_BOTS } from '@/graphql/queries/bot';
+// import { METAVERSE_STATS_SUBSCRIPTION } from '@/graphql/subscriptions/metaverse';
 import { useToast } from '@shared/hooks/use-toast';
 import { LootboxAnimation } from '@shared/components/animations/LootboxAnimation';
 import { useLootbox } from '@shared/hooks/useLootbox';
@@ -45,6 +47,7 @@ const Index = () => {
   const [selectedGameType, setSelectedGameType] = useState<string | null>(null);
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
   const [isInQueue, setIsInQueue] = useState(false);
+  const globeRef = useRef<any>(null);
   
   // Lootbox test integration
   const { isOpen, openLootbox, closeLootbox, generateReward } = useLootbox({
@@ -67,6 +70,11 @@ const Index = () => {
 
   const { data: queueStatusData, loading: queueStatusLoading } = useQuery(GET_QUEUE_STATUS, {
     pollInterval: 5000,
+  });
+
+  const { data: metaverseBotsData } = useQuery(GET_METAVERSE_BOTS, {
+    variables: { limit: 500 },
+    pollInterval: 10000, // Poll every 10 seconds
   });
 
   // GraphQL Mutations
@@ -111,6 +119,11 @@ const Index = () => {
 
   // Subscribe to queue updates
   const { data: queueUpdate } = useSubscription(QUEUE_UPDATE_SUBSCRIPTION);
+  
+  // Subscribe to metaverse stats updates
+  // TODO: Implement metaverseStats subscription in backend
+  // const { data: metaverseStats } = useSubscription(METAVERSE_STATS_SUBSCRIPTION);
+  const metaverseStats = null; // Temporarily disabled until backend implementation
   
   // Check localStorage for queue state on mount
   useEffect(() => {
@@ -471,6 +484,55 @@ const Index = () => {
     setShowPortalTransition(false);
   };
 
+  const handleEnterMetaverse = () => {
+    // Start zoom animation on globe
+    if (metaverseBotsData?.bots && metaverseBotsData.bots.length > 0) {
+      // Find the zone with most bots
+      const zoneCounts: Record<string, number> = {};
+      metaverseBotsData.bots.forEach((bot: any) => {
+        if (bot.currentZone) {
+          zoneCounts[bot.currentZone] = (zoneCounts[bot.currentZone] || 0) + 1;
+        }
+      });
+      
+      // Only try to find popular zone if we have any zones
+      const zoneEntries = Object.entries(zoneCounts);
+      if (zoneEntries.length > 0) {
+        const popularZone = zoneEntries.reduce((a, b) => 
+          a[1] > b[1] ? a : b
+        )[0];
+
+        // Trigger globe zoom animation
+        const zoneCoords = {
+          casino: { lat: 36.1699, lng: -115.1398 },
+          darkAlley: { lat: 40.7128, lng: -74.0060 },
+          suburb: { lat: 34.0522, lng: -118.2437 },
+        };
+
+        if (zoneCoords[popularZone as keyof typeof zoneCoords] && globeRef.current) {
+          const coords = zoneCoords[popularZone as keyof typeof zoneCoords];
+          globeRef.current.zoomToLocation(coords.lat, coords.lng, 0.3);
+        }
+      }
+    }
+    
+    // Show portal transition and navigate after delay
+    setTimeout(() => {
+      setShowPortalTransition(true);
+      setTimeout(() => {
+        // Navigate to the metaverse game running on default Vite port
+        window.open('http://localhost:5173', '_blank');
+        // Reset globe view after navigation
+        setTimeout(() => {
+          if (globeRef.current) {
+            globeRef.current.resetView();
+          }
+          setShowPortalTransition(false);
+        }, 1000);
+      }, 1000);
+    }, 2000);
+  };
+
   const userBots = userBotsData?.bots || [];
   const activeBots = userBots.filter((bot: any) => bot.isActive);
   const queueStatus = queueStatusData?.queueStatus;
@@ -500,6 +562,10 @@ const Index = () => {
       <InteractiveGlobe 
         tournaments={tournaments}
         onLocationClick={handleGlobeLocationClick}
+        globeRef={globeRef}
+        onZoomComplete={() => {
+          // Optional: Add any additional logic after zoom completes
+        }}
       />
       
       {/* Main Content Section */}
@@ -760,6 +826,57 @@ const Index = () => {
         winnerId="test-winner"
         winnerName="Test Winner"
       />
+      
+      {/* Enter Metaverse Button */}
+      <motion.div
+        initial={{ opacity: 0, scale: 0.8 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ delay: 1 }}
+        className="fixed bottom-24 right-8 z-50"
+      >
+        <Button
+          size="lg"
+          onClick={handleEnterMetaverse}
+          className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white shadow-2xl hover:shadow-purple-500/25 transform hover:scale-105 transition-all duration-300 group relative overflow-hidden"
+        >
+          <div className="absolute inset-0 bg-gradient-to-r from-purple-400 to-indigo-400 opacity-0 group-hover:opacity-20 transition-opacity" />
+          <Globe className="mr-2 h-5 w-5 animate-pulse" />
+          Enter Metaverse
+          {(metaverseStats?.metaverseStats?.totalBots || metaverseBotsData?.bots?.length) && (
+            <Badge 
+              variant="secondary" 
+              className="ml-2 bg-white/20 text-white border-white/30"
+            >
+              {metaverseStats?.metaverseStats?.totalBots || metaverseBotsData.bots.length} bots online
+            </Badge>
+          )}
+        </Button>
+        {(metaverseStats?.metaverseStats?.zoneDistribution || metaverseBotsData?.bots) && (
+          <div className="absolute -bottom-6 left-0 right-0 text-center">
+            <span className="text-xs text-white/60">
+              {(() => {
+                if (metaverseStats?.metaverseStats?.zoneDistribution) {
+                  return metaverseStats.metaverseStats.zoneDistribution
+                    .slice(0, 2)
+                    .map((z: any) => `${z.zone}: ${z.count}`)
+                    .join(' • ');
+                } else if (metaverseBotsData?.bots) {
+                  const zones = metaverseBotsData.bots.reduce((acc: Record<string, number>, bot: any) => {
+                    if (bot.currentZone) acc[bot.currentZone] = (acc[bot.currentZone] || 0) + 1;
+                    return acc;
+                  }, {});
+                  return Object.entries(zones)
+                    .sort(([,a], [,b]) => (b as number) - (a as number))
+                    .slice(0, 2)
+                    .map(([zone, count]) => `${zone}: ${count}`)
+                    .join(' • ');
+                }
+                return '';
+              })()}
+            </span>
+          </div>
+        )}
+      </motion.div>
     </div>
   );
 };

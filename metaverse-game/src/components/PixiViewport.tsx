@@ -37,9 +37,9 @@ export default PixiComponent('Viewport', {
       .wheel()
       .decelerate()
       .clamp({ direction: 'all', underflow: 'center' })
-      .setZoom(-10)
+      .setZoom(1)
       .clampZoom({
-        minScale: (1.04 * props.screenWidth) / (props.worldWidth / 2),
+        minScale: Math.max(props.screenWidth / props.worldWidth, props.screenHeight / props.worldHeight) * 1.04,
         maxScale: 3.0,
       });
     return viewport;

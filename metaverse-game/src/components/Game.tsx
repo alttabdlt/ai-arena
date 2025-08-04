@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import PixiGame from './PixiGame.tsx';
+import GameHeader from './GameHeader.tsx';
 
 import { useElementSize } from 'usehooks-ts';
 import { Stage } from '@pixi/react';
@@ -20,6 +21,8 @@ export default function Game() {
     kind: 'player';
     id: GameId<'players'>;
   }>();
+  const [selectedBotId, setSelectedBotId] = useState<string>();
+  const [selectedBot, setSelectedBot] = useState<any>();
   const [gameWrapperRef, { width, height }] = useElementSize();
 
   const worldStatus = useQuery(api.world.defaultWorldStatus);
@@ -36,38 +39,55 @@ export default function Game() {
 
   const scrollViewRef = useRef<HTMLDivElement>(null);
 
+  const handleBotSelect = (bot: any) => {
+    setSelectedBot(bot);
+    setSelectedBotId(bot.id);
+    
+    // Find the player with matching aiArenaBotId
+    if (bot.metaverseAgentId && game) {
+      const agent = [...game.world.agents.values()].find(a => a.id === bot.metaverseAgentId);
+      if (agent) {
+        setSelectedElement({ kind: 'player', id: agent.playerId });
+      }
+    }
+  };
+
   if (!worldId || !engineId || !game) {
     return null;
   }
   return (
-    <>
-      {SHOW_DEBUG_UI && <DebugTimeManager timeManager={timeManager} width={200} height={100} />}
-      <div className="mx-auto w-full max-w grid grid-rows-[240px_1fr] lg:grid-rows-[1fr] lg:grid-cols-[1fr_auto] lg:grow max-w-[1400px] min-h-[480px] game-frame">
-        {/* Game area */}
-        <div className="relative overflow-hidden bg-brown-900" ref={gameWrapperRef}>
-          <div className="absolute inset-0">
-            <div className="container">
-              <Stage width={width} height={height} options={{ backgroundColor: 0x7ab5ff }}>
-                {/* Re-propagate context because contexts are not shared between renderers.
-https://github.com/michalochman/react-pixi-fiber/issues/145#issuecomment-531549215 */}
-                <ConvexProvider client={convex}>
-                  <PixiGame
-                    game={game}
-                    worldId={worldId}
-                    engineId={engineId}
-                    width={width}
-                    height={height}
-                    historicalTime={historicalTime}
-                    setSelectedElement={setSelectedElement}
-                  />
-                </ConvexProvider>
-              </Stage>
-            </div>
+    <div className="flex flex-col h-full w-full">
+      {/* Game Header */}
+      <GameHeader 
+        selectedBotId={selectedBotId}
+        onBotSelect={handleBotSelect}
+      />
+      
+      {/* Game Content */}
+      <div className="flex-1 relative p-4 min-h-0">
+        {SHOW_DEBUG_UI && <DebugTimeManager timeManager={timeManager} width={200} height={100} />}
+        <div className="h-full grid grid-cols-[1fr_400px] gap-4">
+          {/* Game area */}
+          <div className="relative overflow-hidden bg-gray-800 rounded-lg border border-gray-700" ref={gameWrapperRef}>
+            <Stage width={width} height={height} options={{ backgroundColor: 0x1a1a1a }}>
+              {/* Re-propagate context because contexts are not shared between renderers.
+              https://github.com/michalochman/react-pixi-fiber/issues/145#issuecomment-531549215 */}
+              <ConvexProvider client={convex}>
+                <PixiGame
+                  game={game}
+                  worldId={worldId}
+                  engineId={engineId}
+                  width={width}
+                  height={height}
+                  historicalTime={historicalTime}
+                  setSelectedElement={setSelectedElement}
+                />
+              </ConvexProvider>
+            </Stage>
           </div>
-        </div>
-        {/* Right column area */}
+        {/* Chat panel */}
         <div
-          className="flex flex-col overflow-y-auto shrink-0 px-4 py-6 sm:px-6 lg:w-96 xl:pr-6 border-t-8 sm:border-t-0 sm:border-l-8 border-brown-900  bg-brown-800 text-brown-100"
+          className="flex flex-col h-full overflow-y-auto bg-gray-900 text-gray-100 rounded-lg border border-gray-700 p-4"
           ref={scrollViewRef}
         >
           <PlayerDetails
@@ -79,7 +99,8 @@ https://github.com/michalochman/react-pixi-fiber/issues/145#issuecomment-5315492
             scrollViewRef={scrollViewRef}
           />
         </div>
+        </div>
       </div>
-    </>
+    </div>
   );
 }

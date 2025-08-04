@@ -1,5 +1,6 @@
 import { gql } from 'graphql-tag';
 import { economyTypeDefs } from './economy';
+import { metaverseSyncTypeDefs } from './metaverseSync';
 
 const baseTypeDefs = gql`
   scalar DateTime
@@ -26,9 +27,11 @@ const baseTypeDefs = gql`
 
   type Bot {
     id: ID!
+    tokenId: Int!
     name: String!
     avatar: String!
     prompt: String!
+    personality: BotPersonality!
     modelType: AIModelType!
     creator: User!
     creatorId: String!
@@ -303,6 +306,7 @@ const baseTypeDefs = gql`
     name: String!
     avatar: String!
     prompt: String!
+    personality: BotPersonality!
     modelType: AIModelType!
     txHash: String!
   }
@@ -332,12 +336,19 @@ const baseTypeDefs = gql`
     DEEPSEEK_CHAT
   }
 
+  enum BotPersonality {
+    CRIMINAL
+    GAMBLER
+    WORKER
+  }
+
 
   input BotFilter {
     modelType: AIModelType
     isActive: Boolean
     creatorAddress: String
     hasQueueEntry: Boolean
+    hasMetaverseAgent: Boolean
   }
 
   enum BotSort {
@@ -1083,4 +1094,4 @@ const baseTypeDefs = gql`
 `;
 
 // Export merged type definitions
-export const typeDefs = [baseTypeDefs, economyTypeDefs];
+export const typeDefs = [baseTypeDefs, economyTypeDefs, metaverseSyncTypeDefs];

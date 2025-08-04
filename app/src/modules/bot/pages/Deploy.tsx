@@ -18,23 +18,10 @@ import { useNavigate } from 'react-router-dom';
 import { WALLET_ADDRESSES, FEE_CONFIG } from '@/config/wallets';
 import { useHypeBalance } from '@shared/hooks/useHypeBalance';
 import { DeploymentStatus, DeploymentState } from '@bot/components/deployment-status';
+import { StardewSpriteSelector, BotPersonality } from '@/services/stardewSpriteSelector';
 // Test components temporarily removed - to be reimplemented
 // import { AllTestsRunner } from '@/components/poker/AllTestsRunner';
 // import { Connect4TestRunner } from '@/components/connect4/Connect4TestRunner';
-
-// Available bot avatars
-const AVATARS = [
-  { id: 'bot-strategist', name: 'The Strategist', icon: '🎯' },
-  { id: 'bot-terminator', name: 'The Terminator', icon: '🤖' },
-  { id: 'bot-zen-master', name: 'Zen Master', icon: '🧘' },
-  { id: 'bot-calculator', name: 'The Calculator', icon: '🧮' },
-  { id: 'bot-eagle', name: 'Eagle Eye', icon: '🦅' },
-  { id: 'bot-fox', name: 'Sly Fox', icon: '🦊' },
-  { id: 'bot-warrior', name: 'The Warrior', icon: '⚔️' },
-  { id: 'bot-sage', name: 'The Sage', icon: '🦉' },
-  { id: 'bot-dragon', name: 'Dragon', icon: '🐉' },
-  { id: 'bot-phoenix', name: 'Phoenix', icon: '🔥' }
-];
 
 // Game Types
 const GAME_TYPES = [
@@ -64,7 +51,8 @@ export default function Deploy() {
     name: '',
     avatar: '',
     prompt: '',
-    modelType: ''
+    modelType: '',
+    personality: ''
   });
   const [promptLength, setPromptLength] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -73,6 +61,8 @@ export default function Deploy() {
   const [allTestsPassed, setAllTestsPassed] = useState(false);
   const [deploymentState, setDeploymentState] = useState<DeploymentState>('idle');
   const [deploymentError, setDeploymentError] = useState<string>('');
+  const [generatedAvatar, setGeneratedAvatar] = useState<{ imageData: string; spritesheetData: any } | null>(null);
+  const [spriteSelector] = useState(() => new StardewSpriteSelector());
   
   const { sendTransaction, data: hash, error: sendError, isPending: isWriting } = useSendTransaction();
   const { 
@@ -91,6 +81,27 @@ export default function Deploy() {
       setDeploymentState('transaction-confirming');
     }
   }, [hash]);
+
+  // Generate avatar when personality is selected
+  useEffect(() => {
+    if (formData.personality) {
+      // Generate a unique seed based on timestamp and random value
+      const seed = `${Date.now()}-${Math.random()}`;
+      
+      // Select sprite asynchronously
+      spriteSelector.selectSprite(
+        formData.personality.toUpperCase() as BotPersonality,
+        seed
+      ).then(sprite => {
+        setGeneratedAvatar({
+          imageData: sprite.imageData,
+          spritesheetData: sprite.spriteSheetData
+        });
+        // Set the avatar field to the base64 image data
+        setFormData(prev => ({ ...prev, avatar: sprite.imageData }));
+      });
+    }
+  }, [formData.personality, spriteSelector]);
 
   // Handle transaction errors
   useEffect(() => {
@@ -112,6 +123,7 @@ export default function Deploy() {
             name: formData.name,
             avatar: formData.avatar,
             prompt: formData.prompt,
+            personality: formData.personality.toUpperCase(),
             modelType: formData.modelType.toUpperCase().replace('-', '_'),
             txHash: txHash,
           },
@@ -120,7 +132,7 @@ export default function Deploy() {
         setDeploymentState('success');
         toast({
           title: "Bot Deployed Successfully!",
-          description: "Your bot has been added to the matchmaking queue.",
+          description: "Your bot has been created. You can now manage it from your dashboard.",
         });
         
         // Reset form after a delay
@@ -129,15 +141,16 @@ export default function Deploy() {
             name: '',
             avatar: '',
             prompt: '',
-            modelType: ''
+            modelType: '',
+            personality: ''
           });
           setPromptLength(0);
           setIsSubmitting(false);
           setTxHash(undefined);
           setDeploymentState('idle');
           
-          // Navigate to bots page
-          navigate('/bots');
+          // Navigate to dashboard instead of bots page
+          navigate('/dashboard');
         }, 2000);
       }).catch((error) => {
         console.error('Bot deployment error:', error);
@@ -189,6 +202,7 @@ export default function Deploy() {
             name: formData.name,
             avatar: formData.avatar,
             prompt: formData.prompt,
+            personality: formData.personality.toUpperCase(),
             modelType: formData.modelType.toUpperCase().replace('-', '_'),
             txHash: txHash,
           },
@@ -198,7 +212,7 @@ export default function Deploy() {
       setDeploymentState('success');
       toast({
         title: "Bot Deployed Successfully!",
-        description: "Your bot has been added to the matchmaking queue.",
+        description: "Your bot has been created. You can now manage it from your dashboard.",
       });
       
       // Reset form after a delay
@@ -207,15 +221,16 @@ export default function Deploy() {
           name: '',
           avatar: '',
           prompt: '',
-          modelType: ''
+          modelType: '',
+          personality: ''
         });
         setPromptLength(0);
         setIsSubmitting(false);
         setTxHash(undefined);
         setDeploymentState('idle');
         
-        // Navigate to bots page
-        navigate('/bots');
+        // Navigate to dashboard instead of bots page
+        navigate('/dashboard');
       }, 2000);
     } catch (error: any) {
       console.error('Bot deployment retry error:', error);
@@ -241,10 +256,10 @@ export default function Deploy() {
       return;
     }
 
-    if (!formData.name || !formData.avatar || !formData.prompt || !formData.modelType) {
+    if (!formData.name || !formData.avatar || !formData.prompt || !formData.modelType || !formData.personality) {
       toast({
         title: "Missing Information",
-        description: "Please fill in all required fields.",
+        description: "Please fill in all required fields including personality.",
         variant: "destructive"
       });
       return;
@@ -309,7 +324,7 @@ export default function Deploy() {
         <Alert className="mb-6">
           <Info className="h-4 w-4" />
           <AlertDescription>
-            <strong>Deployment Fee:</strong> {FEE_CONFIG.DEPLOYMENT_FEE} HYPE per bot. Your bot will automatically enter the matchmaking queue and compete in tournaments. Winners earn HYPE prizes!
+            <strong>Deployment Fee:</strong> {FEE_CONFIG.DEPLOYMENT_FEE} HYPE per bot. After deployment, you can manage your bot and enter it into tournaments from your dashboard. Winners earn HYPE prizes!
             {isConnected && !balanceLoading && (
               <div className="mt-2">
                 <strong>Your Balance:</strong> {formattedBalance} {symbol}
@@ -380,25 +395,32 @@ export default function Deploy() {
                 </div>
 
                 <div>
-                  <Label>Avatar</Label>
-                  <div className="grid grid-cols-5 gap-3 mt-2">
-                    {AVATARS.map((avatar) => (
-                      <button
-                        key={avatar.id}
-                        type="button"
-                        onClick={() => setFormData({ ...formData, avatar: avatar.id })}
-                        disabled={!isConnected}
-                        className={`p-4 rounded-lg border-2 transition-all ${
-                          formData.avatar === avatar.id
-                            ? 'border-primary bg-primary/10'
-                            : 'border-border hover:border-primary/50'
-                        } ${!isConnected ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      >
-                        <div className="text-2xl mb-1">{avatar.icon}</div>
-                        <div className="text-xs">{avatar.name}</div>
-                      </button>
-                    ))}
-                  </div>
+                  <Label>Generated Avatar</Label>
+                  {generatedAvatar ? (
+                    <div className="mt-2 flex items-center gap-4">
+                      <div className="border-2 border-primary rounded-lg p-2 bg-muted">
+                        <img 
+                          src={generatedAvatar.imageData} 
+                          alt="Generated bot avatar"
+                          className="w-32 h-32 pixelated"
+                          style={{ imageRendering: 'pixelated' }}
+                        />
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        <p>Unique pixel art avatar generated based on personality</p>
+                        <p className="mt-1">This will be your bot's appearance in the metaverse</p>
+                        <Badge variant="outline" className="mt-2">
+                          <CheckCircle2 className="h-3 w-3 mr-1" />
+                          Auto-generated
+                        </Badge>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-2 p-8 border-2 border-dashed border-border rounded-lg text-center text-muted-foreground">
+                      <Bot className="h-12 w-12 mx-auto mb-2 opacity-50" />
+                      <p>Select a personality to generate avatar</p>
+                    </div>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -436,6 +458,80 @@ export default function Deploy() {
                       </button>
                     );
                   })}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Bot Personality Selection */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Bot Personality</CardTitle>
+                <CardDescription>Choose your bot's personality type for the crime metaverse</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-3">
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, personality: 'criminal' })}
+                    disabled={!isConnected}
+                    className={`w-full p-4 rounded-lg border-2 transition-all text-left ${
+                      formData.personality === 'criminal'
+                        ? 'border-red-500 bg-red-500/10'
+                        : 'border-border hover:border-red-500/50'
+                    } ${!isConnected ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <span className="text-2xl">🔫</span>
+                      <div className="flex-1">
+                        <h4 className="font-semibold text-red-500">Criminal</h4>
+                        <p className="text-sm text-muted-foreground">
+                          Aggressive and intimidating. Focuses on robbery, violence, and forming gangs. Takes what they want by force.
+                        </p>
+                      </div>
+                    </div>
+                  </button>
+                  
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, personality: 'gambler' })}
+                    disabled={!isConnected}
+                    className={`w-full p-4 rounded-lg border-2 transition-all text-left ${
+                      formData.personality === 'gambler'
+                        ? 'border-yellow-500 bg-yellow-500/10'
+                        : 'border-border hover:border-yellow-500/50'
+                    } ${!isConnected ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <span className="text-2xl">🎲</span>
+                      <div className="flex-1">
+                        <h4 className="font-semibold text-yellow-500">Gambler</h4>
+                        <p className="text-sm text-muted-foreground">
+                          Risk-taker who lives in casinos. Makes bold moves, forms temporary alliances, and has unpredictable loyalty.
+                        </p>
+                      </div>
+                    </div>
+                  </button>
+                  
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, personality: 'worker' })}
+                    disabled={!isConnected}
+                    className={`w-full p-4 rounded-lg border-2 transition-all text-left ${
+                      formData.personality === 'worker'
+                        ? 'border-green-500 bg-green-500/10'
+                        : 'border-border hover:border-green-500/50'
+                    } ${!isConnected ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <span className="text-2xl">🛠️</span>
+                      <div className="flex-1">
+                        <h4 className="font-semibold text-green-500">Worker</h4>
+                        <p className="text-sm text-muted-foreground">
+                          Steady grinder who builds value slowly. Avoids conflict, forms stable partnerships, and focuses on long-term gains.
+                        </p>
+                      </div>
+                    </div>
+                  </button>
                 </div>
               </CardContent>
             </Card>
@@ -579,7 +675,7 @@ export default function Deploy() {
                   <div className="flex items-center justify-between p-4 rounded-lg bg-muted">
                     <div>
                       <p className="font-semibold">Standard Deployment</p>
-                      <p className="text-sm text-muted-foreground">Bot enters queue immediately</p>
+                      <p className="text-sm text-muted-foreground">Create and manage your bot</p>
                     </div>
                     <div className="text-right">
                       <p className="text-2xl font-bold">{FEE_CONFIG.DEPLOYMENT_FEE} HYPE</p>

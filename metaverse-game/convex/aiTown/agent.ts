@@ -26,9 +26,14 @@ import { insertInput } from './insertInput';
 export class Agent {
   id: GameId<'agents'>;
   playerId: GameId<'players'>;
+  aiArenaBotId?: string;
+  personality?: 'CRIMINAL' | 'GAMBLER' | 'WORKER';
   toRemember?: GameId<'conversations'>;
   lastConversation?: number;
   lastInviteAttempt?: number;
+  lastRobberyAttempt?: number;
+  lastCombat?: number;
+  knockedOutUntil?: number;
   inProgressOperation?: {
     name: string;
     operationId: string;
@@ -36,16 +41,22 @@ export class Agent {
   };
 
   constructor(serialized: SerializedAgent) {
-    const { id, lastConversation, lastInviteAttempt, inProgressOperation } = serialized;
+    const { id, aiArenaBotId, personality, lastConversation, lastInviteAttempt, 
+            lastRobberyAttempt, lastCombat, knockedOutUntil, inProgressOperation } = serialized;
     const playerId = parseGameId('players', serialized.playerId);
     this.id = parseGameId('agents', id);
     this.playerId = playerId;
+    this.aiArenaBotId = aiArenaBotId;
+    this.personality = personality;
     this.toRemember =
       serialized.toRemember !== undefined
         ? parseGameId('conversations', serialized.toRemember)
         : undefined;
     this.lastConversation = lastConversation;
     this.lastInviteAttempt = lastInviteAttempt;
+    this.lastRobberyAttempt = lastRobberyAttempt;
+    this.lastCombat = lastCombat;
+    this.knockedOutUntil = knockedOutUntil;
     this.inProgressOperation = inProgressOperation;
   }
 
@@ -247,10 +258,10 @@ export class Agent {
       );
     }
     const operationId = game.allocId('operations');
-    console.log(`Agent ${this.id} starting operation ${name} (${operationId})`);
-    game.scheduleOperation(name, { operationId, ...args } as any);
+    console.log(`Agent ${this.id} starting operation ${String(name)} (${operationId})`);
+    game.scheduleOperation(name as any, { operationId, ...args } as any);
     this.inProgressOperation = {
-      name,
+      name: name as any,
       operationId,
       started: now,
     };
@@ -260,9 +271,14 @@ export class Agent {
     return {
       id: this.id,
       playerId: this.playerId,
+      aiArenaBotId: this.aiArenaBotId,
+      personality: this.personality,
       toRemember: this.toRemember,
       lastConversation: this.lastConversation,
       lastInviteAttempt: this.lastInviteAttempt,
+      lastRobberyAttempt: this.lastRobberyAttempt,
+      lastCombat: this.lastCombat,
+      knockedOutUntil: this.knockedOutUntil,
       inProgressOperation: this.inProgressOperation,
     };
   }
@@ -271,9 +287,14 @@ export class Agent {
 export const serializedAgent = {
   id: agentId,
   playerId: playerId,
+  aiArenaBotId: v.optional(v.string()), // Reference to AI Arena Bot.id
+  personality: v.optional(v.union(v.literal('CRIMINAL'), v.literal('GAMBLER'), v.literal('WORKER'))),
   toRemember: v.optional(conversationId),
   lastConversation: v.optional(v.number()),
   lastInviteAttempt: v.optional(v.number()),
+  lastRobberyAttempt: v.optional(v.number()),
+  lastCombat: v.optional(v.number()),
+  knockedOutUntil: v.optional(v.number()),
   inProgressOperation: v.optional(
     v.object({
       name: v.string(),
@@ -297,6 +318,15 @@ export async function runAgentOperation(ctx: MutationCtx, operation: string, arg
       break;
     case 'agentDoSomething':
       reference = internal.aiTown.agentOperations.agentDoSomething;
+      break;
+    case 'agentAttemptRobbery':
+      reference = internal.aiTown.agentOperations.agentAttemptRobbery;
+      break;
+    case 'agentEngageCombat':
+      reference = internal.aiTown.agentOperations.agentEngageCombat;
+      break;
+    case 'agentSelectZoneActivity':
+      reference = internal.aiTown.agentOperations.agentSelectZoneActivity;
       break;
     default:
       throw new Error(`Unknown operation: ${operation}`);
@@ -364,5 +394,19 @@ export const findConversationCandidate = internalQuery({
     // Sort by distance and take the nearest candidate.
     candidates.sort((a, b) => distance(a.position, position) - distance(b.position, position));
     return candidates[0]?.id;
+  },
+});
+
+export const getAgent = internalQuery({
+  args: {
+    worldId: v.id('worlds'),
+    agentId: agentId,
+  },
+  handler: async (ctx, { worldId, agentId }) => {
+    const world = await ctx.db.get(worldId);
+    if (!world) return null;
+    
+    const agent = world.agents.find(a => a.id === agentId);
+    return agent || null;
   },
 });

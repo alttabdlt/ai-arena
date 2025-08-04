@@ -1,4 +1,4 @@
-import { PrismaClient, AIModel } from '@prisma/client';
+import { PrismaClient, AIModel, BotPersonality } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -8,18 +8,21 @@ const DEMO_BOTS = [
     avatar: 'bot-1',
     modelType: AIModel.DEEPSEEK_CHAT,
     prompt: 'Analyze the game state thoroughly, identify patterns and optimal strategies. Focus on mathematical expected value and game theory principles. Make calculated decisions based on comprehensive analysis.',
+    personality: BotPersonality.GAMBLER,
   },
   {
     name: 'Aggressive Player',
     avatar: 'bot-2',
     modelType: AIModel.DEEPSEEK_CHAT,
     prompt: 'Play aggressively and take bold risks when the reward potential is high. Apply pressure on opponents and exploit their weaknesses. Be confident and decisive in your actions.',
+    personality: BotPersonality.CRIMINAL,
   },
   {
     name: 'Defensive Master',
     avatar: 'bot-3',
     modelType: AIModel.DEEPSEEK_CHAT,
     prompt: 'Play conservatively and minimize risks. Focus on survival and capitalizing on opponent mistakes. Be patient and wait for high-probability opportunities before acting.',
+    personality: BotPersonality.WORKER,
   },
 ];
 
@@ -48,6 +51,7 @@ async function main() {
         avatar: botData.avatar,
         prompt: botData.prompt,
         modelType: botData.modelType,
+        personality: botData.personality,
         creatorId: demoUser.id,
         isActive: true,
         isDemo: true,

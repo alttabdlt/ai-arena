@@ -12,7 +12,7 @@ export function setupWebSocketServer(port: number) {
   const clients = new Map<string, WSClient>();
   const subscriber = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
 
-  subscriber.psubscribe('price:*', 'graduation:*', 'tournament:*');
+  subscriber.psubscribe('price:*', 'graduation:*', 'tournament:*', 'metaverse:*');
 
   subscriber.on('pmessage', (_pattern, channel, message) => {
     const data = JSON.parse(message);
@@ -29,6 +29,24 @@ export function setupWebSocketServer(port: number) {
             type: 'GRADUATION_EVENT',
             data,
           }));
+        } else if (channel.startsWith('metaverse:')) {
+          // Handle different metaverse events
+          if (channel.startsWith('metaverse:bot:') && client.subscriptions.has(channel)) {
+            client.ws.send(JSON.stringify({
+              type: 'METAVERSE_BOT_UPDATE',
+              data,
+            }));
+          } else if (channel.startsWith('metaverse:zone:') && client.subscriptions.has(channel)) {
+            client.ws.send(JSON.stringify({
+              type: 'METAVERSE_ZONE_UPDATE',
+              data,
+            }));
+          } else if (channel.startsWith('metaverse:activity:') && client.subscriptions.has(channel)) {
+            client.ws.send(JSON.stringify({
+              type: 'METAVERSE_ACTIVITY',
+              data,
+            }));
+          }
         }
       }
     });

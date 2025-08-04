@@ -152,4 +152,165 @@ export const agentInputs = {
       return { agentId };
     },
   }),
+  createAgentFromAIArena: inputHandler({
+    args: {
+      name: v.string(),
+      character: v.string(),
+      identity: v.string(),
+      plan: v.string(),
+      aiArenaBotId: v.string(),
+      initialZone: v.string(),
+    },
+    handler: (game, now, args) => {
+      // Create player with the provided details
+      const playerId = Player.join(
+        game,
+        now,
+        args.name,
+        args.character,
+        args.identity,
+      );
+      
+      // Allocate agent ID
+      const agentId = game.allocId('agents');
+      
+      // Create agent with AI Arena bot reference
+      game.world.agents.set(
+        agentId,
+        new Agent({
+          id: agentId,
+          playerId: playerId,
+          aiArenaBotId: args.aiArenaBotId,
+          inProgressOperation: undefined,
+          lastConversation: undefined,
+          lastInviteAttempt: undefined,
+          toRemember: undefined,
+        }),
+      );
+      
+      // Set agent description
+      game.agentDescriptions.set(
+        agentId,
+        new AgentDescription({
+          agentId: agentId,
+          identity: args.identity,
+          plan: args.plan,
+        }),
+      );
+      
+      // TODO: Set initial zone position based on initialZone
+      // This would involve placing the player in the appropriate zone
+      
+      return { agentId, playerId };
+    },
+  }),
+  
+  // Crime metaverse input handlers
+  startRobbery: inputHandler({
+    args: {
+      operationId: v.string(),
+      agentId: v.id('agents'),
+      targetPlayerId: v.id('players'),
+    },
+    handler: (game, now, args) => {
+      const agentId = parseGameId('agents', args.agentId);
+      const agent = game.world.agents.get(agentId);
+      if (!agent) {
+        throw new Error(`Invalid agent ID: ${agentId}`);
+      }
+      
+      agent.startOperation(game, now, 'agentAttemptRobbery', {
+        worldId: game.worldId,
+        agentId: agent.id,
+        playerId: agent.playerId,
+        targetPlayerId: args.targetPlayerId,
+      });
+      
+      return null;
+    },
+  }),
+  
+  finishRobbery: inputHandler({
+    args: {
+      operationId: v.string(),
+      agentId: v.id('agents'),
+      targetPlayerId: v.id('players'),
+      success: v.boolean(),
+      lootValue: v.number(),
+    },
+    handler: (game, now, args) => {
+      const agentId = parseGameId('agents', args.agentId);
+      const agent = game.world.agents.get(agentId);
+      if (!agent) {
+        throw new Error(`Invalid agent ID: ${agentId}`);
+      }
+      
+      agent.lastRobberyAttempt = now;
+      if (agent.inProgressOperation?.operationId === args.operationId) {
+        delete agent.inProgressOperation;
+      }
+      
+      // TODO: Update AI Arena backend with robbery result
+      // TODO: Transfer items/currency if successful
+      
+      return null;
+    },
+  }),
+  
+  startCombat: inputHandler({
+    args: {
+      operationId: v.string(),
+      agentId: v.id('agents'),
+      opponentId: v.id('players'),
+    },
+    handler: (game, now, args) => {
+      const agentId = parseGameId('agents', args.agentId);
+      const agent = game.world.agents.get(agentId);
+      if (!agent) {
+        throw new Error(`Invalid agent ID: ${agentId}`);
+      }
+      
+      agent.startOperation(game, now, 'agentEngageCombat', {
+        worldId: game.worldId,
+        agentId: agent.id,
+        playerId: agent.playerId,
+        opponentId: args.opponentId,
+      });
+      
+      return null;
+    },
+  }),
+  
+  finishCombat: inputHandler({
+    args: {
+      operationId: v.string(),
+      agentId: v.id('agents'),
+      winnerId: v.id('players'),
+      loserId: v.id('players'),
+    },
+    handler: (game, now, args) => {
+      const agentId = parseGameId('agents', args.agentId);
+      const agent = game.world.agents.get(agentId);
+      if (!agent) {
+        throw new Error(`Invalid agent ID: ${agentId}`);
+      }
+      
+      agent.lastCombat = now;
+      if (agent.inProgressOperation?.operationId === args.operationId) {
+        delete agent.inProgressOperation;
+      }
+      
+      // Handle knockout for loser
+      const loserAgent = [...game.world.agents.values()].find(a => a.playerId === args.loserId as any);
+      if (loserAgent) {
+        const { HOSPITAL_RECOVERY } = require('../constants');
+        loserAgent.knockedOutUntil = now + HOSPITAL_RECOVERY;
+      }
+      
+      // TODO: Update AI Arena backend with combat result
+      // TODO: Award experience/items to winner
+      
+      return null;
+    },
+  }),
 };

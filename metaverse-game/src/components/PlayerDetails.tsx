@@ -1,14 +1,17 @@
+import { useState } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '../../convex/_generated/api';
 import { Id } from '../../convex/_generated/dataModel';
 import closeImg from '../../assets/close.svg';
 import { SelectElement } from './Player';
 import { Messages } from './Messages';
+import ActivityLogs from './ActivityLogs';
 import { toastOnError } from '../toasts';
 import { useSendInput } from '../hooks/sendInput';
 import { Player } from '../../convex/aiTown/player';
 import { GameId } from '../../convex/aiTown/ids';
 import { ServerGame } from '../hooks/serverGame';
+import { MessageSquare, Activity } from 'lucide-react';
 
 export default function PlayerDetails({
   worldId,
@@ -25,6 +28,7 @@ export default function PlayerDetails({
   setSelectedElement: SelectElement;
   scrollViewRef: React.RefObject<HTMLDivElement>;
 }) {
+  const [activeTab, setActiveTab] = useState<'chat' | 'logs'>('chat');
   const humanTokenIdentifier = useQuery(api.world.userStatus, { worldId });
 
   const players = [...game.world.players.values()];
@@ -55,8 +59,8 @@ export default function PlayerDetails({
 
   if (!playerId) {
     return (
-      <div className="h-full text-xl flex text-center items-center p-4">
-        Click on an agent on the map to see chat history.
+      <div className="h-full flex items-center justify-center text-gray-400">
+        <p className="text-center">Click on an agent to see chat</p>
       </div>
     );
   }
@@ -131,98 +135,113 @@ export default function PlayerDetails({
   //   [...inflightInputs.values()].find((i) => i.name === inputName) ? ' opacity-50' : '';
 
   const pendingSuffix = (s: string) => '';
+  
+  // Get agent info for activity logs
+  const agent = player && [...game.world.agents.values()].find(a => a.playerId === player.id);
+  
   return (
     <>
-      <div className="flex gap-4">
-        <div className="box w-3/4 sm:w-full mr-auto">
-          <h2 className="bg-brown-700 p-2 font-display text-2xl sm:text-4xl tracking-wider shadow-solid text-center">
-            {playerDescription?.name}
-          </h2>
-        </div>
-        <a
-          className="button text-white shadow-solid text-2xl cursor-pointer pointer-events-auto"
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-xl font-bold">
+          {playerDescription?.name}
+        </h2>
+        <button
+          className="text-gray-400 hover:text-gray-200 transition-colors p-1"
           onClick={() => setSelectedElement(undefined)}
         >
-          <h2 className="h-full bg-clay-700">
-            <img className="w-4 h-4 sm:w-5 sm:h-5" src={closeImg} />
-          </h2>
-        </a>
+          <img className="w-5 h-5" src={closeImg} />
+        </button>
       </div>
-      {canInvite && (
-        <a
+      
+      {/* Tab Navigation */}
+      <div className="flex gap-1 mb-4 bg-gray-800/50 p-1 rounded-lg">
+        <button
+          onClick={() => setActiveTab('chat')}
+          className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md transition-all ${
+            activeTab === 'chat'
+              ? 'bg-gray-700 text-white'
+              : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
+          }`}
+        >
+          <MessageSquare className="w-4 h-4" />
+          <span className="text-sm font-medium">Chat</span>
+        </button>
+        <button
+          onClick={() => setActiveTab('logs')}
+          className={`flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-md transition-all ${
+            activeTab === 'logs'
+              ? 'bg-gray-700 text-white'
+              : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700/50'
+          }`}
+        >
+          <Activity className="w-4 h-4" />
+          <span className="text-sm font-medium">Logs</span>
+        </button>
+      </div>
+      {/* Tab Content */}
+      {activeTab === 'chat' ? (
+        <>
+          {canInvite && (
+        <button
           className={
-            'mt-6 button text-white shadow-solid text-xl cursor-pointer pointer-events-auto' +
+            'mt-3 w-full py-2 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors' +
             pendingSuffix('startConversation')
           }
           onClick={onStartConversation}
         >
-          <div className="h-full bg-clay-700 text-center">
-            <span>Start conversation</span>
-          </div>
-        </a>
+          Start conversation
+        </button>
       )}
       {waitingForAccept && (
-        <a className="mt-6 button text-white shadow-solid text-xl cursor-pointer pointer-events-auto opacity-50">
-          <div className="h-full bg-clay-700 text-center">
-            <span>Waiting for accept...</span>
-          </div>
-        </a>
+        <button className="mt-3 w-full py-2 px-4 bg-gray-600 text-white rounded opacity-50 cursor-not-allowed">
+          Waiting for accept...
+        </button>
       )}
       {waitingForNearby && (
-        <a className="mt-6 button text-white shadow-solid text-xl cursor-pointer pointer-events-auto opacity-50">
-          <div className="h-full bg-clay-700 text-center">
-            <span>Walking over...</span>
-          </div>
-        </a>
+        <button className="mt-3 w-full py-2 px-4 bg-gray-600 text-white rounded opacity-50 cursor-not-allowed">
+          Walking over...
+        </button>
       )}
       {inConversationWithMe && (
-        <a
+        <button
           className={
-            'mt-6 button text-white shadow-solid text-xl cursor-pointer pointer-events-auto' +
+            'mt-3 w-full py-2 px-4 bg-red-600 hover:bg-red-700 text-white rounded transition-colors' +
             pendingSuffix('leaveConversation')
           }
           onClick={onLeaveConversation}
         >
-          <div className="h-full bg-clay-700 text-center">
-            <span>Leave conversation</span>
-          </div>
-        </a>
+          Leave conversation
+        </button>
       )}
       {haveInvite && (
         <>
-          <a
+          <button
             className={
-              'mt-6 button text-white shadow-solid text-xl cursor-pointer pointer-events-auto' +
+              'mt-3 w-full py-2 px-4 bg-green-600 hover:bg-green-700 text-white rounded transition-colors' +
               pendingSuffix('acceptInvite')
             }
             onClick={onAcceptInvite}
           >
-            <div className="h-full bg-clay-700 text-center">
-              <span>Accept</span>
-            </div>
-          </a>
-          <a
+            Accept
+          </button>
+          <button
             className={
-              'mt-6 button text-white shadow-solid text-xl cursor-pointer pointer-events-auto' +
+              'mt-3 w-full py-2 px-4 bg-red-600 hover:bg-red-700 text-white rounded transition-colors' +
               pendingSuffix('rejectInvite')
             }
             onClick={onRejectInvite}
           >
-            <div className="h-full bg-clay-700 text-center">
-              <span>Reject</span>
-            </div>
-          </a>
+            Reject
+          </button>
         </>
       )}
       {!playerConversation && player.activity && player.activity.until > Date.now() && (
-        <div className="box flex-grow mt-6">
-          <h2 className="bg-brown-700 text-base sm:text-lg text-center">
-            {player.activity.description}
-          </h2>
+        <div className="mt-3 p-2 bg-gray-800 rounded text-sm text-center">
+          {player.activity.description}
         </div>
       )}
-      <div className="desc my-6">
-        <p className="leading-tight -m-4 bg-brown-700 text-base sm:text-sm">
+      <div className="my-3 p-3 bg-gray-800 rounded">
+        <p className="text-sm text-gray-300">
           {!isMe && playerDescription?.description}
           {isMe && <i>This is you!</i>}
           {!isMe && inConversationWithMe && (
@@ -245,9 +264,7 @@ export default function PlayerDetails({
       )}
       {!playerConversation && previousConversation && (
         <>
-          <div className="box flex-grow">
-            <h2 className="bg-brown-700 text-lg text-center">Previous conversation</h2>
-          </div>
+          <h3 className="text-lg font-semibold mt-4 mb-2">Previous conversation</h3>
           <Messages
             worldId={worldId}
             engineId={engineId}
@@ -257,6 +274,15 @@ export default function PlayerDetails({
             scrollViewRef={scrollViewRef}
           />
         </>
+      )}
+        </>
+      ) : (
+        <ActivityLogs
+          worldId={worldId}
+          playerId={playerId}
+          agentId={agent?.id}
+          aiArenaBotId={agent?.aiArenaBotId}
+        />
       )}
     </>
   );

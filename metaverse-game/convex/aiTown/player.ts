@@ -47,7 +47,20 @@ export const serializedPlayer = {
   human: v.optional(v.string()),
   pathfinding: v.optional(pathfinding),
   activity: v.optional(activity),
-
+  
+  // Crime metaverse fields
+  currentZone: v.optional(v.union(
+    v.literal('casino'),
+    v.literal('darkAlley'),
+    v.literal('suburb'),
+    v.literal('downtown'),
+    v.literal('underground')
+  )),
+  equipment: v.optional(v.object({
+    powerBonus: v.number(),
+    defenseBonus: v.number(),
+  })),
+  
   // The last time they did something.
   lastInput: v.number(),
 
@@ -62,6 +75,8 @@ export class Player {
   human?: string;
   pathfinding?: Pathfinding;
   activity?: Activity;
+  currentZone?: 'casino' | 'darkAlley' | 'suburb' | 'downtown' | 'underground';
+  equipment?: { powerBonus: number; defenseBonus: number };
 
   lastInput: number;
 
@@ -70,11 +85,13 @@ export class Player {
   speed: number;
 
   constructor(serialized: SerializedPlayer) {
-    const { id, human, pathfinding, activity, lastInput, position, facing, speed } = serialized;
+    const { id, human, pathfinding, activity, currentZone, equipment, lastInput, position, facing, speed } = serialized;
     this.id = parseGameId('players', id);
     this.human = human;
     this.pathfinding = pathfinding;
     this.activity = activity;
+    this.currentZone = currentZone;
+    this.equipment = equipment;
     this.lastInput = lastInput;
     this.position = position;
     this.facing = facing;
@@ -249,12 +266,14 @@ export class Player {
   }
 
   serialize(): SerializedPlayer {
-    const { id, human, pathfinding, activity, lastInput, position, facing, speed } = this;
+    const { id, human, pathfinding, activity, currentZone, equipment, lastInput, position, facing, speed } = this;
     return {
       id,
       human,
       pathfinding,
       activity,
+      currentZone,
+      equipment,
       lastInput,
       position,
       facing,
@@ -308,3 +327,26 @@ export const playerInputs = {
     },
   }),
 };
+
+import { internalQuery } from '../_generated/server';
+
+export const getPlayer = internalQuery({
+  args: {
+    worldId: v.id('worlds'),
+    playerId: playerId,
+  },
+  handler: async (ctx, { worldId, playerId }) => {
+    const world = await ctx.db.get(worldId);
+    if (!world) return null;
+    
+    const player = world.players.find(p => p.id === playerId);
+    // Add house data stub for now
+    if (player) {
+      return {
+        ...player,
+        house: { defenseLevel: 10 }, // Placeholder house data
+      };
+    }
+    return null;
+  },
+});

@@ -22,6 +22,35 @@ export default function ReverseHangmanServerView() {
   const navigate = useNavigate();
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [selectedDifficulty, setSelectedDifficulty] = useState<'easy' | 'medium' | 'hard' | 'expert'>('medium');
+  
+  // Function to update tournament in sessionStorage
+  const updateTournamentInStorage = (matchData: any, status?: string) => {
+    if (matchData?.match && id) {
+      const match = matchData.match;
+      const tournament = {
+        id: match.id,
+        name: match.tournament?.name || `Reverse Hangman Match ${match.id.slice(0, 8)}`,
+        gameType: 'reverse-hangman',
+        status: status || (match.status === 'COMPLETED' ? 'completed' : match.status === 'SCHEDULED' ? 'waiting' : 'in-progress'),
+        players: match.participants.map((p: any) => ({
+          id: p.bot.id,
+          name: p.bot.name,
+          modelType: p.bot.modelType,
+          avatar: p.bot.avatar
+        })),
+        maxPlayers: match.participants.length,
+        minPlayers: 2,
+        isPublic: true,
+        createdBy: 'system',
+        createdAt: match.createdAt || new Date(),
+        matchId: match.id
+      };
+      
+      // Store in sessionStorage
+      sessionStorage.setItem(`tournament-${match.id}`, JSON.stringify(tournament));
+      console.log('🎩 Updated tournament in sessionStorage:', tournament);
+    }
+  };
 
   // Use GraphQL to fetch match data
   const { data: matchData, loading: matchLoading, error: matchError } = useQuery(GET_MATCH, {
@@ -46,6 +75,9 @@ export default function ReverseHangmanServerView() {
           navigate(`/tournament/${id}/connect4`);
         }
       }
+      
+      // Create/update tournament in sessionStorage
+      updateTournamentInStorage(data);
     },
     onError: (error) => {
       console.error('❌ Reverse Hangman match query error:', error);
@@ -201,7 +233,10 @@ export default function ReverseHangmanServerView() {
                 {matchError ? matchError.message : 
                  'The tournament you are looking for does not exist or has been removed.'}
               </p>
-              <Button onClick={() => navigate('/tournaments')}>
+              <Button onClick={() => {
+                updateTournamentInStorage(matchData, 'completed');
+                navigate('/tournaments');
+              }}>
                 Return to Tournaments
               </Button>
             </Card>
@@ -228,7 +263,10 @@ export default function ReverseHangmanServerView() {
           currentRound="Round 1"
           gameType="reverse-hangman"
           status={tournament?.status as 'waiting' | 'in-progress' | 'completed' || 'waiting'}
-          onBack={() => navigate('/tournaments')}
+          onBack={() => {
+            updateTournamentInStorage(matchData, gameWinner ? 'completed' : 'in-progress');
+            navigate('/tournaments');
+          }}
         />
         <div className="container mx-auto px-4 py-8">
           
@@ -287,7 +325,10 @@ export default function ReverseHangmanServerView() {
           currentRound="Round 1"
           gameType="reverse-hangman"
           status={tournament?.status as 'waiting' | 'in-progress' | 'completed' || 'in-progress'}
-          onBack={() => navigate('/tournaments')}
+          onBack={() => {
+            updateTournamentInStorage(matchData, gameWinner ? 'completed' : 'in-progress');
+            navigate('/tournaments');
+          }}
         />
         <div className="container mx-auto px-4 py-8">
           

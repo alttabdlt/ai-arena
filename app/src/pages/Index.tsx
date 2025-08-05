@@ -509,9 +509,13 @@ const Index = () => {
           suburb: { lat: 34.0522, lng: -118.2437 },
         };
 
-        if (zoneCoords[popularZone as keyof typeof zoneCoords] && globeRef.current) {
+        if (zoneCoords[popularZone as keyof typeof zoneCoords] && globeRef.current && globeRef.current.zoomToLocation) {
           const coords = zoneCoords[popularZone as keyof typeof zoneCoords];
-          globeRef.current.zoomToLocation(coords.lat, coords.lng, 0.3);
+          try {
+            globeRef.current.zoomToLocation(coords.lat, coords.lng, 0.3);
+          } catch (error) {
+            console.warn('Globe zoom failed:', error);
+          }
         }
       }
     }
@@ -520,12 +524,16 @@ const Index = () => {
     setTimeout(() => {
       setShowPortalTransition(true);
       setTimeout(() => {
-        // Navigate to the metaverse game running on default Vite port
-        window.open('http://localhost:5173', '_blank');
+        // Navigate to the metaverse game running on port 5174
+        window.open('http://localhost:5174', '_blank');
         // Reset globe view after navigation
         setTimeout(() => {
-          if (globeRef.current) {
-            globeRef.current.resetView();
+          if (globeRef.current && globeRef.current.resetView) {
+            try {
+              globeRef.current.resetView();
+            } catch (error) {
+              console.warn('Globe reset failed:', error);
+            }
           }
           setShowPortalTransition(false);
         }, 1000);
@@ -710,43 +718,57 @@ const Index = () => {
                 initial={{ opacity: 0, scale: 0.8 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 1.2 }}
-                className="bg-background/90 backdrop-blur-xl rounded-2xl p-8 shadow-2xl border border-primary/20 max-w-md w-full"
+                className="bg-background/95 backdrop-blur-sm rounded-lg p-6 shadow-xl border border-border max-w-md w-full"
               >
-                <div className="space-y-6">
+                <div className="space-y-4">
                   <div className="text-center">
-                    <h2 className="text-2xl font-bold mb-2">Select Your Bot</h2>
-                    <p className="text-muted-foreground">Choose a bot to enter the queue</p>
+                    <h2 className="text-xl font-semibold mb-1">Select Your Bot</h2>
+                    <p className="text-sm text-muted-foreground">Choose a bot to enter the queue</p>
                   </div>
                   
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     {activeBots.map((bot: any) => (
                       <Card 
                         key={bot.id}
-                        className="p-4 cursor-pointer hover:border-primary transition-colors"
+                        className="p-3 cursor-pointer hover:bg-muted/50 transition-colors border-border"
                         onClick={() => handleBotSelect(bot.id)}
                       >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-3">
-                            <div className="text-2xl">{bot.avatar || '🤖'}</div>
+                            {bot.avatar && bot.avatar.startsWith('data:image') ? (
+                              <img 
+                                src={bot.avatar} 
+                                alt={bot.name}
+                                className="w-10 h-10 rounded-full object-cover"
+                                style={{ imageRendering: 'pixelated' }}
+                              />
+                            ) : (
+                              <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center">
+                                <Bot className="h-5 w-5 text-muted-foreground" />
+                              </div>
+                            )}
                             <div>
-                              <p className="font-medium">{bot.name}</p>
-                              <p className="text-sm text-muted-foreground">
+                              <p className="font-medium text-sm">{bot.name}</p>
+                              <p className="text-xs text-muted-foreground">
                                 {bot.stats.wins}W - {bot.stats.losses}L
                               </p>
                             </div>
                           </div>
-                          <Badge variant="outline">
-                            {bot.stats.winRate.toFixed(1)}%
-                          </Badge>
+                          <div className="text-right">
+                            <Badge variant="secondary" className="text-xs">
+                              {bot.stats.winRate.toFixed(1)}%
+                            </Badge>
+                          </div>
                         </div>
                       </Card>
                     ))}
                   </div>
                   
                   <Button
-                    variant="ghost"
+                    variant="outline"
                     onClick={() => setShowGameSelection(false)}
                     className="w-full"
+                    size="sm"
                   >
                     Cancel
                   </Button>

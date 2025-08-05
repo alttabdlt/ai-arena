@@ -52,6 +52,10 @@ export const GET_BOT_DETAIL = gql`
           }
         }
       }
+      metaverseAgentId
+      currentZone
+      metaversePosition
+      lastZoneChange
     }
   }
 `;

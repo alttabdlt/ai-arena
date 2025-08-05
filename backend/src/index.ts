@@ -21,6 +21,7 @@ import { PubSub } from 'graphql-subscriptions';
 import { initializeServices, getQueueService, getTransactionService } from './services';
 import { fileLoggerService } from './services/fileLoggerService';
 import { botSyncService } from './services/botSyncService';
+import { worldInitializationService } from './services/worldInitializationService';
 
 // Override console methods to capture backend logs
 const originalConsole = {
@@ -179,7 +180,7 @@ async function startServer() {
   app.use(
     '/graphql',
     cors<cors.CorsRequest>({
-      origin: ['http://localhost:5173', 'http://localhost:8080', 'http://localhost:8081'],
+      origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:8080', 'http://localhost:8081'],
       credentials: true,
       allowedHeaders: ['Content-Type', 'Authorization', 'x-wallet-address', 'x-bot-prompt'],
       exposedHeaders: ['Authorization'],
@@ -257,6 +258,9 @@ async function startServer() {
     
     // Game manager service is initialized as a singleton
     console.log('🎮 Game manager service ready');
+    
+    // Initialize metaverse world instances
+    await worldInitializationService.initialize();
     
     // Start bot sync service
     await botSyncService.start();

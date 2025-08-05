@@ -33,6 +33,7 @@ export default defineConfig(({ mode }) => ({
       "@tournament": path.resolve(__dirname, "./src/modules/tournament"),
       "@auth": path.resolve(__dirname, "./src/modules/auth"),
       "@queue": path.resolve(__dirname, "./src/modules/queue"),
+      "@admin": path.resolve(__dirname, "./src/modules/admin"),
       "@shared": path.resolve(__dirname, "./src/shared"),
       "@ui": path.resolve(__dirname, "./src/shared/components/ui"),
     },

@@ -45,53 +45,80 @@ const TournamentsPage = () => {
   const [tournamentToDelete, setTournamentToDelete] = useState<string | null>(null);
   const navigate = useNavigate();
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        // Load tournaments from sessionStorage
-        const storedTournaments: TournamentType[] = [];
-        for (let i = 0; i < sessionStorage.length; i++) {
-          const key = sessionStorage.key(i);
-          if (key?.startsWith('tournament-')) {
-            const tournament = JSON.parse(sessionStorage.getItem(key) || '{}');
-            if (tournament.id) {
-              storedTournaments.push(tournament);
-            }
+  const fetchData = async () => {
+    try {
+      // Load tournaments from sessionStorage
+      const storedTournaments: TournamentType[] = [];
+      for (let i = 0; i < sessionStorage.length; i++) {
+        const key = sessionStorage.key(i);
+        if (key?.startsWith('tournament-')) {
+          const tournament = JSON.parse(sessionStorage.getItem(key) || '{}');
+          if (tournament.id) {
+            storedTournaments.push(tournament);
           }
         }
-        
-        // Add some mock tournaments for demo if none exist
-        if (storedTournaments.length === 0) {
-          const mockTournament: TournamentType = {
-            id: 'demo-1',
-            name: "Demo Poker Championship",
-            gameType: 'poker',
-            status: "waiting",
-            config: {
-              startingChips: 10000,
-              maxHands: 100,
-              speed: 'normal'
-            },
-            players: [],
-            maxPlayers: 8,
-            minPlayers: 2,
-            isPublic: true,
-            createdBy: 'system',
-            createdAt: new Date(Date.now() - 1000 * 60 * 30)
-          };
-          sessionStorage.setItem(`tournament-${mockTournament.id}`, JSON.stringify(mockTournament));
-          storedTournaments.push(mockTournament);
-        }
-        
-        setTournaments(storedTournaments);
-      } catch (error) {
-        console.error('Error fetching data:', error);
-      } finally {
-        setLoading(false);
+      }
+      
+      // Add some mock tournaments for demo if none exist
+      if (storedTournaments.length === 0) {
+        const mockTournament: TournamentType = {
+          id: 'demo-1',
+          name: "Demo Poker Championship",
+          gameType: 'poker',
+          status: "waiting",
+          config: {
+            startingChips: 10000,
+            maxHands: 100,
+            speed: 'normal'
+          },
+          players: [],
+          maxPlayers: 8,
+          minPlayers: 2,
+          isPublic: true,
+          createdBy: 'system',
+          createdAt: new Date(Date.now() - 1000 * 60 * 30)
+        };
+        sessionStorage.setItem(`tournament-${mockTournament.id}`, JSON.stringify(mockTournament));
+        storedTournaments.push(mockTournament);
+      }
+      
+      setTournaments(storedTournaments);
+    } catch (error) {
+      console.error('Error fetching data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+    
+    // Poll for updates every 2 seconds
+    const pollInterval = setInterval(() => {
+      fetchData();
+    }, 2000);
+    
+    // Add focus event listener to refresh when navigating back
+    const handleFocus = () => {
+      fetchData();
+    };
+    
+    window.addEventListener('focus', handleFocus);
+    
+    // Also listen for visibility change
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        fetchData();
       }
     };
-
-    fetchData();
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    return () => {
+      clearInterval(pollInterval);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []);
 
   const handleDeleteTournament = (tournamentId: string) => {
@@ -126,11 +153,11 @@ const TournamentsPage = () => {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'in-progress': return 'bg-red-500/20 text-red-700 hover:bg-red-500/30';
-      case 'waiting': return 'bg-yellow-500/20 text-yellow-700 hover:bg-yellow-500/30';
-      case 'completed': return 'bg-green-500/20 text-green-700 hover:bg-green-500/30';
-      case 'cancelled': return 'bg-gray-500/20 text-gray-700 hover:bg-gray-500/30';
-      default: return 'bg-gray-500/20 text-gray-700 hover:bg-gray-500/30';
+      case 'in-progress': return 'text-red-600';
+      case 'waiting': return 'text-yellow-600';
+      case 'completed': return 'text-green-600';
+      case 'cancelled': return 'text-muted-foreground';
+      default: return 'text-muted-foreground';
     }
   };
 
@@ -155,83 +182,74 @@ const TournamentsPage = () => {
       <div className="container mx-auto px-4 py-8">
         {/* Header */}
         <div className="mb-8">
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-4xl font-bold">Tournaments</h1>
-              <p className="text-muted-foreground mt-2">
+              <h1 className="text-3xl font-semibold">Tournaments</h1>
+              <p className="text-muted-foreground mt-1">
                 Watch AI bots compete in real-time strategic battles
               </p>
             </div>
             <Button 
               onClick={() => navigate('/queue')} 
-              size="lg"
-              className="bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
+              size="sm"
             >
-              <Bot className="mr-2 h-5 w-5" />
+              <Bot className="mr-2 h-4 w-4" />
               Join Queue
             </Button>
           </div>
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-          <Card className="hover:shadow-lg transition-all hover:scale-[1.02] bg-gradient-to-br from-background to-muted/20">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Live Now</CardTitle>
-              <div className="h-10 w-10 rounded-full bg-red-500/10 flex items-center justify-center">
-                <Flame className="h-5 w-5 text-red-500" />
-              </div>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Live Now</CardTitle>
+              <Activity className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold text-red-600">{liveTournaments.length}</div>
-              <p className="text-sm text-muted-foreground mt-1">
+              <div className="text-2xl font-semibold">{liveTournaments.length}</div>
+              <p className="text-xs text-muted-foreground mt-1">
                 Active battles
               </p>
             </CardContent>
           </Card>
 
-          <Card className="hover:shadow-lg transition-all hover:scale-[1.02] bg-gradient-to-br from-background to-muted/20">
+          <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">In Queue</CardTitle>
-              <div className="h-10 w-10 rounded-full bg-yellow-500/10 flex items-center justify-center">
-                <Clock className="h-5 w-5 text-yellow-500" />
-              </div>
+              <CardTitle className="text-sm font-medium text-muted-foreground">In Queue</CardTitle>
+              <Clock className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold text-yellow-600">{waitingTournaments.length}</div>
-              <p className="text-sm text-muted-foreground mt-1">
+              <div className="text-2xl font-semibold">{waitingTournaments.length}</div>
+              <p className="text-xs text-muted-foreground mt-1">
                 Waiting to start
               </p>
             </CardContent>
           </Card>
 
-          <Card className="hover:shadow-lg transition-all hover:scale-[1.02] bg-gradient-to-br from-background to-muted/20">
+          <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Total Viewers</CardTitle>
-              <div className="h-10 w-10 rounded-full bg-purple-500/10 flex items-center justify-center">
-                <Eye className="h-5 w-5 text-purple-500" />
-              </div>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Total Viewers</CardTitle>
+              <Eye className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold text-purple-600">
+              <div className="text-2xl font-semibold">
                 {Math.floor(Math.random() * 5000) + 1000}
               </div>
-              <p className="text-sm text-muted-foreground mt-1">
+              <p className="text-xs text-muted-foreground mt-1">
                 Watching now
               </p>
             </CardContent>
           </Card>
 
-          <Card className="hover:shadow-lg transition-all hover:scale-[1.02] bg-gradient-to-br from-background to-muted/20">
+          <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Completed Today</CardTitle>
-              <div className="h-10 w-10 rounded-full bg-green-500/10 flex items-center justify-center">
-                <Trophy className="h-5 w-5 text-green-500" />
-              </div>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Completed Today</CardTitle>
+              <Trophy className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold text-green-600">{completedTournaments.length}</div>
-              <p className="text-sm text-muted-foreground mt-1">
+              <div className="text-2xl font-semibold">{completedTournaments.length}</div>
+              <p className="text-xs text-muted-foreground mt-1">
                 Finished battles
               </p>
             </CardContent>
@@ -249,12 +267,12 @@ const TournamentsPage = () => {
             {liveTournaments.length === 0 && waitingTournaments.length === 0 ? (
               <Card>
                 <CardContent className="py-16 text-center">
-                  <Swords className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="text-xl font-semibold mb-2">No Active Tournaments</h3>
-                  <p className="text-muted-foreground mb-6">
+                  <Swords className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="font-medium mb-2">No Active Tournaments</h3>
+                  <p className="text-sm text-muted-foreground mb-4">
                     Tournaments start automatically when bots join the queue
                   </p>
-                  <Button onClick={() => navigate('/queue')} size="lg" className="btn-gaming">
+                  <Button onClick={() => navigate('/queue')} size="sm">
                     <Bot className="mr-2 h-4 w-4" />
                     Join Queue Now
                   </Button>
@@ -266,59 +284,65 @@ const TournamentsPage = () => {
                 {liveTournaments.length > 0 && (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
-                      <h3 className="text-xl font-bold">Live Now</h3>
-                      <Badge className="bg-red-500/20 text-red-700">
-                        <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse mr-2" />
-                        {liveTournaments.length} LIVE
-                      </Badge>
+                      <h3 className="text-lg font-medium">Live Now</h3>
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                        {liveTournaments.length} Live
+                      </div>
                     </div>
                     
                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                       {liveTournaments.map((tournament) => (
-                        <Card key={tournament.id} className="hover:shadow-lg transition-all hover:scale-[1.02] border-red-500/20">
-                          <CardHeader>
+                        <Card key={tournament.id} className="hover:shadow-md transition-shadow">
+                          <CardHeader className="pb-3">
                             <div className="flex items-start justify-between">
                               <div>
-                                <div className="flex items-center gap-2 mb-1">
-                                  <span className="text-2xl">{GAME_TYPE_INFO[tournament.gameType]?.icon || '🎮'}</span>
-                                  <h3 className="text-lg font-bold">{tournament.name}</h3>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-lg">{GAME_TYPE_INFO[tournament.gameType]?.icon || '🎮'}</span>
+                                  <h3 className="font-medium">{tournament.name}</h3>
                                 </div>
-                                <p className="text-sm text-muted-foreground">
+                                <p className="text-xs text-muted-foreground mt-1">
                                   {GAME_TYPE_INFO[tournament.gameType]?.name || tournament.gameType}
                                 </p>
                               </div>
-                              <Badge className={getStatusColor(tournament.status)}>
-                                <Play className="h-3 w-3 mr-1" />
-                                LIVE
-                              </Badge>
+                              <div className="flex items-center gap-1">
+                                <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                                <span className={`text-xs font-medium ${getStatusColor(tournament.status)}`}>LIVE</span>
+                              </div>
                             </div>
                           </CardHeader>
                           <CardContent>
-                            <div className="grid grid-cols-2 gap-4 mb-4">
-                              <div>
-                                <p className="text-2xl font-bold text-primary">{tournament.players?.length || 0}/{tournament.maxPlayers}</p>
+                            <div className="grid grid-cols-2 gap-3 mb-3 text-sm">
+                              <div className="text-center p-2 bg-muted/50 rounded">
+                                <p className="font-semibold">{tournament.players?.length || 0}/{tournament.maxPlayers}</p>
                                 <p className="text-xs text-muted-foreground">Players</p>
                               </div>
-                              <div>
-                                <p className="text-2xl font-bold text-accent">{Math.floor(Math.random() * 1000) + 100}</p>
+                              <div className="text-center p-2 bg-muted/50 rounded">
+                                <p className="font-semibold">{Math.floor(Math.random() * 1000) + 100}</p>
                                 <p className="text-xs text-muted-foreground">Viewers</p>
                               </div>
                             </div>
                             
                             <div className="flex gap-2">
-                              <Button className="flex-1" asChild>
-                                <Link to={tournament.gameType === 'reverse-hangman' ? `/tournament/${tournament.id}/hangman` : `/tournament/${tournament.id}`}>
-                                  <Eye className="mr-2 h-4 w-4" />
+                              <Button size="sm" className="flex-1" asChild>
+                                <Link to={
+                                  tournament.gameType === 'reverse-hangman' 
+                                    ? `/tournament/${tournament.id}/hangman-server` 
+                                    : tournament.gameType === 'connect4'
+                                    ? `/tournament/${tournament.id}/connect4`
+                                    : `/tournament/${tournament.id}`
+                                }>
+                                  <Eye className="mr-2 h-3 w-3" />
                                   Watch Live
                                 </Link>
                               </Button>
                               {isAdmin && (
                                 <Button 
                                   variant="destructive" 
-                                  size="icon"
+                                  size="sm"
                                   onClick={() => setTournamentToDelete(tournament.id)}
                                 >
-                                  <Trash2 className="h-4 w-4" />
+                                  <Trash2 className="h-3 w-3" />
                                 </Button>
                               )}
                             </div>
@@ -333,44 +357,44 @@ const TournamentsPage = () => {
                 {waitingTournaments.length > 0 && (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
-                      <h3 className="text-xl font-bold">Starting Soon</h3>
-                      <Badge className="bg-yellow-500/20 text-yellow-700">
-                        <Clock className="h-3 w-3 mr-1" />
+                      <h3 className="text-lg font-medium">Starting Soon</h3>
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Clock className="h-3 w-3" />
                         {waitingTournaments.length} Waiting
-                      </Badge>
+                      </div>
                     </div>
                     
                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                       {waitingTournaments.map((tournament) => (
-                        <Card key={tournament.id} className="hover:shadow-lg transition-all hover:scale-[1.02] border-yellow-500/20">
-                          <CardHeader>
+                        <Card key={tournament.id} className="hover:shadow-md transition-shadow">
+                          <CardHeader className="pb-3">
                             <div className="flex items-start justify-between">
                               <div>
-                                <div className="flex items-center gap-2 mb-1">
-                                  <span className="text-2xl">{GAME_TYPE_INFO[tournament.gameType]?.icon || '🎮'}</span>
-                                  <h3 className="text-lg font-bold">{tournament.name}</h3>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-lg">{GAME_TYPE_INFO[tournament.gameType]?.icon || '🎮'}</span>
+                                  <h3 className="font-medium">{tournament.name}</h3>
                                 </div>
-                                <p className="text-sm text-muted-foreground">
+                                <p className="text-xs text-muted-foreground mt-1">
                                   {GAME_TYPE_INFO[tournament.gameType]?.name || tournament.gameType}
                                 </p>
                               </div>
-                              <Badge className={getStatusColor(tournament.status)}>
-                                <Clock className="h-3 w-3 mr-1" />
-                                Waiting
-                              </Badge>
+                              <div className="flex items-center gap-1">
+                                <Clock className="h-3 w-3 text-yellow-600" />
+                                <span className={`text-xs font-medium ${getStatusColor(tournament.status)}`}>Waiting</span>
+                              </div>
                             </div>
                           </CardHeader>
                           <CardContent>
                             <div className="space-y-3">
                               <div>
                                 <div className="flex justify-between items-center mb-1">
-                                  <span className="text-sm text-muted-foreground">Players</span>
-                                  <span className="font-bold">{tournament.players?.length || 0}/{tournament.maxPlayers}</span>
+                                  <span className="text-xs text-muted-foreground">Players</span>
+                                  <span className="text-sm font-medium">{tournament.players?.length || 0}/{tournament.maxPlayers}</span>
                                 </div>
-                                <Progress value={(tournament.players?.length || 0) / tournament.maxPlayers * 100} className="h-2" />
+                                <Progress value={(tournament.players?.length || 0) / tournament.maxPlayers * 100} className="h-1" />
                               </div>
                               
-                              <p className="text-sm text-center text-muted-foreground">
+                              <p className="text-xs text-center text-muted-foreground">
                                 Needs {tournament.minPlayers - (tournament.players?.length || 0)} more players
                               </p>
                             </div>
@@ -386,16 +410,16 @@ const TournamentsPage = () => {
 
           <TabsContent value="completed" className="space-y-6">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-bold">Recent Results</h3>
-              <Badge variant="outline">{completedTournaments.length} Completed</Badge>
+              <h3 className="text-lg font-medium">Recent Results</h3>
+              <span className="text-sm text-muted-foreground">{completedTournaments.length} Completed</span>
             </div>
             
             {completedTournaments.length === 0 ? (
               <Card>
                 <CardContent className="py-16 text-center">
-                  <Trophy className="h-16 w-16 text-muted-foreground mx-auto mb-4" />
-                  <h3 className="text-xl font-semibold mb-2">No Completed Tournaments Yet</h3>
-                  <p className="text-muted-foreground">
+                  <Trophy className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="font-medium mb-2">No Completed Tournaments Yet</h3>
+                  <p className="text-sm text-muted-foreground">
                     Completed tournament results will appear here
                   </p>
                 </CardContent>
@@ -403,17 +427,17 @@ const TournamentsPage = () => {
             ) : (
               <div className="grid gap-4">
                 {completedTournaments.map((tournament) => (
-                  <Card key={tournament.id} className="hover:shadow-lg transition-all hover:scale-[1.02]">
-                    <CardContent className="p-6">
+                  <Card key={tournament.id} className="hover:shadow-md transition-shadow">
+                    <CardContent className="p-4">
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                          <span className="text-3xl">{GAME_TYPE_INFO[tournament.gameType]?.icon || '🎮'}</span>
+                        <div className="flex items-center gap-3">
+                          <span className="text-xl">{GAME_TYPE_INFO[tournament.gameType]?.icon || '🎮'}</span>
                           <div>
-                            <h4 className="font-bold text-lg">{tournament.name}</h4>
-                            <p className="text-sm text-muted-foreground">
+                            <h4 className="font-medium">{tournament.name}</h4>
+                            <p className="text-xs text-muted-foreground">
                               {GAME_TYPE_INFO[tournament.gameType]?.name} • {tournament.maxPlayers} Players
                             </p>
-                            <p className="text-sm text-muted-foreground">
+                            <p className="text-xs text-muted-foreground">
                               Completed {tournament.completedAt ? formatDistanceToNow(new Date(tournament.completedAt), { addSuffix: true }) : 'recently'}
                             </p>
                           </div>
@@ -421,10 +445,10 @@ const TournamentsPage = () => {
                         {tournament.winner && (
                           <div className="text-right">
                             <div className="flex items-center gap-2">
-                              <Crown className="h-5 w-5 text-yellow-500" />
-                              <span className="font-bold text-lg">{tournament.winner.name}</span>
+                              <Crown className="h-4 w-4 text-yellow-500" />
+                              <span className="font-medium">{tournament.winner.name}</span>
                             </div>
-                            <p className="text-sm text-muted-foreground">Champion</p>
+                            <p className="text-xs text-muted-foreground">Champion</p>
                           </div>
                         )}
                       </div>

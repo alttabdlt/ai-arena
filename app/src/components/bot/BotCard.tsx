@@ -3,9 +3,16 @@ import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader } from '@ui/card';
 import { Badge } from '@ui/badge';
 import { Button } from '@ui/button';
-import { Bot, Trophy, Zap, Shield, Coins, Activity, Eye, Play, Package, Trash2 } from 'lucide-react';
+import { Bot, Trophy, Zap, Shield, Coins, Activity, Eye, Play, Package, Trash2, MoreVertical } from 'lucide-react';
 import { StardewSpriteSelector, BotPersonality } from '@/services/stardewSpriteSelector';
 import { BotInventoryModal } from './BotInventoryModal';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@ui/dropdown-menu';
 
 interface BotData {
   id: string;
@@ -44,40 +51,25 @@ export function BotCard({ bot, onQueue, onManage, onDelete }: BotCardProps) {
     imageData: ''
   });
   const [spriteSelector] = useState(() => new StardewSpriteSelector());
-  const [isHovered, setIsHovered] = useState(false);
 
   useEffect(() => {
-    console.log('BotCard: Sprite generation effect triggered', { 
-      botId: bot.id, 
-      personality: bot.personality,
-      hasAvatar: !!bot.avatar,
-      avatarPrefix: bot.avatar?.substring(0, 50)
-    });
-    
     // Use existing avatar if available
     if (bot.avatar && bot.avatar.startsWith('data:image')) {
-      console.log('BotCard: Using existing avatar');
       setSpriteData({ imageData: bot.avatar });
     } else {
       // Select sprite based on personality
-      console.log('BotCard: Generating new sprite');
       spriteSelector.selectSprite(
         bot.personality as BotPersonality,
         bot.id // Use bot ID as seed for consistent sprites
       ).then(sprite => {
-        console.log('BotCard: Sprite generated', { 
-          imageDataLength: sprite.imageData.length,
-          imageDataPrefix: sprite.imageData.substring(0, 50)
-        });
         setSpriteData({ 
           imageData: sprite.imageData 
         });
       }).catch(error => {
-        console.error('BotCard: Failed to generate sprite', error);
+        console.error('Failed to generate sprite', error);
       });
     }
   }, [bot.avatar, bot.personality, bot.id, spriteSelector]);
-
 
   const formatEarnings = (earnings: string) => {
     const num = parseFloat(earnings);
@@ -90,7 +82,6 @@ export function BotCard({ bot, onQueue, onManage, onDelete }: BotCardProps) {
   };
 
   const formatModelType = (modelType: string) => {
-    // Handle common model types
     const modelMap: Record<string, string> = {
       'DEEPSEEK_CHAT': 'DeepSeek',
       'GPT_4O': 'GPT-4o',
@@ -106,19 +97,6 @@ export function BotCard({ bot, onQueue, onManage, onDelete }: BotCardProps) {
       .replace(/\b\w/g, (l) => l.toUpperCase());
   };
 
-  const getPersonalityColor = (personality: string) => {
-    switch (personality) {
-      case 'CRIMINAL':
-        return 'text-red-500 border-red-500 bg-red-500/10';
-      case 'GAMBLER':
-        return 'text-yellow-500 border-yellow-500 bg-yellow-500/10';
-      case 'WORKER':
-        return 'text-green-500 border-green-500 bg-green-500/10';
-      default:
-        return 'text-muted-foreground border-border';
-    }
-  };
-
   const getPersonalityIcon = (personality: string) => {
     switch (personality) {
       case 'CRIMINAL':
@@ -132,217 +110,140 @@ export function BotCard({ bot, onQueue, onManage, onDelete }: BotCardProps) {
     }
   };
 
+  const unopenedLootboxes = bot.lootboxRewards?.filter(r => !r.opened).length || 0;
+
   return (
-    <Card 
-      className="hover:shadow-lg transition-all duration-200 cursor-pointer overflow-hidden"
-      onMouseEnter={() => {
-        setIsHovered(true);
-      }}
-      onMouseLeave={() => {
-        setIsHovered(false);
-      }}
-      onClick={() => navigate(`/bot/${bot.id}`)}
-    >
+    <Card className="overflow-hidden hover:shadow-md transition-shadow">
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between">
           <div className="flex-1">
-            <h3 className="font-semibold text-lg truncate">{bot.name}</h3>
+            <h3 className="font-medium text-base">{bot.name}</h3>
             <div className="flex items-center gap-2 mt-1">
-              <Badge variant="outline" className="text-xs">
-                #{bot.tokenId}
-              </Badge>
-              <Badge variant="outline" className={`text-xs ${getPersonalityColor(bot.personality)}`}>
-                <span className="mr-1">{getPersonalityIcon(bot.personality)}</span>
-                {bot.personality}
-              </Badge>
+              <span className="text-xs text-muted-foreground">#{bot.tokenId}</span>
+              <span className="text-xs text-muted-foreground">•</span>
+              <span className="text-xs text-muted-foreground">{formatModelType(bot.modelType)}</span>
             </div>
           </div>
-          {bot.isActive ? (
-            <Badge variant="default" className="text-xs">
-              <Activity className="h-3 w-3 mr-1" />
-              Active
-            </Badge>
-          ) : (
-            <Badge variant="secondary" className="text-xs">
-              <Activity className="h-3 w-3 mr-1 opacity-50" />
-              Inactive
-            </Badge>
-          )}
+          <div className="flex items-center gap-1">
+            {bot.isActive && (
+              <div className="w-2 h-2 rounded-full bg-green-500" title="Active" />
+            )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => navigate(`/bot/${bot.id}`)}>
+                  <Eye className="mr-2 h-4 w-4" />
+                  View Details
+                </DropdownMenuItem>
+                {bot.isActive && !bot.queuePosition && onQueue && (
+                  <DropdownMenuItem onClick={onQueue}>
+                    <Play className="mr-2 h-4 w-4" />
+                    Queue for Tournament
+                  </DropdownMenuItem>
+                )}
+                {!bot.isActive && onManage && (
+                  <DropdownMenuItem onClick={onManage}>
+                    <Zap className="mr-2 h-4 w-4" />
+                    Activate Bot
+                  </DropdownMenuItem>
+                )}
+                {!bot.isDemo && onDelete && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={onDelete} className="text-destructive">
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Delete Bot
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
       </CardHeader>
       
       <CardContent className="space-y-4">
         {/* Sprite Display */}
         <div className="flex justify-center">
-          <div className="relative group">
-            <div className="absolute inset-0 bg-gradient-to-t from-primary/20 to-transparent rounded-lg opacity-0 group-hover:opacity-100 transition-opacity" />
-            {spriteData.imageData && (
-              <div 
-                className="w-32 h-32 bg-muted rounded-lg flex items-center justify-center"
+          {spriteData.imageData && (
+            <div 
+              className="w-24 h-24 bg-muted rounded-lg flex items-center justify-center"
+              style={{
+                imageRendering: 'pixelated'
+              }}
+            >
+              <img 
+                src={spriteData.imageData}
+                alt={bot.name}
+                className="w-full h-full object-contain"
                 style={{
                   imageRendering: 'pixelated'
                 }}
-              >
-                <img 
-                  src={spriteData.imageData}
-                  alt={bot.name}
-                  className="w-full h-full object-contain"
-                  style={{
-                    imageRendering: 'pixelated'
-                  }}
-                />
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Stats */}
-        <div className="grid grid-cols-2 gap-2">
-          <div className="flex items-center justify-between p-2 bg-muted rounded">
-            <span className="text-xs text-muted-foreground flex items-center gap-1">
-              <Trophy className="h-3 w-3" />
-              W/L
-            </span>
-            <span className="text-sm font-medium">
-              {bot.stats.wins}/{bot.stats.losses}
-            </span>
-          </div>
-          <div className="flex items-center justify-between p-2 bg-muted rounded">
-            <span className="text-xs text-muted-foreground flex items-center gap-1">
-              <Zap className="h-3 w-3" />
-              Rate
-            </span>
-            <span className="text-sm font-medium">
-              {bot.stats.winRate.toFixed(1)}%
-            </span>
-          </div>
-          <div className="flex items-center justify-between p-2 bg-muted rounded">
-            <span className="text-xs text-muted-foreground flex items-center gap-1">
-              <Coins className="h-3 w-3" />
-              Earned
-            </span>
-            <span className="text-sm font-medium">
-              {formatEarnings(bot.stats.earnings)}
-            </span>
-          </div>
-          <div className="flex items-center justify-between p-2 bg-muted rounded">
-            <span className="text-xs text-muted-foreground flex items-center gap-1">
-              <Shield className="h-3 w-3" />
-              Model
-            </span>
-            <span className="text-sm font-medium truncate max-w-[80px]" title={bot.modelType}>
-              {formatModelType(bot.modelType)}
-            </span>
-          </div>
+              />
+            </div>
+          )}
         </div>
 
         {/* Queue Status */}
         {bot.queuePosition && (
-          <div className="flex items-center justify-center p-2 bg-primary/10 rounded-lg">
-            <Badge variant="outline" className="text-xs">
+          <div className="bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-900/50 rounded-md p-2 text-center">
+            <p className="text-xs font-medium text-yellow-800 dark:text-yellow-200">
               Queue Position: #{bot.queuePosition}
-            </Badge>
+            </p>
           </div>
         )}
 
-        {/* Inventory Preview - Always visible for consistency */}
-        <div className="grid grid-cols-2 gap-2">
-          <div className="flex items-center justify-between p-2 bg-muted rounded">
-            <span className="text-xs text-muted-foreground flex items-center gap-1">
-              <Package className="h-3 w-3" />
-              Lootboxes
-            </span>
-            <span className="text-sm font-medium">
-              {bot.lootboxRewards?.filter(r => !r.opened).length || 0}
-            </span>
+        {/* Stats Grid */}
+        <div className="grid grid-cols-2 gap-2 text-sm">
+          <div className="flex justify-between items-center p-2 bg-muted/50 rounded">
+            <span className="text-muted-foreground">Win Rate</span>
+            <span className="font-medium">{bot.stats.winRate.toFixed(1)}%</span>
           </div>
-          <div className="flex items-center justify-between p-2 bg-muted rounded">
-            <span className="text-xs text-muted-foreground flex items-center gap-1">
-              <Shield className="h-3 w-3" />
-              Equipped
-            </span>
-            <span className="text-sm font-medium">
-              {bot.equipment?.filter(e => e.equipped).length || 0}
-            </span>
+          <div className="flex justify-between items-center p-2 bg-muted/50 rounded">
+            <span className="text-muted-foreground">W/L</span>
+            <span className="font-medium">{bot.stats.wins}/{bot.stats.losses}</span>
+          </div>
+          <div className="flex justify-between items-center p-2 bg-muted/50 rounded">
+            <span className="text-muted-foreground">Earnings</span>
+            <span className="font-medium">{formatEarnings(bot.stats.earnings)}</span>
+          </div>
+          <div className="flex justify-between items-center p-2 bg-muted/50 rounded">
+            <span className="text-muted-foreground">Type</span>
+            <span className="font-medium">{getPersonalityIcon(bot.personality)} {bot.personality}</span>
           </div>
         </div>
 
         {/* Actions */}
-        <div className="space-y-2" onClick={(e) => e.stopPropagation()}>
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              className="flex-1"
-              onClick={(e) => {
-                e.stopPropagation();
-                navigate(`/bot/${bot.id}`);
-              }}
-            >
-              <Eye className="h-3 w-3 mr-1" />
-              View
-            </Button>
-            <BotInventoryModal 
-              bot={bot}
-              trigger={
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="flex-1"
-                >
-                  <Package className="h-3 w-3 mr-1" />
-                  Inventory
-                  {bot.lootboxRewards?.filter(r => !r.opened).length ? (
-                    <Badge variant="default" className="ml-1 h-5 px-1.5 text-[10px]">
-                      {bot.lootboxRewards.filter(r => !r.opened).length}
-                    </Badge>
-                  ) : null}
-                </Button>
-              }
-            />
-          </div>
-          {!bot.isDemo && onDelete && (
-            <Button
-              size="sm"
-              variant="destructive"
-              className="w-full"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-            >
-              <Trash2 className="h-3 w-3 mr-1" />
-              Delete Bot
-            </Button>
-          )}
-          {bot.isActive && !bot.queuePosition && (
-            <Button
-              size="sm"
-              variant="default"
-              className="w-full"
-              onClick={(e) => {
-                e.stopPropagation();
-                onQueue?.();
-              }}
-            >
-              <Play className="h-3 w-3 mr-1" />
-              Queue for Tournament
-            </Button>
-          )}
-          {!bot.isActive && (
-            <Button
-              size="sm"
-              variant="secondary"
-              className="w-full"
-              onClick={(e) => {
-                e.stopPropagation();
-                onManage?.();
-              }}
-            >
-              <Bot className="h-3 w-3 mr-1" />
-              Activate Bot
-            </Button>
-          )}
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="flex-1"
+            onClick={() => navigate(`/bot/${bot.id}`)}
+          >
+            View Details
+          </Button>
+          <BotInventoryModal 
+            bot={bot}
+            trigger={
+              <Button
+                size="sm"
+                variant="outline"
+                className="relative"
+              >
+                <Package className="h-4 w-4" />
+                {unopenedLootboxes > 0 && (
+                  <span className="absolute -top-1 -right-1 h-5 w-5 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center">
+                    {unopenedLootboxes}
+                  </span>
+                )}
+              </Button>
+            }
+          />
         </div>
       </CardContent>
     </Card>

@@ -1,6 +1,7 @@
 import { gql } from 'graphql-tag';
 import { economyTypeDefs } from './economy';
 import { metaverseSyncTypeDefs } from './metaverseSync';
+import { deploymentTypeDefs } from './deployment';
 
 const baseTypeDefs = gql`
   scalar DateTime
@@ -1102,4 +1103,4 @@ const baseTypeDefs = gql`
 `;
 
 // Export merged type definitions
-export const typeDefs = [baseTypeDefs, economyTypeDefs, metaverseSyncTypeDefs];
+export const typeDefs = [baseTypeDefs, economyTypeDefs, metaverseSyncTypeDefs, deploymentTypeDefs];

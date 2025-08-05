@@ -80,6 +80,18 @@ export class Agent {
       this.lastInviteAttempt && now < this.lastInviteAttempt + CONVERSATION_COOLDOWN;
     const doingActivity = player.activity && player.activity.until > now;
     if (doingActivity && (conversation || player.pathfinding)) {
+      // Log activity interruption before ending it
+      const playerDesc = game.playerDescriptions.get(player.id);
+      if (playerDesc && player.activity) {
+        game.scheduleOperation('logActivityEnd', {
+          worldId: game.worldId,
+          playerId: player.id as string,
+          agentId: this.id as string,
+          playerName: playerDesc.name,
+          activity: player.activity.description,
+          zone: player.currentZone || 'downtown',
+        });
+      }
       player.activity!.until = now;
     }
     // If we're not in a conversation, do something.
@@ -327,6 +339,21 @@ export async function runAgentOperation(ctx: MutationCtx, operation: string, arg
       break;
     case 'agentSelectZoneActivity':
       reference = internal.aiTown.agentOperations.agentSelectZoneActivity;
+      break;
+    case 'logConversationStart':
+      reference = internal.aiTown.agentOperations.logConversationStart;
+      break;
+    case 'logConversationEnd':
+      reference = internal.aiTown.agentOperations.logConversationEnd;
+      break;
+    case 'logActivityStart':
+      reference = internal.aiTown.agentOperations.logActivityStart;
+      break;
+    case 'logZoneChange':
+      reference = internal.aiTown.agentOperations.logZoneChange;
+      break;
+    case 'logActivityEnd':
+      reference = internal.aiTown.agentOperations.logActivityEnd;
       break;
     default:
       throw new Error(`Unknown operation: ${operation}`);

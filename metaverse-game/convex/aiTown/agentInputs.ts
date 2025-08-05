@@ -70,6 +70,18 @@ export const agentInputs = {
       }
       if (args.activity) {
         player.activity = args.activity;
+        // Log activity start
+        const zone = player.currentZone || 'downtown';
+        const playerDescription = game.playerDescriptions.get(player.id);
+        if (playerDescription) {
+          game.scheduleOperation('logActivityStart', {
+            worldId: game.worldId,
+            playerId: player.id as string,
+            playerName: playerDescription.name,
+            activity: args.activity.description,
+            zone: zone,
+          });
+        }
       }
       return null;
     },

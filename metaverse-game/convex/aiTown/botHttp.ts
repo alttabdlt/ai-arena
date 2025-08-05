@@ -1,7 +1,26 @@
 import { v } from 'convex/values';
-import { httpAction, internalMutation } from '../_generated/server';
-import { internal } from '../_generated/api';
+import { httpAction, internalMutation, query } from '../_generated/server';
+import { api, internal } from '../_generated/api';
 import { insertInput } from './insertInput';
+import { Id } from '../_generated/dataModel';
+
+// Query to check input status for polling
+export const getInputStatus = query({
+  args: {
+    inputId: v.id('inputs'),
+  },
+  handler: async (ctx, args) => {
+    const input = await ctx.db.get(args.inputId);
+    if (!input) {
+      throw new Error('Input not found');
+    }
+    
+    return {
+      status: input.returnValue ? 'completed' : 'pending',
+      returnValue: input.returnValue,
+    };
+  },
+});
 
 // Handle bot registration from AI Arena
 export const handleBotRegistration = httpAction(async (ctx, request) => {
@@ -106,7 +125,7 @@ export const handleBotStatsSync = httpAction(async (ctx, request) => {
   }
 
   try {
-    // Update bot stats
+    // Sync bot stats
     await ctx.runMutation(internal.aiTown.botHttp.syncBotStats, {
       agentId,
       worldId,
@@ -300,194 +319,146 @@ export const handleGetBotPosition = httpAction(async (ctx, request) => {
       });
     }
 
-    // Parse the agent ID to get the numeric ID
-    const agentNumericId = parseInt(agentId.split(':')[1], 10);
-    if (isNaN(agentNumericId)) {
-      return new Response(JSON.stringify({ 
-        error: 'Invalid agent ID format' 
-      }), {
+    // Validate worldId format
+    if (typeof worldId !== 'string' || !worldId.match(/^[a-z0-9]{32}$/)) {
+      return new Response(JSON.stringify({ error: 'Invalid worldId format' }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
       });
     }
 
-    // Validate worldId format and convert to ID
-    if (!worldId || worldId.length !== 32) {
-      return new Response(JSON.stringify({ 
-        error: 'Invalid worldId format' 
-      }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-    
-    // For HTTP actions, we'll use a simpler approach
-    // In a real implementation, you'd want to add a proper query endpoint
-    // For now, return a placeholder response
-    return new Response(JSON.stringify({
-      position: {
-        x: Math.floor(Math.random() * 50),
-        y: Math.floor(Math.random() * 50),
-      },
-      zone: 'downtown', // Default zone for now
+    // Get bot position from the world using the query defined below
+    const position = await ctx.runQuery(api.aiTown.botHttp.getBotPosition, {
+      worldId,
+      agentId,
+    });
+
+    return new Response(JSON.stringify({ 
+      success: true,
+      position,
     }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (error: any) {
-    console.error('Error getting bot position:', error);
-    
-    return new Response(JSON.stringify({ 
-      error: error.message || 'Failed to get bot position' 
-    }), {
+    console.error('Get bot position error:', error);
+    return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
   }
 });
 
-// Internal mutation to sync lootboxes
+// Query to get bot position
+export const getBotPosition = query({
+  args: {
+    worldId: v.string(),
+    agentId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    // Validate worldId format
+    if (!args.worldId || typeof args.worldId !== 'string') {
+      throw new Error('Invalid worldId provided');
+    }
+    
+    // Validate it matches the expected format (32 character alphanumeric)
+    if (!args.worldId.match(/^[a-z0-9]{32}$/)) {
+      console.error(`Invalid worldId format: ${args.worldId}`);
+      throw new Error(`Invalid worldId format: ${args.worldId}`);
+    }
+    
+    const worldId = args.worldId as Id<'worlds'>;
+    const world = await ctx.db.get(worldId);
+    if (!world) {
+      console.error(`World not found with id: ${args.worldId}`);
+      throw new Error(`World not found with id: ${args.worldId}`);
+    }
+    
+    // Find the agent in the world
+    const agent = world.agents.find((a: any) => a.id === args.agentId);
+    if (!agent) {
+      throw new Error('Agent not found');
+    }
+    
+    // Get the player associated with this agent
+    const player = world.players.find((p: any) => p.id === agent.playerId);
+    if (!player) {
+      throw new Error('Player not found');
+    }
+    
+    return {
+      x: player.position?.x || 0,
+      y: player.position?.y || 0,
+      zone: player.currentZone || 'suburb',
+      worldInstanceId: worldId,
+    };
+  },
+});
+
+// Internal mutation to sync bot lootboxes
 export const syncBotLootboxes = internalMutation({
   args: {
     aiArenaBotId: v.string(),
-    lootboxes: v.array(
-      v.object({
-        id: v.string(),
-        rarity: v.union(
-          v.literal('COMMON'),
-          v.literal('UNCOMMON'),
-          v.literal('RARE'),
-          v.literal('EPIC'),
-          v.literal('LEGENDARY')
-        ),
-        equipmentRewards: v.array(
-          v.object({
-            name: v.string(),
-            type: v.union(
-              v.literal('WEAPON'),
-              v.literal('ARMOR'),
-              v.literal('TOOL'),
-              v.literal('ACCESSORY')
-            ),
-            rarity: v.string(),
-            powerBonus: v.number(),
-            defenseBonus: v.number(),
-          })
-        ),
-        furnitureRewards: v.array(
-          v.object({
-            name: v.string(),
-            type: v.union(
-              v.literal('DECORATION'),
-              v.literal('FUNCTIONAL'),
-              v.literal('DEFENSIVE'),
-              v.literal('TROPHY')
-            ),
-            rarity: v.string(),
-            scoreBonus: v.number(),
-            defenseBonus: v.number(),
-          })
-        ),
-        currencyReward: v.number(),
-      })
-    ),
+    lootboxes: v.array(v.object({
+      id: v.string(),
+      rarity: v.string(),
+      items: v.array(v.object({
+        type: v.string(),
+        name: v.string(),
+        quantity: v.number(),
+        value: v.optional(v.number()),
+      })),
+      openedAt: v.optional(v.string()),
+    })),
   },
   handler: async (ctx, args) => {
-    const { aiArenaBotId, lootboxes } = args;
+    console.log('Syncing lootboxes for bot:', args.aiArenaBotId);
     
-    // Find all agents with this aiArenaBotId across all worlds
-    const agentDescriptions = await ctx.db
-      .query('agentDescriptions')
-      .collect();
+    // Find all worlds and check for this bot
+    const worlds = await ctx.db.query('worlds').collect();
     
-    // Find agents that match this AI Arena bot
-    let processedCount = 0;
-    
-    for (const agentDesc of agentDescriptions) {
-      const world = await ctx.db.get(agentDesc.worldId);
-      if (!world) continue;
+    for (const world of worlds) {
+      // Find agents with this aiArenaBotId in this world
+      const agent = world.agents.find((a: any) => a.aiArenaBotId === args.aiArenaBotId);
       
-      const agent = world.agents.find(a => a.id === agentDesc.agentId && a.aiArenaBotId === aiArenaBotId);
       if (agent) {
-        const player = world.players.find(p => p.id === agent.playerId);
-        if (!player) continue;
-        
-        // Process each lootbox
-        for (const lootbox of lootboxes) {
-          // Add lootbox to queue for processing
-          await ctx.db.insert('lootboxQueue', {
-            worldId: agentDesc.worldId,
-            playerId: agent.playerId,
-            aiArenaBotId: aiArenaBotId,
-            lootboxId: lootbox.id,
-            rarity: lootbox.rarity,
-            rewards: [
-              ...lootbox.equipmentRewards.map(e => ({
-                itemId: `${lootbox.id}-${e.name.replace(/\s+/g, '-').toLowerCase()}`,
-                name: e.name,
-                type: e.type,
-                rarity: e.rarity,
-                stats: {
-                  powerBonus: e.powerBonus,
-                  defenseBonus: e.defenseBonus,
-                  scoreBonus: undefined,
-                },
-              })),
-              ...lootbox.furnitureRewards.map(f => ({
-                itemId: `${lootbox.id}-${f.name.replace(/\s+/g, '-').toLowerCase()}`,
-                name: f.name,
-                type: 'FURNITURE',
-                rarity: f.rarity,
-                stats: {
-                  powerBonus: 0,
-                  defenseBonus: f.defenseBonus,
-                  scoreBonus: f.scoreBonus,
-                },
-              })),
-            ],
-            processed: false,
-            createdAt: Date.now(),
-          });
-          
-          // Ensure player has an inventory
-          let inventory = await ctx.db
-            .query('inventories')
-            .withIndex('player', q => q.eq('worldId', agentDesc.worldId).eq('playerId', agent.playerId))
+        // Found the agent, now sync lootboxes
+        for (const lootbox of args.lootboxes) {
+          // Check if this lootbox already exists
+          const existingItem = await ctx.db
+            .query('items')
+            .withIndex('owner', (q: any) => q.eq('worldId', world._id).eq('ownerId', agent.playerId))
+            .filter(q => q.eq(q.field('itemId'), lootbox.id))
             .first();
             
-          if (!inventory) {
-            // Create inventory for this player
-            await ctx.db.insert('inventories', {
-              worldId: agentDesc.worldId,
-              playerId: agent.playerId,
-              maxSlots: 50, // Default inventory size
-              usedSlots: 0,
-              lastUpdated: Date.now(),
-              totalValue: 0,
-            });
+          if (!existingItem) {
+            // Create inventory items for each item in the lootbox
+            for (const item of lootbox.items) {
+              await ctx.db.insert('items', {
+                worldId: world._id,
+                ownerId: agent.playerId,
+                itemId: `${lootbox.id}_${item.name}`,
+                name: item.name,
+                type: item.type as any,
+                rarity: lootbox.rarity as any,
+                powerBonus: 0,
+                defenseBonus: 0,
+                equipped: false,
+                metadata: {
+                  description: `From ${lootbox.rarity} lootbox`,
+                  tradeable: true,
+                },
+                createdAt: Date.now(),
+              });
+            }
           }
-          
-          // Log activity
-          await ctx.db.insert('activityLogs', {
-            worldId: agentDesc.worldId,
-            playerId: agent.playerId,
-            agentId: agent.id,
-            aiArenaBotId: aiArenaBotId,
-            timestamp: Date.now(),
-            type: 'item_collected',
-            description: `Received ${lootbox.rarity} lootbox with ${lootbox.equipmentRewards.length + lootbox.furnitureRewards.length} items`,
-            emoji: '📦',
-            details: {
-              item: `${lootbox.rarity} Lootbox`,
-              amount: lootbox.equipmentRewards.length + lootbox.furnitureRewards.length,
-            },
-          });
         }
-        processedCount++;
+        
+        return { count: args.lootboxes.length };
       }
     }
     
-    return { count: processedCount };
+    throw new Error('Bot not found in any world');
   },
 });
 
@@ -495,24 +466,26 @@ export const syncBotLootboxes = internalMutation({
 export const handleBotDeletion = httpAction(async (ctx, request) => {
   const body = await request.json();
   
-  const { worldId, agentId, aiArenaBotId } = body;
+  const { aiArenaBotId } = body;
 
-  if (!worldId || !agentId || !aiArenaBotId) {
-    return new Response(JSON.stringify({ error: 'Missing required fields' }), {
+  if (!aiArenaBotId) {
+    return new Response(JSON.stringify({ error: 'Missing required field: aiArenaBotId' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     });
   }
 
   try {
-    // Delete the agent via internal mutation
-    const result = await ctx.runMutation(internal.aiTown.botHttp.deleteBotAgent, {
-      worldId,
-      agentId,
+    // Delete the bot from all worlds
+    const result = await ctx.runMutation(internal.aiTown.botHttp.deleteBotFromWorlds, {
       aiArenaBotId,
     });
 
-    return new Response(JSON.stringify(result), {
+    return new Response(JSON.stringify({ 
+      success: true,
+      message: 'Bot deleted from metaverse',
+      deletedCount: result.deletedCount,
+    }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -525,145 +498,57 @@ export const handleBotDeletion = httpAction(async (ctx, request) => {
   }
 });
 
-// Internal mutation to delete a bot agent
-export const deleteBotAgent = internalMutation({
+// Internal mutation to delete bot from all worlds
+export const deleteBotFromWorlds = internalMutation({
   args: {
-    worldId: v.string(),
-    agentId: v.string(),
     aiArenaBotId: v.string(),
   },
   handler: async (ctx, args) => {
-    const { worldId: worldIdStr, agentId, aiArenaBotId } = args;
+    console.log('Deleting bot from all worlds:', args.aiArenaBotId);
     
-    // Validate worldId format
-    if (!worldIdStr || worldIdStr.length !== 32) {
-      throw new Error('Invalid worldId format');
-    }
+    let deletedCount = 0;
     
-    const worldId = worldIdStr as any;
+    // Find all worlds
+    const worlds = await ctx.db.query('worlds').collect();
     
-    // Get the world
-    const world = await ctx.db.get(worldId);
-    if (!world) {
-      throw new Error('World not found');
-    }
-    
-    // Cast world to have the proper structure
-    const worldData = world as any;
-
-    // Find the agent in the world
-    const agent = worldData.agents?.find((a: any) => a.id === agentId && a.aiArenaBotId === aiArenaBotId);
-    if (!agent) {
-      throw new Error('Agent not found in world');
-    }
-
-    // Delete related data first
-    
-    // 1. Delete agent descriptions
-    const agentDesc = await ctx.db
-      .query('agentDescriptions')
-      .withIndex('worldId', (q: any) => q.eq('worldId', worldId).eq('agentId', agentId))
-      .first();
-    if (agentDesc) {
-      await ctx.db.delete(agentDesc._id);
-    }
-
-    // 2. Delete from archived conversations involving this player
-    const archivedConversations = await ctx.db
-      .query('archivedConversations')
-      .withIndex('worldId', (q: any) => q.eq('worldId', worldId))
-      .collect();
-    
-    for (const conv of archivedConversations) {
-      if (conv.participants.includes(agent.playerId)) {
-        await ctx.db.delete(conv._id);
+    for (const world of worlds) {
+      // Find agents with this aiArenaBotId in this world
+      const agent = world.agents.find((a: any) => a.aiArenaBotId === args.aiArenaBotId);
+      
+      if (agent) {
+        // Remove the agent from the world
+        const updatedAgents = world.agents.filter((a: any) => a.id !== agent.id);
+        const updatedPlayers = world.players.filter((p: any) => p.id !== agent.playerId);
+        
+        await ctx.db.patch(world._id, {
+          agents: updatedAgents,
+          players: updatedPlayers,
+        });
+        
+        // Delete agent description if it exists
+        const agentDesc = await ctx.db
+          .query('agentDescriptions')
+          .withIndex('worldId', (q: any) => q.eq('worldId', world._id).eq('agentId', agent.id))
+          .first();
+          
+        if (agentDesc) {
+          await ctx.db.delete(agentDesc._id);
+        }
+        
+        // Delete any inventory items
+        const inventoryItems = await ctx.db
+          .query('items')
+          .withIndex('owner', (q: any) => q.eq('worldId', world._id).eq('ownerId', agent.playerId))
+          .collect();
+          
+        for (const item of inventoryItems) {
+          await ctx.db.delete(item._id);
+        }
+        
+        deletedCount++;
       }
     }
-
-    // 3. Delete activity logs for this player
-    const activityLogs = await ctx.db
-      .query('activityLogs')
-      .withIndex('player', (q: any) => q.eq('worldId', worldId).eq('playerId', agent.playerId))
-      .collect();
     
-    for (const log of activityLogs) {
-      await ctx.db.delete(log._id);
-    }
-
-    // 4. Delete inventory
-    const inventory = await ctx.db
-      .query('inventories')
-      .withIndex('player', (q: any) => q.eq('worldId', worldId).eq('playerId', agent.playerId))
-      .first();
-    if (inventory) {
-      await ctx.db.delete(inventory._id);
-    }
-
-    // 5. Delete items
-    const items = await ctx.db
-      .query('items')
-      .withIndex('owner', (q: any) => q.eq('worldId', worldId).eq('ownerId', agent.playerId))
-      .collect();
-    
-    for (const item of items) {
-      await ctx.db.delete(item._id);
-    }
-
-    // 6. Delete houses
-    const houses = await ctx.db
-      .query('houses')
-      .withIndex('owner', (q: any) => q.eq('worldId', worldId).eq('ownerId', agent.playerId))
-      .collect();
-    
-    for (const house of houses) {
-      await ctx.db.delete(house._id);
-    }
-
-    // 7. Delete lootbox queue entries
-    const lootboxes = await ctx.db
-      .query('lootboxQueue')
-      .withIndex('player', (q: any) => q.eq('worldId', worldId).eq('playerId', agent.playerId))
-      .collect();
-    
-    for (const lootbox of lootboxes) {
-      await ctx.db.delete(lootbox._id);
-    }
-
-    // 8. Remove agent from world arrays
-    const updatedAgents = worldData.agents?.filter((a: any) => a.id !== agentId) || [];
-    const updatedPlayers = worldData.players?.filter((p: any) => p.id !== agent.playerId) || [];
-    const updatedConversations = worldData.conversations?.filter((c: any) => 
-      !c.participants?.includes(agent.playerId)
-    ) || [];
-    
-    await ctx.db.patch(worldId, {
-      agents: updatedAgents,
-      players: updatedPlayers,
-      conversations: updatedConversations,
-    });
-
-    // 9. Archive the agent and player if needed
-    await ctx.db.insert('archivedAgents', {
-      worldId,
-      ...agent
-    });
-    
-    const player = worldData.players?.find((p: any) => p.id === agent.playerId);
-    if (player) {
-      await ctx.db.insert('archivedPlayers', {
-        worldId,
-        ...player
-      });
-    }
-
-    // Log the deletion
-    console.log(`✅ Deleted bot agent: ${agentId} (AI Arena Bot: ${aiArenaBotId})`);
-
-    return {
-      success: true,
-      message: 'Bot agent deleted successfully',
-      deletedAgentId: agentId,
-      deletedPlayerId: agent.playerId,
-    };
+    return { deletedCount };
   },
 });

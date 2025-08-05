@@ -13,6 +13,7 @@ import { Badge } from '@ui/badge';
 import { Bot, Wallet, Brain, Zap, AlertCircle, Info, CheckCircle, Upload, CheckCircle2, Loader2 } from 'lucide-react';
 import { useToast } from '@shared/hooks/use-toast';
 import { Alert, AlertDescription } from '@ui/alert';
+import { Checkbox } from '@ui/checkbox';
 import { DEPLOY_BOT } from '@/graphql/mutations/deployBot';
 import { REGISTER_BOT_IN_METAVERSE } from '@/graphql/mutations/metaverse';
 import { useNavigate } from 'react-router-dom';
@@ -56,6 +57,7 @@ export default function Deploy() {
     modelType: '',
     personality: ''
   });
+  const [deployToMetaverse, setDeployToMetaverse] = useState(true);
   const [promptLength, setPromptLength] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>();
@@ -126,32 +128,42 @@ export default function Deploy() {
         const botId = result.data?.deployBot?.id;
         
         if (botId) {
-          // Update deployment state to show metaverse registration
-          setDeploymentState('registering-metaverse');
-          toast({
-            title: "Bot Deployed!",
-            description: "Registering your bot in the metaverse...",
-          });
-          
-          try {
-            // Register bot in metaverse
-            await registerBotInMetaverse({
-              variables: { botId },
+          // Only register in metaverse if checkbox is checked
+          if (deployToMetaverse) {
+            // Update deployment state to show metaverse registration
+            setDeploymentState('registering-metaverse');
+            toast({
+              title: "Bot Deployed!",
+              description: "Registering your bot in the metaverse...",
             });
             
+            try {
+              // Register bot in metaverse
+              await registerBotInMetaverse({
+                variables: { botId },
+              });
+              
+              setDeploymentState('success');
+              toast({
+                title: "Success!",
+                description: "Your bot is now active in the AI Arena metaverse!",
+              });
+            } catch (metaverseError: any) {
+              // Still consider deployment successful even if metaverse registration fails
+              console.error('Metaverse registration error:', metaverseError);
+              setDeploymentState('success');
+              toast({
+                title: "Bot Deployed",
+                description: "Bot created successfully. Metaverse registration will be retried automatically.",
+                variant: "default"
+              });
+            }
+          } else {
+            // Skip metaverse registration
             setDeploymentState('success');
             toast({
-              title: "Success!",
-              description: "Your bot is now active in the AI Arena metaverse!",
-            });
-          } catch (metaverseError: any) {
-            // Still consider deployment successful even if metaverse registration fails
-            console.error('Metaverse registration error:', metaverseError);
-            setDeploymentState('success');
-            toast({
-              title: "Bot Deployed",
-              description: "Bot created successfully. Metaverse registration will be retried automatically.",
-              variant: "default"
+              title: "Bot Deployed!",
+              description: "Your bot has been successfully deployed. You can register it in the metaverse later from the bot details page.",
             });
           }
         } else {
@@ -778,6 +790,31 @@ export default function Deploy() {
                       </div>
                     </div>
                   )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Metaverse Deployment Option */}
+            <Card>
+              <CardContent className="pt-6">
+                <div className="flex items-center space-x-3">
+                  <Checkbox
+                    id="deploy-metaverse"
+                    checked={deployToMetaverse}
+                    onCheckedChange={(checked) => setDeployToMetaverse(checked as boolean)}
+                  />
+                  <div className="flex-1">
+                    <Label 
+                      htmlFor="deploy-metaverse" 
+                      className="text-base font-medium cursor-pointer"
+                    >
+                      Deploy to Crime Metaverse
+                    </Label>
+                    <p className="text-sm text-muted-foreground">
+                      Enable your bot to live in the 24/7 crime-themed metaverse where it can form alliances, 
+                      commit crimes, and build a criminal empire. You can always deploy to the metaverse later.
+                    </p>
+                  </div>
                 </div>
               </CardContent>
             </Card>

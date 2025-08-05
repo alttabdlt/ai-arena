@@ -50,15 +50,31 @@ export function useServerSideConnect4({ gameId, tournament }: UseServerSideConne
   const [leaveGame] = useMutation(LEAVE_GAME);
   const hasSignaledReady = useRef(false);
   const hasJoinedGame = useRef(false);
-  const [gameState, setGameState] = useState<Connect4GameState | null>(null);
-  const [isInitialized, setIsInitialized] = useState(false);
+  
+  // Load persisted state from sessionStorage
+  const loadPersistedState = () => {
+    if (!gameId) return { decisions: [], gameState: null };
+    
+    const persistedDecisions = sessionStorage.getItem(`connect4-decisions-${gameId}`);
+    const persistedGameState = sessionStorage.getItem(`connect4-gamestate-${gameId}`);
+    
+    return {
+      decisions: persistedDecisions ? JSON.parse(persistedDecisions) : [],
+      gameState: persistedGameState ? JSON.parse(persistedGameState) : null
+    };
+  };
+  
+  const { decisions: persistedDecisions, gameState: persistedGameState } = loadPersistedState();
+  
+  const [gameState, setGameState] = useState<Connect4GameState | null>(persistedGameState);
+  const [isInitialized, setIsInitialized] = useState(!!persistedGameState);
   const [isActive, setIsActive] = useState(false);
   const [currentPlayer, setCurrentPlayer] = useState<any>(null);
   const [isAIThinking, setIsAIThinking] = useState(false);
-  const [winner, setWinner] = useState<string | null>(null);
+  const [winner, setWinner] = useState<string | null>(persistedGameState?.winner || null);
   const [isDraw, setIsDraw] = useState(false);
-  const [isGameComplete, setIsGameComplete] = useState(false);
-  const [decisionHistory, setDecisionHistory] = useState<Connect4Decision[]>([]);
+  const [isGameComplete, setIsGameComplete] = useState(!!persistedGameState?.winner || persistedGameState?.phase === 'complete');
+  const [decisionHistory, setDecisionHistory] = useState<Connect4Decision[]>(persistedDecisions);
   const [stats, setStats] = useState<any>({});
   const moveCountRef = useRef(0);
   const pendingDecisionsRef = useRef<Array<{playerId: string, data: any}>>([]);
@@ -73,6 +89,20 @@ export function useServerSideConnect4({ gameId, tournament }: UseServerSideConne
   useEffect(() => {
     tournamentRef.current = tournament;
   }, [tournament]);
+  
+  // Persist decision history whenever it changes
+  useEffect(() => {
+    if (gameId && decisionHistory.length > 0) {
+      sessionStorage.setItem(`connect4-decisions-${gameId}`, JSON.stringify(decisionHistory));
+    }
+  }, [gameId, decisionHistory]);
+  
+  // Persist game state whenever it changes
+  useEffect(() => {
+    if (gameId && gameState) {
+      sessionStorage.setItem(`connect4-gamestate-${gameId}`, JSON.stringify(gameState));
+    }
+  }, [gameId, gameState]);
   
   // Join game when component mounts and leave when unmounts
   useEffect(() => {
@@ -98,8 +128,21 @@ export function useServerSideConnect4({ gameId, tournament }: UseServerSideConne
           console.error('❌ Failed to leave Connect4 game:', error);
         });
       }
+      
+      // Don't clear sessionStorage on unmount - preserve for navigation
     };
   }, [gameId, tournament, joinGame, leaveGame]);
+  
+  // Clear persisted state when game completes (after delay)
+  useEffect(() => {
+    if (gameId && isGameComplete && winner) {
+      // Keep data for a while after game ends (5 minutes)
+      setTimeout(() => {
+        sessionStorage.removeItem(`connect4-decisions-${gameId}`);
+        sessionStorage.removeItem(`connect4-gamestate-${gameId}`);
+      }, 5 * 60 * 1000);
+    }
+  }, [gameId, isGameComplete, winner]);
 
   // Subscribe to game state updates
   const { data: stateData, error: stateError } = useSubscription(GAME_STATE_UPDATE, {
@@ -200,6 +243,9 @@ export function useServerSideConnect4({ gameId, tournament }: UseServerSideConne
 
       setGameState(newGameState);
       setCurrentPlayer(currentPlayerData);
+      
+      // Update move count ref
+      moveCountRef.current = backendState.moveCount || 0;
       
       // Update game status
       if (backendState.phase === 'complete' || backendState.winner) {

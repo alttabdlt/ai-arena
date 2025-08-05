@@ -35,6 +35,7 @@ import DeveloperDocs from "./pages/DeveloperDocs";
 import Queue from "@queue/pages/Queue";
 import NotFound from "./pages/NotFound";
 import HouseEditor from "./pages/HouseEditor";
+import { DeploymentStatus } from "@admin/DeploymentStatus";
 
 const App = () => {
   // Start interaction logging
@@ -103,6 +104,9 @@ const App = () => {
             <Route path="/learn" element={<Learn />} />
             <Route path="/docs" element={<DeveloperDocs />} />
             <Route path="/legal" element={<Legal />} />
+            
+            {/* Admin */}
+            <Route path="/admin/deployment" element={<DeploymentStatus />} />
             
             {/* Redirects from old pages */}
             <Route path="/analytics" element={<Navigate to="/dashboard?tab=performance" replace />} />

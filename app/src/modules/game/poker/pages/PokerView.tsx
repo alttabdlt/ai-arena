@@ -27,6 +27,40 @@ const PokerView = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   
+  // Function to update tournament in sessionStorage
+  const updateTournamentInStorage = (matchData: any, status?: string) => {
+    if (matchData?.match && id) {
+      const match = matchData.match;
+      const tournament = {
+        id: match.id,
+        name: match.tournament?.name || `Poker Match ${match.id.slice(0, 8)}`,
+        gameType: 'poker',
+        status: status || (match.status === 'COMPLETED' ? 'completed' : match.status === 'SCHEDULED' ? 'waiting' : 'in-progress'),
+        players: match.participants.map((p: any) => ({
+          id: p.bot.id,
+          name: p.bot.name,
+          modelType: p.bot.modelType,
+          avatar: p.bot.avatar
+        })),
+        maxPlayers: match.participants.length,
+        minPlayers: 2,
+        isPublic: true,
+        createdBy: 'system',
+        createdAt: match.createdAt || new Date(),
+        matchId: match.id,
+        config: {
+          startingChips: 10000,
+          maxHands: 100,
+          speed: 'normal'
+        }
+      };
+      
+      // Store in sessionStorage
+      sessionStorage.setItem(`tournament-${match.id}`, JSON.stringify(tournament));
+      console.log('♠️ Updated tournament in sessionStorage:', tournament);
+    }
+  };
+  
   // Load match data from GraphQL
   const { data: matchData, loading: matchLoading, error: matchError } = useQuery(GET_MATCH, {
     variables: { id },
@@ -52,6 +86,9 @@ const PokerView = () => {
           navigate(`/tournament/${id}/connect4`);
         }
       }
+      
+      // Create/update tournament in sessionStorage
+      updateTournamentInStorage(data);
     },
     onError: (error) => {
       console.error('❌ Poker match query error:', error);
@@ -227,11 +264,11 @@ const PokerView = () => {
   // Show loading state
   if (matchLoading || isLoading) {
     return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
-        <Card className="p-8">
-          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
-          <p className="text-center text-muted-foreground">Loading poker match...</p>
-        </Card>
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-muted-foreground" />
+          <p className="text-muted-foreground">Loading poker match...</p>
+        </div>
       </div>
     );
   }
@@ -239,13 +276,16 @@ const PokerView = () => {
   // Show error state
   if (matchError || loadingError || !tournament) {
     return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
-        <Card className="p-8 max-w-md">
-          <h2 className="text-xl font-bold mb-4 text-destructive">Error Loading Match</h2>
-          <p className="text-muted-foreground mb-4">
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Card className="p-6 max-w-md">
+          <h2 className="text-lg font-medium mb-2 text-destructive">Error Loading Match</h2>
+          <p className="text-sm text-muted-foreground mb-4">
             {matchError?.message || loadingError || 'Failed to load match data'}
           </p>
-          <Button onClick={() => navigate('/tournaments')}>
+          <Button onClick={() => {
+            updateTournamentInStorage(matchData, 'completed');
+            navigate('/tournaments');
+          }} size="sm">
             Back to Tournaments
           </Button>
         </Card>
@@ -254,7 +294,7 @@ const PokerView = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white">
+    <div className="min-h-screen bg-background">
       {/* Header */}
       <GameHeader
         tournamentName={tournament.name}
@@ -265,7 +305,10 @@ const PokerView = () => {
         currentRound={tournament.currentRound}
         gameType="poker"
         status={tournament.status as 'waiting' | 'in-progress' | 'completed'}
-        onBack={() => navigate('/tournaments')}
+        onBack={() => {
+          updateTournamentInStorage(matchData, gameWinner ? 'completed' : 'in-progress');
+          navigate('/tournaments');
+        }}
       />
 
       {/* Main Content */}
@@ -273,8 +316,8 @@ const PokerView = () => {
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
           {/* Poker Table - Main Area */}
           <div className="xl:col-span-2">
-            <Card className="bg-gray-800 border-gray-700">
-              <CardContent className="p-6">
+            <Card>
+              <CardContent className="p-4">
                 <PokerTable
                   players={gameState.players}
                   communityCards={gameState.communityCards}
@@ -309,7 +352,7 @@ const PokerView = () => {
           </div>
 
           {/* Right Sidebar */}
-          <div className="space-y-4">
+          <div className="space-y-3">
 
             {/* Decision History - Always visible */}
             <DecisionHistory

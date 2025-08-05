@@ -33,7 +33,8 @@ import {
   Brain,
   Heart,
   MessageCircle,
-  Share2
+  Share2,
+  MapPin
 } from 'lucide-react';
 import { GET_BOT_DETAIL, GET_BOT_MATCHES } from '@/graphql/queries/bot';
 import { TOGGLE_BOT_ACTIVE, ENTER_QUEUE } from '@/graphql/mutations/bot';
@@ -382,11 +383,12 @@ export default function BotDetail() {
 
         {/* Detailed Stats and History */}
         <Tabs value={selectedTab} onValueChange={setSelectedTab}>
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="performance">Performance</TabsTrigger>
             <TabsTrigger value="achievements">Achievements</TabsTrigger>
             <TabsTrigger value="matches">Match History</TabsTrigger>
             <TabsTrigger value="stats">Statistics</TabsTrigger>
+            <TabsTrigger value="metaverse">Metaverse</TabsTrigger>
           </TabsList>
 
           <TabsContent value="performance" className="mt-6">
@@ -465,6 +467,143 @@ export default function BotDetail() {
                 </div>
               </CardContent>
             </Card>
+          </TabsContent>
+          
+          <TabsContent value="metaverse" className="mt-6">
+            <div className="space-y-4">
+              {/* Metaverse Connection Status */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Share2 className="h-5 w-5" />
+                    Metaverse Status
+                  </CardTitle>
+                  <CardDescription>Your bot's presence in the AI Arena crime metaverse</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {bot.metaverseAgentId ? (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium">Connection Status</span>
+                        <Badge variant="default" className="flex items-center gap-1">
+                          <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                          Connected
+                        </Badge>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <p className="text-sm text-muted-foreground">Current Zone</p>
+                          <p className="text-lg font-medium capitalize">
+                            {bot.currentZone || 'Unknown'}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-muted-foreground">Last Zone Change</p>
+                          <p className="text-sm">
+                            {bot.lastZoneChange 
+                              ? formatDistanceToNow(new Date(bot.lastZoneChange), { addSuffix: true })
+                              : 'Never moved'
+                            }
+                          </p>
+                        </div>
+                      </div>
+                      
+                      {bot.metaversePosition && (
+                        <div>
+                          <p className="text-sm text-muted-foreground mb-2">World Position</p>
+                          <div className="flex gap-4">
+                            <Badge variant="outline">
+                              X: {Math.round(bot.metaversePosition.x || 0)}
+                            </Badge>
+                            <Badge variant="outline">
+                              Y: {Math.round(bot.metaversePosition.y || 0)}
+                            </Badge>
+                          </div>
+                        </div>
+                      )}
+                      
+                      <Alert>
+                        <Info className="h-4 w-4" />
+                        <AlertDescription>
+                          Your bot is actively living in the metaverse, forming alliances, 
+                          committing crimes, and building their criminal empire 24/7.
+                        </AlertDescription>
+                      </Alert>
+                    </div>
+                  ) : (
+                    <div className="text-center py-8">
+                      <Share2 className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                      <h3 className="text-lg font-medium mb-2">Not Connected to Metaverse</h3>
+                      <p className="text-sm text-muted-foreground mb-4">
+                        Your bot is not currently active in the AI Arena metaverse.
+                        Connect your bot to enable 24/7 autonomous gameplay.
+                      </p>
+                      {/* TODO: Add deploy to metaverse button here */}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+              
+              {/* Zone Information */}
+              {bot.currentZone && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Zone Details</CardTitle>
+                    <CardDescription>Information about the current zone</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-3">
+                      {bot.currentZone === 'casino' && (
+                        <>
+                          <Badge variant="default" className="mb-2">🎰 Casino</Badge>
+                          <p className="text-sm text-muted-foreground">
+                            High-risk gambling zone where fortunes are made and lost. 
+                            Your bot frequents poker tables and makes risky deals.
+                          </p>
+                        </>
+                      )}
+                      {bot.currentZone === 'darkAlley' && (
+                        <>
+                          <Badge variant="destructive" className="mb-2">🔫 Dark Alley</Badge>
+                          <p className="text-sm text-muted-foreground">
+                            Dangerous zone for criminal activities. 
+                            Your bot engages in robberies and shady transactions.
+                          </p>
+                        </>
+                      )}
+                      {bot.currentZone === 'suburb' && (
+                        <>
+                          <Badge variant="secondary" className="mb-2">🏠 Suburb</Badge>
+                          <p className="text-sm text-muted-foreground">
+                            Safe residential area for building houses and trading. 
+                            Your bot focuses on accumulating wealth and forming partnerships.
+                          </p>
+                        </>
+                      )}
+                      {bot.currentZone === 'downtown' && (
+                        <>
+                          <Badge variant="outline" className="mb-2">🏙️ Downtown</Badge>
+                          <p className="text-sm text-muted-foreground">
+                            Central hub for meetings and commerce. 
+                            Your bot networks and conducts legitimate business.
+                          </p>
+                        </>
+                      )}
+                      {bot.currentZone === 'underground' && (
+                        <>
+                          <Badge variant="destructive" className="mb-2">👊 Underground</Badge>
+                          <p className="text-sm text-muted-foreground">
+                            Fight club zone for combat and betting. 
+                            Your bot tests their strength against others.
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
           </TabsContent>
         </Tabs>
       </div>

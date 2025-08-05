@@ -101,49 +101,8 @@ export default function ActivityLogs({ worldId, aiArenaBotId, playerId, agentId 
     limit: 100,
   });
 
-  // Use real logs if available, otherwise use mock data
-  const displayLogs = logs && logs.length > 0 ? logs : [
-    {
-      _id: '1',
-      timestamp: Date.now() - 5000,
-      type: 'zone_change' as LogType,
-      description: 'Entered Dark Alley',
-      emoji: '🌃',
-      details: { zone: 'darkAlley' }
-    },
-    {
-      _id: '2',
-      timestamp: Date.now() - 30000,
-      type: 'robbery_attempt' as LogType,
-      description: 'Attempted to rob Lucky',
-      emoji: '💰',
-      details: { targetPlayer: 'player2', success: true, amount: 150 }
-    },
-    {
-      _id: '3',
-      timestamp: Date.now() - 60000,
-      type: 'conversation_start' as LogType,
-      description: 'Started conversation with Grinder',
-      emoji: '💬',
-      details: { targetPlayer: 'player3' }
-    },
-    {
-      _id: '4',
-      timestamp: Date.now() - 120000,
-      type: 'activity_start' as LogType,
-      description: 'Started gambling at the slots',
-      emoji: '🎰',
-      details: {}
-    },
-    {
-      _id: '5',
-      timestamp: Date.now() - 180000,
-      type: 'zone_change' as LogType,
-      description: 'Entered Casino',
-      emoji: '🎲',
-      details: { zone: 'casino' }
-    },
-  ];
+  // Use real logs only - no more mock data
+  const displayLogs = logs || [];
 
   // Auto-scroll to bottom when new logs arrive
   useEffect(() => {

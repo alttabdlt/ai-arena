@@ -29,103 +29,55 @@ export function Connect4Status({
 }: Connect4StatusProps) {
   if (winner) {
     return (
-      <motion.div 
-        className="text-center"
-        initial={{ opacity: 0, scale: 0.8 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ type: "spring", duration: 0.5 }}
-      >
-        <motion.div
-          animate={{ 
-            scale: [1, 1.1, 1],
-            rotate: [0, 5, -5, 0]
-          }}
-          transition={{ 
-            duration: 0.6,
-            repeat: Infinity,
-            repeatDelay: 2
-          }}
-          className="inline-flex items-center gap-2 mb-2"
-        >
-          <Trophy className="h-6 w-6 text-yellow-500" />
-          <h3 className="text-2xl font-bold">
+      <div className="text-center">
+        <div className="inline-flex items-center gap-2 mb-1">
+          <Trophy className="h-4 w-4 text-primary" />
+          <h3 className="text-base font-medium">
             {winner.name} Wins!
           </h3>
-          <Trophy className="h-6 w-6 text-yellow-500" />
-        </motion.div>
+        </div>
         
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
-          className="flex items-center justify-center gap-2 text-muted-foreground"
-        >
+        <div className="flex items-center justify-center gap-2 text-muted-foreground">
           <div className={cn(
-            "w-4 h-4 rounded-full",
+            "w-3 h-3 rounded-full",
             winner.color === 'red' ? 'bg-red-500' : 'bg-yellow-500'
           )} />
-          <span className="text-sm">{winner.aiModel}</span>
-        </motion.div>
-      </motion.div>
+          <span className="text-xs">{winner.aiModel}</span>
+        </div>
+      </div>
     );
   }
 
   if (isDraw) {
     return (
-      <motion.div 
-        className="text-center"
-        initial={{ opacity: 0, y: -10 }}
-        animate={{ opacity: 1, y: 0 }}
-      >
-        <h3 className="text-xl font-semibold text-muted-foreground">
+      <div className="text-center">
+        <h3 className="text-base font-medium text-muted-foreground">
           It's a Draw!
         </h3>
-        <p className="text-sm text-muted-foreground mt-1">
+        <p className="text-xs text-muted-foreground mt-1">
           No more moves available
         </p>
-      </motion.div>
+      </div>
     );
   }
 
   return (
-    <AnimatePresence mode="wait">
-      <motion.div 
-        key={currentPlayer?.id || 'waiting'}
-        className="text-center"
-        initial={{ opacity: 0, x: -20 }}
-        animate={{ opacity: 1, x: 0 }}
-        exit={{ opacity: 0, x: 20 }}
-        transition={{ duration: 0.2 }}
-      >
-        {currentPlayer ? (
-          <>
-            <div className="flex items-center justify-center gap-3 mb-2">
-              <motion.div
-                className={cn(
-                  "w-6 h-6 rounded-full",
-                  currentPlayer.color === 'red' 
-                    ? 'bg-gradient-to-br from-red-400 to-red-600' 
-                    : 'bg-gradient-to-br from-yellow-400 to-yellow-600'
-                )}
-                animate={{ scale: [1, 1.2, 1] }}
-                transition={{ 
-                  duration: 1.5,
-                  repeat: Infinity,
-                  ease: "easeInOut"
-                }}
-              />
-              <h3 className="text-lg font-medium">
-                {currentPlayer.name}'s Turn
-              </h3>
-            </div>
-            
-          </>
-        ) : (
-          <p className="text-muted-foreground">
-            Waiting for game to start...
-          </p>
-        )}
-      </motion.div>
-    </AnimatePresence>
+    <div className="text-center">
+      {currentPlayer ? (
+        <div className="flex items-center justify-center gap-2">
+          <div className={cn(
+            "w-4 h-4 rounded-full",
+            currentPlayer.color === 'red' ? 'bg-red-500' : 'bg-yellow-500'
+          )} />
+          <h3 className="text-sm font-medium">
+            {currentPlayer.name}'s Turn
+          </h3>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Waiting for game to start...
+        </p>
+      )}
+    </div>
   );
 }

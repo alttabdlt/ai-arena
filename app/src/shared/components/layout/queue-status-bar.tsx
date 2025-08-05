@@ -139,10 +139,10 @@ export function QueueStatusBar() {
       <Button
         variant="ghost"
         size="sm"
-        className="relative h-9 px-3"
+        className="relative h-8 px-2"
         disabled
       >
-        <Loader2 className="h-4 w-4 animate-spin" />
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
       </Button>
     );
   }
@@ -159,93 +159,61 @@ export function QueueStatusBar() {
   };
   
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-1">
       <Button
         variant="ghost"
         size="sm"
         className={cn(
-          "relative h-9 px-3 gap-2 transition-all",
-          isReady && "bg-green-500/10 hover:bg-green-500/20 text-green-500 animate-pulse",
-          isAlmostReady && !isReady && "bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-500"
+          "relative h-8 px-2 gap-1.5 text-xs",
+          isReady && "text-green-600 dark:text-green-400",
+          isAlmostReady && !isReady && "text-yellow-600 dark:text-yellow-400"
         )}
         onClick={() => isReady ? navigate('/queue') : null}
         disabled={!isReady}
       >
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {/* Player Count */}
-          <div className="flex items-center gap-1.5">
-            <Users className="h-4 w-4" />
-            <span className="font-semibold">
+          <div className="flex items-center gap-1">
+            <Users className="h-3.5 w-3.5" />
+            <span>
               {totalInQueue}/{playersNeeded}
             </span>
           </div>
           
-          {/* Divider */}
-          <div className="w-px h-4 bg-border" />
-          
           {/* Timer - Show elapsed time if user is in queue */}
-          <div className="flex items-center gap-1.5">
-            <Timer className="h-4 w-4" />
-            <span className="font-mono text-sm">
-              {userBotInQueue ? formatTime(elapsedTime) : 'Queue'}
-            </span>
-          </div>
+          {userBotInQueue && (
+            <>
+              <div className="w-px h-3 bg-border" />
+              <div className="flex items-center gap-1">
+                <Timer className="h-3.5 w-3.5" />
+                <span className="font-mono">
+                  {formatTime(elapsedTime)}
+                </span>
+              </div>
+            </>
+          )}
         </div>
         
-        {/* Pulsing indicator when almost ready */}
-        <AnimatePresence>
-          {isAlmostReady && !isReady && (
-            <motion.div
-              className="absolute -top-1 -right-1"
-              initial={{ scale: 0 }}
-              animate={{ scale: 1 }}
-              exit={{ scale: 0 }}
-            >
-              <div className="relative">
-                <div className="absolute inset-0 bg-yellow-500 rounded-full animate-ping" />
-                <div className="relative w-2 h-2 bg-yellow-500 rounded-full" />
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-        
         {/* Ready indicator */}
-        <AnimatePresence>
-          {isReady && (
-            <motion.div
-              className="absolute -top-1 -right-1"
-              initial={{ scale: 0 }}
-              animate={{ scale: 1 }}
-              exit={{ scale: 0 }}
-            >
-              <Badge className="h-5 px-1.5 bg-green-500 text-white animate-pulse">
-                Ready!
-              </Badge>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {isReady && (
+          <div className="absolute -top-0.5 -right-0.5">
+            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+          </div>
+        )}
       </Button>
       
       {/* Cancel button if user is in queue (not shown for demo bots) */}
-      <AnimatePresence>
-        {userBotInQueue && !isReady && !isDemoBot && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.8 }}
-          >
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-9 w-9 p-0 text-destructive hover:bg-destructive/10"
-              onClick={handleCancelQueue}
-              title="Leave queue"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {userBotInQueue && !isReady && !isDemoBot && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 w-8 p-0"
+          onClick={handleCancelQueue}
+          title="Leave queue"
+        >
+          <X className="h-3.5 w-3.5" />
+        </Button>
+      )}
     </div>
   );
 }

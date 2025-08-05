@@ -76,9 +76,44 @@ export class ConvexService {
       
       // Check if we got a pending response
       if (result.status === 'pending' && result.inputId) {
-        // For now, throw an error indicating async processing
-        // In a production system, we'd implement polling or webhooks
-        throw new Error('Agent creation is being processed asynchronously. Polling not yet implemented.');
+        console.log(`Agent creation pending, inputId: ${result.inputId}. Polling for completion...`);
+        
+        // Poll for completion (max 60 seconds with exponential backoff)
+        const maxAttempts = 20;
+        let pollInterval = 1000; // Start with 1 second
+        
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          await new Promise(resolve => setTimeout(resolve, pollInterval));
+          
+          // Check input status via Convex query
+          try {
+            const pollResult = await this.client.query('aiTown/botHttp:getInputStatus' as any, {
+              inputId: result.inputId,
+            });
+            
+            if (pollResult && pollResult.status === 'completed') {
+              if (pollResult.returnValue && pollResult.returnValue.kind === 'ok') {
+                const { agentId, playerId } = pollResult.returnValue.value;
+                console.log(`✅ Agent creation completed: agentId=${agentId}, playerId=${playerId}`);
+                return { agentId, playerId };
+              } else if (pollResult.returnValue && pollResult.returnValue.kind === 'error') {
+                throw new Error(`Agent creation failed: ${pollResult.returnValue.message}`);
+              }
+            }
+            
+            // Log progress every 5 attempts
+            if (attempt % 5 === 0) {
+              console.log(`⏳ Still waiting for agent creation... (attempt ${attempt + 1}/${maxAttempts})`);
+            }
+          } catch (pollError: any) {
+            console.log(`⚠️ Polling attempt ${attempt + 1}/${maxAttempts} - error checking status:`, pollError?.message || pollError);
+          }
+          
+          // Exponential backoff up to 3 seconds
+          pollInterval = Math.min(pollInterval * 1.2, 3000);
+        }
+        
+        throw new Error(`Agent creation timed out after ${maxAttempts * 2} seconds. The world engine might be paused. Run 'npx convex run testing:resume' in the metaverse-game directory.`);
       }
       
       // Otherwise we should have the agent data
@@ -156,6 +191,11 @@ export class ConvexService {
     zone: string;
   } | null> {
     try {
+      // Validate worldId format before making request
+      if (!worldId || !worldId.match(/^[a-z0-9]{32}$/)) {
+        throw new Error(`Invalid worldId format: ${worldId}`);
+      }
+      
       const response = await fetch(`${this.httpUrl}/api/bots/get-position`, {
         method: 'POST',
         headers: {
@@ -212,7 +252,7 @@ export class ConvexService {
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
+        const errorData = await response.json().catch(() => ({})) as any;
         throw new Error(errorData.error || `Failed to delete bot agent: ${response.statusText}`);
       }
 

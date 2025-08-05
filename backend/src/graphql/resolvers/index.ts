@@ -11,8 +11,11 @@ import { PubSub } from 'graphql-subscriptions';
 import { gameManagerResolvers } from './gameManager';
 import { economyResolvers } from './economy';
 import { metaverseSyncResolvers } from './metaverseSync';
+import { deploymentResolvers } from './deployment';
 import { getQueueService } from '../../services';
 import { getGameManagerService } from '../../services/gameManagerService';
+import { convexService } from '../../services/convexService';
+import { metaverseEventsService } from '../../services/metaverseEventsService';
 
 interface PubSubAsyncIterator<T> extends AsyncIterator<T> {
   return(): Promise<IteratorResult<T>>;
@@ -344,6 +347,9 @@ export const resolvers = {
     
     // Metaverse sync queries
     ...metaverseSyncResolvers.Query,
+    
+    // Deployment queries
+    ...deploymentResolvers.Query,
   },
 
   Mutation: {
@@ -1284,6 +1290,9 @@ export const resolvers = {
     
     // Metaverse sync mutations
     ...metaverseSyncResolvers.Mutation,
+    
+    // Deployment mutations
+    ...deploymentResolvers.Mutation,
   },
 
   Subscription: {

@@ -25,6 +25,7 @@ import { internal } from '../_generated/api';
 import { HistoricalObject } from '../engine/historicalObject';
 import { AgentDescription, serializedAgentDescription } from './agentDescription';
 import { parseMap, serializeMap } from '../util/object';
+import { ActivityHooks } from './activityHooks';
 
 const gameState = v.object({
   world: v.object(serializedWorld),
@@ -59,6 +60,7 @@ export class Game extends AbstractGame {
   agentDescriptions: Map<GameId<'agents'>, AgentDescription>;
 
   pendingOperations: Array<{ name: string; args: any }> = [];
+  pendingActivityLog?: any;
 
   numPathfinds: number;
 
@@ -159,7 +161,48 @@ export class Game extends AbstractGame {
     if (!handler) {
       throw new Error(`Invalid input: ${name}`);
     }
-    return handler(this, now, args as any);
+    
+    // Handle activity logging for specific input types
+    if (name === 'startConversation' && 'playerId' in args && 'invitee' in args) {
+      const playerId = args.playerId as string;
+      const inviteeId = args.invitee as string;
+      const player = this.world.players.get(playerId as any);
+      const invitee = this.world.players.get(inviteeId as any);
+      const playerDesc = this.playerDescriptions.get(playerId as any);
+      const inviteeDesc = this.playerDescriptions.get(inviteeId as any);
+      
+      if (player && invitee && playerDesc && inviteeDesc) {
+        // Log conversation start will be handled after successful creation
+        // Store pending log data for after handler execution
+        this.pendingActivityLog = {
+          type: 'conversation_start',
+          playerId,
+          inviteeId,
+          playerName: playerDesc.name,
+          inviteeName: inviteeDesc.name
+        };
+      }
+    }
+    
+    const result = handler(this, now, args as any);
+    
+    // Log activity after successful handler execution
+    if (this.pendingActivityLog && result) {
+      const log = this.pendingActivityLog;
+      if (log.type === 'conversation_start') {
+        // Schedule the activity log as an operation
+        this.scheduleOperation('logConversationStart', {
+          worldId: this.worldId,
+          playerId: log.playerId,
+          inviteeId: log.inviteeId,
+          playerName: log.playerName,
+          inviteeName: log.inviteeName
+        });
+      }
+      delete this.pendingActivityLog;
+    }
+    
+    return result;
   }
 
   beginStep(_now: number) {

@@ -168,8 +168,21 @@ export function useServerSidePoker({ gameId, tournament }: UseServerSidePokerOpt
           console.error('❌ Failed to leave Poker game:', error);
         });
       }
+      
+      // Don't clear sessionStorage on unmount - preserve for navigation
     };
   }, [gameId, joinGame, leaveGame]);
+  
+  // Clear persisted state when game completes (after delay)
+  useEffect(() => {
+    if (gameId && currentGameState === 'finished') {
+      // Keep data for a while after game ends (5 minutes)
+      setTimeout(() => {
+        sessionStorage.removeItem(`poker-gamestate-${gameId}`);
+        sessionStorage.removeItem(`poker-handhistory-${gameId}`);
+      }, 5 * 60 * 1000);
+    }
+  }, [gameId, currentGameState]);
 
   // Subscribe to game state updates
   const { data: stateData, error: stateError } = useSubscription(GAME_STATE_UPDATE, {
@@ -455,6 +468,9 @@ export function useServerSidePoker({ gameId, tournament }: UseServerSidePokerOpt
     const handDecisions = handHistoryRef.current.get(handNumber) || new Map();
     handDecisions.set(playerId, decision);
     handHistoryRef.current.set(handNumber, handDecisions);
+    
+    // Trigger persistence by updating ref
+    handHistoryRef.current = new Map(handHistoryRef.current);
 
     // Update AI decision history (but limit updates during catch-up)
     if (!isCatchUp || handDecisions.size <= 4) {

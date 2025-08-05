@@ -149,6 +149,20 @@ export class Conversation {
         ],
       }),
     );
+    
+    // Log conversation start
+    const playerDesc = game.playerDescriptions.get(player.id);
+    const inviteeDesc = game.playerDescriptions.get(invitee.id);
+    if (playerDesc && inviteeDesc) {
+      game.scheduleOperation('logConversationStart', {
+        worldId: game.worldId,
+        playerId: player.id as string,
+        inviteeId: invitee.id as string,
+        playerName: playerDesc.name,
+        inviteeName: inviteeDesc.name,
+      });
+    }
+    
     return { conversationId };
   }
 
@@ -192,7 +206,19 @@ export class Conversation {
 
   stop(game: Game, now: number) {
     delete this.isTyping;
+    
+    // Log conversation end for all participants
     for (const [playerId, member] of this.participants.entries()) {
+      const player = game.world.players.get(playerId);
+      const playerDesc = game.playerDescriptions.get(playerId);
+      if (player && playerDesc) {
+        game.scheduleOperation('logConversationEnd', {
+          worldId: game.worldId,
+          playerId: playerId as string,
+          playerName: playerDesc.name,
+        });
+      }
+      
       const agent = [...game.world.agents.values()].find((a) => a.playerId === playerId);
       if (agent) {
         agent.lastConversation = now;

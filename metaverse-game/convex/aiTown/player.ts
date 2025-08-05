@@ -110,6 +110,27 @@ export class Player {
     if (this.human && this.lastInput < now - HUMAN_IDLE_TOO_LONG) {
       this.leave(game, now);
     }
+    
+    // Check if activity has expired and log it
+    if (this.activity && now >= this.activity.until) {
+      const playerDesc = game.playerDescriptions.get(this.id);
+      if (playerDesc) {
+        // Find agent for this player if it exists
+        const agent = [...game.world.agents.values()].find(a => a.playerId === this.id);
+        
+        // Log activity end
+        game.scheduleOperation('logActivityEnd', {
+          worldId: game.worldId,
+          playerId: this.id as string,
+          agentId: agent?.id as string | undefined,
+          playerName: playerDesc.name,
+          activity: this.activity.description,
+          zone: this.currentZone || 'downtown',
+        });
+      }
+      // Clear the expired activity
+      delete this.activity;
+    }
   }
 
   tickPathfinding(game: Game, now: number) {
@@ -184,10 +205,33 @@ export class Player {
       };
       return;
     }
+    
+    // Check for zone change before updating position
+    const { getZoneFromPosition } = require('../constants');
+    const oldZone = this.currentZone || getZoneFromPosition(this.position);
+    const newZone = getZoneFromPosition(position);
+    
     // Update the player's location.
     this.position = position;
     this.facing = facing;
     this.speed = velocity;
+    
+    // If zone changed, update it and log the change
+    if (oldZone !== newZone) {
+      this.currentZone = newZone as any;
+      
+      // Schedule zone change logging
+      const playerDesc = game.playerDescriptions.get(this.id);
+      if (playerDesc) {
+        game.scheduleOperation('logZoneChange', {
+          worldId: game.worldId,
+          playerId: this.id as string,
+          playerName: playerDesc.name,
+          fromZone: oldZone,
+          toZone: newZone,
+        });
+      }
+    }
   }
 
   static join(

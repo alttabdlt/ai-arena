@@ -4,6 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Button } from '@ui/button';
 import { Card } from '@ui/card';
 import { toast } from 'sonner';
+import { Loader2 } from 'lucide-react';
 import { ReverseHangmanBoard } from '@game/reverse-hangman/components/ReverseHangmanBoard';
 import { PromptGenerationAnimation } from '@game/reverse-hangman/components/PromptGenerationAnimation';
 import { useServerSideReverseHangman as useReverseHangmanGame } from '@game/reverse-hangman/hooks/useServerSideReverseHangman';
@@ -94,18 +95,19 @@ export default function ReverseHangmanView() {
       <div className="min-h-screen bg-background">
         <div className="container mx-auto px-4 py-8">
           <Button 
-            variant="outline" 
+            variant="ghost" 
             onClick={() => navigate('/tournaments')}
             className="mb-4"
+            size="sm"
           >
             Back to Tournaments
           </Button>
           <div className="flex items-center justify-center mt-20">
-            <Card className="p-8 text-center max-w-md">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-              <h2 className="text-xl font-semibold mb-2">Loading Tournament</h2>
-              <p className="text-muted-foreground">Tournament ID: {id}</p>
-              <p className="text-sm text-muted-foreground mt-2">This may take a few seconds...</p>
+            <Card className="p-6 text-center max-w-md">
+              <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-muted-foreground" />
+              <h2 className="text-base font-medium mb-2">Loading Tournament</h2>
+              <p className="text-sm text-muted-foreground">Tournament ID: {id}</p>
+              <p className="text-xs text-muted-foreground mt-2">This may take a few seconds...</p>
             </Card>
           </div>
         </div>
@@ -119,23 +121,19 @@ export default function ReverseHangmanView() {
       <div className="min-h-screen bg-background">
         <div className="container mx-auto px-4 py-8">
           <Button 
-            variant="outline" 
+            variant="ghost" 
             onClick={() => navigate('/tournaments')}
             className="mb-4"
+            size="sm"
           >
             Back to Tournaments
           </Button>
           <div className="flex items-center justify-center mt-20">
-            <Card className="p-8 text-center max-w-md">
-              <div className="text-destructive mb-4">
-                <svg className="w-12 h-12 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </div>
-              <h2 className="text-xl font-semibold mb-2">Unable to Load Tournament</h2>
-              <p className="text-muted-foreground mb-4">{loadingError || 'Tournament not found'}</p>
+            <Card className="p-6 text-center max-w-md">
+              <h2 className="text-base font-medium mb-2">Unable to Load Tournament</h2>
+              <p className="text-sm text-muted-foreground mb-4">{loadingError || 'Tournament not found'}</p>
               <div className="space-y-2">
-                <Button onClick={() => navigate('/tournaments')} className="w-full">
+                <Button onClick={() => navigate('/tournaments')} size="sm" className="w-full">
                   Go to Tournaments
                 </Button>
               </div>
@@ -165,13 +163,13 @@ export default function ReverseHangmanView() {
   return (
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-8">
-        <div className="mb-6">
+        <div className="mb-4">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold">{tournament.name}</h1>
-              <p className="text-gray-700">Reverse Engineering Challenge</p>
+              <h1 className="text-lg font-medium">{tournament.name}</h1>
+              <p className="text-sm text-muted-foreground">Reverse Engineering Challenge</p>
             </div>
-            <Button variant="outline" onClick={() => navigate('/tournaments')}>
+            <Button variant="ghost" onClick={() => navigate('/tournaments')} size="sm">
               Back to Tournaments
             </Button>
           </div>
@@ -190,50 +188,50 @@ export default function ReverseHangmanView() {
             ) : (
               <Card className="p-6">
                 {showDifficultySelect ? (
-                  <div className="text-center py-12">
-                    <h2 className="text-2xl font-bold mb-6">Select Difficulty for Round {tournamentStats.currentRound + 1}</h2>
-                    <p className="text-gray-700 mb-8">Choose how challenging you want the next prompt to be</p>
+                  <div className="text-center py-8">
+                    <h2 className="text-base font-medium mb-4">Select Difficulty for Round {tournamentStats.currentRound + 1}</h2>
+                    <p className="text-sm text-muted-foreground mb-6">Choose how challenging you want the next prompt to be</p>
                     
-                    <div className="grid grid-cols-2 gap-4 max-w-2xl mx-auto mb-8">
+                    <div className="grid grid-cols-2 gap-3 max-w-2xl mx-auto mb-6">
                       <Card 
-                        className={`p-6 cursor-pointer transition-all ${selectedDifficulty === 'easy' ? 'border-primary ring-2 ring-primary' : 'hover:border-primary'}`}
+                        className={`p-4 cursor-pointer transition-shadow ${selectedDifficulty === 'easy' ? 'border-primary' : 'hover:shadow-md'}`}
                         onClick={() => setSelectedDifficulty('easy')}
                       >
-                        <h3 className="font-bold text-lg mb-2">Easy</h3>
-                        <p className="text-sm text-gray-700">6-8 words</p>
-                        <p className="text-xs text-gray-700 mt-1">Simple prompts with clear outputs</p>
+                        <h3 className="font-medium text-sm mb-1">Easy</h3>
+                        <p className="text-xs text-muted-foreground">6-8 words</p>
+                        <p className="text-xs text-muted-foreground mt-1">Simple prompts with clear outputs</p>
                       </Card>
                       
                       <Card 
-                        className={`p-6 cursor-pointer transition-all ${selectedDifficulty === 'medium' ? 'border-primary ring-2 ring-primary' : 'hover:border-primary'}`}
+                        className={`p-4 cursor-pointer transition-shadow ${selectedDifficulty === 'medium' ? 'border-primary' : 'hover:shadow-md'}`}
                         onClick={() => setSelectedDifficulty('medium')}
                       >
-                        <h3 className="font-bold text-lg mb-2">Medium</h3>
-                        <p className="text-sm text-gray-700">8-12 words</p>
-                        <p className="text-xs text-gray-700 mt-1">Moderate complexity prompts</p>
+                        <h3 className="font-medium text-sm mb-1">Medium</h3>
+                        <p className="text-xs text-muted-foreground">8-12 words</p>
+                        <p className="text-xs text-muted-foreground mt-1">Moderate complexity prompts</p>
                       </Card>
                       
                       <Card 
-                        className={`p-6 cursor-pointer transition-all ${selectedDifficulty === 'hard' ? 'border-primary ring-2 ring-primary' : 'hover:border-primary'}`}
+                        className={`p-4 cursor-pointer transition-shadow ${selectedDifficulty === 'hard' ? 'border-primary' : 'hover:shadow-md'}`}
                         onClick={() => setSelectedDifficulty('hard')}
                       >
-                        <h3 className="font-bold text-lg mb-2">Hard</h3>
-                        <p className="text-sm text-gray-700">10-15 words</p>
-                        <p className="text-xs text-gray-700 mt-1">Complex prompts with nuance</p>
+                        <h3 className="font-medium text-sm mb-1">Hard</h3>
+                        <p className="text-xs text-muted-foreground">10-15 words</p>
+                        <p className="text-xs text-muted-foreground mt-1">Complex prompts with nuance</p>
                       </Card>
                       
                       <Card 
-                        className={`p-6 cursor-pointer transition-all ${selectedDifficulty === 'expert' ? 'border-primary ring-2 ring-primary' : 'hover:border-primary'}`}
+                        className={`p-4 cursor-pointer transition-shadow ${selectedDifficulty === 'expert' ? 'border-primary' : 'hover:shadow-md'}`}
                         onClick={() => setSelectedDifficulty('expert')}
                       >
-                        <h3 className="font-bold text-lg mb-2">Expert</h3>
-                        <p className="text-sm text-gray-700">12-20 words</p>
-                        <p className="text-xs text-gray-700 mt-1">Highly specific technical prompts</p>
+                        <h3 className="font-medium text-sm mb-1">Expert</h3>
+                        <p className="text-xs text-muted-foreground">12-20 words</p>
+                        <p className="text-xs text-muted-foreground mt-1">Highly specific technical prompts</p>
                       </Card>
                     </div>
                     
                     <Button 
-                      size="lg" 
+                      size="sm" 
                       onClick={handleDifficultySelect}
                       disabled={isStartingRound}
                     >
@@ -247,71 +245,71 @@ export default function ReverseHangmanView() {
                   />
                 ) : (
                   <div className="text-center py-12">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-                    <p>Preparing round...</p>
+                    <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-muted-foreground" />
+                    <p className="text-sm text-muted-foreground">Preparing round...</p>
                   </div>
                 )}
               </Card>
             )}
           </div>
 
-          <div className="space-y-4">
-            <Card className="p-4">
-              <h3 className="font-semibold mb-3">Current Player</h3>
+          <div className="space-y-3">
+            <Card className="p-3">
+              <h3 className="text-sm font-medium mb-2">Current Player</h3>
               {currentAgent ? (
                 <div className="space-y-2">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">
-                      <span className="text-lg font-semibold">
+                  <div className="flex items-center space-x-2">
+                    <div className="w-8 h-8 bg-muted rounded-full flex items-center justify-center">
+                      <span className="text-xs font-medium">
                         {currentAgent.name[0]}
                       </span>
                     </div>
                     <div>
-                      <div className="font-medium">{currentAgent.name}</div>
-                      <div className="text-sm text-gray-700">{currentAgent.model}</div>
+                      <div className="text-sm">{currentAgent.name}</div>
+                      <div className="text-xs text-muted-foreground">{currentAgent.model}</div>
                     </div>
                   </div>
                   {currentAgent.strategy && (
-                    <p className="text-sm text-gray-700 mt-2">
+                    <p className="text-xs text-muted-foreground mt-2">
                       {currentAgent.strategy}
                     </p>
                   )}
                 </div>
               ) : (
-                <p className="text-sm text-gray-700">Waiting for player...</p>
+                <p className="text-xs text-muted-foreground">Waiting for player...</p>
               )}
             </Card>
 
-            <Card className="p-4">
-              <h3 className="font-semibold mb-3">Tournament Progress</h3>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-700">Round</span>
-                  <span className="font-medium">
+            <Card className="p-3">
+              <h3 className="text-sm font-medium mb-2">Tournament Progress</h3>
+              <div className="space-y-1">
+                <div className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">Round</span>
+                  <span>
                     {tournamentStats.currentRound} / {tournamentStats.totalRounds}
                   </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-700">Total Score</span>
-                  <span className="font-medium">
+                <div className="flex justify-between text-xs">
+                  <span className="text-muted-foreground">Total Score</span>
+                  <span>
                     {tournamentStats.totalScore}
                   </span>
                 </div>
               </div>
             </Card>
 
-            <Card className="p-4">
-              <h3 className="font-semibold mb-3">Players</h3>
-              <div className="space-y-2">
+            <Card className="p-3">
+              <h3 className="text-sm font-medium mb-2">Players</h3>
+              <div className="space-y-1">
                 {tournament.players.map((player) => (
                   <div 
                     key={player.id}
-                    className={`flex items-center justify-between p-2 rounded ${
-                      currentAgent?.id === player.id ? 'bg-primary/10' : ''
+                    className={`flex items-center justify-between p-1.5 rounded ${
+                      currentAgent?.id === player.id ? 'bg-muted' : ''
                     }`}
                   >
-                    <span className="text-sm">{player.name}</span>
-                    <span className="text-xs text-gray-700">{player.aiModel}</span>
+                    <span className="text-xs">{player.name}</span>
+                    <span className="text-xs text-muted-foreground">{player.aiModel}</span>
                   </div>
                 ))}
               </div>

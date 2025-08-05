@@ -110,6 +110,27 @@ export const COMBAT_COOLDOWN = 3 * 60_000; // 3 minutes between fights
 export const HOSPITAL_RECOVERY = 2 * 60_000; // 2 minutes in hospital after knockout
 export const REVENGE_MEMORY_DURATION = 24 * 60 * 60_000; // Remember robberies for 24 hours
 
+// Zone boundaries for the crime metaverse (assuming 100x100 map)
+// These define rectangular regions for each zone
+export const ZONE_BOUNDARIES = {
+  casino: { minX: 0, maxX: 30, minY: 0, maxY: 30 },
+  darkAlley: { minX: 70, maxX: 100, minY: 70, maxY: 100 },
+  suburb: { minX: 0, maxX: 30, minY: 70, maxY: 100 },
+  underground: { minX: 70, maxX: 100, minY: 0, maxY: 30 },
+  downtown: { minX: 30, maxX: 70, minY: 30, maxY: 70 }, // Center area
+};
+
+// Helper function to determine zone from position
+export function getZoneFromPosition(position: { x: number; y: number }): string {
+  for (const [zone, bounds] of Object.entries(ZONE_BOUNDARIES)) {
+    if (position.x >= bounds.minX && position.x < bounds.maxX &&
+        position.y >= bounds.minY && position.y < bounds.maxY) {
+      return zone;
+    }
+  }
+  return 'downtown'; // Default to downtown if outside defined zones
+}
+
 // Crime success rates
 export const BASE_ROBBERY_SUCCESS = 0.3; // 30% base chance
 export const BASE_COMBAT_SUCCESS = 0.5; // 50% base chance

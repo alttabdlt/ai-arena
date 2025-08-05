@@ -119,7 +119,14 @@ export function useServerSideReverseHangman({ tournament }: UseServerSideReverse
               },
               timestamp: Date.now()
             };
-            setDecisionHistory(prev => [...prev, historyEntry]);
+            setDecisionHistory(prev => {
+              const updated = [...prev, historyEntry];
+              // Limit history size to prevent excessive storage
+              if (updated.length > 100) {
+                return updated.slice(-100);
+              }
+              return updated;
+            });
           }
         }
         break;

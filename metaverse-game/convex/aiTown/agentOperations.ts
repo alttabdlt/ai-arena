@@ -134,6 +134,22 @@ export const agentDoSomething = internalAction({
       return;
     }
     
+    // Check if just recovered from being knocked out
+    if (agent.knockedOutUntil && now >= agent.knockedOutUntil) {
+      // Log hospital recovery (will log multiple times but that's ok for now)
+      // Would need to add hasLoggedRecovery field to persist this state
+      const playerName = `Player ${player.id.slice(0, 4)}`;
+      
+      await ctx.runMutation(internal.aiTown.activityLogger.logActivity, {
+        worldId: args.worldId,
+        playerId: player.id,
+        agentId: agent.id,
+        type: 'hospital_recovery',
+        description: `${playerName} recovered and left the hospital`,
+        emoji: '🏥',
+      });
+    }
+    
     // Decide whether to do crime activities based on zone and personality
     const currentZone = player.currentZone || 'downtown';
     const personality = agent.personality || 'WORKER';
@@ -407,7 +423,65 @@ export const agentEngageCombat = internalAction({
     
     const agentWins = Math.random() < (agentPower / (agentPower + opponentPower));
     
+    // Get player names for logging
+    // For now just use generic names, would need to query player descriptions properly
+    const agentName = `Player ${args.playerId.slice(0, 4)}`;
+    const opponentName = `Player ${args.opponentId.slice(0, 4)}`;
+    
+    // Log combat start
+    await ctx.runMutation(internal.aiTown.activityLogger.logActivity, {
+      worldId: args.worldId,
+      playerId: args.playerId,
+      agentId: args.agentId,
+      type: 'combat',
+      description: `${agentName} engaged in combat with ${opponentName}`,
+      emoji: '⚔️',
+      details: {
+        targetPlayer: args.opponentId,
+      },
+    });
+    
     await sleep(Math.random() * 3000);
+    
+    // Log combat result
+    if (agentWins) {
+      await ctx.runMutation(internal.aiTown.activityLogger.logActivity, {
+        worldId: args.worldId,
+        playerId: args.playerId,
+        agentId: args.agentId,
+        type: 'combat',
+        description: `${agentName} won the fight against ${opponentName}!`,
+        emoji: '🏆',
+        details: {
+          targetPlayer: args.opponentId,
+          success: true,
+        },
+      });
+      
+      // Log knock-out for the loser
+      await ctx.runMutation(internal.aiTown.activityLogger.logActivity, {
+        worldId: args.worldId,
+        playerId: args.opponentId,
+        type: 'knocked_out',
+        description: `${opponentName} was knocked out by ${agentName}`,
+        emoji: '💀',
+        details: {
+          targetPlayer: args.playerId,
+        },
+      });
+    } else {
+      await ctx.runMutation(internal.aiTown.activityLogger.logActivity, {
+        worldId: args.worldId,
+        playerId: args.playerId,
+        agentId: args.agentId,
+        type: 'knocked_out',
+        description: `${agentName} was knocked out by ${opponentName}`,
+        emoji: '💀',
+        details: {
+          targetPlayer: args.opponentId,
+        },
+      });
+    }
     
     await ctx.runMutation(api.aiTown.main.sendInput, {
       worldId: args.worldId,
@@ -481,6 +555,126 @@ export const agentSelectZoneActivity = internalAction({
           emoji: activity.emoji,
           until: Date.now() + activity.duration,
         },
+      },
+    });
+  },
+});
+
+// Activity logging operation handlers
+export const logConversationStart = internalAction({
+  args: {
+    worldId: v.id('worlds'),
+    playerId: v.string(),
+    inviteeId: v.string(),
+    playerName: v.string(),
+    inviteeName: v.string(),
+  },
+  handler: async (ctx, args) => {
+    // Create activity hooks instance and log the conversation start
+    await ctx.runMutation(internal.aiTown.activityLogger.logActivity, {
+      worldId: args.worldId,
+      playerId: args.playerId,
+      type: 'conversation_start',
+      description: `${args.playerName} started a conversation with ${args.inviteeName}`,
+      emoji: '💬',
+      details: {
+        targetPlayer: args.inviteeId,
+      },
+    });
+  },
+});
+
+export const logConversationEnd = internalAction({
+  args: {
+    worldId: v.id('worlds'),
+    playerId: v.string(),
+    playerName: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.runMutation(internal.aiTown.activityLogger.logActivity, {
+      worldId: args.worldId,
+      playerId: args.playerId,
+      type: 'conversation_end',
+      description: `${args.playerName} ended the conversation`,
+      emoji: '👋',
+    });
+  },
+});
+
+export const logActivityStart = internalAction({
+  args: {
+    worldId: v.id('worlds'),
+    playerId: v.string(),
+    playerName: v.string(),
+    activity: v.string(),
+    zone: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.runMutation(internal.aiTown.activityLogger.logActivity, {
+      worldId: args.worldId,
+      playerId: args.playerId,
+      type: 'activity_start',
+      description: `${args.playerName} started ${args.activity} in ${args.zone}`,
+      emoji: '🎯',
+      details: {
+        zone: args.zone,
+        message: args.activity,
+      },
+    });
+  },
+});
+
+export const logZoneChange = internalAction({
+  args: {
+    worldId: v.id('worlds'),
+    playerId: v.string(),
+    playerName: v.string(),
+    fromZone: v.string(),
+    toZone: v.string(),
+  },
+  handler: async (ctx, args) => {
+    // Zone-specific emojis
+    const zoneEmojis: Record<string, string> = {
+      casino: '🎲',
+      darkAlley: '🌃',
+      suburb: '🏠',
+      underground: '⚔️',
+      downtown: '🏙️',
+    };
+    
+    await ctx.runMutation(internal.aiTown.activityLogger.logActivity, {
+      worldId: args.worldId,
+      playerId: args.playerId,
+      type: 'zone_change',
+      description: `${args.playerName} entered ${args.toZone.charAt(0).toUpperCase() + args.toZone.slice(1).replace(/([A-Z])/g, ' $1')}`,
+      emoji: zoneEmojis[args.toZone] || '🚶',
+      details: {
+        zone: args.toZone,
+      },
+    });
+  },
+});
+
+export const logActivityEnd = internalAction({
+  args: {
+    worldId: v.id('worlds'),
+    playerId: v.string(),
+    agentId: v.optional(v.string()),
+    playerName: v.string(),
+    activity: v.string(),
+    zone: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.runMutation(internal.aiTown.activityLogger.logActivity, {
+      worldId: args.worldId,
+      playerId: args.playerId,
+      agentId: args.agentId,
+      type: 'activity_end',
+      description: `${args.playerName} finished ${args.activity}`,
+      emoji: '✅',
+      details: {
+        zone: args.zone,
+        message: args.activity,
       },
     });
   },

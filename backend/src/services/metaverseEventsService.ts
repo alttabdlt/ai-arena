@@ -87,6 +87,22 @@ export class MetaverseEventsService {
     console.log(`📊 Published bot stats sync for ${botId}`);
   }
 
+  // Publish bot deployment
+  async publishBotDeployed(botId: string, agentId: string, worldId: string) {
+    const event = {
+      botId,
+      agentId,
+      worldId,
+      timestamp: new Date().toISOString(),
+    };
+
+    await this.publisher.publish(`metaverse:bot:${botId}`, JSON.stringify({
+      type: 'DEPLOYED',
+      ...event,
+    }));
+    console.log(`🚀 Published bot deployment for ${botId}`);
+  }
+
   // Subscribe to metaverse events from Convex (for bi-directional sync)
   async subscribeToConvexEvents() {
     // This would be implemented when we have a WebSocket connection to Convex

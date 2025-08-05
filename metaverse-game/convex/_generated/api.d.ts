@@ -16,6 +16,7 @@ import type {
 import type * as agent_conversation from "../agent/conversation.js";
 import type * as agent_embeddingsCache from "../agent/embeddingsCache.js";
 import type * as agent_memory from "../agent/memory.js";
+import type * as aiTown_activityHooks from "../aiTown/activityHooks.js";
 import type * as aiTown_activityLogger from "../aiTown/activityLogger.js";
 import type * as aiTown_agent from "../aiTown/agent.js";
 import type * as aiTown_agentDescription from "../aiTown/agentDescription.js";
@@ -78,6 +79,7 @@ declare const fullApi: ApiFromModules<{
   "agent/conversation": typeof agent_conversation;
   "agent/embeddingsCache": typeof agent_embeddingsCache;
   "agent/memory": typeof agent_memory;
+  "aiTown/activityHooks": typeof aiTown_activityHooks;
   "aiTown/activityLogger": typeof aiTown_activityLogger;
   "aiTown/agent": typeof aiTown_agent;
   "aiTown/agentDescription": typeof aiTown_agentDescription;

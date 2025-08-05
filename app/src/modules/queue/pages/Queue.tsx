@@ -8,7 +8,7 @@ import { Badge } from '@ui/badge';
 import { Button } from '@ui/button';
 import { Loader2, Users, Zap, Trophy, Clock, Wifi, WifiOff } from 'lucide-react';
 import { GameType, GAME_TYPE_INFO } from '@shared/types/tournament';
-import { GET_QUEUE_STATUS, QUEUE_UPDATE_SUBSCRIPTION } from '@/graphql/queries/queue';
+import { GET_QUEUE_STATUS, GET_QUEUED_BOTS, QUEUE_UPDATE_SUBSCRIPTION } from '@/graphql/queries/queue';
 import { useToast } from '@shared/hooks/use-toast';
 import { useWebSocketStatus } from '@shared/hooks/useWebSocketStatus';
 import { gql } from '@apollo/client';
@@ -54,6 +54,17 @@ const Queue = () => {
     pollInterval: 1000, // Fast polling while on this page
   });
   
+  // Query queued bots for initial data
+  const { data: queuedBotsData } = useQuery(GET_QUEUED_BOTS, {
+    variables: { limit: 4 }, // Only need first 4 for match
+    onCompleted: (data) => {
+      if (data?.queuedBots && data.queuedBots.length > 0) {
+        console.log('📋 Initial queued bots loaded:', data.queuedBots.map((b: any) => b.name));
+        setMatchedBots(data.queuedBots.slice(0, 4));
+      }
+    }
+  });
+  
   // Subscribe to queue updates
   const { data: queueUpdate, loading: subLoading, error: subError } = useSubscription(QUEUE_UPDATE_SUBSCRIPTION, {
     skip: false,
@@ -84,7 +95,10 @@ const Queue = () => {
           setMatchedBots(prev => {
             const exists = prev.some(bot => bot.id === update.bot.id);
             if (!exists) {
-              return [...prev, update.bot];
+              // Only add if we have less than 4 bots
+              if (prev.length < 4) {
+                return [...prev, update.bot];
+              }
             }
             return prev;
           });
@@ -299,13 +313,8 @@ const Queue = () => {
   
   return (
     <div className="min-h-screen bg-background">
-      {/* Background effects */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-primary/20 rounded-full blur-3xl animate-pulse" />
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-accent/20 rounded-full blur-3xl animate-pulse" />
-      </div>
       
-      <div className="relative z-10 container mx-auto px-4 py-8">
+      <div className="container mx-auto px-4 py-8">
         {/* WebSocket Status */}
         {!isConnected && (
           <motion.div
@@ -313,10 +322,10 @@ const Queue = () => {
             animate={{ opacity: 1, y: 0 }}
             className="fixed top-4 right-4 z-50"
           >
-            <Card className="p-3 bg-destructive/10 border-destructive/20">
-              <div className="flex items-center gap-2 text-destructive">
-                <WifiOff className="h-4 w-4" />
-                <span className="text-sm font-medium">
+            <Card className="p-2 border-destructive/50">
+              <div className="flex items-center gap-2 text-sm">
+                <WifiOff className="h-4 w-4 text-destructive" />
+                <span className="text-destructive">
                   WebSocket disconnected
                   {reconnectAttempts > 0 && ` (Retry ${reconnectAttempts})`}
                 </span>
@@ -326,35 +335,36 @@ const Queue = () => {
         )}
         
         {/* Header */}
-        <div className="text-center mb-8">
+        <div className="text-center mb-6">
           <motion.div
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-green-500/10 rounded-full border border-green-500/20 mb-6"
+            className="inline-flex items-center gap-2 px-3 py-1 bg-green-50 dark:bg-green-950/20 rounded-md border border-green-200 dark:border-green-900/50 mb-4"
           >
-            <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse" />
-            <span className="text-green-500 font-medium">Match Ready!</span>
+            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+            <span className="text-sm text-green-800 dark:text-green-200">Match Ready</span>
           </motion.div>
           
-          <h1 className="text-4xl md:text-5xl font-bold mb-4 bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
+          <h1 className="text-3xl font-semibold mb-2">
             Game Selection
           </h1>
-          <p className="text-xl text-muted-foreground">
+          <p className="text-muted-foreground">
             {totalInQueue} players ready • Starting match...
           </p>
         </div>
         
         {/* Players in queue */}
-        <Card className="mb-8 p-6 bg-muted/5 backdrop-blur-sm border-primary/20">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold flex items-center gap-2">
-              <Users className="h-5 w-5 text-primary" />
-              Players Ready
-            </h3>
-            <Badge variant="secondary" className="bg-green-500/10 text-green-500">
-              {totalInQueue}/4 Players
-            </Badge>
-          </div>
+        <Card className="mb-6">
+          <div className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-base font-medium flex items-center gap-2">
+                <Users className="h-4 w-4 text-muted-foreground" />
+                Players Ready
+              </h3>
+              <Badge variant="secondary" className="text-xs">
+                {totalInQueue}/4 Players
+              </Badge>
+            </div>
           
           <div className="grid grid-cols-4 gap-4">
             {[...Array(4)].map((_, i) => {
@@ -365,36 +375,43 @@ const Queue = () => {
                   initial={{ opacity: 0, scale: 0.8 }}
                   animate={{ opacity: 1, scale: 1 }}
                   transition={{ delay: i * 0.1 }}
-                  className={`p-4 rounded-lg border ${
+                  className={`p-3 rounded border ${
                     bot || i < totalInQueue 
-                      ? 'bg-primary/10 border-primary/20' 
-                      : 'bg-muted/10 border-border'
+                      ? 'bg-muted/50 border-border' 
+                      : 'bg-background border-border'
                   }`}
                 >
                   <div className="flex items-center justify-center">
                     {bot ? (
                       <div className="text-center">
-                        <div className="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center mx-auto mb-2">
-                          <span className="text-2xl">
-                            {bot.avatar && !bot.avatar.startsWith('bot-') ? bot.avatar : '🤖'}
-                          </span>
-                        </div>
+                        {bot.avatar && bot.avatar.startsWith('data:image') ? (
+                          <img 
+                            src={bot.avatar} 
+                            alt={bot.name}
+                            className="w-10 h-10 rounded-full mx-auto mb-1"
+                            style={{ imageRendering: 'pixelated' }}
+                          />
+                        ) : (
+                          <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center mx-auto mb-1">
+                            <Trophy className="h-5 w-5 text-muted-foreground" />
+                          </div>
+                        )}
                         <p className="text-xs font-medium">{bot.name}</p>
-                        <p className="text-xs text-muted-foreground opacity-75">
-                          {bot.creator?.address === '0x0000000000000000000000000000000000000001' ? 'Demo Bot' : 'Player Bot'}
+                        <p className="text-xs text-muted-foreground">
+                          {bot.creator?.address === '0x0000000000000000000000000000000000000001' ? 'Demo' : 'Player'}
                         </p>
                       </div>
                     ) : i < totalInQueue ? (
                       <div className="text-center">
-                        <div className="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center mx-auto mb-2">
-                          <Trophy className="h-6 w-6 text-primary" />
+                        <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center mx-auto mb-1">
+                          <Trophy className="h-5 w-5 text-muted-foreground" />
                         </div>
                         <p className="text-xs text-muted-foreground">Player {i + 1}</p>
                       </div>
                     ) : (
                       <div className="text-center opacity-50">
-                        <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-2">
-                          <Users className="h-6 w-6 text-muted-foreground" />
+                        <div className="w-10 h-10 rounded-full bg-muted/50 flex items-center justify-center mx-auto mb-1">
+                          <Users className="h-5 w-5 text-muted-foreground" />
                         </div>
                         <p className="text-xs text-muted-foreground">Waiting...</p>
                       </div>
@@ -403,6 +420,7 @@ const Queue = () => {
                 </motion.div>
               );
             })}
+            </div>
           </div>
         </Card>
         
@@ -427,17 +445,17 @@ const Queue = () => {
               animate={{ opacity: 1, scale: 1 }}
               className="text-center space-y-6"
             >
-              <div className="inline-flex items-center gap-3 px-6 py-3 bg-primary/10 rounded-full">
-                <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                <span className="text-lg font-medium">Creating match...</span>
+              <div className="inline-flex items-center gap-2 px-4 py-2 bg-muted rounded-md">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                <span className="text-sm">Creating match...</span>
               </div>
               
               {selectedGame && (
-                <div className="space-y-2">
-                  <p className="text-2xl font-bold">
+                <div className="space-y-1">
+                  <p className="text-lg font-medium">
                     {GAME_TYPE_INFO[selectedGame].icon} {GAME_TYPE_INFO[selectedGame].name}
                   </p>
-                  <p className="text-muted-foreground">
+                  <p className="text-sm text-muted-foreground">
                     Preparing tournament setup...
                   </p>
                 </div>

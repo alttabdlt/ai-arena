@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { AnimatedWordReveal } from './AnimatedWordReveal';
 import { MatchProgressBar } from './MatchProgressBar';
 import { MistakeDisplay } from './MistakeDisplay';
+import { Loader2 } from 'lucide-react';
 import type { ReverseHangmanGameState as ReverseHangmanState, GuessAttempt } from '@game/engine/games/reverse-hangman/ReverseHangmanTypes';
 
 // Simple local mistake type - mistake detection was removed in framework migration
@@ -74,15 +75,15 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
     return (
       <div className="max-w-4xl mx-auto p-6">
         <div className="text-center py-12">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-          <p className="text-lg text-gray-700">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4 text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">
             {gameState.phase === 'selecting' ? 'Generating prompt...' : 
              gameState.phase === 'playing' ? 'Loading game state...' : 
              'Preparing game...'}
           </p>
-          <p className="text-sm text-gray-600 mt-2">Phase: {gameState.phase}</p>
+          <p className="text-xs text-muted-foreground mt-2">Phase: {gameState.phase}</p>
           {gameState.phase === 'playing' && !gameState.currentPromptPair && (
-            <p className="text-sm text-yellow-600 mt-2">Waiting for prompt generation...</p>
+            <p className="text-xs text-muted-foreground mt-2">Waiting for prompt generation...</p>
           )}
         </div>
       </div>
@@ -100,23 +101,23 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
 
   const getMatchTypeColor = (matchType: GuessAttempt['matchType']) => {
     switch (matchType) {
-      case 'exact': return 'text-green-500';
-      case 'near': return 'text-yellow-500';
-      case 'partial': return 'text-orange-500';
-      case 'semantic': return 'text-blue-500';
-      default: return 'text-red-500';
+      case 'exact': return 'text-green-600 dark:text-green-400';
+      case 'near': return 'text-yellow-600 dark:text-yellow-400';
+      case 'partial': return 'text-orange-600 dark:text-orange-400';
+      case 'semantic': return 'text-blue-600 dark:text-blue-400';
+      default: return 'text-red-600 dark:text-red-400';
     }
   };
 
   return (
-    <div className="max-w-4xl mx-auto p-6 space-y-6">
+    <div className="max-w-4xl mx-auto p-4 space-y-4">
       {/* Header */}
       <div className="text-center">
-        <h2 className="text-3xl font-bold mb-2">Reverse Engineering Challenge</h2>
+        <h2 className="text-lg font-medium mb-2">Reverse Engineering Challenge</h2>
         {gameState.currentPromptPair && (
-          <p className="text-gray-900">
-            Difficulty: <span className="capitalize font-semibold">{gameState.currentPromptPair.difficulty}</span> | 
-            Category: <span className="capitalize font-semibold">{gameState.currentPromptPair.category}</span>
+          <p className="text-sm text-muted-foreground">
+            Difficulty: <span className="capitalize">{gameState.currentPromptPair.difficulty}</span> | 
+            Category: <span className="capitalize">{gameState.currentPromptPair.category}</span>
           </p>
         )}
       </div>
@@ -136,7 +137,7 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
       {/* Attempts Indicator */}
       <div className="flex justify-center space-x-2">
         {Array.from({ length: gameState.maxAttempts || 6 }).map((_, i) => (
-          <div key={i} className="text-2xl">
+          <div key={i} className="text-sm">
             {getAttemptIcon(i)}
           </div>
         ))}
@@ -144,10 +145,10 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
 
       {/* Output Display */}
       {gameState.currentPromptPair && (
-        <div className="bg-gray-50 rounded-lg p-6">
-          <h3 className="text-lg font-semibold mb-3 text-gray-900">AI Output Generated!</h3>
-          <p className="text-sm text-gray-600 mb-2">Can you guess the original prompt?</p>
-          <div className="bg-white p-4 rounded border border-gray-300 whitespace-pre-wrap text-gray-900 font-medium">
+        <div className="bg-muted rounded-lg p-4">
+          <h3 className="text-sm font-medium mb-2">AI Output Generated!</h3>
+          <p className="text-xs text-muted-foreground mb-2">Can you guess the original prompt?</p>
+          <div className="bg-background p-3 rounded border whitespace-pre-wrap text-sm">
             {gameState.currentPromptPair.output || 'Loading output...'}
           </div>
         </div>
@@ -156,10 +157,10 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
       {/* Game Status */}
       {gameState.phase === 'playing' && (
         <div className="text-center">
-          <p className="text-lg">
-            Attempts Remaining: <span className="font-bold">{attemptsRemaining}</span>
+          <p className="text-sm">
+            Attempts Remaining: <span className="font-medium">{attemptsRemaining}</span>
           </p>
-          <p className="text-sm text-gray-900 mt-1">
+          <p className="text-xs text-muted-foreground mt-1">
             Guess the prompt that generated this output (minimum 6 words)
           </p>
         </div>
@@ -167,8 +168,8 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
 
       {/* Current Player's Attempts */}
       {gameState.attempts && gameState.currentTurn && (
-        <div className="space-y-3">
-          <h3 className="text-lg font-semibold">
+        <div className="space-y-2">
+          <h3 className="text-sm font-medium">
             {gameState.players.find(p => p.id === gameState.currentTurn)?.name}'s Attempts:
           </h3>
           {(() => {
@@ -177,11 +178,11 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
             const playerAttempts = currentPlayer?.guessHistory || [];
             
             return playerAttempts.map((attempt: any, index: number) => (
-            <div key={index} className="bg-white p-4 rounded border border-gray-200">
-              <div className="space-y-3">
+            <div key={index} className="bg-background p-3 rounded border">
+              <div className="space-y-2">
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
-                    <p className="text-sm text-gray-800 font-medium">Attempt {index + 1}:</p>
+                    <p className="text-xs text-muted-foreground">Attempt {index + 1}:</p>
                     <div className="mt-1">
                       <AnimatedWordReveal
                         text={attempt.guess}
@@ -191,10 +192,10 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
                     </div>
                   </div>
                   <div className="text-right ml-4">
-                    <span className={`font-semibold ${getMatchTypeColor(attempt.matchType)}`}>
+                    <span className={`text-xs font-medium ${getMatchTypeColor(attempt.matchType)}`}>
                       {attempt.matchType.toUpperCase()}
                     </span>
-                    <p className="text-sm text-gray-900 font-medium">
+                    <p className="text-xs text-muted-foreground">
                       {attempt.matchPercentage.toFixed(0)}% match
                     </p>
                   </div>
@@ -202,30 +203,30 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
                 
                 {/* Detailed Match Feedback */}
                 {attempt.matchDetails && (
-                  <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
+                  <div className="mt-2 pt-2 border-t space-y-1">
                     {/* Position Template (Hangman-style) */}
                     {attempt.matchDetails.positionTemplate && (
-                      <div className="text-sm mb-2">
-                        <span className="font-medium text-gray-800">Pattern:</span>{' '}
-                        <span className="font-mono text-gray-900 bg-gray-100 px-2 py-1 rounded">
+                      <div className="text-xs">
+                        <span className="text-muted-foreground">Pattern:</span>{' '}
+                        <span className="font-mono bg-muted px-1 rounded">
                           {attempt.matchDetails.positionTemplate}
                         </span>
                       </div>
                     )}
                     
                     {/* Word Match Summary */}
-                    <div className="text-sm">
-                      <span className="font-medium text-gray-800">Word Match:</span>{' '}
-                      <span className="text-gray-900">
+                    <div className="text-xs">
+                      <span className="text-muted-foreground">Word Match:</span>{' '}
+                      <span>
                         {attempt.matchDetails.wordMatches} / {attempt.matchDetails.totalWords} words
                       </span>
                     </div>
                     
                     {/* Matched Words */}
                     {attempt.matchDetails.matchedWords.length > 0 && (
-                      <div className="text-sm">
-                        <span className="font-medium text-green-700">✓ Correct:</span>{' '}
-                        <span className="text-green-600">
+                      <div className="text-xs">
+                        <span className="text-green-600 dark:text-green-400">✓ Correct:</span>{' '}
+                        <span className="text-green-600 dark:text-green-400">
                           {attempt.matchDetails.matchedWords.join(', ')}
                         </span>
                       </div>
@@ -233,9 +234,9 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
                     
                     {/* Semantic Matches */}
                     {attempt.matchDetails.semanticMatches.length > 0 && (
-                      <div className="text-sm">
-                        <span className="font-medium text-blue-700">≈ Similar:</span>{' '}
-                        <span className="text-blue-600">
+                      <div className="text-xs">
+                        <span className="text-blue-600 dark:text-blue-400">≈ Similar:</span>{' '}
+                        <span className="text-blue-600 dark:text-blue-400">
                           {attempt.matchDetails.semanticMatches.map(sm => 
                             `${sm.matched} → ${sm.original}`
                           ).join(', ')}
@@ -246,9 +247,9 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
                     
                     {/* Extra Words */}
                     {attempt.matchDetails.extraWords.length > 0 && (
-                      <div className="text-sm">
-                        <span className="font-medium text-red-700">+ Extra:</span>{' '}
-                        <span className="text-red-600">
+                      <div className="text-xs">
+                        <span className="text-red-600 dark:text-red-400">+ Extra:</span>{' '}
+                        <span className="text-red-600 dark:text-red-400">
                           {attempt.matchDetails.extraWords.join(', ')}
                         </span>
                       </div>
@@ -264,20 +265,20 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
 
       {/* Hangman Pattern Display - Show current progress */}
       {gameState.attempts && gameState.attempts.length > 0 && gameState.currentTurn && (
-        <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-4 text-center">
-          <h3 className="text-lg font-semibold mb-2">Current Pattern:</h3>
+        <div className="bg-muted border rounded-lg p-3 text-center">
+          <h3 className="text-sm font-medium mb-2">Current Pattern:</h3>
           {(() => {
             const currentPlayer = gameState.players.find(p => p.id === gameState.currentTurn) as any;
             const lastAttempt = currentPlayer?.guessHistory?.[currentPlayer.guessHistory.length - 1];
             const pattern = lastAttempt?.matchDetails?.positionTemplate || '_ _ _ _ _ _';
             
             return (
-              <div className="font-mono text-2xl tracking-wider text-gray-900">
+              <div className="font-mono text-lg tracking-wider">
                 {pattern}
               </div>
             );
           })()}
-          <p className="text-sm text-gray-600 mt-2">
+          <p className="text-xs text-muted-foreground mt-2">
             Words you've correctly guessed will appear in the pattern above
           </p>
         </div>
@@ -285,18 +286,18 @@ export const ReverseHangmanBoard: React.FC<ReverseHangmanBoardProps> = ({
 
       {/* Game Over Display */}
       {(['won', 'lost', 'round-complete'].includes(gameState.phase) && gameState.currentPromptPair && gameState.roundNumber > 0) && (
-        <div className={`p-6 rounded-lg text-center ${
-          gameState.phase === 'won' ? 'bg-green-100' : 'bg-red-100'
+        <div className={`p-4 rounded-lg text-center ${
+          gameState.phase === 'won' ? 'bg-green-50 dark:bg-green-950/20' : 'bg-red-50 dark:bg-red-950/20'
         }`}>
-          <h3 className="text-2xl font-bold mb-3">
+          <h3 className="text-base font-medium mb-2">
             {gameState.phase === 'won' ? '🎉 Success!' : '😔 Game Over'}
           </h3>
-          <div className="mb-4">
-            <p className="text-sm text-gray-900 mb-1">The correct prompt was:</p>
-            <p className="font-semibold text-lg">{gameState.currentPromptPair.prompt}</p>
+          <div className="mb-3">
+            <p className="text-xs text-muted-foreground mb-1">The correct prompt was:</p>
+            <p className="text-sm font-medium">{gameState.currentPromptPair.prompt}</p>
           </div>
           {gameState.phase === 'won' && gameState.endTime && (
-            <div className="text-sm text-gray-900">
+            <div className="text-xs text-muted-foreground">
               <p>Solved in {gameState.attempts?.length || 0} attempt{(gameState.attempts?.length || 0) !== 1 ? 's' : ''}</p>
               {gameState.endTime && gameState.startTime && (
                 <p>Time: {Math.round((new Date(gameState.endTime).getTime() - new Date(gameState.startTime).getTime()) / 1000)}s</p>

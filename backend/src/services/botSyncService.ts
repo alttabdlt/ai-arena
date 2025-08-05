@@ -1,6 +1,8 @@
 import { prisma } from '../config/database';
+import { Prisma } from '@prisma/client';
 import { convexService } from './convexService';
 import { metaverseEventsService } from './metaverseEventsService';
+import { worldInitializationService } from './worldInitializationService';
 import { SyncStatus } from '@prisma/client';
 
 export class BotSyncService {
@@ -52,14 +54,42 @@ export class BotSyncService {
   private async performSync() {
     console.log('🔄 Performing bot sync...');
 
+    // First, ensure worlds are initialized
+    await worldInitializationService.ensureWorldsExist();
+
+    // Check for undeployed bots (bots without metaverseAgentId)
+    const undeployedBots = await prisma.bot.findMany({
+      where: {
+        OR: [
+          { metaverseAgentId: null },
+          { metaverseAgentId: '' }
+        ]
+      },
+      include: {
+        creator: true,
+        botSync: true
+      }
+    });
+
+    if (undeployedBots.length > 0) {
+      console.log(`🚀 Found ${undeployedBots.length} undeployed bots - deploying automatically...`);
+      await this.deployUndeployedBots(undeployedBots);
+    }
+
     // Get all bots that need syncing
     const botsToSync = await prisma.bot.findMany({
       where: {
-        OR: [
-          { botSync: null },
-          { botSync: { syncStatus: { not: SyncStatus.SYNCED } } },
-          { botSync: { lastSyncedAt: { lt: new Date(Date.now() - 60 * 60 * 1000) } } }, // Older than 1 hour
-        ],
+        AND: [
+          { metaverseAgentId: { not: null } },
+          { metaverseAgentId: { not: '' } },
+          {
+            OR: [
+              { botSync: null },
+              { botSync: { syncStatus: { not: SyncStatus.SYNCED } } },
+              { botSync: { lastSyncedAt: { lt: new Date(Date.now() - 60 * 60 * 1000) } } }, // Older than 1 hour
+            ],
+          }
+        ]
       },
       include: {
         botSync: true,
@@ -82,6 +112,11 @@ export class BotSyncService {
 
     // Check for position updates from metaverse
     await this.checkMetaverseUpdates();
+
+    // Clean up failed syncs periodically (every 5th run)
+    if (Math.random() < 0.2) {
+      await this.cleanupFailedSyncs();
+    }
   }
 
   // Sync a single bot
@@ -211,8 +246,33 @@ export class BotSyncService {
               console.log(`📍 Updated position for bot ${sync.bot.name}: Zone ${agentData.zone} (${agentData.position.x}, ${agentData.position.y})`);
             }
           }
-        } catch (error) {
-          console.error(`Failed to fetch position for bot ${sync.botId}:`, error);
+        } catch (error: any) {
+          // Handle specific error cases
+          if (error.message && error.message.includes('Invalid worldId format')) {
+            console.error(`Invalid worldId for bot ${sync.bot.name}: ${sync.convexWorldId}`);
+            // Mark sync as failed due to invalid worldId
+            await prisma.botSync.update({
+              where: { id: sync.id },
+              data: {
+                syncStatus: 'FAILED',
+                syncErrors: [`Invalid worldId: ${sync.convexWorldId}`],
+                lastSyncedAt: new Date()
+              }
+            });
+          } else if (error.message && error.message.includes('World not found')) {
+            console.error(`World not found for bot ${sync.bot.name}: ${sync.convexWorldId}`);
+            // The world might have been deleted, mark as failed
+            await prisma.botSync.update({
+              where: { id: sync.id },
+              data: {
+                syncStatus: 'FAILED',
+                syncErrors: [`World not found: ${sync.convexWorldId}`],
+                lastSyncedAt: new Date()
+              }
+            });
+          } else {
+            console.error(`Failed to fetch position for bot ${sync.bot.name}:`, error.message || error);
+          }
         }
       }
     } catch (error) {
@@ -258,6 +318,194 @@ export class BotSyncService {
       console.log(`📍 Updated position for bot ${bot.id}`);
     } catch (error) {
       console.error('Error handling position update:', error);
+    }
+  }
+
+  // Deploy undeployed bots automatically
+  private async deployUndeployedBots(bots: any[]) {
+    let deployed = 0;
+    let failed = 0;
+
+    for (const bot of bots) {
+      try {
+        // Create or update bot sync record
+        const botSync = await prisma.botSync.upsert({
+          where: { botId: bot.id },
+          create: {
+            botId: bot.id,
+            syncStatus: 'SYNCING'
+          },
+          update: {
+            syncStatus: 'SYNCING',
+            syncErrors: []
+          }
+        });
+
+        // Map personality to agent description
+        const { mapPersonalityToAgent, getInitialZone } = require('../utils/personalityMapping');
+        const agentDescription = mapPersonalityToAgent(
+          bot.name,
+          bot.personality,
+          bot.prompt
+        );
+        
+        // Determine initial zone
+        const initialZone = getInitialZone(bot.personality);
+        
+        // Find available world instance
+        const worldInstance = await convexService.findAvailableInstance(initialZone, bot.id);
+        
+        if (!worldInstance) {
+          throw new Error(`No available instance for zone ${initialZone}`);
+        }
+        
+        // Register bot in metaverse
+        const result = await convexService.createBotAgent({
+          worldId: worldInstance.worldId,
+          name: agentDescription.name,
+          character: agentDescription.character,
+          identity: agentDescription.identity,
+          plan: agentDescription.plan,
+          aiArenaBotId: bot.id,
+          initialZone: initialZone
+        });
+
+        if (result && result.agentId) {
+          // Update bot with metaverse data
+          await prisma.bot.update({
+            where: { id: bot.id },
+            data: {
+              metaverseAgentId: result.agentId,
+              currentZone: initialZone,
+              metaversePosition: Prisma.JsonNull // Position will be synced later
+            }
+          });
+
+          // Update sync status
+          await prisma.botSync.update({
+            where: { id: botSync.id },
+            data: {
+              syncStatus: 'SYNCED',
+              convexWorldId: worldInstance.worldId,
+              convexAgentId: result.agentId,
+              convexPlayerId: result.playerId,
+              personalityMapped: true,
+              lastSyncedAt: new Date()
+            }
+          });
+
+          deployed++;
+          console.log(`✅ Auto-deployed bot: ${bot.name} (${bot.id})`);
+          
+          // Publish deployment event
+          await metaverseEventsService.publishBotDeployed(bot.id, result.agentId, worldInstance.worldId);
+        } else {
+          throw new Error('Failed to register bot');
+        }
+      } catch (error: any) {
+        failed++;
+        console.error(`❌ Failed to auto-deploy bot ${bot.name}:`, error.message);
+        
+        // Update sync status to failed
+        await prisma.botSync.upsert({
+          where: { botId: bot.id },
+          create: {
+            botId: bot.id,
+            syncStatus: 'FAILED',
+            syncErrors: [error.message]
+          },
+          update: {
+            syncStatus: 'FAILED',
+            syncErrors: [error.message]
+          }
+        });
+      }
+
+      // Rate limiting between deployments
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+
+    if (deployed > 0) {
+      console.log(`🎉 Auto-deployment complete: ${deployed} succeeded, ${failed} failed`);
+    }
+  }
+
+  // Clean up failed syncs periodically
+  private async cleanupFailedSyncs() {
+    try {
+      console.log('🧹 Cleaning up failed syncs...');
+      
+      // Find syncs that failed due to invalid world IDs
+      const invalidSyncs = await prisma.botSync.findMany({
+        where: {
+          OR: [
+            { 
+              syncStatus: 'FAILED'
+            },
+            {
+              convexWorldId: 'm17dkz0psv5e7b812sjjxwpwgd7n374s' // Known invalid ID
+            }
+          ]
+        }
+      });
+
+      if (invalidSyncs.length > 0) {
+        console.log(`Found ${invalidSyncs.length} invalid syncs to clean`);
+        
+        for (const sync of invalidSyncs) {
+          // Reset sync status
+          await prisma.botSync.update({
+            where: { id: sync.id },
+            data: {
+              syncStatus: 'PENDING',
+              convexWorldId: null,
+              convexAgentId: null,
+              convexPlayerId: null,
+              syncErrors: [],
+              personalityMapped: false,
+              positionSynced: false,
+              statsSynced: false
+            }
+          });
+
+          // Clear bot metaverse fields
+          await prisma.bot.update({
+            where: { id: sync.botId },
+            data: {
+              metaverseAgentId: null,
+              currentZone: null,
+              metaversePosition: Prisma.JsonNull
+            }
+          });
+        }
+
+        console.log(`✅ Cleaned ${invalidSyncs.length} invalid syncs`);
+      }
+
+      // Retry failed syncs that are older than 5 minutes
+      const oldFailedSyncs = await prisma.botSync.findMany({
+        where: {
+          syncStatus: 'FAILED',
+          lastSyncedAt: { lt: new Date(Date.now() - 5 * 60 * 1000) }
+        },
+        take: 5 // Limit retries per cycle
+      });
+
+      if (oldFailedSyncs.length > 0) {
+        console.log(`Retrying ${oldFailedSyncs.length} failed syncs...`);
+        
+        for (const sync of oldFailedSyncs) {
+          await prisma.botSync.update({
+            where: { id: sync.id },
+            data: {
+              syncStatus: 'PENDING',
+              syncErrors: []
+            }
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error cleaning up failed syncs:', error);
     }
   }
 

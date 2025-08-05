@@ -10,7 +10,7 @@ import { Connect4Status } from '@game/connect4/components/Connect4Status';
 import { Connect4DecisionHistory } from '@game/connect4/components/Connect4DecisionHistory';
 import { useServerSideConnect4 } from '@game/connect4/hooks/useServerSideConnect4';
 import { GET_MATCH } from '@/graphql/queries/bot';
-import { Trophy } from 'lucide-react';
+import { Trophy, Loader2 } from 'lucide-react';
 import { Badge } from '@ui/badge';
 import { Connect4TournamentManager } from '@game/connect4/components/Connect4TournamentManager';
 import { GameHeader } from '@game/components/GameHeader';
@@ -21,6 +21,35 @@ export default function Connect4View() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [showTournamentView, setShowTournamentView] = useState(true);
+  
+  // Function to update tournament in sessionStorage
+  const updateTournamentInStorage = (matchData: any, status?: string) => {
+    if (matchData?.match && id) {
+      const match = matchData.match;
+      const tournament = {
+        id: match.id,
+        name: match.tournament?.name || `Connect4 Match ${match.id.slice(0, 8)}`,
+        gameType: 'connect4',
+        status: status || (match.status === 'COMPLETED' ? 'completed' : match.status === 'SCHEDULED' ? 'waiting' : 'in-progress'),
+        players: match.participants.map((p: any) => ({
+          id: p.bot.id,
+          name: p.bot.name,
+          modelType: p.bot.modelType,
+          avatar: p.bot.avatar
+        })),
+        maxPlayers: match.participants.length,
+        minPlayers: 2,
+        isPublic: true,
+        createdBy: 'system',
+        createdAt: match.createdAt || new Date(),
+        matchId: match.id
+      };
+      
+      // Store in sessionStorage
+      sessionStorage.setItem(`tournament-${match.id}`, JSON.stringify(tournament));
+      console.log('🎮 Updated tournament in sessionStorage:', tournament);
+    }
+  };
   
   // Load match data from GraphQL
   const { data: matchData, loading: matchLoading, error: matchError } = useQuery(GET_MATCH, {
@@ -61,6 +90,9 @@ export default function Connect4View() {
           navigate(`/tournament/${id}/hangman-server`);
         }
       }
+      
+      // Create/update tournament in sessionStorage
+      updateTournamentInStorage(data);
     },
     onError: (error) => {
       console.error('❌ Connect4 match query error:', error);
@@ -122,17 +154,21 @@ export default function Connect4View() {
       <div className="min-h-screen bg-background">
         <div className="container mx-auto px-4 py-8">
           <Button 
-            variant="outline" 
-            onClick={() => navigate('/tournaments')}
+            variant="ghost" 
+            onClick={() => {
+              updateTournamentInStorage(matchData, isGameComplete ? 'completed' : 'in-progress');
+              navigate('/tournaments');
+            }}
             className="mb-4"
+            size="sm"
           >
             Back to Tournaments
           </Button>
           
-          <Card className="p-8">
+          <Card className="p-6">
             <div className="text-center">
-              <h2 className="text-2xl font-bold mb-4">Loading Match...</h2>
-              <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full mx-auto"></div>
+              <h2 className="text-base font-medium mb-4">Loading Match...</h2>
+              <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
             </div>
           </Card>
         </div>
@@ -146,18 +182,19 @@ export default function Connect4View() {
       <div className="min-h-screen bg-background">
         <div className="container mx-auto px-4 py-8">
           <Button 
-            variant="outline" 
+            variant="ghost" 
             onClick={() => navigate('/tournaments')}
             className="mb-4"
+            size="sm"
           >
             Back to Tournaments
           </Button>
           
-          <Card className="p-8">
+          <Card className="p-6">
             <div className="text-center">
-              <h2 className="text-2xl font-bold mb-4 text-destructive">Error Loading Match</h2>
-              <p className="text-muted-foreground mb-6">{matchError?.message || 'Match not found'}</p>
-              <Button onClick={() => navigate('/tournaments')}>
+              <h2 className="text-base font-medium mb-2">Error Loading Match</h2>
+              <p className="text-sm text-muted-foreground mb-4">{matchError?.message || 'Match not found'}</p>
+              <Button onClick={() => navigate('/tournaments')} size="sm">
                 Return to Tournaments
               </Button>
             </div>
@@ -183,32 +220,35 @@ export default function Connect4View() {
           currentRound={gameHistory?.round === 'semifinal' ? 'Semifinal' : gameHistory?.round === 'final' ? 'Final' : 'Round 1'}
           gameType="connect4"
           status={match.status === 'SCHEDULED' ? 'waiting' : match.status === 'IN_PROGRESS' ? 'in-progress' : 'completed'}
-          onBack={() => navigate('/tournaments')}
+          onBack={() => {
+            updateTournamentInStorage(matchData, isGameComplete ? 'completed' : 'in-progress');
+            navigate('/tournaments');
+          }}
         />
 
         {/* Connect4 Tournament View */}
         <div className="space-y-6">
           {/* Tournament Info - Simple display for now */}
           {match.tournament && (
-            <Card className="p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-bold">Connect4 Tournament</h2>
-                <Badge variant="outline">
+            <Card className="p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-base font-medium">Connect4 Tournament</h2>
+                <Badge variant="secondary" className="text-xs">
                   {gameHistory?.round === 'semifinal' ? 'Semifinal' : 
                    gameHistory?.round === 'final' ? 'Final' : 'Match'}
                 </Badge>
               </div>
               
               {/* Current Match Participants */}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-3">
                 {match.participants?.map((p: any, idx: number) => (
-                  <div key={p.bot.id} className="flex items-center gap-2 p-3 rounded-lg bg-muted/50">
-                    <div className={`w-4 h-4 rounded-full ${idx === 0 ? 'bg-red-500' : 'bg-yellow-500'}`} />
+                  <div key={p.bot.id} className="flex items-center gap-2 p-2 rounded bg-muted/50">
+                    <div className={`w-3 h-3 rounded-full ${idx === 0 ? 'bg-red-500' : 'bg-yellow-500'}`} />
                     <div className="flex-1">
-                      <p className="font-medium">{p.bot.name}</p>
+                      <p className="text-sm">{p.bot.name}</p>
                       <p className="text-xs text-muted-foreground">{p.bot.modelType}</p>
                     </div>
-                    {winner === p.bot.id && <Trophy className="h-4 w-4 text-primary" />}
+                    {winner === p.bot.id && <Trophy className="h-3.5 w-3.5 text-primary" />}
                   </div>
                 ))}
               </div>
@@ -228,28 +268,28 @@ export default function Connect4View() {
                   winningCells={gameState.winningCells}
                 />
               ) : (
-                <Card className="p-8">
+                <Card className="p-6">
                   <div className="text-center">
-                    <h3 className="text-xl font-semibold mb-2">Waiting for game to start...</h3>
-                    <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full mx-auto"></div>
+                    <h3 className="text-base font-medium mb-2">Waiting for game to start...</h3>
+                    <Loader2 className="h-8 w-8 animate-spin mx-auto text-muted-foreground" />
                   </div>
                 </Card>
               )}
             </div>
 
             {/* Game Info */}
-            <div className="space-y-4">
+            <div className="space-y-3">
               {/* Current Match Info */}
-              <Card className="p-4">
-                <h3 className="font-semibold mb-3">
+              <Card className="p-3">
+                <h3 className="text-sm font-medium mb-2">
                   {gameHistory?.round === 'semifinal' ? 'Semifinal Match' : 
                    gameHistory?.round === 'final' ? 'Final Match' : 'Match'}
                 </h3>
-                <div className="space-y-2">
+                <div className="space-y-1">
                   {match.participants.map((p: any, idx: number) => (
                     <div key={p.bot.id} className="flex items-center gap-2">
-                      <div className={`w-4 h-4 rounded-full ${idx === 0 ? 'bg-red-500' : 'bg-yellow-500'}`} />
-                      <span className="text-sm">{p.bot.name}</span>
+                      <div className={`w-3 h-3 rounded-full ${idx === 0 ? 'bg-red-500' : 'bg-yellow-500'}`} />
+                      <span className="text-xs">{p.bot.name}</span>
                       {winner === p.bot.id && <Trophy className="h-3 w-3 text-primary ml-auto" />}
                     </div>
                   ))}

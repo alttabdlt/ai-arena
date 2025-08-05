@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
+import { Loader2 } from 'lucide-react';
 
 interface Connect4BoardProps {
   board: number[][];
@@ -48,8 +49,8 @@ export function Connect4Board({
     console.error('Connect4Board: Invalid board data', board);
     return (
       <div className="text-center p-8">
-        <p className="text-muted-foreground">Waiting for game board to initialize...</p>
-        <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full mx-auto mt-4"></div>
+        <p className="text-sm text-muted-foreground">Waiting for game board to initialize...</p>
+        <Loader2 className="h-6 w-6 animate-spin mx-auto mt-4 text-muted-foreground" />
       </div>
     );
   }
@@ -117,48 +118,37 @@ export function Connect4Board({
       
       {/* Warning for old board size */}
       {isOldBoardSize && (
-        <div className="bg-yellow-500 text-white p-2 mb-2 rounded text-sm">
+        <div className="bg-yellow-50 dark:bg-yellow-950/20 border border-yellow-200 dark:border-yellow-900 p-2 mb-2 rounded text-xs">
           ⚠️ This game is using the old 6x7 board. Start a new game for the 8x8 board.
         </div>
       )}
       
       {/* Column hover indicators */}
-      <div className={`grid gap-1 mb-2 ${actualCols === 7 ? 'grid-cols-7' : 'grid-cols-8'}`}>
+      <div className={`grid gap-1 mb-1 ${actualCols === 7 ? 'grid-cols-7' : 'grid-cols-8'}`}>
         {Array.from({ length: actualCols }, (_, col) => (
-          <motion.div
+          <div
             key={col}
             className={cn(
-              "h-8 flex items-center justify-center cursor-pointer",
-              !disabled && !isAIThinking && board[0][col] === 0 && "hover:bg-primary/10"
+              "h-6 flex items-center justify-center cursor-pointer",
+              !disabled && !isAIThinking && board[0][col] === 0 && "hover:bg-muted"
             )}
-            whileHover={!disabled && !isAIThinking && board[0][col] === 0 ? { scale: 1.1 } : {}}
-            whileTap={!disabled && !isAIThinking && board[0][col] === 0 ? { scale: 0.95 } : {}}
             onMouseEnter={() => setHoveredColumn(col)}
             onMouseLeave={() => setHoveredColumn(null)}
             onClick={() => handleColumnClick(col)}
           >
-            <AnimatePresence>
-              {!disabled && !isAIThinking && board[0][col] === 0 && hoveredColumn === col && (
-                <motion.div
-                  initial={{ opacity: 0, y: -5 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -5 }}
-                  className="text-xs text-muted-foreground"
-                >
-                  ▼
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </motion.div>
+            {!disabled && !isAIThinking && board[0][col] === 0 && hoveredColumn === col && (
+              <span className="text-xs text-muted-foreground">▼</span>
+            )}
+          </div>
         ))}
       </div>
 
       {/* Game board */}
       <motion.div 
-        className="bg-blue-100 dark:bg-blue-900 p-4 rounded-lg border-2 border-blue-500"
-        initial={{ opacity: 0, scale: 0.9 }}
+        className="bg-muted p-3 rounded-lg border"
+        initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.3 }}
+        transition={{ duration: 0.2 }}
       >
         <div className={`grid gap-2 ${actualCols === 7 ? 'grid-cols-7' : 'grid-cols-8'}`}>
           {board.map((row, rowIndex) =>
@@ -174,34 +164,26 @@ export function Connect4Board({
                 <motion.div
                   key={cellKey}
                   className={cn(
-                    "aspect-square rounded-full border-2 border-primary/30",
+                    "aspect-square rounded-full border",
                     "flex items-center justify-center cursor-pointer relative overflow-hidden",
-                    "min-w-[40px] min-h-[40px] md:min-w-[60px] md:min-h-[60px]", // Explicit minimum dimensions
-                    !cell && "bg-gray-100 dark:bg-gray-800", // More visible empty cell color
-                    !disabled && !isAIThinking && board[0][colIndex] === 0 && "hover:border-primary/50"
+                    "min-w-[35px] min-h-[35px] md:min-w-[50px] md:min-h-[50px]",
+                    !cell && "bg-background",
+                    !disabled && !isAIThinking && board[0][colIndex] === 0 && "hover:border-muted-foreground"
                   )}
-                  style={{ 
-                    width: '100%',
-                    backgroundColor: cell === 0 ? '#f3f4f6' : undefined // Ensure empty cells are visible
-                  }}
                   onClick={() => handleColumnClick(colIndex)}
                   onMouseEnter={() => setHoveredColumn(colIndex)}
                   onMouseLeave={() => setHoveredColumn(null)}
-                  whileHover={!disabled && !isAIThinking && board[0][colIndex] === 0 ? {
-                    borderColor: "rgba(var(--primary), 0.5)"
-                  } : {}}
-                  transition={{ duration: 0.2 }}
                 >
                   <AnimatePresence mode="wait">
                     {/* Preview disc */}
                     {showPreview && (
                       <motion.div
                         key="preview"
-                        className="absolute inset-2 rounded-full bg-primary/20"
-                        initial={{ opacity: 0, scale: 0.5 }}
+                        className="absolute inset-2 rounded-full bg-muted-foreground/20"
+                        initial={{ opacity: 0, scale: 0.8 }}
                         animate={{ opacity: 1, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.5 }}
-                        transition={{ duration: 0.15 }}
+                        exit={{ opacity: 0, scale: 0.8 }}
+                        transition={{ duration: 0.1 }}
                       />
                     )}
                     
@@ -210,50 +192,26 @@ export function Connect4Board({
                       <motion.div
                         key={`disc-${cellKey}`}
                         className={cn(
-                          "absolute inset-2 rounded-full",
-                          cell === 1 ? "bg-gradient-to-br from-red-400 to-red-600" : "bg-gradient-to-br from-yellow-400 to-yellow-600"
+                          "absolute inset-1 rounded-full",
+                          cell === 1 ? "bg-red-500" : "bg-yellow-500"
                         )}
-                        initial={isDropping ? { y: -400, scale: 0.8 } : { scale: 0 }}
+                        initial={isDropping ? { y: -300, scale: 0.9 } : { scale: 0 }}
                         animate={isWinning ? {
                           y: 0,
-                          scale: [1, 1.1, 1],
-                          rotate: [0, 5, -5, 0]
+                          scale: [1, 1.05, 1]
                         } : {
                           y: 0,
                           scale: 1
                         }}
-                        transition={isWinning ? {
-                          scale: {
-                            duration: 0.5,
-                            repeat: Infinity,
-                            repeatDelay: 1
-                          },
-                          rotate: {
-                            duration: 0.5,
-                            repeat: Infinity,
-                            repeatDelay: 1
-                          },
-                          y: {
-                            type: "spring",
-                            damping: 12,
-                            stiffness: 200,
-                            bounce: 0.4
-                          }
-                        } : {
+                        transition={isDropping ? {
                           type: "spring",
-                          damping: 12,
-                          stiffness: 200,
-                          bounce: 0.4
+                          damping: 15,
+                          stiffness: 250,
+                          bounce: 0.3
+                        } : {
+                          duration: 0.2
                         }}
-                      >
-                        {/* Inner shine effect */}
-                        <div className={cn(
-                          "absolute inset-1 rounded-full",
-                          cell === 1 
-                            ? "bg-gradient-to-tl from-transparent to-red-300/50" 
-                            : "bg-gradient-to-tl from-transparent to-yellow-300/50"
-                        )} />
-                      </motion.div>
+                      />
                     )}
                   </AnimatePresence>
                 </motion.div>

@@ -13,6 +13,7 @@ import { useHistoricalTime } from '../hooks/useHistoricalTime.ts';
 import { DebugTimeManager } from './DebugTimeManager.tsx';
 import { GameId } from '../../convex/aiTown/ids.ts';
 import { useServerGame } from '../hooks/serverGame.ts';
+import { useUserBots } from '../hooks/useUserBots.ts';
 
 export const SHOW_DEBUG_UI = !!import.meta.env.VITE_SHOW_DEBUG_UI;
 
@@ -26,6 +27,9 @@ export default function Game() {
   const [selectedBot, setSelectedBot] = useState<any>();
   const [showInventory, setShowInventory] = useState(false);
   const [gameWrapperRef, { width, height }] = useElementSize();
+  
+  // Fetch user's bots from AI Arena backend
+  const { bots: userBots, loading: botsLoading, error: botsError } = useUserBots();
 
   const worldStatus = useQuery(api.world.defaultWorldStatus);
   const worldId = worldStatus?.worldId;
@@ -62,39 +66,67 @@ export default function Game() {
   );
   const itemCount = inventory?.items?.length || 0;
 
-  // Transform agents to bot data for the selector
+  // Transform and merge bot data from GraphQL and Convex agents
   const transformedBots = React.useMemo(() => {
     if (!worldState?.world?.agents || !game) return [];
     
     // Debug logging
     console.log('Transforming bots:', {
       agentsCount: allAgents.length,
-      hasPlayerDescriptions: !!game.playerDescriptions,
-      playerDescSize: game.playerDescriptions?.size,
+      userBotsCount: userBots.length,
+      botsLoading,
+      botsError,
     });
     
-    // For now, show all agents (not just ones with aiArenaBotId) so users can see them
+    // Create a map of aiArenaBotId to agent for quick lookup
+    const agentsByBotId = new Map();
+    allAgents.forEach(agent => {
+      if (agent.aiArenaBotId) {
+        agentsByBotId.set(agent.aiArenaBotId, agent);
+      }
+    });
+    
+    // If we have user bots from GraphQL, use those as the primary source
+    if (userBots.length > 0) {
+      return userBots.map(bot => {
+        // Find the corresponding agent in the metaverse
+        const agent = agentsByBotId.get(bot.id);
+        
+        return {
+          id: bot.id,
+          name: bot.name,
+          tokenId: bot.tokenId,
+          personality: bot.personality,
+          stats: bot.stats || { wins: 0, losses: 0 },
+          isActive: bot.isActive && (!agent?.knockedOutUntil || Date.now() > agent.knockedOutUntil),
+          metaverseAgentId: agent?.id || bot.metaverseAgentId,
+          playerId: agent?.playerId,
+          aiArenaBotId: bot.id,
+          inMetaverse: !!agent, // Indicator if bot is actually in the metaverse
+        };
+      });
+    }
+    
+    // Fallback: Show all agents if no user bots are loaded yet
     return allAgents
+      .filter(agent => agent.aiArenaBotId) // Only show agents that have AI Arena bot IDs
       .map((agent, index) => {
-        // Find the player description for this agent
         const playerDesc = game.playerDescriptions?.get(agent.playerId);
         
         return {
-          id: agent.id,
+          id: agent.aiArenaBotId || agent.id,
           name: playerDesc?.name || `Agent ${index + 1}`,
-          tokenId: 1000 + index, // Generate a token ID
+          tokenId: 1000 + index,
           personality: agent.personality,
-          stats: {
-            wins: 0, // TODO: Get from AI Arena backend
-            losses: 0,
-          },
+          stats: { wins: 0, losses: 0 },
           isActive: !agent.knockedOutUntil || Date.now() > agent.knockedOutUntil,
           metaverseAgentId: agent.id,
           playerId: agent.playerId,
           aiArenaBotId: agent.aiArenaBotId,
+          inMetaverse: true,
         };
       });
-  }, [allAgents, game]);
+  }, [allAgents, game, userBots, botsLoading, botsError]);
 
   const handleBotSelect = (bot: any) => {
     setSelectedBot(bot);

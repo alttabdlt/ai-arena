@@ -7,7 +7,7 @@ const router = Router();
 // Webhook for agent deletion from metaverse
 router.post('/agent-deleted', async (req, res) => {
   try {
-    const { aiArenaBotId, worldId, agentId } = req.body;
+    const { aiArenaBotId, agentId } = req.body;
 
     if (!aiArenaBotId) {
       return res.status(400).json({ error: 'Missing aiArenaBotId' });

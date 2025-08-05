@@ -96,7 +96,7 @@ model Bot {
 model DeploymentTransaction {
   id              String           @id @default(cuid())
   botId           String           @unique
-  bot             Bot              @relation(fields: [botId], references: [id])
+  bot             Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
   userId          String
   user            User             @relation(fields: [userId], references: [id])
   txHash          String           @unique

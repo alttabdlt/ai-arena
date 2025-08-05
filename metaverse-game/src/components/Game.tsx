@@ -1,6 +1,7 @@
-import { useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import PixiGame from './PixiGame.tsx';
 import GameHeader from './GameHeader.tsx';
+import InventoryModal from './InventoryModal.tsx';
 
 import { useElementSize } from 'usehooks-ts';
 import { Stage } from '@pixi/react';
@@ -23,6 +24,7 @@ export default function Game() {
   }>();
   const [selectedBotId, setSelectedBotId] = useState<string>();
   const [selectedBot, setSelectedBot] = useState<any>();
+  const [showInventory, setShowInventory] = useState(false);
   const [gameWrapperRef, { width, height }] = useElementSize();
 
   const worldStatus = useQuery(api.world.defaultWorldStatus);
@@ -39,16 +41,68 @@ export default function Game() {
 
   const scrollViewRef = useRef<HTMLDivElement>(null);
 
+  // Get current player ID for inventory
+  // If no player is selected, try to use the first agent with an aiArenaBotId
+  const currentPlayerId = selectedElement?.id || '';
+  
+  // Get all agents in the world
+  const allAgents = worldState?.world?.agents || [];
+  
+  // Find agent with this player ID to get aiArenaBotId
+  const currentAgent = currentPlayerId 
+    ? allAgents.find(agent => agent.playerId === currentPlayerId)
+    : allAgents.find(agent => agent.aiArenaBotId); // Default to first bot with aiArenaBotId
+    
+  const aiArenaBotId = currentAgent?.aiArenaBotId || '';
+  const effectivePlayerId = currentPlayerId || currentAgent?.playerId || '';
+
+  // Query inventory for item count
+  const inventory = useQuery(api.aiTown.inventory.getPlayerInventory,
+    worldId && effectivePlayerId ? { worldId, playerId: effectivePlayerId } : 'skip'
+  );
+  const itemCount = inventory?.items?.length || 0;
+
+  // Transform agents to bot data for the selector
+  const transformedBots = React.useMemo(() => {
+    if (!worldState?.world?.agents || !game) return [];
+    
+    // Debug logging
+    console.log('Transforming bots:', {
+      agentsCount: allAgents.length,
+      hasPlayerDescriptions: !!game.playerDescriptions,
+      playerDescSize: game.playerDescriptions?.size,
+    });
+    
+    // For now, show all agents (not just ones with aiArenaBotId) so users can see them
+    return allAgents
+      .map((agent, index) => {
+        // Find the player description for this agent
+        const playerDesc = game.playerDescriptions?.get(agent.playerId);
+        
+        return {
+          id: agent.id,
+          name: playerDesc?.name || `Agent ${index + 1}`,
+          tokenId: 1000 + index, // Generate a token ID
+          personality: agent.personality,
+          stats: {
+            wins: 0, // TODO: Get from AI Arena backend
+            losses: 0,
+          },
+          isActive: !agent.knockedOutUntil || Date.now() > agent.knockedOutUntil,
+          metaverseAgentId: agent.id,
+          playerId: agent.playerId,
+          aiArenaBotId: agent.aiArenaBotId,
+        };
+      });
+  }, [allAgents, game]);
+
   const handleBotSelect = (bot: any) => {
     setSelectedBot(bot);
     setSelectedBotId(bot.id);
     
-    // Find the player with matching aiArenaBotId
-    if (bot.metaverseAgentId && game) {
-      const agent = [...game.world.agents.values()].find(a => a.id === bot.metaverseAgentId);
-      if (agent) {
-        setSelectedElement({ kind: 'player', id: agent.playerId });
-      }
+    // Set the selected element to the bot's player
+    if (bot.playerId) {
+      setSelectedElement({ kind: 'player', id: bot.playerId });
     }
   };
 
@@ -61,6 +115,9 @@ export default function Game() {
       <GameHeader 
         selectedBotId={selectedBotId}
         onBotSelect={handleBotSelect}
+        onInventoryClick={() => setShowInventory(true)}
+        itemCount={itemCount}
+        bots={transformedBots}
       />
       
       {/* Game Content */}
@@ -101,6 +158,41 @@ export default function Game() {
         </div>
         </div>
       </div>
+
+      {/* Inventory Modal */}
+      {worldId && effectivePlayerId ? (
+        <InventoryModal
+          isOpen={showInventory}
+          onClose={() => setShowInventory(false)}
+          worldId={worldId}
+          playerId={effectivePlayerId}
+          aiArenaBotId={aiArenaBotId}
+        />
+      ) : (
+        showInventory && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center">
+            <div className="bg-gray-900 border border-red-900/50 rounded-lg p-8 max-w-md">
+              <h2 className="text-xl font-bold text-red-400 mb-4">No Bot Selected</h2>
+              <p className="text-gray-300 mb-4">
+                {!worldId ? 'World is not loaded yet.' : 
+                 !effectivePlayerId ? 'Please select a bot in the game or ensure you have registered bots.' :
+                 'Loading...'}
+              </p>
+              <p className="text-sm text-gray-500 mb-4">
+                Debug: worldId={worldId ? 'exists' : 'null'}, 
+                agents={allAgents.length}, 
+                selectedId={currentPlayerId || 'none'}
+              </p>
+              <button
+                onClick={() => setShowInventory(false)}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )
+      )}
     </div>
   );
 }

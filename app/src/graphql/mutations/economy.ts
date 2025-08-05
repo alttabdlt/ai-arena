@@ -9,6 +9,9 @@ export const OPEN_LOOTBOX = gql`
       currencyReward
       opened
       openedAt
+      bot {
+        id
+      }
     }
   }
 `;

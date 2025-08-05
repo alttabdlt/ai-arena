@@ -19,54 +19,28 @@ interface BotSelectorProps {
   selectedBotId?: string;
   onBotSelect: (bot: BotData) => void;
   className?: string;
+  bots?: BotData[];
 }
 
-// Mock data for now - will be replaced with GraphQL query
-const mockBots: BotData[] = [
-  { 
-    id: '1', 
-    name: 'Viper', 
-    tokenId: 1001, 
-    personality: 'CRIMINAL',
-    stats: { wins: 5, losses: 2 },
-    isActive: true,
-    metaverseAgentId: 'agent1'
-  },
-  { 
-    id: '2', 
-    name: 'Lucky', 
-    tokenId: 1002, 
-    personality: 'GAMBLER',
-    stats: { wins: 3, losses: 4 },
-    isActive: true,
-    metaverseAgentId: 'agent2'
-  },
-  { 
-    id: '3', 
-    name: 'Grinder', 
-    tokenId: 1003, 
-    personality: 'WORKER',
-    stats: { wins: 7, losses: 1 },
-    isActive: false
-  },
-];
+// Component now receives bots data from parent
 
-export default function BotSelector({ selectedBotId, onBotSelect, className = '' }: BotSelectorProps) {
+export default function BotSelector({ selectedBotId, onBotSelect, className = '', bots = [] }: BotSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [bots, setBots] = useState<BotData[]>(mockBots);
   const [selectedBot, setSelectedBot] = useState<BotData | null>(
     bots.find(bot => bot.id === selectedBotId) || bots[0] || null
   );
 
   useEffect(() => {
-    // TODO: Replace with GraphQL query to fetch user's bots
-    // const { data } = useQuery(GET_USER_BOTS, {
-    //   variables: { creatorAddress: userAddress }
-    // });
-    // if (data?.bots) {
-    //   setBots(data.bots);
-    // }
-  }, []);
+    // Update selected bot when bots prop changes
+    if (bots.length > 0) {
+      const newSelectedBot = bots.find(bot => bot.id === selectedBotId) || bots[0];
+      if (newSelectedBot && newSelectedBot.id !== selectedBot?.id) {
+        setSelectedBot(newSelectedBot);
+      }
+    } else {
+      setSelectedBot(null);
+    }
+  }, [bots, selectedBotId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (selectedBot && selectedBot.id !== selectedBotId) {
@@ -105,11 +79,13 @@ export default function BotSelector({ selectedBotId, onBotSelect, className = ''
     }
   };
 
-  if (!selectedBot) {
+  if (!selectedBot || bots.length === 0) {
     return (
       <div className={`flex items-center gap-2 px-4 py-2 bg-gray-800/50 rounded-lg ${className}`}>
         <User className="w-4 h-4 text-gray-400" />
-        <span className="text-sm text-gray-400">No bots available</span>
+        <span className="text-sm text-gray-400">
+          {bots.length === 0 ? 'Loading bots...' : 'No bots available'}
+        </span>
       </div>
     );
   }

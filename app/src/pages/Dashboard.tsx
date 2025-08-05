@@ -26,12 +26,11 @@ import {
   Loader2,
   Bot
 } from 'lucide-react';
-import { GET_USER_STATS, GET_USER_BOTS, GET_PLATFORM_STATS } from '@/graphql/queries/user';
-import { GET_TOP_BOTS } from '@/graphql/queries/bot';
+import { GET_USER_STATS, GET_USER_BOTS } from '@/graphql/queries/user';
 import { BotCard } from '@/components/bot/BotCard';
 import { useMutation } from '@apollo/client';
 import { ENTER_QUEUE } from '@/graphql/mutations/queue';
-import { TOGGLE_BOT_ACTIVE } from '@/graphql/mutations/bot';
+import { TOGGLE_BOT_ACTIVE, DELETE_BOT } from '@/graphql/mutations/bot';
 import { useToast } from '@shared/hooks/use-toast';
 
 export default function Dashboard() {
@@ -44,7 +43,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     const tab = searchParams.get('tab');
-    if (tab && ['overview', 'performance', 'community', 'activity'].includes(tab)) {
+    if (tab && ['overview', 'performance'].includes(tab)) {
       setActiveTab(tab);
     }
   }, [searchParams]);
@@ -63,20 +62,13 @@ export default function Dashboard() {
     pollInterval: 30000
   });
 
-  // Fetch platform stats
-  const { data: platformStatsData, loading: platformStatsLoading } = useQuery(GET_PLATFORM_STATS, {
-    pollInterval: 60000
-  });
-
-  // Fetch top bots
-  const { data: topBotsData, loading: topBotsLoading } = useQuery(GET_TOP_BOTS, {
-    variables: { limit: 3 }
-  });
-
   const userStats = userStatsData?.userStats;
   const userBots = userBotsData?.bots || [];
-  const platformStats = platformStatsData?.platformStats;
-  const topBots = topBotsData?.topBots || [];
+  
+  // Get top performing bots from user's own collection
+  const topBots = [...userBots]
+    .sort((a: any, b: any) => b.stats.winRate - a.stats.winRate)
+    .slice(0, 3);
 
   const activeBots = userBots.filter((bot: any) => bot.isActive).length;
   const queuedBots = userBots.filter((bot: any) => bot.queuePosition).length;
@@ -87,6 +79,10 @@ export default function Dashboard() {
   });
   
   const [toggleBotActive] = useMutation(TOGGLE_BOT_ACTIVE, {
+    refetchQueries: ['GetUserBots']
+  });
+  
+  const [deleteBot] = useMutation(DELETE_BOT, {
     refetchQueries: ['GetUserBots']
   });
   const totalGames = userBots.reduce((acc: number, bot: any) => acc + bot.stats.wins + bot.stats.losses, 0);
@@ -104,7 +100,7 @@ export default function Dashboard() {
     return num.toFixed(0);
   };
 
-  const loading = userStatsLoading || userBotsLoading || platformStatsLoading || topBotsLoading;
+  const loading = userStatsLoading || userBotsLoading;
 
   if (!address) {
     return (
@@ -124,36 +120,49 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-8">
+        {/* Header with Stats */}
         <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">Dashboard</h1>
-          <p className="text-muted-foreground">
-            Your AI Arena overview and bot performance
-          </p>
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h1 className="text-4xl font-bold">Dashboard</h1>
+              <p className="text-muted-foreground mt-2">
+                Manage your AI bots and track their performance
+              </p>
+            </div>
+            <Button 
+              onClick={() => navigate('/deploy')} 
+              size="lg"
+              className="bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70"
+            >
+              <Bot className="mr-2 h-5 w-5" />
+              Deploy New Bot
+            </Button>
+          </div>
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-2 max-w-md">
             <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="performance">Performance</TabsTrigger>
-            <TabsTrigger value="community">Community</TabsTrigger>
-            <TabsTrigger value="activity">Activity</TabsTrigger>
+            <TabsTrigger value="performance">Analytics</TabsTrigger>
           </TabsList>
 
           <TabsContent value="overview" className="space-y-6">
             {/* Key Metrics */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <Card className="hover:shadow-lg transition-shadow">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+              <Card className="hover:shadow-lg transition-all hover:scale-[1.02] bg-gradient-to-br from-background to-muted/20">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium">Total Games</CardTitle>
-                  <Trophy className="h-4 w-4 text-muted-foreground" />
+                  <div className="h-10 w-10 rounded-full bg-primary/10 flex items-center justify-center">
+                    <Trophy className="h-5 w-5 text-primary" />
+                  </div>
                 </CardHeader>
                 <CardContent>
                   {loading ? (
                     <Loader2 className="h-6 w-6 animate-spin" />
                   ) : (
                     <>
-                      <div className="text-2xl font-bold">{totalGames.toLocaleString()}</div>
-                      <p className="text-xs text-muted-foreground">
+                      <div className="text-3xl font-bold">{totalGames.toLocaleString()}</div>
+                      <p className="text-sm text-muted-foreground mt-1">
                         Across {userBots.length} bots
                       </p>
                     </>
@@ -161,19 +170,21 @@ export default function Dashboard() {
                 </CardContent>
               </Card>
 
-              <Card className="hover:shadow-lg transition-shadow">
+              <Card className="hover:shadow-lg transition-all hover:scale-[1.02] bg-gradient-to-br from-background to-muted/20">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium">Win Rate</CardTitle>
-                  <Target className="h-4 w-4 text-muted-foreground" />
+                  <div className="h-10 w-10 rounded-full bg-green-500/10 flex items-center justify-center">
+                    <Target className="h-5 w-5 text-green-500" />
+                  </div>
                 </CardHeader>
                 <CardContent>
                   {loading ? (
                     <Loader2 className="h-6 w-6 animate-spin" />
                   ) : (
                     <>
-                      <div className="text-2xl font-bold">{winRate}%</div>
-                      <Progress value={parseFloat(winRate)} className="mt-2" />
-                      <p className="text-xs text-muted-foreground mt-1">
+                      <div className="text-3xl font-bold text-green-600">{winRate}%</div>
+                      <Progress value={parseFloat(winRate)} className="mt-2 h-2" />
+                      <p className="text-sm text-muted-foreground mt-1">
                         {totalWins} wins
                       </p>
                     </>
@@ -181,39 +192,43 @@ export default function Dashboard() {
                 </CardContent>
               </Card>
 
-              <Card className="hover:shadow-lg transition-shadow">
+              <Card className="hover:shadow-lg transition-all hover:scale-[1.02] bg-gradient-to-br from-background to-muted/20">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium">Total Earnings</CardTitle>
-                  <DollarSign className="h-4 w-4 text-muted-foreground" />
+                  <div className="h-10 w-10 rounded-full bg-yellow-500/10 flex items-center justify-center">
+                    <DollarSign className="h-5 w-5 text-yellow-500" />
+                  </div>
                 </CardHeader>
                 <CardContent>
                   {loading ? (
                     <Loader2 className="h-6 w-6 animate-spin" />
                   ) : (
                     <>
-                      <div className="text-2xl font-bold">{formatEarnings(totalEarnings)} HYPE</div>
-                      <p className="text-xs text-muted-foreground">
-                        Lifetime earnings
+                      <div className="text-3xl font-bold text-yellow-600">{formatEarnings(totalEarnings)}</div>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        HYPE earned
                       </p>
                     </>
                   )}
                 </CardContent>
               </Card>
 
-              <Card className="hover:shadow-lg transition-shadow">
+              <Card className="hover:shadow-lg transition-all hover:scale-[1.02] bg-gradient-to-br from-background to-muted/20">
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium">Active Bots</CardTitle>
-                  <Zap className="h-4 w-4 text-muted-foreground" />
+                  <div className="h-10 w-10 rounded-full bg-purple-500/10 flex items-center justify-center">
+                    <Zap className="h-5 w-5 text-purple-500" />
+                  </div>
                 </CardHeader>
                 <CardContent>
                   {loading ? (
                     <Loader2 className="h-6 w-6 animate-spin" />
                   ) : (
                     <>
-                      <div className="text-2xl font-bold">{activeBots}</div>
-                      <div className="flex space-x-1 mt-2">
+                      <div className="text-3xl font-bold text-purple-600">{activeBots}</div>
+                      <div className="flex flex-wrap gap-1 mt-2">
                         <Badge variant="outline" className="text-xs">{activeBots - queuedBots} Idle</Badge>
-                        <Badge variant="secondary" className="text-xs">{queuedBots} Queued</Badge>
+                        <Badge className="text-xs bg-purple-500/20 text-purple-700 hover:bg-purple-500/30">{queuedBots} Queued</Badge>
                       </div>
                     </>
                   )}
@@ -221,47 +236,12 @@ export default function Dashboard() {
               </Card>
             </div>
 
-            {/* Quick Actions & Top Bots */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <Card>
+            {/* Top Performing Bots */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+              <Card className="lg:col-span-2">
                 <CardHeader>
                   <CardTitle className="flex items-center justify-between">
-                    <span>Quick Actions</span>
-                    <Zap className="h-5 w-5 text-muted-foreground" />
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <Button 
-                    className="w-full justify-between" 
-                    variant="outline"
-                    onClick={() => navigate('/deploy')}
-                  >
-                    <span>Deploy New Bot</span>
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                  <Button 
-                    className="w-full justify-between" 
-                    variant="outline"
-                    onClick={() => navigate('/queue')}
-                  >
-                    <span>View Tournament Queue</span>
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                  <Button 
-                    className="w-full justify-between" 
-                    variant="outline"
-                    onClick={() => navigate('/bots')}
-                  >
-                    <span>Manage Your Bots</span>
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center justify-between">
-                    <span>Top Performing Bots</span>
+                    <span>Your Top Performing Bots</span>
                     <Trophy className="h-5 w-5 text-muted-foreground" />
                   </CardTitle>
                 </CardHeader>
@@ -300,12 +280,56 @@ export default function Dashboard() {
                   )}
                 </CardContent>
               </Card>
+              
+              {/* Quick Stats */}
+              <Card className="bg-gradient-to-br from-primary/5 to-primary/10">
+                <CardHeader>
+                  <CardTitle className="flex items-center justify-between">
+                    <span>Quick Stats</span>
+                    <BarChart3 className="h-5 w-5 text-primary" />
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-sm text-muted-foreground">Best Win Streak</span>
+                      <span className="font-bold">0</span>
+                    </div>
+                    <Progress value={0} className="h-2" />
+                  </div>
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-sm text-muted-foreground">Tournament Rank</span>
+                      <span className="font-bold">-</span>
+                    </div>
+                    <Progress value={0} className="h-2" />
+                  </div>
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-sm text-muted-foreground">Activity Score</span>
+                      <span className="font-bold">0</span>
+                    </div>
+                    <Progress value={0} className="h-2" />
+                  </div>
+                  <Button 
+                    variant="outline" 
+                    className="w-full mt-4"
+                    onClick={() => navigate('/queue')}
+                  >
+                    View Tournament Queue
+                    <ChevronRight className="ml-2 h-4 w-4" />
+                  </Button>
+                </CardContent>
+              </Card>
             </div>
 
             {/* Your Bots Grid */}
             <div className="space-y-6">
               <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-bold">Your Bot Collection</h2>
+                <div>
+                  <h2 className="text-2xl font-bold">Your Bot Collection</h2>
+                  <p className="text-muted-foreground mt-1">Deploy and manage your AI competitors</p>
+                </div>
                 <div className="flex items-center gap-2">
                   <Badge variant="outline">
                     <Bot className="h-3 w-3 mr-1" />
@@ -371,6 +395,29 @@ export default function Dashboard() {
                           });
                         }
                       }}
+                      onDelete={async () => {
+                        if (confirm(`Are you sure you want to delete ${bot.name}? This action cannot be undone.`)) {
+                          try {
+                            const result = await deleteBot({
+                              variables: { botId: bot.id }
+                            });
+                            if (result.data?.deleteBot?.success) {
+                              toast({
+                                title: "Bot Deleted",
+                                description: `${bot.name} has been successfully deleted${result.data.deleteBot.metaverseDeleted ? ' from both AI Arena and the metaverse' : ''}.`,
+                              });
+                            } else {
+                              throw new Error(result.data?.deleteBot?.message || 'Failed to delete bot');
+                            }
+                          } catch (error: any) {
+                            toast({
+                              title: "Delete Failed",
+                              description: error.message || "Failed to delete bot",
+                              variant: "destructive"
+                            });
+                          }
+                        }
+                      }}
                     />
                   ))}
                 </div>
@@ -390,63 +437,12 @@ export default function Dashboard() {
             </div>
           </TabsContent>
 
-          <TabsContent value="performance">
+          <TabsContent value="performance" className="space-y-6">
+            <div className="mb-4">
+              <h2 className="text-2xl font-bold">Performance Analytics</h2>
+              <p className="text-muted-foreground mt-1">Deep dive into your bots' performance metrics</p>
+            </div>
             <AnalyticsDashboard />
-          </TabsContent>
-
-          <TabsContent value="community" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Community Stats</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {loading ? (
-                  <div className="flex justify-center py-8">
-                    <Loader2 className="h-6 w-6 animate-spin" />
-                  </div>
-                ) : (
-                  <>
-                    <div className="flex justify-between items-center">
-                      <span className="text-muted-foreground">Total Players</span>
-                      <span className="font-bold">{platformStats?.totalUsers.toLocaleString() || 0}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-muted-foreground">Active Today</span>
-                      <span className="font-bold">{platformStats?.activeUsers24h.toLocaleString() || 0}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-muted-foreground">Total Bots</span>
-                      <span className="font-bold">{platformStats?.totalBots.toLocaleString() || 0}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-muted-foreground">Bots in Queue</span>
-                      <span className="font-bold">{platformStats?.queuedBots.toLocaleString() || 0}</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-muted-foreground">Total Prize Pool</span>
-                      <span className="font-bold">{formatEarnings(platformStats?.totalEarnings || '0')} HYPE</span>
-                    </div>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="activity" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center justify-between">
-                  <span>Recent Activity</span>
-                  <Activity className="h-5 w-5 text-muted-foreground" />
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-center py-12 text-muted-foreground">
-                  <Activity className="h-12 w-12 mx-auto mb-4" />
-                  <p>Activity feed coming soon</p>
-                </div>
-              </CardContent>
-            </Card>
           </TabsContent>
         </Tabs>
       </div>

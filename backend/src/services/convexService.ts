@@ -195,6 +195,34 @@ export class ConvexService {
       throw error;
     }
   }
+
+  // Delete a bot agent from the metaverse
+  async deleteBotAgent(args: {
+    worldId: string;
+    agentId: string;
+    aiArenaBotId: string;
+  }): Promise<void> {
+    try {
+      const response = await fetch(`${this.httpUrl}/api/bots/delete`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(args),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Failed to delete bot agent: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      console.log(`✅ Bot agent deleted from metaverse:`, result);
+    } catch (error) {
+      console.error('Error deleting bot agent from metaverse:', error);
+      throw error;
+    }
+  }
 }
 
 // Export singleton instance

@@ -61,6 +61,10 @@ export const serializedPlayer = {
     defenseBonus: v.number(),
   })),
   
+  // Inventory tracking
+  inventoryId: v.optional(v.id('inventories')),
+  houseId: v.optional(v.id('houses')),
+  
   // The last time they did something.
   lastInput: v.number(),
 
@@ -77,6 +81,8 @@ export class Player {
   activity?: Activity;
   currentZone?: 'casino' | 'darkAlley' | 'suburb' | 'downtown' | 'underground';
   equipment?: { powerBonus: number; defenseBonus: number };
+  inventoryId?: string;
+  houseId?: string;
 
   lastInput: number;
 
@@ -85,13 +91,15 @@ export class Player {
   speed: number;
 
   constructor(serialized: SerializedPlayer) {
-    const { id, human, pathfinding, activity, currentZone, equipment, lastInput, position, facing, speed } = serialized;
+    const { id, human, pathfinding, activity, currentZone, equipment, inventoryId, houseId, lastInput, position, facing, speed } = serialized;
     this.id = parseGameId('players', id);
     this.human = human;
     this.pathfinding = pathfinding;
     this.activity = activity;
     this.currentZone = currentZone;
     this.equipment = equipment;
+    this.inventoryId = inventoryId as string | undefined;
+    this.houseId = houseId as string | undefined;
     this.lastInput = lastInput;
     this.position = position;
     this.facing = facing;
@@ -266,7 +274,7 @@ export class Player {
   }
 
   serialize(): SerializedPlayer {
-    const { id, human, pathfinding, activity, currentZone, equipment, lastInput, position, facing, speed } = this;
+    const { id, human, pathfinding, activity, currentZone, equipment, inventoryId, houseId, lastInput, position, facing, speed } = this;
     return {
       id,
       human,
@@ -274,6 +282,8 @@ export class Player {
       activity,
       currentZone,
       equipment,
+      inventoryId: inventoryId as any,
+      houseId: houseId as any,
       lastInput,
       position,
       facing,

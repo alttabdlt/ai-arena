@@ -28,7 +28,8 @@ const init = mutation({
       worldStatus.engineId,
     );
     if (shouldCreate) {
-      const toCreate = args.numAgents !== undefined ? args.numAgents : Descriptions.length;
+      // Only create agents if explicitly requested
+      const toCreate = args.numAgents !== undefined ? args.numAgents : 0;
       for (let i = 0; i < toCreate; i++) {
         await insertInput(ctx, worldStatus.worldId, 'createAgent', {
           descriptionIndex: i % Descriptions.length,

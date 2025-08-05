@@ -152,4 +152,119 @@ export const aiTownTables = {
     .index('player', ['worldId', 'playerId', 'timestamp'])
     .index('agent', ['worldId', 'agentId', 'timestamp'])
     .index('aiArenaBotId', ['worldId', 'aiArenaBotId', 'timestamp']),
+  
+  // Item system for bot inventories
+  items: defineTable({
+    worldId: v.id('worlds'),
+    ownerId: playerId, // Bot/player who owns this item
+    itemId: v.string(), // Unique item ID from AI Arena
+    name: v.string(),
+    type: v.union(
+      v.literal('WEAPON'),
+      v.literal('ARMOR'),
+      v.literal('TOOL'),
+      v.literal('ACCESSORY'),
+      v.literal('FURNITURE')
+    ),
+    category: v.optional(v.union(
+      v.literal('DECORATION'),
+      v.literal('FUNCTIONAL'),
+      v.literal('DEFENSIVE'),
+      v.literal('TROPHY')
+    )), // For furniture items
+    rarity: v.union(
+      v.literal('COMMON'),
+      v.literal('UNCOMMON'),
+      v.literal('RARE'),
+      v.literal('EPIC'),
+      v.literal('LEGENDARY')
+    ),
+    powerBonus: v.number(),
+    defenseBonus: v.number(),
+    scoreBonus: v.optional(v.number()), // For furniture
+    equipped: v.boolean(),
+    houseId: v.optional(v.id('houses')), // If placed in a house
+    position: v.optional(v.object({
+      x: v.number(),
+      y: v.number(),
+      rotation: v.number()
+    })), // Position if placed in house
+    metadata: v.object({
+      description: v.optional(v.string()),
+      specialEffect: v.optional(v.string()),
+      tradeable: v.optional(v.boolean()),
+      condition: v.optional(v.number()), // 0-100 durability
+    }),
+    createdAt: v.number(),
+  })
+    .index('owner', ['worldId', 'ownerId'])
+    .index('equipped', ['worldId', 'ownerId', 'equipped'])
+    .index('house', ['worldId', 'houseId']),
+  
+  // Houses for bots
+  houses: defineTable({
+    worldId: v.id('worlds'),
+    ownerId: playerId, // Bot who owns this house
+    houseScore: v.number(),
+    defenseLevel: v.number(),
+    gridSize: v.object({
+      width: v.number(),
+      height: v.number(),
+    }),
+    worldPosition: v.object({
+      x: v.number(),
+      y: v.number(),
+      zone: v.string(), // Which zone the house is in
+    }),
+    lastRobbed: v.optional(v.number()),
+    robberyCooldown: v.optional(v.number()),
+    visitors: v.array(playerId), // Recent visitors
+    partyActive: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('owner', ['worldId', 'ownerId'])
+    .index('zone', ['worldId', 'worldPosition.zone']),
+  
+  // Bot inventories tracking
+  inventories: defineTable({
+    worldId: v.id('worlds'),
+    playerId: playerId,
+    maxSlots: v.number(), // Inventory capacity
+    usedSlots: v.number(),
+    lastUpdated: v.number(),
+    totalValue: v.number(), // Calculated total value for robbery assessment
+  })
+    .index('player', ['worldId', 'playerId']),
+  
+  // Lootbox queue for processing
+  lootboxQueue: defineTable({
+    worldId: v.id('worlds'),
+    playerId: playerId,
+    aiArenaBotId: v.string(),
+    lootboxId: v.string(),
+    rarity: v.union(
+      v.literal('COMMON'),
+      v.literal('UNCOMMON'),
+      v.literal('RARE'),
+      v.literal('EPIC'),
+      v.literal('LEGENDARY')
+    ),
+    rewards: v.array(v.object({
+      itemId: v.string(),
+      name: v.string(),
+      type: v.string(),
+      rarity: v.string(),
+      stats: v.object({
+        powerBonus: v.number(),
+        defenseBonus: v.number(),
+        scoreBonus: v.optional(v.number()),
+      }),
+    })),
+    processed: v.boolean(),
+    openedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index('player', ['worldId', 'playerId', 'processed'])
+    .index('aiArenaBotId', ['worldId', 'aiArenaBotId']),
 };

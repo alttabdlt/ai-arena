@@ -1,15 +1,18 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, Coins, TrendingUp } from 'lucide-react';
+import { ArrowLeft, Coins, TrendingUp, Briefcase } from 'lucide-react';
 import BotSelector from './BotSelector';
 
 interface GameHeaderProps {
   tokens?: number;
   selectedBotId?: string;
   onBotSelect?: (bot: any) => void;
+  onInventoryClick?: () => void;
+  itemCount?: number;
+  bots?: any[];
 }
 
-export default function GameHeader({ tokens = 1234567, selectedBotId, onBotSelect }: GameHeaderProps) {
+export default function GameHeader({ tokens = 1234567, selectedBotId, onBotSelect, onInventoryClick, itemCount = 0, bots = [] }: GameHeaderProps) {
   const [displayTokens, setDisplayTokens] = useState(tokens);
   const [prevTokens, setPrevTokens] = useState(tokens);
 
@@ -160,6 +163,30 @@ export default function GameHeader({ tokens = 1234567, selectedBotId, onBotSelec
             </div>
           </motion.div>
 
+          {/* Inventory Button */}
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.35 }}
+          >
+            <motion.button
+              onClick={onInventoryClick}
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              className="relative flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-gray-800/50 to-gray-700/30 hover:from-gray-700/60 hover:to-gray-600/40 border border-gray-600/50 rounded-lg transition-all duration-200 shadow-lg hover:shadow-gray-800/50"
+            >
+              <Briefcase className="w-5 h-5 text-gray-400" />
+              <span className="text-sm font-bold text-gray-200 uppercase tracking-wider">
+                Inventory
+              </span>
+              {itemCount > 0 && (
+                <span className="absolute -top-2 -right-2 px-2 py-0.5 text-xs bg-red-500 text-white rounded-full font-bold">
+                  {itemCount}
+                </span>
+              )}
+            </motion.button>
+          </motion.div>
+
           {/* Bot Selector */}
           <motion.div 
             initial={{ opacity: 0, x: 20 }}
@@ -171,6 +198,7 @@ export default function GameHeader({ tokens = 1234567, selectedBotId, onBotSelec
               <BotSelector 
                 selectedBotId={selectedBotId}
                 onBotSelect={onBotSelect || (() => {})}
+                bots={bots}
               />
             </div>
           </motion.div>

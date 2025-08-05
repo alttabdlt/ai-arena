@@ -313,4 +313,32 @@ export const agentInputs = {
       return null;
     },
   }),
+  
+  updatePlayerEquipment: inputHandler({
+    args: {
+      playerId: v.id('players'),
+      timestamp: v.number(),
+      powerBonus: v.optional(v.number()),
+      defenseBonus: v.optional(v.number()),
+    },
+    handler: (game, now, args) => {
+      const playerId = parseGameId('players', args.playerId);
+      const player = game.world.players.get(playerId);
+      if (!player) {
+        throw new Error(`Invalid player ID: ${playerId}`);
+      }
+      
+      // Update player equipment stats
+      if (args.powerBonus !== undefined && args.defenseBonus !== undefined) {
+        player.equipment = {
+          powerBonus: args.powerBonus,
+          defenseBonus: args.defenseBonus,
+        };
+      }
+      
+      console.log(`Equipment updated for player ${playerId}: Power ${player.equipment?.powerBonus || 0}, Defense ${player.equipment?.defenseBonus || 0}`);
+      
+      return null;
+    },
+  }),
 };

@@ -464,6 +464,84 @@ export const resolvers = {
         include: { creator: true },
       });
     },
+
+    deleteBot: async (_: any, { botId }: { botId: string }, ctx: Context) => {
+      if (!ctx.user) {
+        throw new Error('Not authenticated');
+      }
+
+      // Find the bot with all related data
+      const bot = await ctx.prisma.bot.findUnique({
+        where: { id: botId },
+        include: {
+          botSync: true,
+          queueEntries: {
+            where: { status: 'WAITING' },
+          },
+        },
+      });
+
+      if (!bot) {
+        throw new Error('Bot not found');
+      }
+
+      if (bot.creatorId !== ctx.user.id) {
+        throw new Error('Not authorized to delete this bot');
+      }
+
+      // Check if bot is in active queue
+      if (bot.queueEntries.length > 0) {
+        throw new Error('Cannot delete bot while in queue. Please leave queue first.');
+      }
+
+      let metaverseDeleted = false;
+
+      try {
+        // If bot is synced to metaverse, delete from there first
+        if (bot.botSync?.syncStatus === 'SYNCED' && bot.metaverseAgentId) {
+          try {
+            // Call Convex to delete the agent
+            await convexService.deleteBotAgent({
+              worldId: bot.botSync.convexWorldId!,
+              agentId: bot.metaverseAgentId,
+              aiArenaBotId: botId,
+            });
+            metaverseDeleted = true;
+          } catch (metaverseError: any) {
+            console.error('Failed to delete bot from metaverse:', metaverseError);
+            // Continue with deletion even if metaverse deletion fails
+            // We'll mark it in the response
+          }
+        }
+
+        // Delete the bot from database (cascade will handle related records)
+        await ctx.prisma.bot.delete({
+          where: { id: botId },
+        });
+
+        // Publish deletion event
+        try {
+          await metaverseEventsService.publishBotActivity('bot_deleted', {
+            botId,
+            metaverseAgentId: bot.metaverseAgentId,
+            deletedBy: ctx.user.id,
+            timestamp: new Date().toISOString(),
+          });
+        } catch (eventError) {
+          console.error('Failed to publish bot deletion event:', eventError);
+        }
+
+        return {
+          success: true,
+          message: 'Bot deleted successfully',
+          deletedBotId: botId,
+          metaverseDeleted,
+        };
+      } catch (error: any) {
+        console.error('Bot deletion error:', error);
+        throw new Error(`Failed to delete bot: ${error.message}`);
+      }
+    },
     
     enterQueue: async (_: any, { botId, queueType }: { botId: string; queueType: string }, ctx: Context) => {
       if (!ctx.user) {

@@ -11,6 +11,7 @@ import cors from 'cors';
 import { typeDefs } from './graphql/schema';
 import { resolvers } from './graphql/resolvers';
 import { createContext } from './config/context';
+import webhookRoutes from './routes/webhooks';
 import { setupWebSocketServer } from './websocket/server';
 import { prisma } from './config/database';
 import Redis from 'ioredis';
@@ -220,6 +221,9 @@ async function startServer() {
       version: process.version
     });
   });
+
+  // Webhook routes
+  app.use('/api/webhooks', webhookRoutes);
 
   const customWsServer = setupWebSocketServer(parseInt(WS_PORT.toString()));
 

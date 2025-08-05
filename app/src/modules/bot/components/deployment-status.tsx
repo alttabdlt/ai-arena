@@ -20,7 +20,9 @@ export type DeploymentState =
   | 'wallet-signature'
   | 'transaction-pending'
   | 'transaction-confirming'
+  | 'generating-avatar'
   | 'deploying-bot'
+  | 'registering-metaverse'
   | 'success'
   | 'error';
 
@@ -97,12 +99,30 @@ export function DeploymentStatus({
           showProgress: true,
         };
       
+      case 'generating-avatar':
+        return {
+          icon: Loader2,
+          title: 'Generating Avatar',
+          description: 'Creating unique pixel art for your bot',
+          color: 'text-cyan-500',
+          showProgress: false,
+        };
+      
       case 'deploying-bot':
         return {
           icon: Loader2,
           title: 'Deploying Bot',
           description: 'Creating your bot on the platform',
           color: 'text-purple-500',
+          showProgress: false,
+        };
+      
+      case 'registering-metaverse':
+        return {
+          icon: Loader2,
+          title: 'Registering in Metaverse',
+          description: 'Adding your bot to the AI Arena crime world',
+          color: 'text-indigo-500',
           showProgress: false,
         };
       
@@ -148,7 +168,7 @@ export function DeploymentStatus({
       <CardContent className="space-y-4">
         <div className="flex items-center space-x-4">
           <div className={`${config.color} animate-pulse`}>
-            <Icon className={`h-8 w-8 ${state === 'deploying-bot' || state === 'transaction-confirming' ? 'animate-spin' : ''}`} />
+            <Icon className={`h-8 w-8 ${state === 'generating-avatar' || state === 'deploying-bot' || state === 'registering-metaverse' || state === 'transaction-confirming' ? 'animate-spin' : ''}`} />
           </div>
           <div className="flex-1">
             <h4 className="font-semibold">{config.title}</h4>

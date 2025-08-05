@@ -5,7 +5,8 @@ import {
   handleBotPositionUpdate, 
   handleBotStatsSync,
   handleGetBotPosition,
-  handleLootboxSync
+  handleLootboxSync,
+  handleBotDeletion
 } from './aiTown/botHttp';
 
 const http = httpRouter();
@@ -46,6 +47,12 @@ http.route({
   path: '/api/lootbox/sync',
   method: 'POST',
   handler: handleLootboxSync,
+});
+
+http.route({
+  path: '/api/bots/delete',
+  method: 'POST',
+  handler: handleBotDeletion,
 });
 
 export default http;

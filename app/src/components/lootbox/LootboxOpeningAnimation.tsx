@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Dialog, DialogContent } from '@ui/dialog';
 import { Badge } from '@ui/badge';
 import { Button } from '@ui/button';
+import { DialogTitle } from '@ui/dialog';
+import { VisuallyHidden } from '@ui/visually-hidden';
 import { 
   Package, 
   Sparkles, 
@@ -62,7 +64,7 @@ export function LootboxOpeningAnimation({
         setShowRewards(true);
         
         // Trigger confetti for rare or better lootboxes
-        if (reward.lootboxRarity !== 'COMMON') {
+        if (reward.lootboxRarity && reward.lootboxRarity !== 'COMMON') {
           triggerConfetti(reward.lootboxRarity);
         }
       }, 1500);
@@ -85,15 +87,17 @@ export function LootboxOpeningAnimation({
     }
   }, [isOpen, reward, onClose, autoCloseDelay]);
 
-  const triggerConfetti = (rarity: string) => {
+  const triggerConfetti = (rarity: string | undefined) => {
     const colors = {
       LEGENDARY: ['#FFD700', '#FFA500', '#FF6347'],
       EPIC: ['#9B59B6', '#8E44AD', '#663399'],
       RARE: ['#3498DB', '#2980B9', '#5DADE2'],
       UNCOMMON: ['#2ECC71', '#27AE60', '#82E0AA'],
+      COMMON: ['#95A5A6', '#7F8C8D', '#BDC3C7'],
     };
 
-    const selectedColors = colors[rarity as keyof typeof colors] || colors.UNCOMMON;
+    const rarityKey = rarity?.toUpperCase() || 'COMMON';
+    const selectedColors = colors[rarityKey as keyof typeof colors] || colors.COMMON;
 
     confetti({
       particleCount: 100,
@@ -103,7 +107,9 @@ export function LootboxOpeningAnimation({
     });
   };
 
-  const getRarityColor = (rarity: string) => {
+  const getRarityColor = (rarity: string | undefined) => {
+    if (!rarity) return 'from-gray-500 to-gray-700';
+    
     switch (rarity.toUpperCase()) {
       case 'LEGENDARY':
         return 'from-yellow-500 to-amber-600';
@@ -118,7 +124,9 @@ export function LootboxOpeningAnimation({
     }
   };
 
-  const getRarityGlow = (rarity: string) => {
+  const getRarityGlow = (rarity: string | undefined) => {
+    if (!rarity) return 'shadow-[0_0_30px_rgba(107,114,128,0.6)]';
+    
     switch (rarity.toUpperCase()) {
       case 'LEGENDARY':
         return 'shadow-[0_0_60px_rgba(255,215,0,0.8)]';
@@ -133,7 +141,9 @@ export function LootboxOpeningAnimation({
     }
   };
 
-  const getItemIcon = (type: string) => {
+  const getItemIcon = (type: string | undefined) => {
+    if (!type) return <Package className="h-5 w-5" />;
+    
     switch (type.toUpperCase()) {
       case 'WEAPON':
         return <Sword className="h-5 w-5" />;
@@ -156,6 +166,9 @@ export function LootboxOpeningAnimation({
       {isOpen && (
         <Dialog open={isOpen} onOpenChange={onClose}>
           <DialogContent className="max-w-2xl border-0 bg-transparent shadow-none p-0 overflow-visible">
+            <VisuallyHidden>
+              <DialogTitle>Lootbox Opening</DialogTitle>
+            </VisuallyHidden>
             <div className="relative flex flex-col items-center justify-center min-h-[500px]">
               {/* Close button */}
               <Button
@@ -245,7 +258,7 @@ export function LootboxOpeningAnimation({
                               {getItemIcon(item.type)}
                               <span className="font-semibold">{item.name}</span>
                             </div>
-                            <Badge variant="outline" className={`bg-gradient-to-r ${getRarityColor(item.rarity)} text-white`}>
+                            <Badge variant="outline" className={getRarityColor(item.rarity)}>
                               {item.rarity}
                             </Badge>
                           </div>
@@ -277,7 +290,7 @@ export function LootboxOpeningAnimation({
                               <Home className="h-5 w-5" />
                               <span className="font-semibold">{item.name}</span>
                             </div>
-                            <Badge variant="outline" className={`bg-gradient-to-r ${getRarityColor(item.rarity)} text-white`}>
+                            <Badge variant="outline" className={getRarityColor(item.rarity)}>
                               {item.rarity}
                             </Badge>
                           </div>

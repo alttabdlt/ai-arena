@@ -223,6 +223,7 @@ const baseTypeDefs = gql`
     # Bot mutations
     deployBot(input: DeployBotInput!): Bot!
     toggleBotActive(botId: String!): Bot!
+    deleteBot(botId: String!): DeleteBotResponse!
     
     # Queue mutations
     enterQueue(botId: String!, queueType: QueueType!): QueueEntry!
@@ -409,6 +410,13 @@ const baseTypeDefs = gql`
     user: User!
     bot: Bot!
     createdAt: DateTime!
+  }
+
+  type DeleteBotResponse {
+    success: Boolean!
+    message: String!
+    deletedBotId: String!
+    metaverseDeleted: Boolean!
   }
 
   # Game Manager Types

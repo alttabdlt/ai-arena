@@ -12,7 +12,7 @@ import {
   GET_PENDING_LOOTBOXES 
 } from '@/graphql/queries/economy';
 
-export function useOpenLootbox() {
+export function useOpenLootbox(botId?: string) {
   const [openLootbox, { loading, error }] = useMutation(OPEN_LOOTBOX, {
     onCompleted: (data) => {
       const rewards = data.openLootbox;
@@ -23,11 +23,21 @@ export function useOpenLootbox() {
     onError: (error) => {
       toast.error(`Failed to open lootbox: ${error.message}`);
     },
-    refetchQueries: [
-      { query: GET_PENDING_LOOTBOXES },
-      { query: GET_BOT_EQUIPMENT },
-      { query: GET_BOT_HOUSE }
-    ],
+    refetchQueries: (result) => {
+      const queries = [];
+      // Get botId from the result if not provided
+      const actualBotId = botId || result.data?.openLootbox?.bot?.id;
+      
+      if (actualBotId) {
+        queries.push(
+          { query: GET_PENDING_LOOTBOXES, variables: { botId: actualBotId } },
+          { query: GET_BOT_EQUIPMENT, variables: { botId: actualBotId } },
+          { query: GET_BOT_HOUSE, variables: { botId: actualBotId } }
+        );
+      }
+      
+      return queries;
+    },
   });
 
   return {
@@ -126,7 +136,7 @@ export function useInitializeBotHouse() {
 
 // Combined hook for all inventory operations
 export function useInventory(botId: string) {
-  const openLootbox = useOpenLootbox();
+  const openLootbox = useOpenLootbox(botId);
   const toggleEquipment = useToggleEquipment();
   const placeFurniture = usePlaceFurniture();
   const initializeHouse = useInitializeBotHouse();

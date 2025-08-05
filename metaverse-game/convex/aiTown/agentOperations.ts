@@ -140,7 +140,7 @@ export const agentDoSomething = internalAction({
     
     // Criminal activities in appropriate zones
     if (personality === 'CRIMINAL' && currentZone === 'darkAlley' && !recentRobbery && !player.pathfinding) {
-      // Look for robbery targets
+      // Look for robbery targets and assess their value
       const nearbyPlayers = args.otherFreePlayers.filter((p: any) => {
         const distance = Math.sqrt(
           Math.pow(p.position.x - player.position.x, 2) + 
@@ -150,18 +150,58 @@ export const agentDoSomething = internalAction({
       });
       
       if (nearbyPlayers.length > 0 && Math.random() < 0.3) {
-        const target = nearbyPlayers[Math.floor(Math.random() * nearbyPlayers.length)];
-        await sleep(Math.random() * 1000);
-        await ctx.runMutation(api.aiTown.main.sendInput, {
-          worldId: args.worldId,
-          name: 'startRobbery',
-          args: {
-            operationId: args.operationId,
+        // Assess potential targets based on visible wealth indicators
+        const targetAssessments = await Promise.all(nearbyPlayers.map(async (p) => {
+          // Get inventory value for this player
+          const inventory = await ctx.runQuery(internal.aiTown.inventory.getPlayerInventoryInternal, {
+            worldId: args.worldId,
+            playerId: p.id,
+          });
+          
+          // Calculate perceived value based on visible indicators
+          const equipmentValue = (p.equipment?.powerBonus || 0) + (p.equipment?.defenseBonus || 0);
+          const inventoryValue = inventory?.inventory?.totalValue || 0;
+          const defenseRisk = (p.equipment?.defenseBonus || 0) * 2; // Higher defense = higher risk
+          
+          // Score = potential reward - risk
+          const score = (equipmentValue * 10 + inventoryValue * 0.1) - defenseRisk;
+          
+          return { player: p, score, inventoryValue };
+        }));
+        
+        // Sort by score and pick the best target (or randomly from top 3 if multiple good targets)
+        targetAssessments.sort((a, b) => b.score - a.score);
+        const topTargets = targetAssessments.slice(0, 3).filter(t => t.score > 0);
+        
+        if (topTargets.length > 0) {
+          const targetData = topTargets[Math.floor(Math.random() * topTargets.length)];
+          
+          await sleep(Math.random() * 1000);
+          await ctx.runMutation(api.aiTown.main.sendInput, {
+            worldId: args.worldId,
+            name: 'startRobbery',
+            args: {
+              operationId: args.operationId,
+              agentId: agent.id,
+              targetPlayerId: targetData.player.id,
+            },
+          });
+          
+          // Log the assessment
+          await ctx.runMutation(internal.aiTown.activityLogger.logActivity, {
+            worldId: args.worldId,
+            playerId: player.id,
             agentId: agent.id,
-            targetPlayerId: target.id,
-          },
-        });
-        return;
+            type: 'activity_start',
+            description: `Eyeing target with estimated ${targetData.inventoryValue} value`,
+            emoji: '👀',
+            details: {
+              targetPlayer: targetData.player.id,
+            },
+          });
+          
+          return;
+        }
       }
     }
     
@@ -275,14 +315,31 @@ export const agentAttemptRobbery = internalAction({
       playerId: args.playerId,
     });
     
-    // Calculate success based on equipment and personality
-    const attackPower = (agentPlayer?.equipment?.powerBonus || 0) + 
-                       (agent?.personality === 'CRIMINAL' ? 20 : 0);
-    const defense = (target?.equipment?.defenseBonus || 0) + 
-                   (target?.house?.defenseLevel || 0);
+    // Calculate success based on equipment, personality, and zone
+    const personalityBonus = PERSONALITY_BONUS[agent?.personality as keyof typeof PERSONALITY_BONUS || 'WORKER']?.robbery || 0;
+    const zoneModifier = agentPlayer?.currentZone === 'darkAlley' ? 0.15 : 
+                        agentPlayer?.currentZone === 'casino' ? 0.05 :
+                        agentPlayer?.currentZone === 'suburb' ? -0.10 : 0;
     
-    const successChance = Math.max(0.1, Math.min(0.9, 0.5 + (attackPower - defense) / 100));
+    const attackPower = (agentPlayer?.equipment?.powerBonus || 0) * (1 + personalityBonus);
+    const defense = (target?.equipment?.defenseBonus || 0) + 
+                   (target?.house?.defenseLevel || 0) * 2; // House defense counts double
+    
+    // Base success chance modified by power differential and zone
+    const powerDifferential = (attackPower - defense) / 50;
+    const baseChance = 0.4 + powerDifferential + zoneModifier;
+    const successChance = Math.max(0.05, Math.min(0.85, baseChance));
+    
     const success = Math.random() < successChance;
+    
+    // Calculate loot based on target's inventory value
+    const targetInventory = await ctx.runQuery(internal.aiTown.inventory.getPlayerInventoryInternal, {
+      worldId: args.worldId,
+      playerId: args.targetPlayerId,
+    });
+    
+    const maxLoot = Math.floor((targetInventory?.inventory?.totalValue || 100) * 0.2); // Can steal up to 20%
+    const lootValue = success ? Math.floor(Math.random() * maxLoot) + 10 : 0;
     
     await sleep(Math.random() * 2000);
     
@@ -294,7 +351,24 @@ export const agentAttemptRobbery = internalAction({
         agentId: args.agentId,
         targetPlayerId: args.targetPlayerId,
         success,
-        lootValue: success ? Math.floor(Math.random() * 100) + 50 : 0,
+        lootValue,
+      },
+    });
+    
+    // Log the robbery attempt
+    await ctx.runMutation(internal.aiTown.activityLogger.logActivity, {
+      worldId: args.worldId,
+      playerId: args.playerId,
+      agentId: args.agentId,
+      type: 'robbery_attempt',
+      description: success ? 
+        `Successfully robbed player for ${lootValue} value` : 
+        `Failed robbery attempt against player`,
+      emoji: success ? '💰' : '❌',
+      details: {
+        targetPlayer: args.targetPlayerId,
+        success,
+        amount: lootValue,
       },
     });
   },

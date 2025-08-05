@@ -14,6 +14,7 @@ import { Bot, Wallet, Brain, Zap, AlertCircle, Info, CheckCircle, Upload, CheckC
 import { useToast } from '@shared/hooks/use-toast';
 import { Alert, AlertDescription } from '@ui/alert';
 import { DEPLOY_BOT } from '@/graphql/mutations/deployBot';
+import { REGISTER_BOT_IN_METAVERSE } from '@/graphql/mutations/metaverse';
 import { useNavigate } from 'react-router-dom';
 import { WALLET_ADDRESSES, FEE_CONFIG } from '@/config/wallets';
 import { useHypeBalance } from '@shared/hooks/useHypeBalance';
@@ -46,6 +47,7 @@ export default function Deploy() {
   const navigate = useNavigate();
   const { address, isConnected } = useAccount();
   const [deployBot] = useMutation(DEPLOY_BOT);
+  const [registerBotInMetaverse] = useMutation(REGISTER_BOT_IN_METAVERSE);
   const { balance, formatted: formattedBalance, symbol, isLoading: balanceLoading } = useHypeBalance();
   const [formData, setFormData] = useState({
     name: '',
@@ -61,7 +63,6 @@ export default function Deploy() {
   const [allTestsPassed, setAllTestsPassed] = useState(false);
   const [deploymentState, setDeploymentState] = useState<DeploymentState>('idle');
   const [deploymentError, setDeploymentError] = useState<string>('');
-  const [generatedAvatar, setGeneratedAvatar] = useState<{ imageData: string; spritesheetData: any } | null>(null);
   const [spriteSelector] = useState(() => new StardewSpriteSelector());
   
   const { sendTransaction, data: hash, error: sendError, isPending: isWriting } = useSendTransaction();
@@ -82,26 +83,6 @@ export default function Deploy() {
     }
   }, [hash]);
 
-  // Generate avatar when personality is selected
-  useEffect(() => {
-    if (formData.personality) {
-      // Generate a unique seed based on timestamp and random value
-      const seed = `${Date.now()}-${Math.random()}`;
-      
-      // Select sprite asynchronously
-      spriteSelector.selectSprite(
-        formData.personality.toUpperCase() as BotPersonality,
-        seed
-      ).then(sprite => {
-        setGeneratedAvatar({
-          imageData: sprite.imageData,
-          spritesheetData: sprite.spriteSheetData
-        });
-        // Set the avatar field to the base64 image data
-        setFormData(prev => ({ ...prev, avatar: sprite.imageData }));
-      });
-    }
-  }, [formData.personality, spriteSelector]);
 
   // Handle transaction errors
   useEffect(() => {
@@ -115,25 +96,67 @@ export default function Deploy() {
   // Handle transaction confirmation
   useEffect(() => {
     if (isConfirmed && txHash) {
-      setDeploymentState('deploying-bot');
-      // Call deployBot mutation
-      deployBot({
-        variables: {
-          input: {
-            name: formData.name,
-            avatar: formData.avatar,
-            prompt: formData.prompt,
-            personality: formData.personality.toUpperCase(),
-            modelType: formData.modelType.toUpperCase().replace('-', '_'),
-            txHash: txHash,
+      // First generate the avatar
+      setDeploymentState('generating-avatar');
+      
+      // Generate a unique seed based on timestamp and random value
+      const seed = `${Date.now()}-${Math.random()}`;
+      
+      // Generate avatar based on selected personality
+      spriteSelector.selectSprite(
+        formData.personality.toUpperCase() as BotPersonality,
+        seed
+      ).then(sprite => {
+        // Once avatar is generated, deploy the bot
+        setDeploymentState('deploying-bot');
+        
+        // Call deployBot mutation with generated avatar
+        deployBot({
+          variables: {
+            input: {
+              name: formData.name,
+              avatar: sprite.imageData,
+              prompt: formData.prompt,
+              personality: formData.personality.toUpperCase(),
+              modelType: formData.modelType.toUpperCase().replace('-', '_'),
+              txHash: txHash,
+            },
           },
-        },
-      }).then((result) => {
-        setDeploymentState('success');
-        toast({
-          title: "Bot Deployed Successfully!",
-          description: "Your bot has been created. You can now manage it from your dashboard.",
-        });
+        }).then(async (result) => {
+        const botId = result.data?.deployBot?.id;
+        
+        if (botId) {
+          // Update deployment state to show metaverse registration
+          setDeploymentState('registering-metaverse');
+          toast({
+            title: "Bot Deployed!",
+            description: "Registering your bot in the metaverse...",
+          });
+          
+          try {
+            // Register bot in metaverse
+            await registerBotInMetaverse({
+              variables: { botId },
+            });
+            
+            setDeploymentState('success');
+            toast({
+              title: "Success!",
+              description: "Your bot is now active in the AI Arena metaverse!",
+            });
+          } catch (metaverseError: any) {
+            // Still consider deployment successful even if metaverse registration fails
+            console.error('Metaverse registration error:', metaverseError);
+            setDeploymentState('success');
+            toast({
+              title: "Bot Deployed",
+              description: "Bot created successfully. Metaverse registration will be retried automatically.",
+              variant: "default"
+            });
+          }
+        } else {
+          throw new Error('Bot deployment succeeded but no ID returned');
+        }
         
         // Reset form after a delay
         setTimeout(() => {
@@ -174,8 +197,19 @@ export default function Deploy() {
         });
         setIsSubmitting(false);
       });
+      }).catch((avatarError) => {
+        console.error('Avatar generation error:', avatarError);
+        setDeploymentState('error');
+        setDeploymentError('Failed to generate avatar. Please try again.');
+        toast({
+          title: "Avatar Generation Failed",
+          description: "Failed to generate bot avatar. Please try again.",
+          variant: "destructive"
+        });
+        setIsSubmitting(false);
+      });
     }
-  }, [isConfirmed, txHash, deployBot, formData, navigate, toast]);
+  }, [isConfirmed, txHash, deployBot, registerBotInMetaverse, formData, navigate, toast, spriteSelector]);
 
   const handlePromptChange = (value: string) => {
     if (value.length <= 1000) {
@@ -192,15 +226,26 @@ export default function Deploy() {
   const retryDeployment = async () => {
     if (!txHash) return;
     
-    setDeploymentState('deploying-bot');
+    setDeploymentState('generating-avatar');
     setDeploymentError('');
     
     try {
-      await deployBot({
+      // Generate a unique seed based on timestamp and random value
+      const seed = `${Date.now()}-${Math.random()}`;
+      
+      // Generate avatar based on selected personality
+      const sprite = await spriteSelector.selectSprite(
+        formData.personality.toUpperCase() as BotPersonality,
+        seed
+      );
+      
+      setDeploymentState('deploying-bot');
+      
+      const deployResult = await deployBot({
         variables: {
           input: {
             name: formData.name,
-            avatar: formData.avatar,
+            avatar: sprite.imageData,
             prompt: formData.prompt,
             personality: formData.personality.toUpperCase(),
             modelType: formData.modelType.toUpperCase().replace('-', '_'),
@@ -209,11 +254,40 @@ export default function Deploy() {
         },
       });
       
-      setDeploymentState('success');
-      toast({
-        title: "Bot Deployed Successfully!",
-        description: "Your bot has been created. You can now manage it from your dashboard.",
-      });
+      const botId = deployResult.data?.deployBot?.id;
+      
+      if (botId) {
+        // Update deployment state to show metaverse registration
+        setDeploymentState('registering-metaverse');
+        toast({
+          title: "Bot Deployed!",
+          description: "Registering your bot in the metaverse...",
+        });
+        
+        try {
+          // Register bot in metaverse
+          await registerBotInMetaverse({
+            variables: { botId },
+          });
+          
+          setDeploymentState('success');
+          toast({
+            title: "Success!",
+            description: "Your bot is now active in the AI Arena metaverse!",
+          });
+        } catch (metaverseError: any) {
+          // Still consider deployment successful even if metaverse registration fails
+          console.error('Metaverse registration error:', metaverseError);
+          setDeploymentState('success');
+          toast({
+            title: "Bot Deployed",
+            description: "Bot created successfully. Metaverse registration will be retried automatically.",
+            variant: "default"
+          });
+        }
+      } else {
+        throw new Error('Bot deployment succeeded but no ID returned');
+      }
       
       // Reset form after a delay
       setTimeout(() => {
@@ -256,7 +330,7 @@ export default function Deploy() {
       return;
     }
 
-    if (!formData.name || !formData.avatar || !formData.prompt || !formData.modelType || !formData.personality) {
+    if (!formData.name || !formData.prompt || !formData.modelType || !formData.personality) {
       toast({
         title: "Missing Information",
         description: "Please fill in all required fields including personality.",
@@ -395,30 +469,27 @@ export default function Deploy() {
                 </div>
 
                 <div>
-                  <Label>Generated Avatar</Label>
-                  {generatedAvatar ? (
+                  <Label>Bot Avatar</Label>
+                  {formData.personality ? (
                     <div className="mt-2 flex items-center gap-4">
-                      <div className="border-2 border-primary rounded-lg p-2 bg-muted">
-                        <img 
-                          src={generatedAvatar.imageData} 
-                          alt="Generated bot avatar"
-                          className="w-32 h-32 pixelated"
-                          style={{ imageRendering: 'pixelated' }}
-                        />
+                      <div className="border-2 border-dashed border-primary/50 rounded-lg p-2 bg-muted/50">
+                        <div className="w-32 h-32 flex items-center justify-center">
+                          <Bot className="h-16 w-16 text-muted-foreground opacity-50" />
+                        </div>
                       </div>
                       <div className="text-sm text-muted-foreground">
-                        <p>Unique pixel art avatar generated based on personality</p>
-                        <p className="mt-1">This will be your bot's appearance in the metaverse</p>
+                        <p>A unique pixel art avatar will be generated</p>
+                        <p className="mt-1">after your transaction is confirmed</p>
                         <Badge variant="outline" className="mt-2">
-                          <CheckCircle2 className="h-3 w-3 mr-1" />
-                          Auto-generated
+                          <Wallet className="h-3 w-3 mr-1" />
+                          Generated after payment
                         </Badge>
                       </div>
                     </div>
                   ) : (
                     <div className="mt-2 p-8 border-2 border-dashed border-border rounded-lg text-center text-muted-foreground">
                       <Bot className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                      <p>Select a personality to generate avatar</p>
+                      <p>Select a personality first</p>
                     </div>
                   )}
                 </div>

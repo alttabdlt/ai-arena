@@ -362,17 +362,17 @@ export function BotInventoryModal({ bot, trigger, onOpenLootbox, onEquipItem }: 
                     <CardContent>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
-                          <span className="text-sm text-muted-foreground">House Score</span>
+                          <span className="text-xs text-muted-foreground">House Score</span>
                           <div className="flex items-center gap-1">
                             <Home className="h-4 w-4" />
-                            <span className="font-bold">{bot.house.houseScore}</span>
+                            <span className="text-sm font-bold">{bot.house.houseScore}</span>
                           </div>
                         </div>
                         <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
-                          <span className="text-sm text-muted-foreground">Defense Level</span>
+                          <span className="text-xs text-muted-foreground">Defense Level</span>
                           <div className="flex items-center gap-1">
                             <Shield className="h-4 w-4" />
-                            <span className="font-bold">{bot.house.defenseLevel}</span>
+                            <span className="text-sm font-bold">{bot.house.defenseLevel}</span>
                           </div>
                         </div>
                       </div>

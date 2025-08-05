@@ -36,13 +36,11 @@ export const GET_USER_STATS = gql`
         type
         status
         createdAt
-        result {
-          winner {
-            id
-            name
-          }
-          duration
+        winner {
+          id
+          name
         }
+        completedAt
       }
     }
   }

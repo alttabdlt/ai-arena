@@ -27,3 +27,14 @@ export const ENTER_QUEUE = gql`
     }
   }
 `;
+
+export const DELETE_BOT = gql`
+  mutation DeleteBot($botId: String!) {
+    deleteBot(botId: $botId) {
+      success
+      message
+      deletedBotId
+      metaverseDeleted
+    }
+  }
+`;

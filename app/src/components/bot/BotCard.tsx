@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader } from '@ui/card';
 import { Badge } from '@ui/badge';
 import { Button } from '@ui/button';
-import { Bot, Trophy, Zap, Shield, Coins, Activity, Eye, Play, Package } from 'lucide-react';
+import { Bot, Trophy, Zap, Shield, Coins, Activity, Eye, Play, Package, Trash2 } from 'lucide-react';
 import { StardewSpriteSelector, BotPersonality } from '@/services/stardewSpriteSelector';
 import { BotInventoryModal } from './BotInventoryModal';
 
@@ -33,9 +33,10 @@ interface BotCardProps {
   bot: BotData;
   onQueue?: () => void;
   onManage?: () => void;
+  onDelete?: () => void;
 }
 
-export function BotCard({ bot, onQueue, onManage }: BotCardProps) {
+export function BotCard({ bot, onQueue, onManage, onDelete }: BotCardProps) {
   const navigate = useNavigate();
   const [spriteData, setSpriteData] = useState<{ 
     imageData: string; 
@@ -88,14 +89,31 @@ export function BotCard({ bot, onQueue, onManage }: BotCardProps) {
     return num.toFixed(0);
   };
 
+  const formatModelType = (modelType: string) => {
+    // Handle common model types
+    const modelMap: Record<string, string> = {
+      'DEEPSEEK_CHAT': 'DeepSeek',
+      'GPT_4O': 'GPT-4o',
+      'GPT_4O_MINI': 'GPT-4o Mini',
+      'CLAUDE_3_5_SONNET': 'Claude 3.5',
+      'CLAUDE_3_OPUS': 'Claude Opus',
+      'CLAUDE_3_HAIKU': 'Claude Haiku',
+      'LLAMA_3_70B': 'Llama 3 70B',
+      'MIXTRAL_8X7B': 'Mixtral 8x7B',
+    };
+    
+    return modelMap[modelType] || modelType.replace(/_/g, ' ').toLowerCase()
+      .replace(/\b\w/g, (l) => l.toUpperCase());
+  };
+
   const getPersonalityColor = (personality: string) => {
     switch (personality) {
       case 'CRIMINAL':
-        return 'text-red-500 border-red-500';
+        return 'text-red-500 border-red-500 bg-red-500/10';
       case 'GAMBLER':
-        return 'text-yellow-500 border-yellow-500';
+        return 'text-yellow-500 border-yellow-500 bg-yellow-500/10';
       case 'WORKER':
-        return 'text-green-500 border-green-500';
+        return 'text-green-500 border-green-500 bg-green-500/10';
       default:
         return 'text-muted-foreground border-border';
     }
@@ -134,7 +152,8 @@ export function BotCard({ bot, onQueue, onManage }: BotCardProps) {
                 #{bot.tokenId}
               </Badge>
               <Badge variant="outline" className={`text-xs ${getPersonalityColor(bot.personality)}`}>
-                {getPersonalityIcon(bot.personality)} {bot.personality}
+                <span className="mr-1">{getPersonalityIcon(bot.personality)}</span>
+                {bot.personality}
               </Badge>
             </div>
           </div>
@@ -145,6 +164,7 @@ export function BotCard({ bot, onQueue, onManage }: BotCardProps) {
             </Badge>
           ) : (
             <Badge variant="secondary" className="text-xs">
+              <Activity className="h-3 w-3 mr-1 opacity-50" />
               Inactive
             </Badge>
           )}
@@ -177,41 +197,41 @@ export function BotCard({ bot, onQueue, onManage }: BotCardProps) {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-2 gap-2 text-sm">
+        <div className="grid grid-cols-2 gap-2">
           <div className="flex items-center justify-between p-2 bg-muted rounded">
-            <span className="text-muted-foreground flex items-center gap-1">
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
               <Trophy className="h-3 w-3" />
               W/L
             </span>
-            <span className="font-medium">
+            <span className="text-sm font-medium">
               {bot.stats.wins}/{bot.stats.losses}
             </span>
           </div>
           <div className="flex items-center justify-between p-2 bg-muted rounded">
-            <span className="text-muted-foreground flex items-center gap-1">
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
               <Zap className="h-3 w-3" />
               Rate
             </span>
-            <span className="font-medium">
+            <span className="text-sm font-medium">
               {bot.stats.winRate.toFixed(1)}%
             </span>
           </div>
           <div className="flex items-center justify-between p-2 bg-muted rounded">
-            <span className="text-muted-foreground flex items-center gap-1">
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
               <Coins className="h-3 w-3" />
               Earned
             </span>
-            <span className="font-medium">
+            <span className="text-sm font-medium">
               {formatEarnings(bot.stats.earnings)}
             </span>
           </div>
           <div className="flex items-center justify-between p-2 bg-muted rounded">
-            <span className="text-muted-foreground flex items-center gap-1">
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
               <Shield className="h-3 w-3" />
               Model
             </span>
-            <span className="font-medium text-xs">
-              {bot.modelType}
+            <span className="text-sm font-medium truncate max-w-[80px]" title={bot.modelType}>
+              {formatModelType(bot.modelType)}
             </span>
           </div>
         </div>
@@ -225,17 +245,27 @@ export function BotCard({ bot, onQueue, onManage }: BotCardProps) {
           </div>
         )}
 
-        {/* Inventory Preview */}
-        {(bot.lootboxRewards?.length || bot.equipment?.length) && (
+        {/* Inventory Preview - Always visible for consistency */}
+        <div className="grid grid-cols-2 gap-2">
           <div className="flex items-center justify-between p-2 bg-muted rounded">
-            <span className="text-xs text-muted-foreground">
-              {bot.lootboxRewards?.filter(r => !r.opened).length || 0} unopened lootboxes
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
+              <Package className="h-3 w-3" />
+              Lootboxes
             </span>
-            <span className="text-xs text-muted-foreground">
-              {bot.equipment?.length || 0} items equipped
+            <span className="text-sm font-medium">
+              {bot.lootboxRewards?.filter(r => !r.opened).length || 0}
             </span>
           </div>
-        )}
+          <div className="flex items-center justify-between p-2 bg-muted rounded">
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
+              <Shield className="h-3 w-3" />
+              Equipped
+            </span>
+            <span className="text-sm font-medium">
+              {bot.equipment?.filter(e => e.equipped).length || 0}
+            </span>
+          </div>
+        </div>
 
         {/* Actions */}
         <div className="space-y-2" onClick={(e) => e.stopPropagation()}>
@@ -263,7 +293,7 @@ export function BotCard({ bot, onQueue, onManage }: BotCardProps) {
                   <Package className="h-3 w-3 mr-1" />
                   Inventory
                   {bot.lootboxRewards?.filter(r => !r.opened).length ? (
-                    <Badge variant="default" className="ml-1 h-4 px-1">
+                    <Badge variant="default" className="ml-1 h-5 px-1.5 text-[10px]">
                       {bot.lootboxRewards.filter(r => !r.opened).length}
                     </Badge>
                   ) : null}
@@ -271,6 +301,20 @@ export function BotCard({ bot, onQueue, onManage }: BotCardProps) {
               }
             />
           </div>
+          {!bot.isDemo && onDelete && (
+            <Button
+              size="sm"
+              variant="destructive"
+              className="w-full"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+            >
+              <Trash2 className="h-3 w-3 mr-1" />
+              Delete Bot
+            </Button>
+          )}
           {bot.isActive && !bot.queuePosition && (
             <Button
               size="sm"

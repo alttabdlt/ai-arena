@@ -175,13 +175,6 @@ export default function BotDetail() {
     );
   }
   
-  // Debug ownership detection
-  console.log('BotDetail ownership check:', {
-    userAddress: user?.address,
-    botCreatorAddress: bot.creator.address,
-    isOwner,
-    user
-  });
 
   const handleToggleActive = async () => {
     try {
@@ -219,6 +212,22 @@ export default function BotDetail() {
     }
   };
 
+  const formatModelType = (modelType: string) => {
+    const modelMap: Record<string, string> = {
+      'DEEPSEEK_CHAT': 'DeepSeek',
+      'GPT_4O': 'GPT-4o',
+      'GPT_4O_MINI': 'GPT-4o Mini',
+      'CLAUDE_3_5_SONNET': 'Claude 3.5',
+      'CLAUDE_3_OPUS': 'Claude Opus',
+      'CLAUDE_3_HAIKU': 'Claude Haiku',
+      'LLAMA_3_70B': 'Llama 3 70B',
+      'MIXTRAL_8X7B': 'Mixtral 8x7B',
+    };
+    
+    return modelMap[modelType] || modelType.replace(/_/g, ' ').toLowerCase()
+      .replace(/\b\w/g, (l) => l.toUpperCase());
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-8 max-w-7xl">
@@ -235,20 +244,18 @@ export default function BotDetail() {
             <div>
               <h1 className="text-3xl font-bold">Bot Profile</h1>
               <p className="text-muted-foreground">
-                {isOwner ? 'Manage your bot' : 'Public profile'}
+                View bot performance and statistics
               </p>
             </div>
           </div>
-          {!isOwner && (
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="icon">
-                <Heart className="h-4 w-4" />
-              </Button>
-              <Button variant="outline" size="icon">
-                <Share2 className="h-4 w-4" />
-              </Button>
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="icon">
+              <Heart className="h-4 w-4" />
+            </Button>
+            <Button variant="outline" size="icon">
+              <Share2 className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
 
         {/* Live Match Card - Show prominently if bot is in a match */}
@@ -287,26 +294,39 @@ export default function BotDetail() {
                   <div>
                     <CardTitle className="text-2xl">{bot.name}</CardTitle>
                     <CardDescription>
-                      <div className="flex items-center gap-2 mt-1">
-                        {getModelIcon(bot.modelType)}
-                        <span>{bot.modelType.replace(/_/g, ' ')}</span>
+                      <div className="flex items-center gap-4 mt-1">
+                        <div className="flex items-center gap-1">
+                          {getModelIcon(bot.modelType)}
+                          <span>{formatModelType(bot.modelType)}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Hash className="h-3 w-3" />
+                          <span className="text-xs">{bot.personality}</span>
+                        </div>
                       </div>
                     </CardDescription>
                   </div>
                 </div>
-                <Badge variant={bot.isActive ? 'default' : 'secondary'}>
-                  {bot.isActive ? 'Active' : 'Inactive'}
-                </Badge>
+                <div className="flex items-center gap-2">
+                  <Badge variant={bot.isActive ? 'default' : 'secondary'}>
+                    {bot.isActive ? 'Active' : 'Inactive'}
+                  </Badge>
+                  <Badge variant="outline">
+                    #{bot.tokenId}
+                  </Badge>
+                </div>
               </div>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                <div>
-                  <h3 className="font-semibold mb-2">Strategy Prompt</h3>
-                  <p className="text-sm text-muted-foreground bg-muted/50 p-3 rounded-lg">
-                    {bot.prompt}
-                  </p>
-                </div>
+                {isOwner && (
+                  <div>
+                    <h3 className="font-semibold mb-2">Strategy Prompt</h3>
+                    <p className="text-sm text-muted-foreground bg-muted/50 p-3 rounded-lg">
+                      {bot.prompt}
+                    </p>
+                  </div>
+                )}
                 <div className="flex items-center gap-4 text-sm text-muted-foreground">
                   <div className="flex items-center gap-1">
                     <Calendar className="h-4 w-4" />
@@ -314,7 +334,7 @@ export default function BotDetail() {
                   </div>
                   <div className="flex items-center gap-1">
                     <Users className="h-4 w-4" />
-                    <span>by {bot.creator.username || bot.creator.address.slice(0, 6) + '...' + bot.creator.address.slice(-4)}</span>
+                    <span>Owner: {bot.creator.username || bot.creator.address.slice(0, 6) + '...' + bot.creator.address.slice(-4)}</span>
                   </div>
                 </div>
               </div>
@@ -323,7 +343,7 @@ export default function BotDetail() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Quick Stats</CardTitle>
+              <CardTitle>Performance Stats</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
@@ -355,40 +375,6 @@ export default function BotDetail() {
                   </div>
                 )}
 
-                {isOwner && (
-                  <div className="pt-4 space-y-2">
-                    <Button
-                      onClick={handleToggleActive}
-                      variant={bot.isActive ? 'destructive' : 'default'}
-                      className="w-full"
-                      size="sm"
-                    >
-                      {bot.isActive ? (
-                        <>
-                          <PowerOff className="h-4 w-4 mr-2" />
-                          Deactivate Bot
-                        </>
-                      ) : (
-                        <>
-                          <Power className="h-4 w-4 mr-2" />
-                          Activate Bot
-                        </>
-                      )}
-                    </Button>
-                    
-                    {bot.isActive && !bot.queuePosition && (
-                      <Button
-                        onClick={handleEnterQueue}
-                        variant="outline"
-                        className="w-full"
-                        size="sm"
-                      >
-                        <Play className="h-4 w-4 mr-2" />
-                        Enter Queue
-                      </Button>
-                    )}
-                  </div>
-                )}
               </div>
             </CardContent>
           </Card>

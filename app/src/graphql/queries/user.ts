@@ -65,6 +65,14 @@ export const GET_USER_BOTS = gql`
         winRate
         avgFinishPosition
       }
+      energy {
+        currentEnergy
+        maxEnergy
+        isPaused
+        consumptionRate
+        regenerationRate
+        netConsumption
+      }
       queuePosition
       equipment {
         id

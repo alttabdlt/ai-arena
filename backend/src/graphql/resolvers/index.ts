@@ -12,10 +12,13 @@ import { gameManagerResolvers } from './gameManager';
 import { economyResolvers } from './economy';
 import { metaverseSyncResolvers } from './metaverseSync';
 import { deploymentResolvers } from './deployment';
+import { channelResolvers } from './channel';
+import { energyResolvers } from './energy';
 import { getQueueService } from '../../services';
 import { getGameManagerService } from '../../services/gameManagerService';
 import { convexService } from '../../services/convexService';
 import { metaverseEventsService } from '../../services/metaverseEventsService';
+import { energyService } from '../../services/energyService';
 
 interface PubSubAsyncIterator<T> extends AsyncIterator<T> {
   return(): Promise<IteratorResult<T>>;
@@ -350,6 +353,12 @@ export const resolvers = {
     
     // Deployment queries
     ...deploymentResolvers.Query,
+    
+    // Channel queries
+    ...channelResolvers.Query,
+    
+    // Energy queries
+    ...energyResolvers.Query,
   },
 
   Mutation: {
@@ -435,6 +444,9 @@ export const resolvers = {
             status: 'PENDING',
           },
         });
+        
+        // Initialize bot energy using the transaction
+        await energyService.initializeBotEnergy(newBot.id, prisma);
         
         // Note: Removed automatic queuing - bots must be manually queued by users
         // This allows users to manage their bots before entering tournaments
@@ -1293,6 +1305,12 @@ export const resolvers = {
     
     // Deployment mutations
     ...deploymentResolvers.Mutation,
+    
+    // Channel mutations
+    ...channelResolvers.Mutation,
+    
+    // Energy mutations
+    ...energyResolvers.Mutation,
   },
 
   Subscription: {
@@ -1327,6 +1345,12 @@ export const resolvers = {
         return (ctx.pubsub as TypedPubSub).asyncIterator(['BOT_DEPLOYED']);
       },
     },
+
+    debugLog: {
+      subscribe: (_: any, __: any, ctx: Context) => {
+        return (ctx.pubsub as TypedPubSub).asyncIterator(['DEBUG_LOG']);
+      },
+    },
     
     // Game Manager subscriptions
     ...gameManagerResolvers.Subscription,
@@ -1336,6 +1360,10 @@ export const resolvers = {
   },
 
   Bot: {
+    channel: (parent: any) => {
+      // The channel field is already on the bot from Prisma
+      return parent.channel || 'main';
+    },
     socialStats: async (_bot: any) => {
       return {
         likes: 0,
@@ -1350,11 +1378,28 @@ export const resolvers = {
       }
       return bot.stats;
     },
+    // Energy field from energyResolvers
+    energy: async (parent: any) => {
+      try {
+        return await energyService.getBotEnergy(parent.id);
+      } catch (error) {
+        // Return default values if energy record doesn't exist
+        return {
+          currentEnergy: 100,
+          maxEnergy: 100,
+          isPaused: false,
+          consumptionRate: 1,
+          regenerationRate: 1,
+          netConsumption: 0,
+        };
+      }
+    },
     equipment: async (bot: any, _: any, ctx: Context) => {
       if (bot.equipment) return bot.equipment;
-      return ctx.prisma.botEquipment.findMany({
+      const equipment = await ctx.prisma.botEquipment.findMany({
         where: { botId: bot.id },
       });
+      return equipment || [];
     },
     house: async (bot: any, _: any, ctx: Context) => {
       if (bot.house) return bot.house;
@@ -1486,7 +1531,7 @@ export const resolvers = {
     },
     queueEntries: async (bot: any, _: any, ctx: Context) => {
       // Return queue entries for this bot
-      return ctx.prisma.queueEntry.findMany({
+      const entries = await ctx.prisma.queueEntry.findMany({
         where: {
           botId: bot.id,
         },
@@ -1494,6 +1539,7 @@ export const resolvers = {
           bot: true,
         },
       });
+      return entries || [];
     },
   },
   

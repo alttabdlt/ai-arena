@@ -65,14 +65,30 @@ export function mapPersonalityToAgent(
   botName: string,
   personality: BotPersonality,
   customPrompt?: string,
+  existingCharacter?: string,
 ): AgentDescription {
   // Select a random template for the personality type
   const templates = personalityTemplates[personality];
   const template = templates[Math.floor(Math.random() * templates.length)];
   
-  // Select a random character sprite for the personality type
-  const sprites = characterSprites[personality];
-  const character = sprites[Math.floor(Math.random() * sprites.length)];
+  // Use existing character if provided and valid, otherwise select random
+  let character: string;
+  if (existingCharacter) {
+    // Check if the existing character is valid
+    const validCharacters = ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 
+                            'criminal1', 'gambler1', 'worker1'];
+    if (validCharacters.includes(existingCharacter)) {
+      character = existingCharacter;
+    } else {
+      // Fall back to random selection if invalid
+      const sprites = characterSprites[personality];
+      character = sprites[Math.floor(Math.random() * sprites.length)];
+    }
+  } else {
+    // Select a random character sprite for the personality type
+    const sprites = characterSprites[personality];
+    character = sprites[Math.floor(Math.random() * sprites.length)];
+  }
   
   // Build the identity, incorporating custom prompt if provided
   let identity = template.identity.replace(/{name}/g, botName);

@@ -524,8 +524,12 @@ const Index = () => {
     setTimeout(() => {
       setShowPortalTransition(true);
       setTimeout(() => {
-        // Navigate to the metaverse game running on port 5174
-        window.open('http://localhost:5174', '_blank');
+        // Navigate to the metaverse game running on port 5175
+        // Pass the user's wallet address as a URL parameter
+        const metaverseUrl = user?.address 
+          ? `http://localhost:5175?address=${encodeURIComponent(user.address)}`
+          : 'http://localhost:5175';
+        window.open(metaverseUrl, '_blank');
         // Reset globe view after navigation
         setTimeout(() => {
           if (globeRef.current && globeRef.current.resetView) {

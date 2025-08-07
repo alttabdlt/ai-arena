@@ -17,6 +17,13 @@ crons.interval('restart dead worlds', { seconds: 60 }, internal.world.restartDea
 
 crons.daily('vacuum old entries', { hourUTC: 4, minuteUTC: 20 }, internal.crons.vacuumOldEntries);
 
+// Process bot registrations every 3 seconds
+crons.interval(
+  'process bot registrations',
+  { seconds: 3 },
+  internal.aiTown.batchRegistration.scheduledBatchProcessor,
+);
+
 export default crons;
 
 const TablesToVacuum: TableNames[] = [

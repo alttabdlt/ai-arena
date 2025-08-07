@@ -2,6 +2,7 @@ import { gql } from 'graphql-tag';
 import { economyTypeDefs } from './economy';
 import { metaverseSyncTypeDefs } from './metaverseSync';
 import { deploymentTypeDefs } from './deployment';
+import { energyTypeDefs } from './energy';
 
 const baseTypeDefs = gql`
   scalar DateTime
@@ -45,6 +46,9 @@ const baseTypeDefs = gql`
     currentMatch: Match
     createdAt: DateTime!
     updatedAt: DateTime!
+    
+    # Metaverse fields
+    channel: String!
     
     # Economy fields
     equipment: [BotEquipment!]!
@@ -179,6 +183,34 @@ const baseTypeDefs = gql`
     LEGENDARY
   }
 
+  # Channel types
+  type Channel {
+    id: ID!
+    name: String!
+    type: ChannelType!
+    status: ChannelStatus!
+    currentBots: Int!
+    maxBots: Int!
+    loadPercentage: Float!
+    worldId: String
+    region: String
+    description: String
+  }
+
+  enum ChannelType {
+    MAIN
+    REGIONAL
+    VIP
+    TEST
+  }
+
+  enum ChannelStatus {
+    ACTIVE
+    FULL
+    DRAINING
+    MAINTENANCE
+  }
+
   type Query {
     # User queries
     user(address: String!): User
@@ -218,6 +250,11 @@ const baseTypeDefs = gql`
     activeGames: [GameInstance!]!
     gameById(gameId: String!): GameInstance
     gameStats: GameStats!
+    
+    # Channel queries
+    channels(type: ChannelType, status: ChannelStatus): [Channel!]!
+    channel(name: String!): Channel
+    myBotChannels: [Channel!]!
   }
 
   type Mutation {
@@ -272,6 +309,9 @@ const baseTypeDefs = gql`
     resumeGame(gameId: String!): GameInstance!
     addSpectator(gameId: String!, userId: String!): Boolean!
     removeSpectator(gameId: String!, userId: String!): Boolean!
+    
+    # Channel mutations
+    switchChannel(botId: String!, channelName: String!): Bot!
   }
 
   type Subscription {
@@ -332,10 +372,48 @@ const baseTypeDefs = gql`
   }
   
   enum AIModelType {
+    # OpenAI Models
     GPT_4O
+    GPT_4O_MINI
+    O3
+    O3_MINI
+    O3_PRO
+    
+    # Anthropic Claude Models
     CLAUDE_3_5_SONNET
+    CLAUDE_3_5_HAIKU
     CLAUDE_3_OPUS
+    CLAUDE_4_OPUS
+    CLAUDE_4_SONNET
+    
+    # DeepSeek Models
     DEEPSEEK_CHAT
+    DEEPSEEK_R1
+    DEEPSEEK_V3
+    
+    # Alibaba Qwen Models
+    QWEN_2_5_72B
+    QWQ_32B
+    QVQ_72B_PREVIEW
+    QWEN_2_5_MAX
+    
+    # xAI Models
+    GROK_3
+    
+    # Kimi Models
+    KIMI_K2
+    
+    # Google Gemini Models
+    GEMINI_2_5_PRO
+    GEMINI_2_5_PRO_DEEP_THINK
+    
+    # Meta Llama Models
+    LLAMA_3_1_405B
+    LLAMA_3_1_70B
+    LLAMA_3_2_90B
+    
+    # Mistral Models
+    MIXTRAL_8X22B
   }
 
   enum BotPersonality {
@@ -1103,4 +1181,4 @@ const baseTypeDefs = gql`
 `;
 
 // Export merged type definitions
-export const typeDefs = [baseTypeDefs, economyTypeDefs, metaverseSyncTypeDefs, deploymentTypeDefs];
+export const typeDefs = [baseTypeDefs, economyTypeDefs, metaverseSyncTypeDefs, deploymentTypeDefs, energyTypeDefs];

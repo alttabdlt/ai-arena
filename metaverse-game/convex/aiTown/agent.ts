@@ -258,11 +258,11 @@ export class Agent {
     }
   }
 
-  startOperation<Name extends keyof AgentOperations>(
+  startOperation(
     game: Game,
     now: number,
-    name: Name,
-    args: Omit<FunctionArgs<AgentOperations[Name]>, 'operationId'>,
+    name: AgentOperationName,
+    args: any,
   ) {
     if (this.inProgressOperation) {
       throw new Error(
@@ -317,43 +317,84 @@ export const serializedAgent = {
 };
 export type SerializedAgent = ObjectType<typeof serializedAgent>;
 
-type AgentOperations = typeof internal.aiTown.agentOperations;
+type AgentOperationName = 
+  | 'agentRememberConversation'
+  | 'agentGenerateMessage'
+  | 'agentDoSomething'
+  | 'agentAttemptRobbery'
+  | 'agentEngageCombat'
+  | 'agentSelectZoneActivity'
+  | 'logConversationStart'
+  | 'logConversationEnd'
+  | 'logActivityStart'
+  | 'logActivityEnd'
+  | 'logZoneChange'
+  | 'processConversationRelationship'
+  | 'processRobberyRelationship'
+  | 'processCombatRelationship';
 
 export async function runAgentOperation(ctx: MutationCtx, operation: string, args: any) {
   let reference;
+  // @ts-ignore - TypeScript type depth issue with generated Convex API
+  const operations = internal.aiTown.agentOperations;
   switch (operation) {
     case 'agentRememberConversation':
-      reference = internal.aiTown.agentOperations.agentRememberConversation;
+      reference = operations.agentRememberConversation;
       break;
     case 'agentGenerateMessage':
-      reference = internal.aiTown.agentOperations.agentGenerateMessage;
+      reference = operations.agentGenerateMessage;
       break;
     case 'agentDoSomething':
-      reference = internal.aiTown.agentOperations.agentDoSomething;
+      reference = operations.agentDoSomething;
       break;
     case 'agentAttemptRobbery':
-      reference = internal.aiTown.agentOperations.agentAttemptRobbery;
+      reference = operations.agentAttemptRobbery;
       break;
     case 'agentEngageCombat':
-      reference = internal.aiTown.agentOperations.agentEngageCombat;
+      reference = operations.agentEngageCombat;
       break;
     case 'agentSelectZoneActivity':
-      reference = internal.aiTown.agentOperations.agentSelectZoneActivity;
+      reference = operations.agentSelectZoneActivity;
       break;
     case 'logConversationStart':
-      reference = internal.aiTown.agentOperations.logConversationStart;
+      reference = operations.logConversationStart;
       break;
     case 'logConversationEnd':
-      reference = internal.aiTown.agentOperations.logConversationEnd;
+      reference = operations.logConversationEnd;
       break;
     case 'logActivityStart':
-      reference = internal.aiTown.agentOperations.logActivityStart;
+      reference = operations.logActivityStart;
       break;
     case 'logZoneChange':
-      reference = internal.aiTown.agentOperations.logZoneChange;
+      reference = operations.logZoneChange;
       break;
     case 'logActivityEnd':
-      reference = internal.aiTown.agentOperations.logActivityEnd;
+      reference = operations.logActivityEnd;
+      break;
+    case 'processRobberyRelationship':
+      reference = internal.aiTown.relationshipService.processInteraction;
+      // Transform args for robbery
+      args = {
+        worldId: args.worldId,
+        type: args.success ? 'ROBBERY_SUCCESS' : 'ROBBERY_FAILED',
+        actor: { playerId: args.robberId, personality: args.robberPersonality },
+        target: { playerId: args.victimId },
+        amount: args.lootValue,
+      };
+      break;
+    case 'processCombatRelationship':
+      reference = internal.aiTown.relationshipService.processInteraction;
+      // Transform args for combat
+      args = {
+        worldId: args.worldId,
+        type: 'COMBAT_WIN',
+        actor: { playerId: args.winnerId, personality: args.winnerPersonality },
+        target: { playerId: args.loserId, personality: args.loserPersonality },
+      };
+      break;
+    case 'processConversationRelationship':
+      reference = internal.aiTown.relationshipService.processInteraction;
+      // Pass through args as-is for conversation
       break;
     default:
       throw new Error(`Unknown operation: ${operation}`);
@@ -415,11 +456,40 @@ export const findConversationCandidate = internalQuery({
           continue;
         }
       }
-      candidates.push({ id: otherPlayer.id, position });
+      
+      // Get relationship with this player
+      const relationship = await ctx.db
+        .query('relationships')
+        .withIndex('fromTo', q => 
+          q.eq('worldId', worldId)
+           .eq('fromPlayer', player.id)
+           .eq('toPlayer', otherPlayer.id)
+        )
+        .first();
+      
+      // Skip high-revenge enemies (they wouldn't want to talk)
+      if (relationship && relationship.revenge > 70) {
+        continue;
+      }
+      
+      // Calculate conversation preference score
+      let score = 50; // Base score
+      if (relationship) {
+        score += relationship.trust * 0.5;     // Talk to trusted players
+        score -= relationship.revenge * 2;     // Avoid enemies
+        score += relationship.loyalty * 0.3;   // Chat with allies
+        score -= relationship.fear * 0.5;      // Slightly avoid feared players
+      }
+      
+      // Factor in distance (closer is better)
+      const dist = distance(otherPlayer.position, position);
+      score = score * (10 / (dist + 10)); // Distance penalty
+      
+      candidates.push({ id: otherPlayer.id, position: otherPlayer.position, score });
     }
 
-    // Sort by distance and take the nearest candidate.
-    candidates.sort((a, b) => distance(a.position, position) - distance(b.position, position));
+    // Sort by score and take the best candidate
+    candidates.sort((a, b) => b.score - a.score);
     return candidates[0]?.id;
   },
 });

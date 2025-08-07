@@ -3,9 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader } from '@ui/card';
 import { Badge } from '@ui/badge';
 import { Button } from '@ui/button';
-import { Bot, Trophy, Zap, Shield, Coins, Activity, Eye, Play, Package, Trash2, MoreVertical } from 'lucide-react';
+import { Progress } from '@ui/progress';
+import { Bot, Trophy, Zap, Shield, Coins, Activity, Eye, Play, Package, Trash2, MoreVertical, Pause } from 'lucide-react';
 import { StardewSpriteSelector, BotPersonality } from '@/services/stardewSpriteSelector';
 import { BotInventoryModal } from './BotInventoryModal';
+import { cn } from '@/lib/utils';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,11 +26,20 @@ interface BotData {
   isActive: boolean;
   isDemo: boolean;
   createdAt: string;
+  channel?: string;
   stats: {
     wins: number;
     losses: number;
     earnings: string;
     winRate: number;
+  };
+  energy?: {
+    currentEnergy: number;
+    maxEnergy: number;
+    isPaused: boolean;
+    consumptionRate: number;
+    regenerationRate: number;
+    netConsumption: number;
   };
   queuePosition?: number | null;
   equipment?: any[];
@@ -112,6 +123,27 @@ export function BotCard({ bot, onQueue, onManage, onDelete }: BotCardProps) {
 
   const unopenedLootboxes = bot.lootboxRewards?.filter(r => !r.opened).length || 0;
 
+  const getEnergyPercentage = () => {
+    if (!bot.energy) return 0;
+    return (bot.energy.currentEnergy / bot.energy.maxEnergy) * 100;
+  };
+
+  const getEnergyColor = (percentage: number) => {
+    if (percentage > 50) return 'bg-green-500';
+    if (percentage > 20) return 'bg-yellow-500';
+    return 'bg-red-500';
+  };
+
+  const getTimeRemaining = () => {
+    if (!bot.energy || bot.energy.netConsumption <= 0) return 'Infinite';
+    const hours = bot.energy.currentEnergy / bot.energy.netConsumption;
+    if (hours < 1) return `${Math.floor(hours * 60)}m`;
+    if (hours < 24) return `${Math.floor(hours)}h`;
+    return `${Math.floor(hours / 24)}d`;
+  };
+
+  const energyPercentage = getEnergyPercentage();
+
   return (
     <Card className="overflow-hidden hover:shadow-md transition-shadow">
       <CardHeader className="pb-3">
@@ -122,6 +154,14 @@ export function BotCard({ bot, onQueue, onManage, onDelete }: BotCardProps) {
               <span className="text-xs text-muted-foreground">#{bot.tokenId}</span>
               <span className="text-xs text-muted-foreground">•</span>
               <span className="text-xs text-muted-foreground">{formatModelType(bot.modelType)}</span>
+              {bot.channel && (
+                <>
+                  <span className="text-xs text-muted-foreground">•</span>
+                  <Badge variant="secondary" className="text-xs px-1.5 py-0 h-4">
+                    📺 {bot.channel}
+                  </Badge>
+                </>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-1">
@@ -187,6 +227,47 @@ export function BotCard({ bot, onQueue, onManage, onDelete }: BotCardProps) {
             </div>
           )}
         </div>
+
+        {/* Energy Display */}
+        {bot.energy && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <div className="flex items-center gap-1">
+                <Zap className="h-3 w-3" />
+                <span className="font-medium">
+                  {bot.energy.currentEnergy}/{bot.energy.maxEnergy} ⚡
+                </span>
+                {bot.energy.isPaused && (
+                  <Badge variant="secondary" className="text-xs px-1 py-0 h-4">
+                    <Pause className="h-2.5 w-2.5 mr-0.5" />
+                    Paused
+                  </Badge>
+                )}
+              </div>
+              <span className="text-muted-foreground">
+                {bot.energy.netConsumption > 0 ? `-${bot.energy.netConsumption}/h` : `+${Math.abs(bot.energy.netConsumption)}/h`}
+              </span>
+            </div>
+            <div className="relative">
+              <Progress 
+                value={energyPercentage} 
+                className="h-2"
+              />
+              <div 
+                className={cn(
+                  "absolute inset-0 h-2 rounded-full transition-all",
+                  getEnergyColor(energyPercentage)
+                )}
+                style={{ width: `${energyPercentage}%` }}
+              />
+            </div>
+            {!bot.energy.isPaused && bot.energy.netConsumption > 0 && (
+              <p className="text-xs text-muted-foreground text-center">
+                Runs out in: {getTimeRemaining()}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Queue Status */}
         {bot.queuePosition && (

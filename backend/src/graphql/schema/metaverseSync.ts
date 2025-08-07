@@ -104,6 +104,7 @@ export const metaverseSyncTypeDefs = gql`
   extend type Bot {
     # Metaverse integration
     metaverseAgentId: String
+    metaverseCharacter: String
     currentZone: String
     metaversePosition: MetaversePosition
     lastZoneChange: DateTime

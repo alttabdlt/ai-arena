@@ -142,11 +142,12 @@ export const deploymentResolvers = {
               }
             });
 
-            // Map personality to agent description
+            // Map personality to agent description (use existing character if set)
             const agentDescription = mapPersonalityToAgent(
               bot.name,
               bot.personality,
-              bot.prompt
+              bot.prompt,
+              bot.metaverseCharacter || undefined
             );
             
             // Determine initial zone
@@ -171,11 +172,12 @@ export const deploymentResolvers = {
             });
 
             if (result && result.agentId) {
-              // Update bot with metaverse data
+              // Update bot with metaverse data and character
               await prisma.bot.update({
                 where: { id: bot.id },
                 data: {
                   metaverseAgentId: result.agentId,
+                  metaverseCharacter: agentDescription.character, // Save the character used
                   currentZone: initialZone,
                   metaversePosition: Prisma.JsonNull // Position will be synced later
                 }
@@ -276,11 +278,12 @@ export const deploymentResolvers = {
           }
         });
 
-        // Map personality to agent description
+        // Map personality to agent description (use existing character if set)
         const agentDescription = mapPersonalityToAgent(
           bot.name,
           bot.personality,
-          bot.prompt
+          bot.prompt,
+          bot.metaverseCharacter || undefined
         );
         
         // Determine initial zone
@@ -305,11 +308,12 @@ export const deploymentResolvers = {
         });
 
         if (result && result.agentId) {
-          // Update bot
+          // Update bot with metaverse data and character
           await prisma.bot.update({
             where: { id: botId },
             data: {
               metaverseAgentId: result.agentId,
+              metaverseCharacter: agentDescription.character, // Save the character used
               currentZone: initialZone,
               metaversePosition: Prisma.JsonNull // Position will be synced later
             }

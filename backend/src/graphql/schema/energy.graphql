@@ -1,0 +1,54 @@
+type BotEnergy {
+  currentEnergy: Int!
+  maxEnergy: Int!
+  isPaused: Boolean!
+  consumptionRate: Int!
+  regenerationRate: Int!
+  netConsumption: Int!
+}
+
+type EnergyPurchase {
+  id: String!
+  botId: String!
+  energyAmount: Int!
+  hypeSpent: Float!
+  packType: String!
+  txHash: String
+  purchasedAt: String!
+}
+
+type BotEnergyStats {
+  botId: String!
+  botName: String!
+  modelType: String!
+  currentEnergy: Int!
+  maxEnergy: Int!
+  isPaused: Boolean!
+  consumptionRate: Int!
+}
+
+type EnergyOperationResult {
+  success: Boolean!
+  message: String!
+}
+
+extend type Bot {
+  energy: BotEnergy
+}
+
+extend type Query {
+  botEnergy(botId: String!): BotEnergy!
+  userBotsEnergy: [BotEnergyStats!]!
+  energyPurchaseHistory(botId: String!): [EnergyPurchase!]!
+}
+
+extend type Mutation {
+  purchaseEnergy(
+    botId: String!
+    packType: String!
+    txHash: String!
+  ): EnergyOperationResult!
+  
+  pauseBot(botId: String!): EnergyOperationResult!
+  resumeBot(botId: String!): EnergyOperationResult!
+}

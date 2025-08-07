@@ -4,6 +4,7 @@ import { PubSub } from 'graphql-subscriptions';
 import { getGameManagerService } from './gameManagerService';
 import { randomInt } from 'crypto';
 import { getConnect4TournamentService } from './connect4TournamentService';
+import { energyService } from './energyService';
 
 export interface QueueServiceConfig {
   minPlayersForMatch: number;
@@ -583,6 +584,55 @@ export class QueueService {
 
   private async createTournament(botIds: string[]) {
     console.log(`Creating tournament for bots: ${botIds.join(', ')}`);
+    
+    // Check energy for all bots before creating tournament
+    const energyCheckResults = await Promise.all(
+      botIds.map(async (botId) => {
+        const hasEnergy = await energyService.consumeTournamentEnergy(botId);
+        return { botId, hasEnergy };
+      })
+    );
+    
+    const botsWithoutEnergy = energyCheckResults
+      .filter(result => !result.hasEnergy)
+      .map(result => result.botId);
+    
+    if (botsWithoutEnergy.length > 0) {
+      console.log(`⚡ Bots without sufficient energy (need 10⚡): ${botsWithoutEnergy.join(', ')}`);
+      
+      // Remove bots without energy from queue
+      await this.prisma.queueEntry.deleteMany({
+        where: {
+          botId: { in: botsWithoutEnergy },
+          status: 'WAITING',
+        },
+      });
+      
+      // If not enough bots remain, cancel the tournament
+      const botsWithEnergy = botIds.filter(id => !botsWithoutEnergy.includes(id));
+      if (botsWithEnergy.length < 2) {
+        console.log('❌ Not enough bots with energy to create tournament');
+        
+        // Return remaining bots to queue
+        await this.prisma.queueEntry.updateMany({
+          where: {
+            botId: { in: botsWithEnergy },
+            status: 'MATCHED',
+          },
+          data: {
+            status: 'WAITING',
+          },
+        });
+        
+        throw new Error('Insufficient energy for tournament');
+      }
+      
+      // Continue with bots that have energy
+      botIds = botsWithEnergy;
+      console.log(`⚡ Continuing with ${botIds.length} bots that have energy`);
+    } else {
+      console.log(`⚡ All bots have sufficient energy for tournament`);
+    }
     
     // Available game types for random selection
     const gameTypes = ['poker', 'reverse-hangman', 'connect4'];

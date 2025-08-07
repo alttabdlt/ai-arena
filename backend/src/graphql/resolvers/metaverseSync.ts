@@ -4,10 +4,25 @@ import { SyncStatus } from "@prisma/client";
 import { convexService } from "../../services/convexService";
 import { metaverseEventsService } from "../../services/metaverseEventsService";
 
+// Deployment mutex to prevent concurrent registrations
+const deploymentMutex = new Set<string>();
+const deploymentPromises = new Map<string, Promise<any>>();
+
 export const metaverseSyncResolvers = {
   Mutation: {
     // Register an AI Arena bot in AI Town metaverse
     registerBotInMetaverse: async (_: any, { botId }: { botId: string }) => {
+      // Check if deployment is already in progress for this bot
+      if (deploymentMutex.has(botId)) {
+        console.log(`⏭️ Registration already in progress for bot ${botId}`);
+        // If there's an existing promise, wait for it
+        const existingPromise = deploymentPromises.get(botId);
+        if (existingPromise) {
+          return await existingPromise;
+        }
+        throw new Error("Registration already in progress");
+      }
+
       // Get bot details
       const bot = await prisma.bot.findUnique({
         where: { id: botId },
@@ -23,8 +38,9 @@ export const metaverseSyncResolvers = {
         throw new Error("Bot not found");
       }
 
-      // Check if already synced
-      if (bot.botSync?.syncStatus === SyncStatus.SYNCED) {
+      // Check if already synced with an agent ID
+      if (bot.botSync?.syncStatus === SyncStatus.SYNCED && bot.botSync?.convexAgentId) {
+        console.log(`✅ Bot ${botId} already synced with agent ${bot.botSync.convexAgentId}`);
         return {
           success: true,
           message: "Bot already synced",
@@ -32,9 +48,14 @@ export const metaverseSyncResolvers = {
         };
       }
 
-      try {
-        // Create or update BotSync record
-        const botSync = await prisma.botSync.upsert({
+      // Add to mutex to prevent concurrent registrations
+      deploymentMutex.add(botId);
+
+      // Create a promise for this deployment
+      const deploymentPromise = (async () => {
+        try {
+          // Create or update BotSync record
+          const botSync = await prisma.botSync.upsert({
           where: { botId },
           create: {
             botId,
@@ -57,7 +78,9 @@ export const metaverseSyncResolvers = {
         );
 
         // Find available world instance for the zone
+        console.log('Finding available instance for zone:', initialZone, 'botId:', botId);
         const worldInstance = await convexService.findAvailableInstance(initialZone, botId);
+        console.log('World instance result:', worldInstance);
 
         if (!worldInstance) {
           throw new Error(`No available instance for zone ${initialZone}`);
@@ -158,8 +181,18 @@ export const metaverseSyncResolvers = {
           },
         });
 
-        throw error;
-      }
+          throw error;
+        } finally {
+          // Remove from mutex and promises map
+          deploymentMutex.delete(botId);
+          deploymentPromises.delete(botId);
+        }
+      })();
+
+      // Store the promise for potential waiting
+      deploymentPromises.set(botId, deploymentPromise);
+
+      return await deploymentPromise;
     },
 
     // Sync bot stats from AI Arena to AI Town

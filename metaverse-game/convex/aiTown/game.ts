@@ -63,6 +63,10 @@ export class Game extends AbstractGame {
   pendingActivityLog?: any;
 
   numPathfinds: number;
+  
+  // Relationship cache for performance
+  relationshipCache: Map<string, any> = new Map();
+  reputationCache: Map<GameId<'players'>, any> = new Map();
 
   constructor(
     engine: Doc<'engines'>,
@@ -154,6 +158,56 @@ export class Game extends AbstractGame {
 
   scheduleOperation(name: string, args: unknown) {
     this.pendingOperations.push({ name, args });
+  }
+  
+  // Get cached relationship or load from cache
+  getCachedRelationship(fromPlayer: GameId<'players'>, toPlayer: GameId<'players'>): any {
+    const key = `${fromPlayer}-${toPlayer}`;
+    if (!this.relationshipCache.has(key)) {
+      // In a real implementation, this would load from DB
+      // For now, return default relationship
+      return { 
+        respect: 0, fear: 0, trust: 0, 
+        loyalty: 0, revenge: 0, debt: 0 
+      };
+    }
+    return this.relationshipCache.get(key);
+  }
+  
+  // Update relationship cache
+  updateRelationshipCache(fromPlayer: GameId<'players'>, toPlayer: GameId<'players'>, relationship: any) {
+    const key = `${fromPlayer}-${toPlayer}`;
+    this.relationshipCache.set(key, relationship);
+  }
+  
+  // Get cached reputation or load from cache
+  getCachedReputation(playerId: GameId<'players'>): any {
+    if (!this.reputationCache.has(playerId)) {
+      // In a real implementation, this would load from DB
+      // For now, return default reputation
+      return {
+        globalRespect: 0,
+        dangerLevel: 0,
+        reliability: 0,
+        robberyCount: 0,
+        combatWins: 0,
+        combatLosses: 0,
+        successfulTrades: 0,
+      };
+    }
+    return this.reputationCache.get(playerId);
+  }
+  
+  // Clear caches (call periodically to prevent memory issues)
+  clearRelationshipCaches() {
+    // Keep only the most recently used 100 relationships
+    if (this.relationshipCache.size > 100) {
+      const entries = Array.from(this.relationshipCache.entries());
+      this.relationshipCache.clear();
+      entries.slice(-100).forEach(([key, value]) => {
+        this.relationshipCache.set(key, value);
+      });
+    }
   }
 
   handleInput<Name extends InputNames>(now: number, name: Name, args: InputArgs<Name>) {
@@ -397,6 +451,16 @@ export const loadWorld = internalQuery({
   },
   handler: async (ctx, args) => {
     return await Game.load(ctx.db, args.worldId, args.generationNumber);
+  },
+});
+
+export const worldStatus = internalQuery({
+  args: { worldId: v.id('worlds') },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query('worldStatus')
+      .withIndex('worldId', (q) => q.eq('worldId', args.worldId))
+      .first();
   },
 });
 

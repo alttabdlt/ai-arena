@@ -26,15 +26,39 @@ export function useUserBots() {
         setLoading(true);
         setError(null);
 
-        // TODO: Get actual user address from authentication
-        // For now, use a test address or get from localStorage
-        const testAddress = localStorage.getItem('testUserAddress') || '0x1234567890123456789012345678901234567890';
+        // Get user address from URL parameters first
+        const urlParams = new URLSearchParams(window.location.search);
+        const urlAddress = urlParams.get('address');
         
-        console.log('Fetching bots for address:', testAddress);
+        // Determine which address to use:
+        // 1. URL parameter (from main app)
+        // 2. Stored address in localStorage
+        // 3. Default test address as fallback
+        let userAddress: string;
+        
+        if (urlAddress) {
+          // Address passed from main app - save it for future use
+          userAddress = urlAddress;
+          localStorage.setItem('metaverseUserAddress', urlAddress);
+          console.log('Using address from URL:', userAddress);
+        } else {
+          // Try to get previously saved address
+          const storedAddress = localStorage.getItem('metaverseUserAddress');
+          if (storedAddress) {
+            userAddress = storedAddress;
+            console.log('Using stored address:', userAddress);
+          } else {
+            // Fallback to test address for development
+            userAddress = localStorage.getItem('testUserAddress') || '0x2487155df829977813ea9b4f992c229f86d4f16a';
+            console.log('Using fallback test address:', userAddress);
+          }
+        }
+        
+        console.log('Fetching bots for address:', userAddress);
 
         const data = await graphqlClient.request<UserBotsResponse>(
           GET_USER_BOTS_QUERY,
-          { userAddress: testAddress }
+          { userAddress: userAddress }
         );
 
         if (data.user && data.user.bots) {
@@ -77,8 +101,19 @@ export function useUserBots() {
   return { bots, loading, error };
 }
 
-// Helper function to set test user address for development
-export function setTestUserAddress(address: string) {
-  localStorage.setItem('testUserAddress', address);
+// Helper function to set user address manually (for development/testing)
+export function setMetaverseUserAddress(address: string) {
+  localStorage.setItem('metaverseUserAddress', address);
   window.location.reload(); // Reload to fetch bots for new address
+}
+
+// Helper function to clear stored address and use a different account
+export function clearMetaverseUserAddress() {
+  localStorage.removeItem('metaverseUserAddress');
+  window.location.reload();
+}
+
+// Legacy helper for backwards compatibility
+export function setTestUserAddress(address: string) {
+  setMetaverseUserAddress(address);
 }

@@ -31,6 +31,14 @@ export const GET_BOT_DETAIL = gql`
         comments
         followers
       }
+      energy {
+        currentEnergy
+        maxEnergy
+        isPaused
+        consumptionRate
+        regenerationRate
+        netConsumption
+      }
       queuePosition
       queueEntries {
         id
@@ -95,6 +103,7 @@ export const GET_BOTS = gql`
       modelType
       isActive
       isDemo
+      channel
       createdAt
       creator {
         id
@@ -152,6 +161,14 @@ export const GET_TOP_BOTS = gql`
         likes
         comments
         followers
+      }
+      energy {
+        currentEnergy
+        maxEnergy
+        isPaused
+        consumptionRate
+        regenerationRate
+        netConsumption
       }
       queuePosition
     }

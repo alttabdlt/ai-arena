@@ -11,7 +11,7 @@ import { useSendInput } from '../hooks/sendInput';
 import { Player } from '../../convex/aiTown/player';
 import { GameId } from '../../convex/aiTown/ids';
 import { ServerGame } from '../hooks/serverGame';
-import { MessageSquare, Activity } from 'lucide-react';
+import { MessageSquare, Activity, Zap, Pause } from 'lucide-react';
 
 export default function PlayerDetails({
   worldId,
@@ -139,18 +139,80 @@ export default function PlayerDetails({
   // Get agent info for activity logs
   const agent = player && [...game.world.agents.values()].find(a => a.playerId === player.id);
   
+  // Mock energy data for now - will be connected to real data later
+  const botEnergy = agent?.aiArenaBotId ? {
+    currentEnergy: 75,
+    maxEnergy: 100,
+    isPaused: false,
+    consumptionRate: 3,
+    regenerationRate: 1,
+    netConsumption: 2
+  } : null;
+  
+  const getEnergyPercentage = () => {
+    if (!botEnergy) return 0;
+    return (botEnergy.currentEnergy / botEnergy.maxEnergy) * 100;
+  };
+  
+  const getEnergyColor = (percentage: number) => {
+    if (percentage > 50) return '#10b981'; // green
+    if (percentage > 20) return '#eab308'; // yellow
+    return '#ef4444'; // red
+  };
+  
+  const energyPercentage = getEnergyPercentage();
+  
   return (
     <>
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold">
-          {playerDescription?.name}
-        </h2>
-        <button
-          className="text-gray-400 hover:text-gray-200 transition-colors p-1"
-          onClick={() => setSelectedElement(undefined)}
-        >
-          <img className="w-5 h-5" src={closeImg} />
-        </button>
+      <div className="mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-xl font-bold">
+            {playerDescription?.name}
+          </h2>
+          <button
+            className="text-gray-400 hover:text-gray-200 transition-colors p-1"
+            onClick={() => setSelectedElement(undefined)}
+          >
+            <img className="w-5 h-5" src={closeImg} />
+          </button>
+        </div>
+        
+        {/* Energy Display */}
+        {botEnergy && agent?.aiArenaBotId && (
+          <div className="mt-3 p-3 bg-gray-800/50 rounded-lg space-y-2">
+            <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center gap-2">
+                <Zap className="w-4 h-4 text-yellow-400" />
+                <span className="font-medium text-gray-200">
+                  {botEnergy.currentEnergy}/{botEnergy.maxEnergy} ⚡
+                </span>
+                {botEnergy.isPaused && (
+                  <div className="flex items-center gap-1 text-gray-400">
+                    <Pause className="w-3 h-3" />
+                    <span className="text-xs">Paused</span>
+                  </div>
+                )}
+              </div>
+              <span className="text-xs text-gray-400">
+                {botEnergy.netConsumption > 0 ? `-${botEnergy.netConsumption}` : `+${Math.abs(botEnergy.netConsumption)}`} ⚡/h
+              </span>
+            </div>
+            <div className="relative h-2 bg-gray-700 rounded-full overflow-hidden">
+              <div 
+                className="absolute inset-y-0 left-0 rounded-full transition-all"
+                style={{ 
+                  width: `${energyPercentage}%`,
+                  backgroundColor: getEnergyColor(energyPercentage)
+                }}
+              />
+            </div>
+            {!botEnergy.isPaused && botEnergy.netConsumption > 0 && (
+              <p className="text-xs text-gray-400 text-center">
+                Runs out in: {Math.floor(botEnergy.currentEnergy / botEnergy.netConsumption)}h
+              </p>
+            )}
+          </div>
+        )}
       </div>
       
       {/* Tab Navigation */}

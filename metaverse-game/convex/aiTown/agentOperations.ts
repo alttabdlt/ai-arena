@@ -15,6 +15,7 @@ import { ACTIVITIES, ACTIVITY_COOLDOWN, CONVERSATION_COOLDOWN,
 import { api, internal } from '../_generated/api';
 import { sleep } from '../util/sleep';
 import { serializedPlayer } from './player';
+import { calculateRelationshipScore } from './relationshipService';
 
 export const agentRememberConversation = internalAction({
   args: {
@@ -33,6 +34,7 @@ export const agentRememberConversation = internalAction({
       args.conversationId as GameId<'conversations'>,
     );
     await sleep(Math.random() * 1000);
+    // @ts-ignore - TypeScript type depth issue with generated Convex API
     await ctx.runMutation(api.aiTown.main.sendInput, {
       worldId: args.worldId,
       name: 'finishRememberConversation',
@@ -166,7 +168,7 @@ export const agentDoSomething = internalAction({
       });
       
       if (nearbyPlayers.length > 0 && Math.random() < 0.3) {
-        // Assess potential targets based on visible wealth indicators
+        // Assess potential targets based on wealth, defense, and relationships
         const targetAssessments = await Promise.all(nearbyPlayers.map(async (p) => {
           // Get inventory value for this player
           const inventory = await ctx.runQuery(internal.aiTown.inventory.getPlayerInventoryInternal, {
@@ -174,15 +176,26 @@ export const agentDoSomething = internalAction({
             playerId: p.id,
           });
           
+          // Get relationship with this player
+          const relationship = await ctx.runQuery(internal.aiTown.relationshipService.getRelationship, {
+            worldId: args.worldId,
+            fromPlayer: player.id,
+            toPlayer: p.id,
+          });
+          
           // Calculate perceived value based on visible indicators
           const equipmentValue = (p.equipment?.powerBonus || 0) + (p.equipment?.defenseBonus || 0);
           const inventoryValue = inventory?.inventory?.totalValue || 0;
           const defenseRisk = (p.equipment?.defenseBonus || 0) * 2; // Higher defense = higher risk
           
-          // Score = potential reward - risk
-          const score = (equipmentValue * 10 + inventoryValue * 0.1) - defenseRisk;
+          // Base score from equipment and inventory
+          let score = (equipmentValue * 10 + inventoryValue * 0.1) - defenseRisk;
           
-          return { player: p, score, inventoryValue };
+          // Apply relationship modifiers
+          const relationshipModifier = calculateRelationshipScore(relationship, 'robbery');
+          score = score * (relationshipModifier / 100); // Convert to multiplier
+          
+          return { player: p, score, inventoryValue, relationship };
         }));
         
         // Sort by score and pick the best target (or randomly from top 3 if multiple good targets)

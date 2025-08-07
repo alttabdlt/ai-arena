@@ -4,9 +4,14 @@ export class ConvexService {
   private client: ConvexHttpClient;
   private static instance: ConvexService;
   private httpUrl: string;
+  
+  // Public getter for Convex client
+  get convexClient(): ConvexHttpClient {
+    return this.client;
+  }
 
   private constructor() {
-    const convexUrl = process.env.CONVEX_URL || 'https://reliable-ocelot-928.convex.cloud';
+    const convexUrl = process.env.CONVEX_URL || 'https://quaint-koala-55.convex.cloud';
     this.client = new ConvexHttpClient(convexUrl);
     
     // Extract deployment name and construct HTTP endpoint URL
@@ -35,15 +40,18 @@ export class ConvexService {
     currentBots: number;
   } | null> {
     try {
+      console.log('ConvexService.findAvailableInstance called with:', { zoneType, playerId });
       // Use Convex client to query
       const result = await this.client.query('aiTown/instanceManager:findAvailableInstance' as any, {
         zoneType,
         playerId,
       });
+      console.log('ConvexService.findAvailableInstance result:', result);
       
       return result;
     } catch (error) {
       console.error('Error finding available instance:', error);
+      console.error('Error details:', JSON.stringify(error, null, 2));
       throw error;
     }
   }
@@ -59,6 +67,17 @@ export class ConvexService {
     initialZone: string;
   }): Promise<{ agentId: string; playerId: string }> {
     try {
+      // Ensure the world is active before creating the bot
+      try {
+        await this.convexClient.mutation('world:heartbeatWorld' as any, { 
+          worldId: args.worldId as any 
+        });
+        console.log('💓 World heartbeat sent for', args.worldId);
+      } catch (heartbeatError) {
+        console.warn('⚠️ Could not send world heartbeat:', heartbeatError);
+        // Continue anyway - the world might still be active
+      }
+      
       // This will use the HTTP API endpoint we'll create
       const response = await fetch(`${this.httpUrl}/api/bots/register`, {
         method: 'POST',
@@ -74,30 +93,71 @@ export class ConvexService {
 
       const result = await response.json() as any;
       
-      // Check if we got a pending response
-      if (result.status === 'pending' && result.inputId) {
-        console.log(`Agent creation pending, inputId: ${result.inputId}. Polling for completion...`);
+      // Check if we got a pending response (could be registrationId or inputId for backward compatibility)
+      if (result.status === 'pending' && (result.registrationId || result.inputId)) {
+        const trackingId = result.registrationId || result.inputId;
+        const isRegistration = !!result.registrationId;
+        console.log(`Agent creation pending, ${isRegistration ? 'registrationId' : 'inputId'}: ${trackingId}. Polling for completion...`);
         
-        // Poll for completion (max 60 seconds with exponential backoff)
-        const maxAttempts = 20;
+        // Poll for completion (max 90 seconds with exponential backoff and recovery)
+        const maxAttempts = 30; // Increased from 20
         let pollInterval = 1000; // Start with 1 second
+        let lastHeartbeatAttempt = 0;
         
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
           await new Promise(resolve => setTimeout(resolve, pollInterval));
           
-          // Check input status via Convex query
+          // Send world heartbeat every 10 attempts to keep world active
+          if (attempt - lastHeartbeatAttempt >= 10) {
+            try {
+              await this.client.mutation('world:heartbeatWorld' as any, { 
+                worldId: args.worldId as any 
+              });
+              console.log('💓 Sent world heartbeat during bot creation');
+              lastHeartbeatAttempt = attempt;
+            } catch (hbError) {
+              console.warn('⚠️ Heartbeat failed during bot creation:', hbError);
+            }
+          }
+          
+          // Check status via Convex query
           try {
-            const pollResult = await this.client.query('aiTown/botHttp:getInputStatus' as any, {
-              inputId: result.inputId,
-            });
+            let pollResult;
             
-            if (pollResult && pollResult.status === 'completed') {
-              if (pollResult.returnValue && pollResult.returnValue.kind === 'ok') {
-                const { agentId, playerId } = pollResult.returnValue.value;
-                console.log(`✅ Agent creation completed: agentId=${agentId}, playerId=${playerId}`);
-                return { agentId, playerId };
-              } else if (pollResult.returnValue && pollResult.returnValue.kind === 'error') {
-                throw new Error(`Agent creation failed: ${pollResult.returnValue.message}`);
+            if (isRegistration) {
+              // New registration queue system
+              pollResult = await this.client.query('aiTown/botHttp:getRegistrationStatus' as any, {
+                registrationId: trackingId,
+              });
+              
+              if (pollResult && pollResult.status === 'completed') {
+                if (pollResult.result) {
+                  const { agentId, playerId } = pollResult.result;
+                  console.log(`✅ Agent creation completed: agentId=${agentId}, playerId=${playerId}`);
+                  return { agentId, playerId };
+                }
+              } else if (pollResult && pollResult.status === 'failed') {
+                throw new Error(`Agent creation failed: ${pollResult.error || 'Unknown error'}`);
+              }
+            } else {
+              // Legacy input system
+              pollResult = await this.client.query('aiTown/botHttp:getInputStatus' as any, {
+                inputId: trackingId,
+              });
+              
+              if (pollResult && pollResult.status === 'completed') {
+                if (pollResult.returnValue && pollResult.returnValue.kind === 'ok') {
+                  const { agentId, playerId } = pollResult.returnValue.value;
+                  console.log(`✅ Agent creation completed: agentId=${agentId}, playerId=${playerId}`);
+                  return { agentId, playerId };
+                } else if (pollResult.returnValue && pollResult.returnValue.kind === 'error') {
+                  // Check if it's a generation number error - if so, retry
+                  if (pollResult.returnValue.message && pollResult.returnValue.message.includes('generation')) {
+                    console.log('⚠️ Generation number mismatch during bot creation, will retry...');
+                    continue;
+                  }
+                  throw new Error(`Agent creation failed: ${pollResult.returnValue.message}`);
+                }
               }
             }
             
@@ -107,13 +167,24 @@ export class ConvexService {
             }
           } catch (pollError: any) {
             console.log(`⚠️ Polling attempt ${attempt + 1}/${maxAttempts} - error checking status:`, pollError?.message || pollError);
+            
+            // If we get engine not running error, try to resume
+            if (pollError?.message && pollError.message.includes('engine')) {
+              try {
+                console.log('🔄 Engine issue detected, attempting to resume world...');
+                await this.client.mutation('testing:resume' as any);
+                await new Promise(resolve => setTimeout(resolve, 2000));
+              } catch (resumeErr) {
+                console.warn('⚠️ Could not resume world:', resumeErr);
+              }
+            }
           }
           
           // Exponential backoff up to 3 seconds
           pollInterval = Math.min(pollInterval * 1.2, 3000);
         }
         
-        throw new Error(`Agent creation timed out after ${maxAttempts * 2} seconds. The world engine might be paused. Run 'npx convex run testing:resume' in the metaverse-game directory.`);
+        throw new Error(`Agent creation timed out after ${maxAttempts * 3} seconds. The world engine might be experiencing issues. Try manually resuming the world.`);
       }
       
       // Otherwise we should have the agent data

@@ -22,6 +22,28 @@ export const getInputStatus = query({
   },
 });
 
+// Query to check registration status
+export const getRegistrationStatus = query({
+  args: {
+    registrationId: v.id('pendingBotRegistrations'),
+  },
+  handler: async (ctx, args) => {
+    const registration = await ctx.db.get(args.registrationId);
+    if (!registration) {
+      throw new Error('Registration not found');
+    }
+    
+    return {
+      status: registration.status,
+      result: registration.result,
+      error: registration.error,
+      createdAt: registration.createdAt,
+      processedAt: registration.processedAt,
+      completedAt: registration.completedAt,
+    };
+  },
+});
+
 // Handle bot registration from AI Arena
 export const handleBotRegistration = httpAction(async (ctx, request) => {
   const body = await request.json();
@@ -43,8 +65,8 @@ export const handleBotRegistration = httpAction(async (ctx, request) => {
     });
   }
   
-  // Validate worldId format
-  if (typeof worldId !== 'string' || !worldId.match(/^[a-z0-9]{32}$/)) {
+  // Validate worldId format (Convex IDs are prefixed and 33 chars)
+  if (typeof worldId !== 'string' || !worldId.match(/^[a-z0-9]{32,34}$/)) {
     return new Response(JSON.stringify({ error: 'Invalid worldId format' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
@@ -145,7 +167,7 @@ export const handleBotStatsSync = httpAction(async (ctx, request) => {
   }
 });
 
-// Internal mutation to create a bot agent
+// Internal mutation to queue a bot agent registration
 export const createBotAgent = internalMutation({
   args: {
     worldId: v.string(), // Accept as string from HTTP
@@ -174,29 +196,76 @@ export const createBotAgent = internalMutation({
       throw new Error('World not found');
     }
 
-    // Create player and agent via the input system
-    const inputId = await insertInput(ctx, worldId, 'createAgentFromAIArena', {
+    // Check if an agent for this AI Arena bot already exists
+    const worldData = world as any;
+    if (worldData.agents && Array.isArray(worldData.agents)) {
+      const existingAgent = worldData.agents.find(
+        (agent: any) => agent.aiArenaBotId === aiArenaBotId
+      );
+      
+      if (existingAgent) {
+        console.log(`Agent already exists for AI Arena bot ${aiArenaBotId}: ${existingAgent.id}`);
+        const existingPlayer = worldData.players?.find(
+          (player: any) => player.id === existingAgent.playerId
+        );
+        
+        if (existingPlayer) {
+          console.log(`Returning existing agent ${existingAgent.id} for bot ${aiArenaBotId}`);
+          return { 
+            agentId: existingAgent.id, 
+            playerId: existingPlayer.id,
+            message: 'Agent already exists, returning existing IDs'
+          };
+        }
+      }
+    }
+    
+    // Check if there's already a pending registration for this bot
+    const existingRegistration = await ctx.db
+      .query('pendingBotRegistrations')
+      .withIndex('aiArenaBotId', (q) => q.eq('aiArenaBotId', aiArenaBotId))
+      .first();
+    
+    if (existingRegistration) {
+      console.log(`Registration already exists for bot ${aiArenaBotId}: ${existingRegistration._id}`);
+      
+      // If it's completed, return the result
+      if (existingRegistration.status === 'completed' && existingRegistration.result) {
+        return {
+          agentId: existingRegistration.result.agentId,
+          playerId: existingRegistration.result.playerId,
+          message: 'Registration completed, returning result'
+        };
+      }
+      
+      // Otherwise return pending status
+      return {
+        registrationId: existingRegistration._id,
+        status: existingRegistration.status,
+        message: `Registration is ${existingRegistration.status}`
+      };
+    }
+    
+    // Queue the registration for batch processing
+    const registrationId = await ctx.db.insert('pendingBotRegistrations', {
+      worldId,
       name,
       character,
       identity,
       plan,
       aiArenaBotId,
       initialZone,
+      status: 'pending',
+      createdAt: Date.now(),
     });
     
-    // The input system should process this synchronously
-    // Check if the input has been processed
-    const processedInput = await ctx.db.get(inputId);
-    if (processedInput && processedInput.returnValue) {
-      const { agentId, playerId } = processedInput.returnValue as any;
-      return { agentId, playerId };
-    }
+    console.log(`Queued registration for bot ${aiArenaBotId}: ${registrationId}`);
     
-    // If not processed immediately, return the inputId so the client can poll
-    return { 
-      inputId,
+    // Return the registration ID for tracking
+    return {
+      registrationId,
       status: 'pending',
-      message: 'Agent creation initiated, poll for completion'
+      message: 'Registration queued for batch processing'
     };
   },
 });
@@ -328,10 +397,20 @@ export const handleGetBotPosition = httpAction(async (ctx, request) => {
     }
 
     // Get bot position from the world using the query defined below
+    // @ts-ignore - TypeScript has issues with deep type instantiation here
     const position = await ctx.runQuery(api.aiTown.botHttp.getBotPosition, {
       worldId,
       agentId,
     });
+
+    if (!position) {
+      return new Response(JSON.stringify({ 
+        error: 'Agent not found in world' 
+      }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
 
     return new Response(JSON.stringify({ 
       success: true,
@@ -358,32 +437,41 @@ export const getBotPosition = query({
   handler: async (ctx, args) => {
     // Validate worldId format
     if (!args.worldId || typeof args.worldId !== 'string') {
-      throw new Error('Invalid worldId provided');
+      console.error('Invalid worldId provided:', args.worldId);
+      return null; // Return null instead of throwing
     }
     
     // Validate it matches the expected format (32 character alphanumeric)
     if (!args.worldId.match(/^[a-z0-9]{32}$/)) {
       console.error(`Invalid worldId format: ${args.worldId}`);
-      throw new Error(`Invalid worldId format: ${args.worldId}`);
+      return null; // Return null instead of throwing
     }
     
     const worldId = args.worldId as Id<'worlds'>;
     const world = await ctx.db.get(worldId);
     if (!world) {
       console.error(`World not found with id: ${args.worldId}`);
-      throw new Error(`World not found with id: ${args.worldId}`);
+      return null; // Return null instead of throwing
     }
     
-    // Find the agent in the world
-    const agent = world.agents.find((a: any) => a.id === args.agentId);
+    // Find the agent in the world - first by direct ID, then by aiArenaBotId
+    let agent = world.agents.find((a: any) => a.id === args.agentId);
+    
+    // If not found by agent ID, try searching by aiArenaBotId
     if (!agent) {
-      throw new Error('Agent not found');
+      agent = world.agents.find((a: any) => a.aiArenaBotId === args.agentId);
+    }
+    
+    if (!agent) {
+      console.log(`Agent not found: ${args.agentId} in world ${args.worldId}`);
+      return null; // Return null instead of throwing
     }
     
     // Get the player associated with this agent
-    const player = world.players.find((p: any) => p.id === agent.playerId);
+    const player = world.players.find((p: any) => p.id === agent!.playerId);
     if (!player) {
-      throw new Error('Player not found');
+      console.error(`Player not found for agent: ${agent.id}`);
+      return null; // Return null instead of throwing
     }
     
     return {

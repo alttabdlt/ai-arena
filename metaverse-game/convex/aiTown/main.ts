@@ -121,6 +121,8 @@ export const runStep = internalAction({
         }
         if (e.data.kind === 'generationNumber') {
           console.debug(`Generation number mismatch: ${e.message}`);
+          // Don't reschedule - let this instance die to prevent race conditions
+          // Another instance with the correct generation number is already running
           return;
         }
       }

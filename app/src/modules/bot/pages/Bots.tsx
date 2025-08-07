@@ -362,6 +362,11 @@ const BotsPage = () => {
                         <h3 className="font-medium">{bot.name}</h3>
                         <div className="text-xs text-muted-foreground">
                           by {bot.creator.username || `${bot.creator.address.slice(0, 6)}...${bot.creator.address.slice(-4)}`}
+                          {bot.channel && (
+                            <span className="ml-2">
+                              📺 {bot.channel}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>

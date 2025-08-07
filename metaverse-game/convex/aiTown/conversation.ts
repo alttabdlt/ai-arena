@@ -161,6 +161,17 @@ export class Conversation {
         playerName: playerDesc.name,
         inviteeName: inviteeDesc.name,
       });
+      
+      // Update relationships for conversation
+      const playerAgent = [...game.world.agents.values()].find(a => a.playerId === player.id);
+      const inviteeAgent = [...game.world.agents.values()].find(a => a.playerId === invitee.id);
+      
+      game.scheduleOperation('processConversationRelationship', {
+        worldId: game.worldId,
+        type: 'CONVERSATION',
+        actor: { playerId: player.id as string, personality: playerAgent?.personality },
+        target: { playerId: invitee.id as string, personality: inviteeAgent?.personality },
+      });
     }
     
     return { conversationId };

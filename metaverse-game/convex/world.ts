@@ -22,6 +22,13 @@ export const defaultWorldStatus = query({
   },
 });
 
+export const listWorlds = query({
+  handler: async (ctx) => {
+    const worlds = await ctx.db.query('worlds').collect();
+    return worlds;
+  },
+});
+
 export const heartbeatWorld = mutation({
   args: {
     worldId: v.id('worlds'),

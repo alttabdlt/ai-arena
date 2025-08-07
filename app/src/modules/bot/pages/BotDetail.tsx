@@ -43,6 +43,9 @@ import { LiveMatchCard } from '@bot/components/LiveMatchCard';
 import { PerformanceByGame } from '@bot/components/PerformanceByGame';
 import { BotAchievements } from '@bot/components/BotAchievements';
 import { MatchHistoryEnhanced } from '@bot/components/MatchHistoryEnhanced';
+import { EnergyPurchaseModal } from '@/components/energy/EnergyPurchaseModal';
+import { useEnergy } from '@/hooks/useEnergy';
+import { cn } from '@/lib/utils';
 
 interface BotStats {
   wins: number;
@@ -95,6 +98,15 @@ export default function BotDetail() {
   // TODO: Add matches query when available in backend
   const matchesLoading = false;
   const matchesData = null;
+
+  // Energy hook
+  const { 
+    energy, 
+    pauseBot, 
+    resumeBot, 
+    getEnergyPercentage,
+    getTimeRemaining 
+  } = useEnergy(id);
 
   // Mutations
   const [toggleBotActive] = useMutation(TOGGLE_BOT_ACTIVE, {
@@ -315,6 +327,24 @@ export default function BotDetail() {
                   <Badge variant="outline">
                     #{bot.tokenId}
                   </Badge>
+                  {energy && (
+                    <div className="flex items-center gap-1">
+                      <Zap className={cn(
+                        "h-3 w-3",
+                        getEnergyPercentage(energy) > 50 ? "text-green-500" :
+                        getEnergyPercentage(energy) > 20 ? "text-yellow-500" :
+                        "text-red-500"
+                      )} />
+                      <span className="text-xs font-medium">
+                        {energy.currentEnergy}/{energy.maxEnergy} ⚡
+                      </span>
+                      {energy.isPaused && (
+                        <Badge variant="secondary" className="text-xs px-1 py-0">
+                          Paused
+                        </Badge>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </CardHeader>

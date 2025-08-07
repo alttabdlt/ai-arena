@@ -133,6 +133,87 @@ export const updateInstanceCounts = mutation({
   },
 });
 
+// Initialize instances for all zones (called during setup)
+export const initializeAllZones = mutation({
+  handler: async (ctx) => {
+    const zoneTypes = ['casino', 'darkAlley', 'suburb', 'downtown', 'underground'] as const;
+    const results = [];
+    
+    for (const zoneType of zoneTypes) {
+      // Check if zone exists
+      let zone = await ctx.db
+        .query('zones')
+        .withIndex('zoneType', (q) => q.eq('zoneType', zoneType))
+        .first();
+      
+      // Create zone if it doesn't exist
+      if (!zone) {
+        // First, we need to create or find a map for this zone
+        // For now, use the default map for all zones
+        const defaultMap = await ctx.db.query('maps').first();
+        if (!defaultMap) {
+          throw new Error('No default map found. Please ensure maps are initialized.');
+        }
+        
+        const zoneId = await ctx.db.insert('zones', {
+          zoneType,
+          name: zoneType.charAt(0).toUpperCase() + zoneType.slice(1).replace(/([A-Z])/g, ' $1'),
+          mapId: defaultMap._id,
+          maxPlayers: 100,
+          maxBots: 50,
+          currentPlayers: 0,
+          currentBots: 0,
+        });
+        zone = await ctx.db.get(zoneId);
+      }
+      
+      // Check if there's at least one instance for this zone
+      const existingInstances = await ctx.db
+        .query('worldInstances')
+        .withIndex('status', (q) => q.eq('status', 'active').eq('zoneType', zoneType))
+        .first();
+      
+      if (!existingInstances) {
+        // Create a new world for this zone
+        const worldId = await ctx.db.insert('worlds', {
+          agents: [],
+          conversations: [],
+          players: [],
+          nextId: 1,
+        });
+        
+        // Create the world instance
+        const instanceId = await ctx.db.insert('worldInstances', {
+          zoneType,
+          worldId,
+          instanceNumber: 1,
+          status: 'active',
+          currentPlayers: 0,
+          currentBots: 0,
+          serverRegion: 'us-west',
+          createdAt: Date.now(),
+        });
+        
+        results.push({
+          zoneType,
+          instanceId,
+          worldId,
+          created: true,
+        });
+      } else {
+        results.push({
+          zoneType,
+          instanceId: existingInstances._id,
+          worldId: existingInstances.worldId,
+          created: false,
+        });
+      }
+    }
+    
+    return results;
+  },
+});
+
 // Get instance statistics for monitoring
 export const getInstanceStats = query({
   handler: async (ctx) => {

@@ -20,6 +20,8 @@ export abstract class AbstractGame {
   abstract saveStep(ctx: ActionCtx, engineUpdate: EngineUpdate): Promise<void>;
 
   async runStep(ctx: ActionCtx, now: number) {
+    // Use internal API reference with type assertion to avoid deep type instantiation
+    // @ts-ignore - TypeScript type depth issue with generated Convex API
     const inputs = await ctx.runQuery(internal.engine.abstractGame.loadInputs, {
       engineId: this.engine._id,
       processedInputNumber: this.engine.processedInputNumber,
@@ -167,6 +169,13 @@ export const loadInputs = internalQuery({
       )
       .order('asc')
       .take(args.max);
+  },
+});
+
+export const getEngine = internalQuery({
+  args: { engineId: v.id('engines') },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.engineId);
   },
 });
 

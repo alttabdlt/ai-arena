@@ -31,6 +31,7 @@ export default function Game() {
   // Fetch user's bots from AI Arena backend
   const { bots: userBots, loading: botsLoading, error: botsError } = useUserBots();
 
+  // @ts-ignore - TypeScript type depth issue with generated Convex API
   const worldStatus = useQuery(api.world.defaultWorldStatus);
   const worldId = worldStatus?.worldId;
   const engineId = worldStatus?.engineId;
@@ -111,7 +112,7 @@ export default function Game() {
     return allAgents
       .filter(agent => agent.aiArenaBotId) // Only show agents that have AI Arena bot IDs
       .map((agent, index) => {
-        const playerDesc = game.playerDescriptions?.get(agent.playerId);
+        const playerDesc = game.playerDescriptions?.get(agent.playerId as any);
         
         return {
           id: agent.aiArenaBotId || agent.id,

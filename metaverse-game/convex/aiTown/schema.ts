@@ -267,4 +267,94 @@ export const aiTownTables = {
   })
     .index('player', ['worldId', 'playerId', 'processed'])
     .index('aiArenaBotId', ['worldId', 'aiArenaBotId']),
+  
+  // Relationship scores between bots (sparse - only non-default stored)
+  relationships: defineTable({
+    worldId: v.id('worlds'),
+    fromPlayer: playerId,
+    toPlayer: playerId,
+    
+    // Core relationship metrics (-100 to 100, except fear 0-100)
+    respect: v.number(),
+    fear: v.number(),
+    trust: v.number(),
+    loyalty: v.number(),
+    revenge: v.number(),
+    
+    // Economic tracking
+    debt: v.number(), // Negative = they owe me, Positive = I owe them
+    
+    // Metadata
+    lastInteraction: v.number(),
+    interactionCount: v.number(),
+  })
+  .index('fromTo', ['worldId', 'fromPlayer', 'toPlayer'])
+  .index('toFrom', ['worldId', 'toPlayer', 'fromPlayer'])
+  .index('lastInteraction', ['worldId', 'lastInteraction']),
+  
+  // Global reputation scores
+  reputations: defineTable({
+    worldId: v.id('worlds'),
+    playerId: playerId,
+    
+    // Global metrics affecting all relationships
+    globalRespect: v.number(),    // Overall respect in the world
+    dangerLevel: v.number(),      // How dangerous they are
+    reliability: v.number(),       // Trade/deal reliability
+    
+    // Crime statistics
+    robberyCount: v.number(),
+    combatWins: v.number(),
+    combatLosses: v.number(),
+    successfulTrades: v.number(),
+    
+    lastUpdated: v.number(),
+  })
+  .index('player', ['worldId', 'playerId'])
+  .index('respect', ['worldId', 'globalRespect']),
+  
+  // Faction/gang affiliations (emergent from relationships)
+  factions: defineTable({
+    worldId: v.id('worlds'),
+    name: v.string(),
+    leader: playerId,
+    members: v.array(playerId),
+    territory: v.optional(v.string()), // Primary zone
+    enemyFactions: v.array(v.string()), // Store faction IDs as strings
+    avgRespect: v.number(),
+    
+    createdAt: v.number(),
+  })
+  .index('world', ['worldId'])
+  .index('leader', ['worldId', 'leader']),
+  
+  // Pending bot registrations queue for batch processing
+  pendingBotRegistrations: defineTable({
+    worldId: v.id('worlds'),
+    name: v.string(),
+    character: v.string(),
+    identity: v.string(),
+    plan: v.string(),
+    aiArenaBotId: v.string(),
+    initialZone: v.string(),
+    status: v.union(
+      v.literal('pending'),
+      v.literal('processing'),
+      v.literal('completed'),
+      v.literal('failed')
+    ),
+    createdAt: v.number(),
+    processedAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()),
+    result: v.optional(v.object({
+      agentId: v.string(),
+      playerId: v.string(),
+      inputId: v.optional(v.id('inputs')),
+    })),
+    error: v.optional(v.string()),
+    retryCount: v.optional(v.number()),
+  })
+    .index('status', ['status', 'createdAt'])
+    .index('worldId', ['worldId', 'status'])
+    .index('aiArenaBotId', ['aiArenaBotId']),
 };

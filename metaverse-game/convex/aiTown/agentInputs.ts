@@ -262,6 +262,16 @@ export const agentInputs = {
         delete agent.inProgressOperation;
       }
       
+      // Schedule relationship update for robbery
+      game.scheduleOperation('processRobberyRelationship', {
+        worldId: game.worldId,
+        robberId: agent.playerId as string,
+        victimId: args.targetPlayerId as string,
+        success: args.success,
+        lootValue: args.lootValue,
+        robberPersonality: agent.personality,
+      });
+      
       // TODO: Update AI Arena backend with robbery result
       // TODO: Transfer items/currency if successful
       
@@ -318,6 +328,18 @@ export const agentInputs = {
         const { HOSPITAL_RECOVERY } = require('../constants');
         loserAgent.knockedOutUntil = now + HOSPITAL_RECOVERY;
       }
+      
+      // Find winner agent for personality
+      const winnerAgent = [...game.world.agents.values()].find(a => a.playerId === args.winnerId as any);
+      
+      // Schedule relationship update for combat
+      game.scheduleOperation('processCombatRelationship', {
+        worldId: game.worldId,
+        winnerId: args.winnerId as string,
+        loserId: args.loserId as string,
+        winnerPersonality: winnerAgent?.personality,
+        loserPersonality: loserAgent?.personality,
+      });
       
       // TODO: Update AI Arena backend with combat result
       // TODO: Award experience/items to winner

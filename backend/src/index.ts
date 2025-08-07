@@ -22,6 +22,7 @@ import { initializeServices, getQueueService, getTransactionService } from './se
 import { fileLoggerService } from './services/fileLoggerService';
 import { botSyncService } from './services/botSyncService';
 import { worldInitializationService } from './services/worldInitializationService';
+import { energyScheduler } from './services/energyScheduler';
 
 // Override console methods to capture backend logs
 const originalConsole = {
@@ -180,7 +181,7 @@ async function startServer() {
   app.use(
     '/graphql',
     cors<cors.CorsRequest>({
-      origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:8080', 'http://localhost:8081'],
+      origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'http://localhost:8080', 'http://localhost:8081'],
       credentials: true,
       allowedHeaders: ['Content-Type', 'Authorization', 'x-wallet-address', 'x-bot-prompt'],
       exposedHeaders: ['Authorization'],
@@ -266,6 +267,10 @@ async function startServer() {
     await botSyncService.start();
     console.log('🤖 Bot sync service started');
     
+    // Start energy scheduler
+    energyScheduler.start();
+    console.log('⚡ Energy scheduler started - processing hourly consumption');
+    
     // Log WebSocket server info
     console.log(`🔌 Custom WebSocket server ready at ws://localhost:${WS_PORT}`);
     
@@ -280,6 +285,7 @@ async function startServer() {
     getQueueService().stopMatchmaking();
     await getGameManagerService().shutdown();
     botSyncService.stop();
+    energyScheduler.stop();
     
     httpServer.close();
     customWsServer.close();

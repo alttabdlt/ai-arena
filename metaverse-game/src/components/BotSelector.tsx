@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown, Bot, User, Zap } from 'lucide-react';
+import { ChevronDown, Bot, User, Zap, Pause } from 'lucide-react';
 
 interface BotData {
   id: string;
@@ -10,6 +10,12 @@ interface BotData {
   stats?: {
     wins: number;
     losses: number;
+  };
+  energy?: {
+    currentEnergy: number;
+    maxEnergy: number;
+    isPaused: boolean;
+    consumptionRate: number;
   };
   isActive?: boolean;
   metaverseAgentId?: string;
@@ -102,10 +108,23 @@ export default function BotSelector({ selectedBotId, onBotSelect, className = ''
           <span className="text-lg">{getPersonalityIcon(selectedBot.personality)}</span>
           <div className="flex flex-col items-start">
             <span className="text-sm font-bold text-gray-200">{selectedBot.name}</span>
-            <span className="text-xs text-gray-500">#{selectedBot.tokenId}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">#{selectedBot.tokenId}</span>
+              {selectedBot.energy && (
+                <div className="flex items-center gap-1">
+                  <Zap className="w-2.5 h-2.5 text-yellow-400" />
+                  <span className="text-xs text-yellow-400">
+                    {selectedBot.energy.currentEnergy}/{selectedBot.energy.maxEnergy}
+                  </span>
+                  {selectedBot.energy.isPaused && (
+                    <Pause className="w-2.5 h-2.5 text-gray-400" />
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
-        {selectedBot.isActive && (
+        {selectedBot.isActive && !selectedBot.energy?.isPaused && (
           <Zap className="w-3 h-3 text-green-400 animate-pulse" />
         )}
         <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
@@ -138,13 +157,31 @@ export default function BotSelector({ selectedBotId, onBotSelect, className = ''
                     <div className="flex-1 text-left">
                       <div className="flex items-center justify-between">
                         <span className="text-sm font-semibold text-gray-200">{bot.name}</span>
-                        {bot.isActive && <Zap className="w-3 h-3 text-green-400" />}
+                        <div className="flex items-center gap-1">
+                          {bot.energy && (
+                            <>
+                              <Zap className="w-3 h-3 text-yellow-400" />
+                              <span className="text-xs text-yellow-400">
+                                {bot.energy.currentEnergy}
+                              </span>
+                              {bot.energy.isPaused && <Pause className="w-3 h-3 text-gray-400" />}
+                            </>
+                          )}
+                          {bot.isActive && !bot.energy?.isPaused && (
+                            <Zap className="w-3 h-3 text-green-400" />
+                          )}
+                        </div>
                       </div>
                       <div className="flex items-center gap-3 text-xs">
                         <span className="text-gray-500">#{bot.tokenId}</span>
                         {bot.stats && (
                           <span className="text-gray-400">
                             {bot.stats.wins}W / {bot.stats.losses}L
+                          </span>
+                        )}
+                        {bot.energy && (
+                          <span className="text-gray-400">
+                            -{bot.energy.consumptionRate}⚡/h
                           </span>
                         )}
                       </div>

@@ -10,6 +10,31 @@ import { NUM_MEMORIES_TO_SEARCH } from '../constants';
 
 const selfInternal = internal.agent.conversation;
 
+// Internal wrapper to avoid deep type instantiation
+export const getConversationMessages = internalQuery({
+  args: {
+    worldId: v.id('worlds'),
+    conversationId,
+  },
+  handler: async (ctx, args) => {
+    const messages = await ctx.db
+      .query('messages')
+      .withIndex('conversationId', (q) => q.eq('worldId', args.worldId).eq('conversationId', args.conversationId))
+      .collect();
+    const out = [];
+    for (const message of messages) {
+      const playerDescription = await ctx.db
+        .query('playerDescriptions')
+        .withIndex('worldId', (q) => q.eq('worldId', args.worldId).eq('playerId', message.author))
+        .first();
+      if (playerDescription) {
+        out.push({ ...message, authorName: playerDescription.name });
+      }
+    }
+    return out;
+  },
+});
+
 export async function startConversationMessage(
   ctx: ActionCtx,
   worldId: Id<'worlds'>,
@@ -26,17 +51,21 @@ export async function startConversationMessage(
       conversationId,
     },
   );
-  const embedding = await embeddingsCache.fetch(
-    ctx,
-    `${player.name} is talking to ${otherPlayer.name}`,
-  );
+  // DISABLED: Embeddings to fix Ollama error - using relationship system instead
+  // const embedding = await embeddingsCache.fetch(
+  //   ctx,
+  //   `${player.name} is talking to ${otherPlayer.name}`,
+  // );
 
-  const memories = await memory.searchMemories(
-    ctx,
-    player.id as GameId<'players'>,
-    embedding,
-    Number(process.env.NUM_MEMORIES_TO_SEARCH) || NUM_MEMORIES_TO_SEARCH,
-  );
+  // const memories = await memory.searchMemories(
+  //   ctx,
+  //   player.id as GameId<'players'>,
+  //   embedding,
+  //   Number(process.env.NUM_MEMORIES_TO_SEARCH) || NUM_MEMORIES_TO_SEARCH,
+  // );
+  
+  // Use empty memories for now - will be replaced with relationship-based context
+  const memories: any[] = [];
 
   const memoryWithOtherPlayer = memories.find(
     (m: any) => m.data.type === 'conversation' && m.data.playerIds.includes(otherPlayerId),
@@ -93,11 +122,15 @@ export async function continueConversationMessage(
   );
   const now = Date.now();
   const started = new Date(conversation.created);
-  const embedding = await embeddingsCache.fetch(
-    ctx,
-    `What do you think about ${otherPlayer.name}?`,
-  );
-  const memories = await memory.searchMemories(ctx, player.id as GameId<'players'>, embedding, 3);
+  // DISABLED: Embeddings to fix Ollama error - using relationship system instead
+  // const embedding = await embeddingsCache.fetch(
+  //   ctx,
+  //   `What do you think about ${otherPlayer.name}?`,
+  // );
+  // const memories = await memory.searchMemories(ctx, player.id as GameId<'players'>, embedding, 3);
+  
+  // Use empty memories for now - will be replaced with relationship-based context
+  const memories: any[] = [];
   const prompt = [
     `You are ${player.name}, and you're currently in a conversation with ${otherPlayer.name}.`,
     `The conversation started at ${started.toLocaleString()}. It's now ${now.toLocaleString()}.`,
@@ -234,7 +267,8 @@ async function previousMessages(
   conversationId: GameId<'conversations'>,
 ) {
   const llmMessages: LLMMessage[] = [];
-  const prevMessages = await ctx.runQuery(api.messages.listMessages, { worldId, conversationId });
+  // Use internal wrapper to avoid deep type instantiation
+  const prevMessages = await ctx.runQuery(selfInternal.getConversationMessages, { worldId, conversationId });
   for (const message of prevMessages) {
     const author = message.author === player.id ? player : otherPlayer;
     const recipient = message.author === player.id ? otherPlayer : player;

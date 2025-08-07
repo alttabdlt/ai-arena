@@ -58,7 +58,9 @@ model Bot {
   stats           Json             @default("{}") // wins, losses, earnings
   
   // Metaverse integration
+  channel         String           @default("main") // Channel assignment for world distribution
   metaverseAgentId String?         // AI Town agent ID
+  metaverseCharacter String?        // Character sprite ID (f1-f8, criminal1, etc.)
   currentZone     String?          // Current zone (casino, darkAlley, suburb)
   metaversePosition Json?          @default("{}") // {x: number, y: number, worldInstanceId: string}
   lastZoneChange  DateTime?        // Track zone transitions
@@ -83,12 +85,17 @@ model Bot {
   robberyAttempts RobberyLog[]     @relation("robber")
   robberyDefenses RobberyLog[]     @relation("victim")
   
+  // Energy system
+  energy          BotEnergy?
+  energyPurchases EnergyPurchase[]
+  
   // Metaverse sync
   botSync         BotSync?
   
   @@index([creatorId])
   @@index([createdAt])
   @@index([isActive])
+  @@index([channel])
   @@index([metaverseAgentId])
   @@index([tokenId])
 }
@@ -283,10 +290,48 @@ enum UserRole {
 }
 
 enum AIModel {
+  // OpenAI Models
   GPT_4O
+  GPT_4O_MINI
+  O3
+  O3_MINI
+  O3_PRO
+  
+  // Anthropic Claude Models
   CLAUDE_3_5_SONNET
+  CLAUDE_3_5_HAIKU
   CLAUDE_3_OPUS
+  CLAUDE_4_OPUS
+  CLAUDE_4_SONNET
+  
+  // DeepSeek Models
   DEEPSEEK_CHAT
+  DEEPSEEK_R1
+  DEEPSEEK_V3
+  
+  // Alibaba Qwen Models
+  QWEN_2_5_72B
+  QWQ_32B
+  QVQ_72B_PREVIEW
+  QWEN_2_5_MAX
+  
+  // xAI Models
+  GROK_3
+  
+  // Kimi Models
+  KIMI_K2
+  
+  // Google Gemini Models
+  GEMINI_2_5_PRO
+  GEMINI_2_5_PRO_DEEP_THINK
+  
+  // Meta Llama Models
+  LLAMA_3_1_405B
+  LLAMA_3_1_70B
+  LLAMA_3_2_90B
+  
+  // Mistral Models
+  MIXTRAL_8X22B
 }
 
 enum TxStatus {
@@ -376,6 +421,20 @@ enum SyncStatus {
   SYNCED
   FAILED
   DISABLED
+}
+
+enum ChannelType {
+  MAIN
+  REGIONAL
+  VIP
+  TEST
+}
+
+enum ChannelStatus {
+  ACTIVE
+  FULL
+  DRAINING
+  MAINTENANCE
 }
 
 // Economy System Models
@@ -505,6 +564,9 @@ model BotSync {
   botId             String           @unique
   bot               Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
   
+  // Channel assignment
+  channel           String           @default("main") // Channel for world distribution
+  
   // Sync status
   syncStatus        SyncStatus       @default(PENDING)
   lastSyncedAt      DateTime?
@@ -523,6 +585,63 @@ model BotSync {
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
   
+  @@index([channel])
   @@index([syncStatus])
   @@index([lastSyncedAt])
+}
+
+// Channel metadata for world management and distribution
+model ChannelMetadata {
+  id              String           @id @default(cuid())
+  channel         String           @unique // Unique channel identifier (e.g., "main", "tournament-123")
+  channelType     ChannelType      // MAIN, TOURNAMENT, REGIONAL, VIP, TEST
+  worldId         String?          // Current Convex world ID for this channel
+  status          ChannelStatus    @default(ACTIVE) // ACTIVE, FULL, DRAINING, MAINTENANCE
+  maxBots         Int              @default(100) // Maximum bots allowed in this channel
+  currentBots     Int              @default(0) // Current number of bots in this channel
+  region          String?          // Geographic region (e.g., "us-west", "eu-central")
+  metadata        Json             @default("{}") // Additional metadata (tournamentId, description, etc.)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  
+  @@index([channelType])
+  @@index([status])
+  @@index([worldId])
+}
+
+// Energy system for bot operations
+model BotEnergy {
+  id              String           @id @default(cuid())
+  botId           String           @unique
+  bot             Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
+  
+  currentEnergy   Int              @default(100)  // Current energy amount
+  maxEnergy       Int              @default(100)  // Maximum energy capacity
+  lastRegenTime   DateTime         @default(now()) // Last regeneration timestamp
+  
+  // Energy state
+  isPaused        Boolean          @default(false) // Whether bot is paused to save energy
+  autoResumeAt    Int?            // Resume when energy reaches this amount
+  
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  
+  @@index([botId])
+}
+
+// Track energy purchases for revenue and analytics
+model EnergyPurchase {
+  id              String           @id @default(cuid())
+  botId           String
+  bot             Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
+  
+  energyAmount    Int              // Amount of energy purchased
+  hypeSpent       Float            // HYPE tokens spent
+  packType        String           // small, medium, large, mega
+  txHash          String?          // Blockchain transaction hash
+  
+  purchasedAt     DateTime         @default(now())
+  
+  @@index([botId])
+  @@index([purchasedAt])
 }

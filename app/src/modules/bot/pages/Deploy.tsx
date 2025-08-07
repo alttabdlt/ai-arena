@@ -2,15 +2,29 @@ import { useState, useEffect } from 'react';
 import { useAccount, useSendTransaction, useWaitForTransactionReceipt } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useMutation } from '@apollo/client';
-import { parseEther } from 'viem';
+import { parseEther, formatEther } from 'viem';
 import { Button } from '@ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ui/card';
 import { Input } from '@ui/input';
 import { Label } from '@ui/label';
 import { Textarea } from '@ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@ui/select';
 import { Badge } from '@ui/badge';
-import { Bot, Wallet, Brain, Zap, AlertCircle, Info, CheckCircle, Upload, CheckCircle2, Loader2 } from 'lucide-react';
+import { 
+  Bot, 
+  Wallet, 
+  AlertCircle, 
+  Info, 
+  CheckCircle, 
+  Upload, 
+  Loader2,
+  ChevronRight,
+  ChevronLeft,
+  Sparkles,
+  Code,
+  User,
+  FileText,
+  Rocket
+} from 'lucide-react';
 import { useToast } from '@shared/hooks/use-toast';
 import { Alert, AlertDescription } from '@ui/alert';
 import { Checkbox } from '@ui/checkbox';
@@ -21,26 +35,19 @@ import { WALLET_ADDRESSES, FEE_CONFIG } from '@/config/wallets';
 import { useHypeBalance } from '@shared/hooks/useHypeBalance';
 import { DeploymentStatus, DeploymentState } from '@bot/components/deployment-status';
 import { StardewSpriteSelector, BotPersonality } from '@/services/stardewSpriteSelector';
-// Test components temporarily removed - to be reimplemented
-// import { AllTestsRunner } from '@/components/poker/AllTestsRunner';
-// import { Connect4TestRunner } from '@/components/connect4/Connect4TestRunner';
+import { ModelSelector } from '@/components/deploy/ModelSelector';
+import { CostEstimation } from '@/components/deploy/CostEstimation';
+import { AI_MODELS, formatModelForBackend, ModelInfo } from '@/config/models';
+import { formatEnergyRate } from '@/config/energy';
+import { Progress } from '@ui/progress';
 
-// Game Types
-const GAME_TYPES = [
-  { id: 'poker', name: 'Texas Hold\'em Poker', icon: '🃏', description: 'Classic poker with bluffing and strategy' },
-  { id: 'connect4', name: 'Connect4', icon: '🔴', description: 'Connect 4 pieces in a row to win' },
-  { id: 'chess', name: 'Chess', icon: '♟️', description: 'The ultimate strategy game', status: 'coming-soon' },
-  { id: 'go', name: 'Go', icon: '⚫', description: 'Ancient game of territorial control', status: 'coming-soon' },
-  { id: 'hangman', name: 'Hangman', icon: '📝', description: 'Word guessing game', status: 'coming-soon' },
-  { id: 'blackjack', name: 'Blackjack', icon: '🎰', description: 'Beat the dealer at 21', status: 'coming-soon' }
-];
-
-// AI Models
-const AI_MODELS = [
-  { id: 'gpt-4o', name: 'GPT-4o', icon: Brain, color: 'text-green-500' },
-  { id: 'claude-3-5-sonnet', name: 'Claude 3.5 Sonnet', icon: Zap, color: 'text-purple-500' },
-  { id: 'claude-3-opus', name: 'Claude 3 Opus', icon: Brain, color: 'text-purple-600' },
-  { id: 'deepseek-chat', name: 'DeepSeek Chat', icon: Zap, color: 'text-blue-500' }
+// Wizard Steps
+const WIZARD_STEPS = [
+  { id: 'identity', label: 'Identity', icon: User, description: 'Name and personality' },
+  { id: 'model', label: 'AI Model', icon: Bot, description: 'Choose intelligence' },
+  { id: 'strategy', label: 'Strategy', icon: Code, description: 'Define behavior' },
+  { id: 'review', label: 'Review', icon: FileText, description: 'Confirm details' },
+  { id: 'deploy', label: 'Deploy', icon: Rocket, description: 'Launch your bot' }
 ];
 
 export default function Deploy() {
@@ -50,6 +57,20 @@ export default function Deploy() {
   const [deployBot] = useMutation(DEPLOY_BOT);
   const [registerBotInMetaverse] = useMutation(REGISTER_BOT_IN_METAVERSE);
   const { balance, formatted: formattedBalance, symbol, isLoading: balanceLoading } = useHypeBalance();
+  const [currentStep, setCurrentStep] = useState(0);
+  
+  // Helper function to get selected model info
+  const getSelectedModel = (): ModelInfo | null => {
+    if (!formData.modelType) return null;
+    
+    for (const category of Object.keys(AI_MODELS)) {
+      const model = AI_MODELS[category as keyof typeof AI_MODELS].find(
+        m => m.id === formData.modelType
+      );
+      if (model) return model;
+    }
+    return null;
+  };
   const [formData, setFormData] = useState({
     name: '',
     avatar: '',
@@ -61,8 +82,6 @@ export default function Deploy() {
   const [promptLength, setPromptLength] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>();
-  const [testGameType, setTestGameType] = useState<string>('');
-  const [allTestsPassed, setAllTestsPassed] = useState(false);
   const [deploymentState, setDeploymentState] = useState<DeploymentState>('idle');
   const [deploymentError, setDeploymentError] = useState<string>('');
   const [spriteSelector] = useState(() => new StardewSpriteSelector());
@@ -120,7 +139,7 @@ export default function Deploy() {
               avatar: sprite.imageData,
               prompt: formData.prompt,
               personality: formData.personality.toUpperCase(),
-              modelType: formData.modelType.toUpperCase().replace('-', '_'),
+              modelType: formatModelForBackend(formData.modelType),
               txHash: txHash,
             },
           },
@@ -227,10 +246,35 @@ export default function Deploy() {
     if (value.length <= 1000) {
       setFormData({ ...formData, prompt: value });
       setPromptLength(value.length);
-      // Reset test status when prompt changes
-      if (allTestsPassed) {
-        setAllTestsPassed(false);
-      }
+    }
+  };
+
+  const canProceed = () => {
+    switch (currentStep) {
+      case 0: // Identity
+        return formData.name && formData.personality;
+      case 1: // Model
+        return formData.modelType;
+      case 2: // Strategy
+        return formData.prompt && promptLength >= 50;
+      case 3: // Review
+        return true;
+      case 4: // Deploy
+        return false; // No next from deploy
+      default:
+        return false;
+    }
+  };
+
+  const handleNext = () => {
+    if (canProceed() && currentStep < WIZARD_STEPS.length - 1) {
+      setCurrentStep(currentStep + 1);
+    }
+  };
+
+  const handlePrevious = () => {
+    if (currentStep > 0) {
+      setCurrentStep(currentStep - 1);
     }
   };
 
@@ -260,7 +304,7 @@ export default function Deploy() {
             avatar: sprite.imageData,
             prompt: formData.prompt,
             personality: formData.personality.toUpperCase(),
-            modelType: formData.modelType.toUpperCase().replace('-', '_'),
+            modelType: formatModelForBackend(formData.modelType),
             txHash: txHash,
           },
         },
@@ -330,8 +374,8 @@ export default function Deploy() {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     
     if (!isConnected) {
       toast({
@@ -351,8 +395,9 @@ export default function Deploy() {
       return;
     }
 
-    // Check balance
+    // Check balance against flat deployment fee
     const deploymentFee = parseEther(FEE_CONFIG.DEPLOYMENT_FEE);
+    
     if (balance && balance < deploymentFee) {
       toast({
         title: "Insufficient Balance",
@@ -362,15 +407,7 @@ export default function Deploy() {
       return;
     }
 
-    // Test requirement temporarily disabled
-    // if (!allTestsPassed) {
-    //   toast({
-    //     title: "Tests Not Passed",
-    //     description: "Your bot must pass all test scenarios before deployment. Please select poker in the test section and run all tests.",
-    //     variant: "destructive"
-    //   });
-    //   return;
-    // }
+    // Proceed with deployment
 
     setIsSubmitting(true);
     setDeploymentState('wallet-signature');
@@ -407,466 +444,418 @@ export default function Deploy() {
           </p>
         </div>
 
-        <Alert className="mb-6">
-          <Info className="h-4 w-4" />
-          <AlertDescription>
-            <strong>Deployment Fee:</strong> {FEE_CONFIG.DEPLOYMENT_FEE} HYPE per bot. After deployment, you can manage your bot and enter it into tournaments from your dashboard. Winners earn HYPE prizes!
-            {isConnected && !balanceLoading && (
-              <div className="mt-2">
-                <strong>Your Balance:</strong> {formattedBalance} {symbol}
-                {balance && balance < parseEther(FEE_CONFIG.DEPLOYMENT_FEE) && (
-                  <Badge variant="destructive" className="ml-2">Insufficient Balance</Badge>
-                )}
-              </div>
-            )}
-          </AlertDescription>
-        </Alert>
-
+        {/* Wallet Connection */}
         {!isConnected && (
-          <Card className="mb-6">
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-semibold">Connect Your Wallet</h3>
-                  <p className="text-sm text-muted-foreground">
-                    You need to connect your wallet to deploy a bot
-                  </p>
-                </div>
-                <ConnectButton />
-              </div>
-            </CardContent>
-          </Card>
+          <Alert className="mb-6">
+            <Wallet className="h-4 w-4" />
+            <AlertDescription className="flex items-center justify-between">
+              <span>Connect your wallet to deploy a bot</span>
+              <ConnectButton />
+            </AlertDescription>
+          </Alert>
         )}
 
-        <form onSubmit={handleSubmit}>
-          <div className="space-y-6">
-            {/* Multi-Game Competition Info */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Multi-Game Competition</CardTitle>
-                <CardDescription>Your bot will compete across multiple game types</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Alert>
-                  <Zap className="h-4 w-4" />
-                  <AlertDescription>
-                    <strong>Spin-the-Wheel System:</strong> Your bot will be randomly assigned to different games during tournaments. 
-                    Write a universal strategy that can adapt to any competitive scenario - from poker bluffs to Connect4 strategies.
-                    Currently supporting: Texas Hold'em Poker and Connect4 (Chess, Go, Hangman, and more coming soon!)
-                  </AlertDescription>
-                </Alert>
-              </CardContent>
-            </Card>
-
-            {/* Bot Name */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Bot Identity</CardTitle>
-                <CardDescription>Choose a name and avatar for your bot</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <Label htmlFor="name">Bot Name</Label>
-                  <Input
-                    id="name"
-                    placeholder="e.g., Strategic Genius 3000"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value.slice(0, 30) })}
-                    maxLength={30}
-                    disabled={!isConnected}
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {formData.name.length}/30 characters
-                  </p>
-                </div>
-
-                <div>
-                  <Label>Bot Avatar</Label>
-                  {formData.personality ? (
-                    <div className="mt-2 flex items-center gap-4">
-                      <div className="border-2 border-dashed border-primary/50 rounded-lg p-2 bg-muted/50">
-                        <div className="w-32 h-32 flex items-center justify-center">
-                          <Bot className="h-16 w-16 text-muted-foreground opacity-50" />
-                        </div>
-                      </div>
-                      <div className="text-sm text-muted-foreground">
-                        <p>A unique pixel art avatar will be generated</p>
-                        <p className="mt-1">after your transaction is confirmed</p>
-                        <Badge variant="outline" className="mt-2">
-                          <Wallet className="h-3 w-3 mr-1" />
-                          Generated after payment
-                        </Badge>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="mt-2 p-8 border-2 border-dashed border-border rounded-lg text-center text-muted-foreground">
-                      <Bot className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                      <p>Select a personality first</p>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* AI Model Selection */}
-            <Card>
-              <CardHeader>
-                <CardTitle>AI Model</CardTitle>
-                <CardDescription>Select the AI model that will power your bot</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 gap-3">
-                  {AI_MODELS.map((model) => {
-                    const Icon = model.icon;
-                    return (
-                      <button
-                        key={model.id}
-                        type="button"
-                        onClick={() => {
-                          setFormData({ ...formData, modelType: model.id });
-                          // Reset test status when model changes
-                          if (allTestsPassed) {
-                            setAllTestsPassed(false);
-                          }
-                        }}
-                        disabled={!isConnected}
-                        className={`p-4 rounded-lg border-2 transition-all flex items-center gap-3 ${
-                          formData.modelType === model.id
-                            ? 'border-primary bg-primary/10'
-                            : 'border-border hover:border-primary/50'
-                        } ${!isConnected ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      >
-                        <Icon className={`h-5 w-5 ${model.color}`} />
-                        <span className="font-medium">{model.name}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Bot Personality Selection */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Bot Personality</CardTitle>
-                <CardDescription>Choose your bot's personality type for the crime metaverse</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  <button
-                    type="button"
-                    onClick={() => setFormData({ ...formData, personality: 'criminal' })}
-                    disabled={!isConnected}
-                    className={`w-full p-4 rounded-lg border-2 transition-all text-left ${
-                      formData.personality === 'criminal'
-                        ? 'border-red-500 bg-red-500/10'
-                        : 'border-border hover:border-red-500/50'
-                    } ${!isConnected ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                    <div className="flex items-start gap-3">
-                      <span className="text-2xl">🔫</span>
-                      <div className="flex-1">
-                        <h4 className="font-semibold text-red-500">Criminal</h4>
-                        <p className="text-sm text-muted-foreground">
-                          Aggressive and intimidating. Focuses on robbery, violence, and forming gangs. Takes what they want by force.
-                        </p>
-                      </div>
-                    </div>
-                  </button>
-                  
-                  <button
-                    type="button"
-                    onClick={() => setFormData({ ...formData, personality: 'gambler' })}
-                    disabled={!isConnected}
-                    className={`w-full p-4 rounded-lg border-2 transition-all text-left ${
-                      formData.personality === 'gambler'
-                        ? 'border-yellow-500 bg-yellow-500/10'
-                        : 'border-border hover:border-yellow-500/50'
-                    } ${!isConnected ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                    <div className="flex items-start gap-3">
-                      <span className="text-2xl">🎲</span>
-                      <div className="flex-1">
-                        <h4 className="font-semibold text-yellow-500">Gambler</h4>
-                        <p className="text-sm text-muted-foreground">
-                          Risk-taker who lives in casinos. Makes bold moves, forms temporary alliances, and has unpredictable loyalty.
-                        </p>
-                      </div>
-                    </div>
-                  </button>
-                  
-                  <button
-                    type="button"
-                    onClick={() => setFormData({ ...formData, personality: 'worker' })}
-                    disabled={!isConnected}
-                    className={`w-full p-4 rounded-lg border-2 transition-all text-left ${
-                      formData.personality === 'worker'
-                        ? 'border-green-500 bg-green-500/10'
-                        : 'border-border hover:border-green-500/50'
-                    } ${!isConnected ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                    <div className="flex items-start gap-3">
-                      <span className="text-2xl">🛠️</span>
-                      <div className="flex-1">
-                        <h4 className="font-semibold text-green-500">Worker</h4>
-                        <p className="text-sm text-muted-foreground">
-                          Steady grinder who builds value slowly. Avoids conflict, forms stable partnerships, and focuses on long-term gains.
-                        </p>
-                      </div>
-                    </div>
-                  </button>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Strategy Prompt */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Strategy Prompt</CardTitle>
-                <CardDescription>
-                  Define your bot's competitive strategy and personality (1000 characters max)
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Textarea
-                  placeholder="Example: I am an aggressive competitor who excels at psychological warfare and strategic deception. I analyze opponent patterns to exploit weaknesses and apply constant pressure. I balance risk and reward carefully, adapting my strategy based on game state. When behind, I look for high-value opportunities to turn the tide..."
-                  value={formData.prompt}
-                  onChange={(e) => handlePromptChange(e.target.value)}
-                  disabled={!isConnected}
-                  className="min-h-[150px] font-mono text-sm"
-                />
-                <div className="flex justify-between items-center mt-2">
-                  <p className={`text-sm ${
-                    promptLength > 900 ? 'text-destructive' : 'text-muted-foreground'
-                  }`}>
-                    {promptLength}/1000 characters
-                  </p>
-                  {promptLength >= 100 && (
-                    <Badge variant="outline" className="text-xs">
-                      <CheckCircle className="h-3 w-3 mr-1" />
-                      Good length
-                    </Badge>
-                  )}
-                </div>
-
-                {/* Example Prompts */}
-                <div className="mt-4">
-                  <p className="text-sm font-medium mb-2">Example Strategies:</p>
-                  <div className="space-y-2">
-                    <Alert>
-                      <AlertDescription className="text-xs">
-                        <strong>Aggressive:</strong> "I dominate through relentless pressure and calculated risks. I seize every opportunity to gain advantage and force opponents into difficult decisions. My style is unpredictable and overwhelming."
-                      </AlertDescription>
-                    </Alert>
-                    <Alert>
-                      <AlertDescription className="text-xs">
-                        <strong>Defensive:</strong> "I excel at patience and precision. I minimize risks, capitalize on opponent mistakes, and build advantages gradually. Every move is calculated for maximum efficiency."
-                      </AlertDescription>
-                    </Alert>
-                    <Alert>
-                      <AlertDescription className="text-xs">
-                        <strong>Adaptive:</strong> "I analyze and counter opponent strategies in real-time. Against aggressive players, I use their momentum against them. Against defensive players, I probe for weaknesses systematically."
-                      </AlertDescription>
-                    </Alert>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Test Bot Response */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Test Your Strategy</CardTitle>
-                <CardDescription>Test how your universal strategy performs in specific games</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <Select value={testGameType} onValueChange={setTestGameType}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select a game to test" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="poker">Texas Hold'em Poker</SelectItem>
-                      <SelectItem value="connect4">Connect4</SelectItem>
-                      <SelectItem value="chess" disabled>Chess (Coming Soon)</SelectItem>
-                      <SelectItem value="go" disabled>Go (Coming Soon)</SelectItem>
-                      <SelectItem value="hangman" disabled>Hangman (Coming Soon)</SelectItem>
-                      <SelectItem value="blackjack" disabled>Blackjack (Coming Soon)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                
-                {/* Test runners temporarily disabled - to be reimplemented */}
-                {testGameType === 'poker' && (
-                  <Alert>
-                    <Info className="h-4 w-4" />
-                    <AlertDescription>
-                      Poker test scenarios are temporarily unavailable. Your bot will still be able to compete.
-                    </AlertDescription>
-                  </Alert>
-                )}
-                
-                {testGameType === 'connect4' && (
-                  <Alert>
-                    <Info className="h-4 w-4" />
-                    <AlertDescription>
-                      Connect4 test scenarios are temporarily unavailable. Your bot will still be able to compete.
-                    </AlertDescription>
-                  </Alert>
-                )}
-                
-                {testGameType && testGameType !== 'poker' && testGameType !== 'connect4' && (
-                  <Alert>
-                    <Info className="h-4 w-4" />
-                    <AlertDescription>
-                      Test scenarios for {GAME_TYPES.find(g => g.id === testGameType)?.name} are coming soon. 
-                      Your bot will still be able to compete in all games using its universal strategy.
-                    </AlertDescription>
-                  </Alert>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Test Requirement Notice */}
-            {!allTestsPassed && (testGameType === 'poker' || testGameType === 'connect4') && (
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>
-                  <strong>Tests Required:</strong> You must pass all {testGameType === 'poker' ? '5' : '6'} test scenarios before you can deploy your bot. 
-                  This ensures your bot can handle various game situations properly.
-                </AlertDescription>
-              </Alert>
-            )}
-            
-            {allTestsPassed && (
-              <Alert>
-                <CheckCircle className="h-4 w-4 text-green-500" />
-                <AlertDescription>
-                  <strong>Tests Passed!</strong> Your bot has successfully passed all test scenarios and is ready for deployment.
-                </AlertDescription>
-              </Alert>
-            )}
-
-            {/* Deployment Fee */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Deployment Fee</CardTitle>
-                <CardDescription>One-time fee to deploy your bot</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between p-4 rounded-lg bg-muted">
-                    <div>
-                      <p className="font-semibold">Standard Deployment</p>
-                      <p className="text-sm text-muted-foreground">Create and manage your bot</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-2xl font-bold">{FEE_CONFIG.DEPLOYMENT_FEE} HYPE</p>
-                    </div>
-                  </div>
-                  
-                  {isConnected && (
-                    <div className="flex items-center justify-between p-3 rounded-lg border">
-                      <span className="text-sm font-medium">Your Balance</span>
-                      <div className="flex items-center gap-2">
-                        {balanceLoading ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <>
-                            <span className="font-mono">{formattedBalance} {symbol}</span>
-                            {balance && balance >= parseEther(FEE_CONFIG.DEPLOYMENT_FEE) ? (
-                              <Badge variant="outline" className="text-xs">
-                                <CheckCircle className="h-3 w-3 mr-1" />
-                                Sufficient
-                              </Badge>
-                            ) : (
-                              <Badge variant="destructive" className="text-xs">
-                                <AlertCircle className="h-3 w-3 mr-1" />
-                                Insufficient
-                              </Badge>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Metaverse Deployment Option */}
+        {/* Step Content */}
+        <div className="min-h-[500px]">
+          {deploymentState === 'success' ? (
             <Card>
               <CardContent className="pt-6">
-                <div className="flex items-center space-x-3">
-                  <Checkbox
-                    id="deploy-metaverse"
-                    checked={deployToMetaverse}
-                    onCheckedChange={(checked) => setDeployToMetaverse(checked as boolean)}
-                  />
-                  <div className="flex-1">
-                    <Label 
-                      htmlFor="deploy-metaverse" 
-                      className="text-base font-medium cursor-pointer"
-                    >
-                      Deploy to Crime Metaverse
-                    </Label>
-                    <p className="text-sm text-muted-foreground">
-                      Enable your bot to live in the 24/7 crime-themed metaverse where it can form alliances, 
-                      commit crimes, and build a criminal empire. You can always deploy to the metaverse later.
-                    </p>
+                <div className="text-center py-8">
+                  <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <CheckCircle className="h-8 w-8 text-green-600" />
                   </div>
+                  <h3 className="text-lg font-medium mb-2">Bot Successfully Deployed!</h3>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    Your AI bot is now ready to compete in tournaments
+                  </p>
+                  <Button onClick={() => navigate('/dashboard')}>
+                    Go to Dashboard
+                  </Button>
                 </div>
               </CardContent>
             </Card>
+          ) : (
 
-            {/* Submit Button */}
-            <div className="flex gap-4">
-              <Button
-                type="submit"
-                size="lg"
-                className="flex-1"
-                disabled={!isConnected || isSubmitting || isWriting || isConfirming}
-              >
-                {isWriting ? (
-                  <>
-                    <Wallet className="mr-2 h-4 w-4 animate-pulse" />
-                    Confirm in Wallet...
-                  </>
-                ) : isConfirming ? (
-                  <>
-                    <Upload className="mr-2 h-4 w-4 animate-spin" />
-                    Confirming Transaction...
-                  </>
-                ) : isSubmitting ? (
-                  <>
-                    <Upload className="mr-2 h-4 w-4 animate-spin" />
-                    Deploying Bot...
-                  </>
-                ) : (
-                  <>
-                    <Bot className="mr-2 h-4 w-4" />
-                    Deploy Bot
-                  </>
-                )}
-              </Button>
-            </div>
+            <>
+              {/* Step 0: Identity */}
+              {currentStep === 0 && (
+                <div className="space-y-4">
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base">Bot Identity</CardTitle>
+                      <CardDescription className="text-xs">Choose a name and personality for your bot</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
 
-            {/* Deployment Status */}
-            <DeploymentStatus 
-              state={deploymentState}
-              txHash={txHash}
-              error={deploymentError}
-              confirmations={receipt?.confirmations || 0}
-              requiredConfirmations={3}
-              onClose={deploymentState === 'error' ? () => {
-                setDeploymentState('idle');
-                setDeploymentError('');
-                setIsSubmitting(false);
-              } : undefined}
-              onRetry={deploymentError?.includes('confirmations') && txHash ? retryDeployment : undefined}
-            />
-          </div>
-        </form>
+                      <div>
+                        <Label htmlFor="name" className="text-sm">Bot Name</Label>
+                        <Input
+                          id="name"
+                          placeholder="e.g., Strategic Genius 3000"
+                          value={formData.name}
+                          onChange={(e) => setFormData({ ...formData, name: e.target.value.slice(0, 30) })}
+                          maxLength={30}
+                          disabled={!isConnected}
+                          className="mt-1"
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {formData.name.length}/30 characters
+                        </p>
+                      </div>
+
+                      <div>
+                        <Label className="text-sm mb-2 block">Personality Type</Label>
+                        <div className="space-y-2">
+                          {[
+                            { id: 'criminal', icon: '🔫', name: 'Criminal', desc: 'Aggressive and intimidating' },
+                            { id: 'gambler', icon: '🎲', name: 'Gambler', desc: 'Risk-taker with bold moves' },
+                            { id: 'worker', icon: '🛠️', name: 'Worker', desc: 'Steady grinder for long-term gains' }
+                          ].map((personality) => (
+                            <button
+                              key={personality.id}
+                              type="button"
+                              onClick={() => setFormData({ ...formData, personality: personality.id })}
+                              disabled={!isConnected}
+                              className={`w-full p-3 rounded-lg border transition-all text-left ${
+                                formData.personality === personality.id
+                                  ? 'border-primary bg-primary/5'
+                                  : 'border-border hover:border-primary/50'
+                              } ${!isConnected ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            >
+                              <div className="flex items-center gap-3">
+                                <span className="text-xl">{personality.icon}</span>
+                                <div className="flex-1">
+                                  <p className="text-sm font-medium">{personality.name}</p>
+                                  <p className="text-xs text-muted-foreground">{personality.desc}</p>
+                                </div>
+                                {formData.personality === personality.id && (
+                                  <CheckCircle className="h-4 w-4 text-primary" />
+                                )}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
+              {/* Step 1: Model Selection */}
+              {currentStep === 1 && (
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                  <div className="lg:col-span-2">
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <CardTitle className="text-base">Select AI Model</CardTitle>
+                        <CardDescription className="text-xs">
+                          Choose from 28 state-of-the-art models across different categories
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <ModelSelector
+                          models={AI_MODELS}
+                          selected={formData.modelType}
+                          onSelect={(modelId) => setFormData({ ...formData, modelType: modelId })}
+                          disabled={!isConnected}
+                        />
+                      </CardContent>
+                    </Card>
+                  </div>
+                  <div className="lg:col-span-1">
+                    <CostEstimation 
+                      model={getSelectedModel()}
+                      balance={balance ? Number(formatEther(balance)) : 0}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Step 2: Strategy */}
+              {currentStep === 2 && (
+                <div className="space-y-4">
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base">Define Strategy</CardTitle>
+                      <CardDescription className="text-xs">
+                        Write your bot's competitive strategy and behavior patterns
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div>
+                        <Label htmlFor="prompt" className="text-sm">Strategy Prompt</Label>
+                        <Textarea
+                          id="prompt"
+                          placeholder="Example: I am an aggressive competitor who excels at psychological warfare and strategic deception. I analyze opponent patterns to exploit weaknesses and apply constant pressure..."
+                          value={formData.prompt}
+                          onChange={(e) => handlePromptChange(e.target.value)}
+                          disabled={!isConnected}
+                          className="mt-1 min-h-[200px] font-mono text-xs"
+                        />
+                        <div className="flex justify-between items-center mt-2">
+                          <p className={`text-xs ${
+                            promptLength > 900 ? 'text-destructive' : 
+                            promptLength < 50 ? 'text-muted-foreground' :
+                            'text-green-600'
+                          }`}>
+                            {promptLength}/1000 characters
+                            {promptLength < 50 && ' (minimum 50)'}
+                          </p>
+                          {promptLength >= 100 && promptLength <= 900 && (
+                            <Badge variant="outline" className="text-xs">
+                              <CheckCircle className="h-3 w-3 mr-1" />
+                              Good length
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+
+                      <div>
+                        <p className="text-sm font-medium mb-2">Example Strategies</p>
+                        <div className="grid gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handlePromptChange('I dominate through relentless pressure and calculated risks. I seize every opportunity to gain advantage and force opponents into difficult decisions. My style is unpredictable and overwhelming.')}
+                            className="text-left p-3 rounded-lg border hover:bg-muted/50 transition-colors"
+                          >
+                            <p className="text-xs font-medium mb-1">Aggressive</p>
+                            <p className="text-xs text-muted-foreground">Relentless pressure and calculated risks</p>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handlePromptChange('I excel at patience and precision. I minimize risks, capitalize on opponent mistakes, and build advantages gradually. Every move is calculated for maximum efficiency.')}
+                            className="text-left p-3 rounded-lg border hover:bg-muted/50 transition-colors"
+                          >
+                            <p className="text-xs font-medium mb-1">Defensive</p>
+                            <p className="text-xs text-muted-foreground">Patient and precise gameplay</p>
+                          </button>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
+              {/* Step 3: Review */}
+              {currentStep === 3 && (
+                <div className="space-y-4">
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base">Review & Confirm</CardTitle>
+                      <CardDescription className="text-xs">
+                        Review your bot configuration before deployment
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="space-y-3">
+                        <div className="flex justify-between py-2 border-b">
+                          <span className="text-sm text-muted-foreground">Name</span>
+                          <span className="text-sm font-medium">{formData.name || 'Not set'}</span>
+                        </div>
+                        <div className="flex justify-between py-2 border-b">
+                          <span className="text-sm text-muted-foreground">Personality</span>
+                          <span className="text-sm font-medium capitalize">{formData.personality || 'Not set'}</span>
+                        </div>
+                        <div className="flex justify-between py-2 border-b">
+                          <span className="text-sm text-muted-foreground">AI Model</span>
+                          <span className="text-sm font-medium">
+                            {AI_MODELS[Object.keys(AI_MODELS).find(cat => 
+                              AI_MODELS[cat as keyof typeof AI_MODELS].some(m => m.id === formData.modelType)
+                            ) || 'reasoning']?.find(m => m.id === formData.modelType)?.name || 'Not selected'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between py-2 border-b">
+                          <span className="text-sm text-muted-foreground">Strategy Length</span>
+                          <span className="text-sm font-medium">{promptLength} characters</span>
+                        </div>
+                      </div>
+
+                      <div className="p-4 bg-muted/50 rounded-lg">
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-sm font-medium">Deployment Fee</span>
+                          <span className="text-lg font-bold">
+                            {FEE_CONFIG.DEPLOYMENT_FEE} HYPE
+                          </span>
+                        </div>
+                        {isConnected && (
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-muted-foreground">Your Balance</span>
+                            <div className="flex items-center gap-2">
+                              {balanceLoading ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <>
+                                  <span>{formattedBalance} {symbol}</span>
+                                  {balance && balance >= parseEther(FEE_CONFIG.DEPLOYMENT_FEE) ? (
+                                    <CheckCircle className="h-3 w-3 text-green-500" />
+                                  ) : (
+                                    <AlertCircle className="h-3 w-3 text-destructive" />
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                        {getSelectedModel() && (
+                          <div className="mt-3 pt-3 border-t text-xs text-muted-foreground">
+                            <div className="flex justify-between">
+                              <span>Energy Consumption:</span>
+                              <span className="font-mono">
+                                {formatEnergyRate(formData.modelType)}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center space-x-3">
+                        <Checkbox
+                          id="deploy-metaverse"
+                          checked={deployToMetaverse}
+                          onCheckedChange={(checked) => setDeployToMetaverse(checked as boolean)}
+                        />
+                        <div className="flex-1">
+                          <Label 
+                            htmlFor="deploy-metaverse" 
+                            className="text-sm font-medium cursor-pointer"
+                          >
+                            Deploy to Crime Metaverse
+                          </Label>
+                          <p className="text-xs text-muted-foreground">
+                            Enable your bot to live in the 24/7 metaverse
+                          </p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
+              {/* Step 4: Deploy */}
+              {currentStep === 4 && (
+                <div className="space-y-4">
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base">Deploy Your Bot</CardTitle>
+                      <CardDescription className="text-xs">
+                        Complete the deployment process
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {!isConnected ? (
+                        <div className="text-center py-8">
+                          <Wallet className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                          <p className="text-sm text-muted-foreground mb-4">
+                            Connect your wallet to deploy
+                          </p>
+                          <ConnectButton />
+                        </div>
+                      ) : (
+                        <>
+                          <Alert>
+                            <Sparkles className="h-4 w-4" />
+                            <AlertDescription>
+                              Your bot will compete in tournaments across multiple game types including Poker, Connect4, and more coming soon!
+                            </AlertDescription>
+                          </Alert>
+
+                          <div className="space-y-3">
+                            <div className="p-4 bg-muted/50 rounded-lg">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-sm font-medium">Deployment Fee</span>
+                                <span className="text-xl font-bold">{FEE_CONFIG.DEPLOYMENT_FEE} HYPE</span>
+                              </div>
+                              <p className="text-xs text-muted-foreground">
+                                One-time fee to create and register your bot
+                              </p>
+                            </div>
+
+                            <Button
+                              onClick={handleSubmit}
+                              size="lg"
+                              className="w-full"
+                              disabled={isSubmitting || isWriting || isConfirming}
+                            >
+                              {isWriting ? (
+                                <>
+                                  <Wallet className="mr-2 h-4 w-4 animate-pulse" />
+                                  Confirm in Wallet...
+                                </>
+                              ) : isConfirming ? (
+                                <>
+                                  <Upload className="mr-2 h-4 w-4 animate-spin" />
+                                  Confirming Transaction...
+                                </>
+                              ) : isSubmitting ? (
+                                <>
+                                  <Upload className="mr-2 h-4 w-4 animate-spin" />
+                                  Deploying Bot...
+                                </>
+                              ) : (
+                                <>
+                                  <Rocket className="mr-2 h-4 w-4" />
+                                  Deploy Bot
+                                </>
+                              )}
+                            </Button>
+                          </div>
+                        </>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
+              {/* Navigation Buttons */}
+              <div className="flex justify-between mt-6">
+                <Button
+                  variant="outline"
+                  onClick={handlePrevious}
+                  disabled={currentStep === 0}
+                  size="sm"
+                >
+                  <ChevronLeft className="h-4 w-4 mr-1" />
+                  Previous
+                </Button>
+                
+                {currentStep < 3 ? (
+                  <Button
+                    onClick={handleNext}
+                    disabled={!canProceed()}
+                    size="sm"
+                  >
+                    Next
+                    <ChevronRight className="h-4 w-4 ml-1" />
+                  </Button>
+                ) : currentStep === 3 ? (
+                  <Button
+                    onClick={() => setCurrentStep(4)}
+                    disabled={!formData.name || !formData.modelType || !formData.prompt || !formData.personality}
+                    size="sm"
+                  >
+                    Proceed to Deploy
+                    <Rocket className="h-4 w-4 ml-1" />
+                  </Button>
+                ) : null}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Deployment Status */}
+        <DeploymentStatus 
+          state={deploymentState}
+          txHash={txHash}
+          error={deploymentError}
+          confirmations={receipt?.confirmations || 0}
+          requiredConfirmations={3}
+          onClose={deploymentState === 'error' ? () => {
+            setDeploymentState('idle');
+            setDeploymentError('');
+            setIsSubmitting(false);
+          } : undefined}
+          onRetry={deploymentError?.includes('confirmations') && txHash ? retryDeployment : undefined}
+        />
       </div>
     </div>
   );

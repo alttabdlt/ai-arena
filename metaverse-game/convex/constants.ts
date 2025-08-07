@@ -18,31 +18,29 @@ export const COLLISION_THRESHOLD = 0.75;
 // How many human players can be in a world at once.
 export const MAX_HUMAN_PLAYERS = 8;
 
-// Don't talk to anyone for 15s after having a conversation.
-export const CONVERSATION_COOLDOWN = 15000;
+// Don't talk to anyone for 10s after having a conversation (reduced for dynamic gameplay).
+export const CONVERSATION_COOLDOWN = 10000;
 
-// Don't do another activity for 10s after doing one.
-export const ACTIVITY_COOLDOWN = 10_000;
+// Don't do another activity for 5s after doing one (reduced for dynamic gameplay).
+export const ACTIVITY_COOLDOWN = 5_000;
 
-// Don't talk to a player within 60s of talking to them.
-export const PLAYER_CONVERSATION_COOLDOWN = 60000;
+// Don't talk to a player within 30s of talking to them (reduced for dynamic gameplay).
+export const PLAYER_CONVERSATION_COOLDOWN = 30000;
 
 // Invite 80% of invites that come from other agents.
 export const INVITE_ACCEPT_PROBABILITY = 0.8;
 
-// Wait for 1m for invites to be accepted.
-export const INVITE_TIMEOUT = 60000;
+// Wait for 30s for invites to be accepted (reduced for dynamic gameplay).
+export const INVITE_TIMEOUT = 30000;
 
 // Wait for another player to say something before jumping in.
-export const AWKWARD_CONVERSATION_TIMEOUT = 60_000; // more time locally
-// export const AWKWARD_CONVERSATION_TIMEOUT = 20_000;
+export const AWKWARD_CONVERSATION_TIMEOUT = 15_000; // reduced for dynamic gameplay
 
 // Leave a conversation after participating too long.
-export const MAX_CONVERSATION_DURATION = 10 * 60_000; // more time locally
-// export const MAX_CONVERSATION_DURATION = 2 * 60_000;
+export const MAX_CONVERSATION_DURATION = 2 * 60_000; // 2 minutes for dynamic gameplay
 
-// Leave a conversation if it has more than 8 messages;
-export const MAX_CONVERSATION_MESSAGES = 8;
+// Leave a conversation if it has more than 4 messages (reduced for dynamic gameplay);
+export const MAX_CONVERSATION_MESSAGES = 4;
 
 // Wait for 1s after sending an input to the engine. We can remove this
 // once we can await on an input being processed.
@@ -52,8 +50,8 @@ export const INPUT_DELAY = 1000;
 // This is over-fetched by 10x so we can prioritize memories by more than relevance.
 export const NUM_MEMORIES_TO_SEARCH = 3;
 
-// Wait for at least two seconds before sending another message.
-export const MESSAGE_COOLDOWN = 2000;
+// Wait for at least one second before sending another message (reduced for dynamic gameplay).
+export const MESSAGE_COOLDOWN = 1000;
 
 // Don't run a turn of the agent more than once a second.
 export const AGENT_WAKEUP_THRESHOLD = 1000;
@@ -140,7 +138,7 @@ export const PERSONALITY_BONUS = {
   WORKER: { robbery: -0.1, combat: -0.2 },
 };
 
-export const ENGINE_ACTION_DURATION = 30000;
+export const ENGINE_ACTION_DURATION = 60000; // Increased to 60 seconds to prevent premature restarts
 
 // Bound the number of pathfinding searches we do per game step.
 export const MAX_PATHFINDS_PER_STEP = 16;

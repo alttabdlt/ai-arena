@@ -241,6 +241,7 @@ export class Player {
     character: string,
     description: string,
     tokenIdentifier?: string,
+    avatar?: string,
   ) {
     if (tokenIdentifier) {
       let numHumans = 0;
@@ -300,6 +301,7 @@ export class Player {
         character,
         description,
         name,
+        avatar,
       }),
     );
     game.descriptionsModified = true;
@@ -343,9 +345,10 @@ export const playerInputs = {
       character: v.string(),
       description: v.string(),
       tokenIdentifier: v.optional(v.string()),
+      avatar: v.optional(v.string()),
     },
     handler: (game, now, args) => {
-      Player.join(game, now, args.name, args.character, args.description, args.tokenIdentifier);
+      Player.join(game, now, args.name, args.character, args.description, args.tokenIdentifier, args.avatar);
       return null;
     },
   }),

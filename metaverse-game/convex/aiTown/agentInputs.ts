@@ -200,13 +200,14 @@ export const agentInputs = {
         }),
       );
       
-      // Set agent description
+      // Set agent description with AI Arena bot ID
       game.agentDescriptions.set(
         agentId,
         new AgentDescription({
           agentId: agentId,
           identity: args.identity,
           plan: args.plan,
+          aiArenaBotId: args.aiArenaBotId,
         }),
       );
       

@@ -71,10 +71,12 @@ export const metaverseSyncResolvers = {
         const initialZone = getInitialZone(bot.personality);
         
         // Map personality to AI Town agent description
+        // Use the bot's metaverseCharacter if it exists for sprite consistency
         const agentDescription = mapPersonalityToAgent(
           bot.name,
           bot.personality,
           bot.prompt,
+          bot.metaverseCharacter || undefined,
         );
 
         // Find available world instance for the zone

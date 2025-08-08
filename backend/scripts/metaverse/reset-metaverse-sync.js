@@ -51,7 +51,8 @@ async function resetMetaverseSync(force = false) {
     console.log(`   2. Reset all BotSync statuses to PENDING`);
     console.log(`   3. Clear all Bot metaverseAgentId fields`);
     console.log(`   4. Clear all Bot metaverse positions and zones`);
-    console.log(`   5. Force re-deployment of all bots on next sync\n`);
+    console.log(`   5. Clear all ChannelMetadata world IDs`);
+    console.log(`   6. Force re-deployment of all bots on next sync\n`);
 
     if (!force) {
       const answer = await askQuestion('Are you sure you want to proceed? (yes/no): ');
@@ -91,9 +92,18 @@ async function resetMetaverseSync(force = false) {
       }
     });
     console.log(`   ✅ Cleared metaverse data for ${botResult.count} bots`);
+    
+    // Step 3: Clear Channel Metadata world IDs
+    console.log('\n3️⃣  Clearing Channel Metadata world IDs...');
+    const channelResult = await prisma.channelMetadata.updateMany({
+      data: {
+        worldId: null
+      }
+    });
+    console.log(`   ✅ Cleared world IDs from ${channelResult.count} channel(s)`);
 
-    // Step 3: Get statistics for verification
-    console.log('\n3️⃣  Verifying reset...');
+    // Step 4: Get statistics for verification
+    console.log('\n4️⃣  Verifying reset...');
     const verifySync = await prisma.botSync.count({
       where: {
         OR: [
@@ -117,14 +127,18 @@ async function resetMetaverseSync(force = false) {
       console.log(`   ⚠️  Warning: ${verifySync} sync records and ${verifyBots} bots still have metaverse data`);
     }
 
-    // Step 4: Provide next steps
+    // Step 5: Provide next steps
     console.log('\n✨ Reset Complete!\n');
-    console.log('📝 Next Steps:');
-    console.log('   1. Ensure Convex metaverse is running: cd metaverse-game && npm run dev');
-    console.log('   2. If worlds were wiped, wait for auto-creation or run: npx convex run init');
-    console.log('   3. Start the backend: cd backend && npm run dev');
-    console.log('   4. Bots will auto-deploy to new world on next sync cycle (every 30s)');
-    console.log('   5. Monitor logs for successful deployments\n');
+    console.log('⚠️  IMPORTANT: The backend has an in-memory cache that must be cleared!\n');
+    console.log('📝 Required Steps (in order):');
+    console.log('   1. STOP the backend if running (Ctrl+C)');
+    console.log('   2. Ensure Convex metaverse is running: cd metaverse-game && npm run dev');
+    console.log('   3. If worlds were wiped, wait for auto-creation or run: npx convex run init');
+    console.log('   4. START the backend fresh: cd backend && npm run dev');
+    console.log('   5. The cache will be empty and new world IDs will be discovered');
+    console.log('   6. Bots will auto-deploy to new world on next sync cycle (every 30s)');
+    console.log('   7. Monitor logs for successful deployments\n');
+    console.log('💡 Note: The backend caches world IDs for 5 minutes. Restarting clears this cache.');
 
     // Optional: Show sample bots that will be re-deployed
     const sampleBots = await prisma.bot.findMany({

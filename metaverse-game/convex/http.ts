@@ -8,6 +8,11 @@ import {
   handleLootboxSync,
   handleBotDeletion
 } from './aiTown/botHttp';
+import {
+  getAllArenaAgents,
+  deleteOrphanedAgent,
+  removePlayer
+} from './aiTown/orphanCleanupHttp';
 
 const http = httpRouter();
 
@@ -53,6 +58,25 @@ http.route({
   path: '/api/bots/delete',
   method: 'POST',
   handler: handleBotDeletion,
+});
+
+// Orphan cleanup endpoints
+http.route({
+  path: '/getAllArenaAgents',
+  method: 'POST',
+  handler: getAllArenaAgents,
+});
+
+http.route({
+  path: '/deleteOrphanedAgent',
+  method: 'POST',
+  handler: deleteOrphanedAgent,
+});
+
+http.route({
+  path: '/removePlayer',
+  method: 'POST',
+  handler: removePlayer,
 });
 
 export default http;

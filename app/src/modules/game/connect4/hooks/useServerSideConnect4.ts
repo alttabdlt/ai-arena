@@ -51,12 +51,29 @@ export function useServerSideConnect4({ gameId, tournament }: UseServerSideConne
   const hasSignaledReady = useRef(false);
   const hasJoinedGame = useRef(false);
   
-  // Load persisted state from sessionStorage
+  // Load persisted state from sessionStorage with staleness check
   const loadPersistedState = () => {
     if (!gameId) return { decisions: [], gameState: null };
     
     const persistedDecisions = sessionStorage.getItem(`connect4-decisions-${gameId}`);
     const persistedGameState = sessionStorage.getItem(`connect4-gamestate-${gameId}`);
+    const persistedTimestamp = sessionStorage.getItem(`connect4-timestamp-${gameId}`);
+    
+    // Check if persisted state is stale (older than 30 seconds)
+    if (persistedTimestamp) {
+      const timestamp = parseInt(persistedTimestamp);
+      const now = Date.now();
+      const age = now - timestamp;
+      
+      // If state is older than 30 seconds, clear it to force server sync
+      if (age > 30000) {
+        console.log('🔄 Clearing stale Connect4 state, will sync from server');
+        sessionStorage.removeItem(`connect4-decisions-${gameId}`);
+        sessionStorage.removeItem(`connect4-gamestate-${gameId}`);
+        sessionStorage.removeItem(`connect4-timestamp-${gameId}`);
+        return { decisions: [], gameState: null };
+      }
+    }
     
     return {
       decisions: persistedDecisions ? JSON.parse(persistedDecisions) : [],
@@ -94,6 +111,7 @@ export function useServerSideConnect4({ gameId, tournament }: UseServerSideConne
   useEffect(() => {
     if (gameId && decisionHistory.length > 0) {
       sessionStorage.setItem(`connect4-decisions-${gameId}`, JSON.stringify(decisionHistory));
+      sessionStorage.setItem(`connect4-timestamp-${gameId}`, Date.now().toString());
     }
   }, [gameId, decisionHistory]);
   
@@ -101,6 +119,7 @@ export function useServerSideConnect4({ gameId, tournament }: UseServerSideConne
   useEffect(() => {
     if (gameId && gameState) {
       sessionStorage.setItem(`connect4-gamestate-${gameId}`, JSON.stringify(gameState));
+      sessionStorage.setItem(`connect4-timestamp-${gameId}`, Date.now().toString());
     }
   }, [gameId, gameState]);
   
@@ -140,6 +159,7 @@ export function useServerSideConnect4({ gameId, tournament }: UseServerSideConne
       setTimeout(() => {
         sessionStorage.removeItem(`connect4-decisions-${gameId}`);
         sessionStorage.removeItem(`connect4-gamestate-${gameId}`);
+        sessionStorage.removeItem(`connect4-timestamp-${gameId}`);
       }, 5 * 60 * 1000);
     }
   }, [gameId, isGameComplete, winner]);

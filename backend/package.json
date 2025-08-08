@@ -28,6 +28,7 @@
     "@types/node": "^24.0.14",
     "@types/node-cron": "^3.0.11",
     "@types/ws": "^8.18.1",
+    "axios": "^1.11.0",
     "class-validator": "^0.14.2",
     "convex": "^1.17.8",
     "cors": "^2.8.5",

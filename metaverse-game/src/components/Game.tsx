@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import PixiGame from './PixiGame.tsx';
 import GameHeader from './GameHeader.tsx';
 import InventoryModal from './InventoryModal.tsx';
@@ -14,6 +14,7 @@ import { DebugTimeManager } from './DebugTimeManager.tsx';
 import { GameId } from '../../convex/aiTown/ids.ts';
 import { useServerGame } from '../hooks/serverGame.ts';
 import { useUserBots } from '../hooks/useUserBots.ts';
+import { useUserChannels } from '../hooks/useUserChannels.ts';
 
 export const SHOW_DEBUG_UI = !!import.meta.env.VITE_SHOW_DEBUG_UI;
 
@@ -26,22 +27,42 @@ export default function Game() {
   const [selectedBotId, setSelectedBotId] = useState<string>();
   const [selectedBot, setSelectedBot] = useState<any>();
   const [showInventory, setShowInventory] = useState(false);
+  const [selectedChannelName, setSelectedChannelName] = useState<string>('main');
+  const [selectedWorldId, setSelectedWorldId] = useState<string | null>(null);
   const [gameWrapperRef, { width, height }] = useElementSize();
   
   // Fetch user's bots from AI Arena backend
   const { bots: userBots, loading: botsLoading, error: botsError } = useUserBots();
+  
+  // Fetch user's channels from AI Arena backend
+  const { channels, loading: channelsLoading, error: channelsError } = useUserChannels();
+  
+  // Update selected world ID when channel changes
+  useEffect(() => {
+    const selectedChannel = channels.find(c => c.name === selectedChannelName);
+    if (selectedChannel?.worldId) {
+      setSelectedWorldId(selectedChannel.worldId);
+      console.log(`🌍 Switched to world: ${selectedChannel.worldId} (Channel: ${selectedChannelName})`);
+    } else {
+      // Fall back to default world if channel has no world
+      setSelectedWorldId(null);
+    }
+  }, [selectedChannelName, channels]);
 
+  // Get world status - use selected world or fall back to default
   // @ts-ignore - TypeScript type depth issue with generated Convex API
-  const worldStatus = useQuery(api.world.defaultWorldStatus);
-  const worldId = worldStatus?.worldId;
-  const engineId = worldStatus?.engineId;
+  const defaultWorldStatus = useQuery(api.world.defaultWorldStatus);
+  
+  // Use selected world ID if available, otherwise use default
+  const worldId = selectedWorldId || defaultWorldStatus?.worldId;
+  const engineId = defaultWorldStatus?.engineId; // Engine is the same for all worlds
 
-  const game = useServerGame(worldId);
+  const game = useServerGame(worldId as any);
 
   // Send a periodic heartbeat to our world to keep it alive.
   useWorldHeartbeat();
 
-  const worldState = useQuery(api.world.worldState, worldId ? { worldId } : 'skip');
+  const worldState = useQuery(api.world.worldState, worldId ? { worldId: worldId as any } : 'skip');
   const { historicalTime, timeManager } = useHistoricalTime(worldState?.engine);
 
   const scrollViewRef = useRef<HTMLDivElement>(null);
@@ -63,7 +84,7 @@ export default function Game() {
 
   // Query inventory for item count
   const inventory = useQuery(api.aiTown.inventory.getPlayerInventory,
-    worldId && effectivePlayerId ? { worldId, playerId: effectivePlayerId } : 'skip'
+    worldId && effectivePlayerId ? { worldId: worldId as any, playerId: effectivePlayerId } : 'skip'
   );
   const itemCount = inventory?.items?.length || 0;
 
@@ -79,6 +100,18 @@ export default function Game() {
       botsError,
     });
     
+    // If still loading bots from GraphQL, don't show any bots yet
+    if (botsLoading) {
+      console.log('Still loading bots from GraphQL...');
+      return [];
+    }
+    
+    // If there was an error loading bots, don't show any bots
+    if (botsError) {
+      console.error('Error loading bots from GraphQL:', botsError);
+      return [];
+    }
+    
     // Create a map of aiArenaBotId to agent for quick lookup
     const agentsByBotId = new Map();
     allAgents.forEach(agent => {
@@ -87,7 +120,7 @@ export default function Game() {
       }
     });
     
-    // If we have user bots from GraphQL, use those as the primary source
+    // Only show bots that the user owns (from GraphQL)
     if (userBots.length > 0) {
       return userBots.map(bot => {
         // Find the corresponding agent in the metaverse
@@ -108,26 +141,9 @@ export default function Game() {
       });
     }
     
-    // Fallback: Show all agents if no user bots are loaded yet
-    return allAgents
-      .filter(agent => agent.aiArenaBotId) // Only show agents that have AI Arena bot IDs
-      .map((agent, index) => {
-        const playerDesc = game.playerDescriptions?.get(agent.playerId as any);
-        
-        return {
-          id: agent.aiArenaBotId || agent.id,
-          name: playerDesc?.name || `Agent ${index + 1}`,
-          tokenId: 1000 + index,
-          personality: agent.personality,
-          stats: { wins: 0, losses: 0 },
-          isActive: !agent.knockedOutUntil || Date.now() > agent.knockedOutUntil,
-          metaverseAgentId: agent.id,
-          playerId: agent.playerId,
-          aiArenaBotId: agent.aiArenaBotId,
-          inMetaverse: true,
-        };
-      });
-  }, [allAgents, game, userBots, botsLoading, botsError]);
+    // No fallback - only show bots the user owns
+    return [];
+  }, [allAgents, game, userBots, botsLoading, botsError, worldState]);
 
   const handleBotSelect = (bot: any) => {
     setSelectedBot(bot);
@@ -151,6 +167,16 @@ export default function Game() {
         onInventoryClick={() => setShowInventory(true)}
         itemCount={itemCount}
         bots={transformedBots}
+        channels={channels}
+        selectedChannelName={selectedChannelName}
+        onChannelSelect={(channel) => {
+          setSelectedChannelName(channel.name);
+          // Clear selected bot when switching worlds
+          setSelectedBotId(undefined);
+          setSelectedBot(undefined);
+          setSelectedElement(undefined);
+        }}
+        channelsLoading={channelsLoading}
       />
       
       {/* Game Content */}
@@ -165,12 +191,13 @@ export default function Game() {
               <ConvexProvider client={convex}>
                 <PixiGame
                   game={game}
-                  worldId={worldId}
+                  worldId={worldId as any}
                   engineId={engineId}
                   width={width}
                   height={height}
                   historicalTime={historicalTime}
                   setSelectedElement={setSelectedElement}
+                  ownedBots={transformedBots}
                 />
               </ConvexProvider>
             </Stage>
@@ -181,7 +208,7 @@ export default function Game() {
           ref={scrollViewRef}
         >
           <PlayerDetails
-            worldId={worldId}
+            worldId={worldId as any}
             engineId={engineId}
             game={game}
             playerId={selectedElement?.id}
@@ -197,7 +224,7 @@ export default function Game() {
         <InventoryModal
           isOpen={showInventory}
           onClose={() => setShowInventory(false)}
-          worldId={worldId}
+          worldId={worldId as any}
           playerId={effectivePlayerId}
           aiArenaBotId={aiArenaBotId}
         />

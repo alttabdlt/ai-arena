@@ -55,7 +55,8 @@ export const handleBotRegistration = httpAction(async (ctx, request) => {
     identity,
     plan,
     aiArenaBotId,
-    initialZone
+    initialZone,
+    avatar
   } = body;
 
   if (!worldId || !name || !character || !identity || !plan || !aiArenaBotId) {
@@ -75,6 +76,7 @@ export const handleBotRegistration = httpAction(async (ctx, request) => {
 
   try {
     // Create the agent via the input system
+    // @ts-ignore - TypeScript depth issue with Convex generated types
     const result = await ctx.runMutation(internal.aiTown.botHttp.createBotAgent, {
       worldId,
       name,
@@ -83,6 +85,7 @@ export const handleBotRegistration = httpAction(async (ctx, request) => {
       plan,
       aiArenaBotId,
       initialZone: initialZone || 'suburb',
+      avatar
     });
 
     return new Response(JSON.stringify(result), {
@@ -177,9 +180,10 @@ export const createBotAgent = internalMutation({
     plan: v.string(),
     aiArenaBotId: v.string(),
     initialZone: v.string(),
+    avatar: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const { worldId: worldIdStr, name, character, identity, plan, aiArenaBotId, initialZone } = args;
+    const { worldId: worldIdStr, name, character, identity, plan, aiArenaBotId, initialZone, avatar } = args;
     
     // Validate worldId format and convert to Convex ID type
     // Convex IDs are 32 character strings
@@ -255,6 +259,7 @@ export const createBotAgent = internalMutation({
       plan,
       aiArenaBotId,
       initialZone,
+      avatar,
       status: 'pending',
       createdAt: Date.now(),
     });
@@ -396,6 +401,31 @@ export const handleGetBotPosition = httpAction(async (ctx, request) => {
       });
     }
 
+    // First check if the world exists
+    try {
+      // @ts-ignore - TypeScript has issues with deep type instantiation here
+      const worldCheck = await ctx.runQuery(api.world.worldExists, {
+        worldId,
+      });
+      
+      if (!worldCheck) {
+        return new Response(JSON.stringify({ 
+          error: 'World not found' 
+        }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+    } catch (worldError) {
+      // World doesn't exist
+      return new Response(JSON.stringify({ 
+        error: 'World not found' 
+      }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    
     // Get bot position from the world using the query defined below
     // @ts-ignore - TypeScript has issues with deep type instantiation here
     const position = await ctx.runQuery(api.aiTown.botHttp.getBotPosition, {

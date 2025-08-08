@@ -79,7 +79,9 @@ export class WorldDiscoveryService {
           console.log(`✅ Found existing world for channel "${channel}": ${channelMeta.worldId}`);
           return channelMeta.worldId;
         } else {
-          console.log(`⚠️  Channel's world ${channelMeta.worldId} is invalid, creating new one...`);
+          console.log(`⚠️  Channel's world ${channelMeta.worldId} is invalid, clearing cache and creating new one...`);
+          // Clear cache for this channel
+          this.worldCache.delete(channel);
           // Clear invalid world reference
           await prisma.channelMetadata.update({
             where: { id: channelMeta.id },
@@ -264,7 +266,17 @@ export class WorldDiscoveryService {
    */
   async validateWorldId(worldId: string): Promise<boolean> {
     try {
-      // Attempt to query the world
+      // First try to query the world status directly
+      try {
+        const worldStatus = await this.client.query('world:defaultWorldStatus' as any);
+        if (worldStatus?.worldId === worldId) {
+          return true;
+        }
+      } catch (queryError) {
+        // Query might not exist or world might be different
+      }
+      
+      // Try to get world info via HTTP endpoint
       const response = await fetch(`${this.httpUrl}/api/bots/get-position`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -274,12 +286,25 @@ export class WorldDiscoveryService {
         })
       });
 
-      // If we get a 400 (missing agent) that's fine, world exists
-      // If we get 400 with "World not found", world doesn't exist
       if (!response.ok) {
-        const error = await response.json();
-        if (error.error?.includes('World not found')) {
+        const errorText = await response.text();
+        // Check for explicit world not found errors
+        if (errorText.includes('World not found') || 
+            errorText.includes('Invalid world') ||
+            errorText.includes('World does not exist')) {
           return false;
+        }
+        // If it's just "Agent not found", the world might still exist
+        // but we can't be sure, so we'll do one more check
+        if (errorText.includes('Agent not found')) {
+          // Try to query worlds list
+          try {
+            const worlds = await this.getAllWorlds();
+            return worlds.some(w => w.worldId === worldId);
+          } catch {
+            // If we can't get worlds list, assume invalid
+            return false;
+          }
         }
       }
       

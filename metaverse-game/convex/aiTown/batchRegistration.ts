@@ -332,3 +332,25 @@ export const retryFailedRegistrations = mutation({
     return { retried: retriedCount };
   },
 });
+
+// Clear all stuck registrations
+export const clearStuckRegistrations = mutation({
+  args: {},
+  handler: async (ctx) => {
+    // Get all pending and processing registrations
+    const stuckRegistrations = await ctx.db
+      .query('pendingBotRegistrations')
+      .collect();
+    
+    let clearedCount = 0;
+    for (const reg of stuckRegistrations) {
+      if (reg.status === 'pending' || reg.status === 'processing') {
+        await ctx.db.delete(reg._id);
+        clearedCount++;
+        console.log(`Cleared stuck registration for bot: ${reg.aiArenaBotId}`);
+      }
+    }
+    
+    return { cleared: clearedCount };
+  },
+});

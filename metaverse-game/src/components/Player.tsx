@@ -31,7 +31,8 @@ export const Player = ({
 }) => {
   const playerCharacter = game.playerDescriptions.get(player.id)?.character;
   if (!playerCharacter) {
-    throw new Error(`Player ${player.id} has no character`);
+    console.warn(`Player ${player.id} has no character description - skipping render`);
+    return null;
   }
   const character = characters.find((c) => c.name === playerCharacter);
 

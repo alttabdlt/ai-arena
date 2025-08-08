@@ -23,6 +23,7 @@ export const PixiGame = (props: {
   width: number;
   height: number;
   setSelectedElement: SelectElement;
+  ownedBots?: any[];
 }) => {
   // PIXI setup.
   const pixiApp = useApp();
@@ -80,7 +81,22 @@ export const PixiGame = (props: {
     await toastOnError(moveTo({ playerId: humanPlayerId, destination: roundedTiles }));
   };
   const { width, height, tileDim } = props.game.worldMap;
-  const players = [...props.game.world.players.values()];
+  
+  // Get all players, but filter to only show owned bots if provided
+  const allPlayers = [...props.game.world.players.values()];
+  
+  // If ownedBots is provided (even if empty), use it to filter
+  // This ensures we don't show bots the user doesn't own
+  const players = props.ownedBots !== undefined
+    ? allPlayers.filter(player => {
+        // Check if this player corresponds to an owned bot
+        const agent = [...props.game.world.agents.values()].find(a => a.playerId === player.id);
+        if (!agent) return false;
+        
+        // Check if this agent's aiArenaBotId matches any of our owned bots
+        return props.ownedBots.some(bot => bot.id === agent.aiArenaBotId);
+      })
+    : []; // If ownedBots is undefined, show no players (still loading)
 
   // Zoom on the user’s avatar when it is created
   useEffect(() => {

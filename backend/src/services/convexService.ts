@@ -41,8 +41,8 @@ export class ConvexService {
   } | null> {
     try {
       console.log('ConvexService.findAvailableInstance called with:', { zoneType, playerId });
-      // Use Convex client to query
-      const result = await this.client.query('aiTown/instanceManager:findAvailableInstance' as any, {
+      // Use Convex mutation instead of query to auto-create if needed
+      const result = await this.client.mutation('aiTown/instanceManager:findAvailableInstance' as any, {
         zoneType,
         playerId,
       });
@@ -65,6 +65,7 @@ export class ConvexService {
     plan: string;
     aiArenaBotId: string;
     initialZone: string;
+    avatar?: string;
   }): Promise<{ agentId: string; playerId: string }> {
     try {
       // Ensure the world is active before creating the bot
@@ -88,7 +89,16 @@ export class ConvexService {
       });
 
       if (!response.ok) {
-        throw new Error(`Failed to create bot agent: ${response.statusText}`);
+        const errorText = await response.text();
+        
+        // Check for world not found error and clear cache
+        if (errorText.includes('World not found') || errorText.includes('Invalid world')) {
+          console.log(`🔄 World ${args.worldId} not found during bot creation, clearing cache...`);
+          const { worldDiscoveryService } = await import('./worldDiscoveryService');
+          worldDiscoveryService.clearCache('main');
+        }
+        
+        throw new Error(`Failed to create bot agent: ${errorText || response.statusText}`);
       }
 
       const result = await response.json() as any;
@@ -276,6 +286,16 @@ export class ConvexService {
       });
 
       if (!response.ok) {
+        const errorText = await response.text();
+        
+        // Check for world not found error and clear cache
+        if (errorText.includes('World not found') || errorText.includes('Invalid world')) {
+          console.log(`🔄 World ${worldId} not found, clearing cache...`);
+          // Import worldDiscoveryService to clear cache
+          const { worldDiscoveryService } = await import('./worldDiscoveryService');
+          worldDiscoveryService.clearCache('main');
+        }
+        
         if (response.status === 404) {
           return null; // Agent not found
         }
@@ -303,6 +323,93 @@ export class ConvexService {
       return result;
     } catch (error) {
       console.error('Error getting instance stats:', error);
+      throw error;
+    }
+  }
+
+  // Sync bot lootboxes with metaverse
+  async syncBotLootboxes(args: {
+    worldId: string;
+    aiArenaBotId: string;
+    lootboxes: Array<{
+      id: string;
+      matchId: string;
+      rarity: string;
+      itemName: string;
+      itemType: string;
+      value: number;
+      opened: boolean;
+      openedAt: Date | null;
+    }>;
+  }): Promise<void> {
+    try {
+      const response = await fetch(`${this.httpUrl}/api/lootbox/sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          aiArenaBotId: args.aiArenaBotId,
+          lootboxes: args.lootboxes
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({})) as any;
+        throw new Error(errorData.error || `Failed to sync lootboxes: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      console.log(`✅ Lootboxes synced to metaverse:`, result);
+    } catch (error) {
+      console.error('Error syncing lootboxes to metaverse:', error);
+      throw error;
+    }
+  }
+
+  // Get all Arena-managed agents from the metaverse
+  async getAllArenaAgents(): Promise<{
+    agents: Array<{
+      agentId: string;
+      playerId: string;
+      name: string;
+      identity: string;
+      aiArenaBotId: string | null;
+      worldId: string;
+    }>;
+    worldId: string | null;
+    totalAgents: number;
+    arenaAgents: number;
+  }> {
+    try {
+      const result = await this.client.query('aiTown/orphanCleanup:getAllArenaAgents' as any, {});
+      return result;
+    } catch (error) {
+      console.error('Error getting all Arena agents:', error);
+      return {
+        agents: [],
+        worldId: null,
+        totalAgents: 0,
+        arenaAgents: 0,
+      };
+    }
+  }
+
+  // Delete orphaned agents from the metaverse
+  async deleteOrphanedAgents(agents: Array<{
+    agentId: string;
+    playerId: string;
+    aiArenaBotId?: string;
+  }>, worldId: string, reason?: string): Promise<any> {
+    try {
+      const result = await this.client.mutation('aiTown/orphanCleanup:batchDeleteOrphanedAgents' as any, {
+        worldId,
+        agents,
+        reason,
+      });
+      return result;
+    } catch (error) {
+      console.error('Error deleting orphaned agents:', error);
       throw error;
     }
   }

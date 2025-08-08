@@ -77,6 +77,11 @@ export class BotSyncService {
     // Check for position updates from metaverse
     await this.checkMetaverseUpdates();
 
+    // Clean up orphaned metaverse bots (every 3rd run)
+    if (Math.random() < 0.33) {
+      await this.cleanupOrphanedMetaverseBots();
+    }
+
     // Clean up failed syncs periodically (every 5th run)
     if (Math.random() < 0.2) {
       await this.cleanupFailedSyncs();
@@ -88,11 +93,18 @@ export class BotSyncService {
     console.log(`🔄 Syncing channel: ${channelName}`);
 
     // Discover world for this channel
-    const worldId = await worldDiscoveryService.discoverWorld(channelName);
+    let worldId = await worldDiscoveryService.discoverWorld(channelName);
     
     if (!worldId) {
-      console.error(`❌ Could not discover world for channel "${channelName}"`);
-      return;
+      // Clear cache and retry once
+      console.log(`⚠️ No world found for channel "${channelName}", clearing cache and retrying...`);
+      worldDiscoveryService.clearCache(channelName);
+      worldId = await worldDiscoveryService.discoverWorld(channelName);
+      
+      if (!worldId) {
+        console.error(`❌ Could not discover world for channel "${channelName}" after cache clear`);
+        return;
+      }
     }
 
     // Check for undeployed bots in this channel
@@ -112,7 +124,12 @@ export class BotSyncService {
       },
       include: {
         creator: true,
-        botSync: true
+        botSync: true,
+        lootboxRewards: {
+          include: {
+            match: true
+          }
+        }
       }
     });
 
@@ -336,6 +353,8 @@ export class BotSyncService {
             });
           } else if (error.message && error.message.includes('World not found')) {
             console.error(`World not found for bot ${sync.bot.name}: ${sync.convexWorldId}`);
+            // Clear cache for this channel
+            worldDiscoveryService.clearCache(sync.bot.channel || 'main');
             // World was deleted/wiped, clear the reference and mark for re-deployment
             await prisma.botSync.update({
               where: { id: sync.id },
@@ -419,11 +438,18 @@ export class BotSyncService {
     let skipped = 0;
 
     // Get world ID for deployment
-    const worldId = await worldDiscoveryService.discoverWorld(channel);
+    let worldId = await worldDiscoveryService.discoverWorld(channel);
     
     if (!worldId) {
-      console.error(`❌ Cannot deploy bots: No world available for channel "${channel}"`);
-      return;
+      // Clear cache and retry once
+      console.log(`⚠️ No world found for channel "${channel}", clearing cache and retrying...`);
+      worldDiscoveryService.clearCache(channel);
+      worldId = await worldDiscoveryService.discoverWorld(channel);
+      
+      if (!worldId) {
+        console.error(`❌ Cannot deploy bots: No world available for channel "${channel}" after cache clear`);
+        return;
+      }
     }
 
     // Check and auto-resume world if it's inactive
@@ -501,7 +527,8 @@ export class BotSyncService {
           identity: agentDescription.identity,
           plan: agentDescription.plan,
           aiArenaBotId: bot.id,
-          initialZone: initialZone
+          initialZone: initialZone,
+          avatar: bot.avatar // Pass the Arena avatar
         });
 
         if (result && result.agentId) {
@@ -531,6 +558,33 @@ export class BotSyncService {
 
           deployed++;
           console.log(`✅ Auto-deployed bot: ${bot.name} (${bot.id})`);
+          
+          // Sync lootbox rewards if any
+          if (bot.lootboxRewards && bot.lootboxRewards.length > 0) {
+            try {
+              const lootboxData = bot.lootboxRewards.map((reward: any) => ({
+                id: reward.id,
+                matchId: reward.matchId,
+                rarity: reward.rarity,
+                itemName: reward.itemName,
+                itemType: reward.itemType,
+                value: reward.value,
+                opened: reward.opened,
+                openedAt: reward.openedAt
+              }));
+              
+              await convexService.syncBotLootboxes({
+                worldId: worldId,
+                aiArenaBotId: bot.id,
+                lootboxes: lootboxData
+              });
+              
+              console.log(`📦 Synced ${bot.lootboxRewards.length} lootbox rewards for bot ${bot.name}`);
+            } catch (syncError) {
+              console.error(`Failed to sync lootboxes for bot ${bot.name}:`, syncError);
+              // Don't fail the deployment, just log the error
+            }
+          }
           
           // Publish deployment event
           await metaverseEventsService.publishBotDeployed(bot.id, result.agentId, worldId);
@@ -644,6 +698,125 @@ export class BotSyncService {
       }
     } catch (error) {
       console.error('Error cleaning up failed syncs:', error);
+    }
+  }
+
+  // Clean up orphaned metaverse bots that no longer exist in Arena
+  private async cleanupOrphanedMetaverseBots() {
+    try {
+      console.log('🧹 Checking for orphaned metaverse bots...');
+      
+      // Get all Arena bot IDs
+      const arenaBots = await prisma.bot.findMany({
+        select: { id: true }
+      });
+      const arenaBotIds = new Set(arenaBots.map(bot => bot.id));
+      
+      // Get all metaverse agents with aiArenaBotId
+      const metaverseData = await convexService.getAllArenaAgents();
+      
+      if (!metaverseData || !metaverseData.agents || metaverseData.agents.length === 0) {
+        console.log('No Arena-managed agents found in metaverse');
+        return;
+      }
+      
+      console.log(`Found ${metaverseData.arenaAgents} Arena-managed agents out of ${metaverseData.totalAgents} total agents`);
+      
+      // Find orphans (agents in metaverse but not in Arena)
+      const orphanedAgents = metaverseData.agents.filter(agent => {
+        if (!agent.aiArenaBotId) return false;
+        return !arenaBotIds.has(agent.aiArenaBotId);
+      });
+      
+      if (orphanedAgents.length === 0) {
+        console.log('✅ No orphaned agents found');
+        return;
+      }
+      
+      console.log(`⚠️ Found ${orphanedAgents.length} orphaned agents to clean up:`);
+      orphanedAgents.forEach(agent => {
+        console.log(`  - Agent ${agent.name} (${agent.agentId}) for deleted bot ${agent.aiArenaBotId}`);
+      });
+      
+      // Delete orphaned agents from metaverse
+      if (metaverseData.worldId) {
+        const deleteResult = await convexService.deleteOrphanedAgents(
+          orphanedAgents.map(agent => ({
+            agentId: agent.agentId,
+            playerId: agent.playerId,
+            aiArenaBotId: agent.aiArenaBotId || undefined
+          })),
+          metaverseData.worldId,
+          'Bot no longer exists in Arena database'
+        );
+        
+        if (deleteResult && deleteResult.successful > 0) {
+          console.log(`✅ Cleaned up ${deleteResult.successful} orphaned agents`);
+          if (deleteResult.failed > 0) {
+            console.warn(`⚠️ Failed to clean ${deleteResult.failed} agents`);
+          }
+        }
+      }
+      
+      // Also clean up any BotSync records for deleted bots
+      const orphanedBotIds = orphanedAgents
+        .filter(agent => agent.aiArenaBotId)
+        .map(agent => agent.aiArenaBotId as string);
+      
+      if (orphanedBotIds.length > 0) {
+        const deletedSyncs = await prisma.botSync.deleteMany({
+          where: {
+            botId: { in: orphanedBotIds }
+          }
+        });
+        
+        if (deletedSyncs.count > 0) {
+          console.log(`✅ Cleaned up ${deletedSyncs.count} orphaned sync records`);
+        }
+      }
+      
+    } catch (error) {
+      console.error('Error cleaning up orphaned metaverse bots:', error);
+    }
+  }
+
+  // Clean up a specific bot from the metaverse when deleted from Arena
+  async cleanupDeletedBot(botId: string) {
+    try {
+      console.log(`🗑️ Cleaning up metaverse data for deleted bot ${botId}`);
+      
+      // Get bot sync record
+      const botSync = await prisma.botSync.findUnique({
+        where: { botId }
+      });
+      
+      if (botSync && botSync.convexWorldId && botSync.convexAgentId) {
+        try {
+          // Delete the agent from metaverse
+          await convexService.deleteBotAgent({
+            worldId: botSync.convexWorldId,
+            agentId: botSync.convexAgentId,
+            aiArenaBotId: botId
+          });
+          
+          console.log(`✅ Deleted agent ${botSync.convexAgentId} from metaverse for bot ${botId}`);
+        } catch (error: any) {
+          // If agent not found, that's okay - it's already gone
+          if (error.message && error.message.includes('not found')) {
+            console.log(`Agent already gone from metaverse for bot ${botId}`);
+          } else {
+            console.error(`Failed to delete agent from metaverse for bot ${botId}:`, error);
+          }
+        }
+      }
+      
+      // Delete the sync record
+      await prisma.botSync.deleteMany({
+        where: { botId }
+      });
+      
+    } catch (error) {
+      console.error('Error cleaning up deleted bot from metaverse:', error);
     }
   }
 

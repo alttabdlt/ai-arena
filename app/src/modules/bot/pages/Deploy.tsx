@@ -131,7 +131,10 @@ export default function Deploy() {
         // Once avatar is generated, deploy the bot
         setDeploymentState('deploying-bot');
         
-        // Call deployBot mutation with generated avatar
+        // Include sprite configuration ID for metaverse mapping
+        const spriteId = sprite.config.id; // e.g., "criminal_3_1"
+        
+        // Call deployBot mutation with generated avatar and sprite ID
         deployBot({
           variables: {
             input: {
@@ -141,6 +144,7 @@ export default function Deploy() {
               personality: formData.personality.toUpperCase(),
               modelType: formatModelForBackend(formData.modelType),
               txHash: txHash,
+              spriteId: spriteId, // Pass sprite ID for metaverse mapping
             },
           },
         }).then(async (result) => {

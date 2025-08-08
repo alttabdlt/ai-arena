@@ -84,6 +84,23 @@ export function useServerSidePoker({ gameId, tournament }: UseServerSidePokerOpt
 
   const handHistoryRef = useRef<Map<number, Map<string, AIDecision>>>(new Map());
   const currentHandNumber = useRef(1);
+  
+  // Clear any stale sessionStorage on mount to force server sync
+  useEffect(() => {
+    if (gameId) {
+      const timestamp = sessionStorage.getItem(`poker-timestamp-${gameId}`);
+      if (timestamp) {
+        const age = Date.now() - parseInt(timestamp);
+        // Clear if older than 30 seconds
+        if (age > 30000) {
+          console.log('🔄 Clearing stale Poker state, will sync from server');
+          sessionStorage.removeItem(`poker-gamestate-${gameId}`);
+          sessionStorage.removeItem(`poker-handhistory-${gameId}`);
+          sessionStorage.removeItem(`poker-timestamp-${gameId}`);
+        }
+      }
+    }
+  }, [gameId]);
 
   // Buffer processing function for smooth experience
   const processEventBuffer = useCallback(() => {
@@ -180,6 +197,7 @@ export function useServerSidePoker({ gameId, tournament }: UseServerSidePokerOpt
       setTimeout(() => {
         sessionStorage.removeItem(`poker-gamestate-${gameId}`);
         sessionStorage.removeItem(`poker-handhistory-${gameId}`);
+        sessionStorage.removeItem(`poker-timestamp-${gameId}`);
       }, 5 * 60 * 1000);
     }
   }, [gameId, currentGameState]);

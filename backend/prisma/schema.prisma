@@ -119,7 +119,7 @@ model DeploymentTransaction {
 model QueueEntry {
   id              String           @id @default(cuid())
   botId           String
-  bot             Bot              @relation(fields: [botId], references: [id])
+  bot             Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
   queueType       QueueType        @default(STANDARD)
   priority        Int              @default(0) // higher = faster matching
   status          QueueStatus      @default(WAITING)

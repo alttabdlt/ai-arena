@@ -1,4 +1,5 @@
 import { ConvexError, v } from 'convex/values';
+import { Id } from './_generated/dataModel';
 import { internalMutation, mutation, query } from './_generated/server';
 import { characters } from '../data/characters';
 import { insertInput } from './aiTown/insertInput';
@@ -207,6 +208,27 @@ export const worldState = query({
       throw new Error(`Invalid engine ID: ${worldStatus.engineId}`);
     }
     return { world, engine };
+  },
+});
+
+export const worldExists = query({
+  args: {
+    worldId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    // Validate worldId format
+    if (!args.worldId || !args.worldId.match(/^[a-z0-9]{32}$/)) {
+      return false;
+    }
+    
+    try {
+      const worldId = args.worldId as Id<'worlds'>;
+      const world = await ctx.db.get(worldId);
+      return world !== null;
+    } catch (error) {
+      // World doesn't exist or invalid ID
+      return false;
+    }
   },
 });
 

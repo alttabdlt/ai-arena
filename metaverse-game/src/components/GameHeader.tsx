@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowLeft, Coins, TrendingUp, Briefcase } from 'lucide-react';
 import BotSelector from './BotSelector';
+import WorldSelector from './WorldSelector';
 
 interface GameHeaderProps {
   tokens?: number;
@@ -10,9 +11,24 @@ interface GameHeaderProps {
   onInventoryClick?: () => void;
   itemCount?: number;
   bots?: any[];
+  channels?: any[];
+  selectedChannelName?: string;
+  onChannelSelect?: (channel: any) => void;
+  channelsLoading?: boolean;
 }
 
-export default function GameHeader({ tokens = 1234567, selectedBotId, onBotSelect, onInventoryClick, itemCount = 0, bots = [] }: GameHeaderProps) {
+export default function GameHeader({ 
+  tokens = 1234567, 
+  selectedBotId, 
+  onBotSelect, 
+  onInventoryClick, 
+  itemCount = 0, 
+  bots = [],
+  channels = [],
+  selectedChannelName = 'main',
+  onChannelSelect,
+  channelsLoading = false
+}: GameHeaderProps) {
   const [displayTokens, setDisplayTokens] = useState(tokens);
   const [prevTokens, setPrevTokens] = useState(tokens);
 
@@ -185,6 +201,23 @@ export default function GameHeader({ tokens = 1234567, selectedBotId, onBotSelec
                 </span>
               )}
             </motion.button>
+          </motion.div>
+
+          {/* World Selector */}
+          <motion.div 
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.38 }}
+          >
+            <div className="flex flex-col items-end gap-1">
+              <span className="text-xs text-gray-500 uppercase tracking-wider">World</span>
+              <WorldSelector 
+                channels={channels}
+                selectedChannelName={selectedChannelName}
+                onChannelSelect={onChannelSelect || (() => {})}
+                loading={channelsLoading}
+              />
+            </div>
           </motion.div>
 
           {/* Bot Selector */}

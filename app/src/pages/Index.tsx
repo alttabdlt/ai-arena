@@ -525,9 +525,17 @@ const Index = () => {
       setShowPortalTransition(true);
       setTimeout(() => {
         // Navigate to the metaverse game running on port 5175
-        // Pass the user's wallet address as a URL parameter
-        const metaverseUrl = user?.address 
-          ? `http://localhost:5175?address=${encodeURIComponent(user.address)}`
+        // Pass the user's wallet address and auth token as URL parameters
+        const token = localStorage.getItem('ai-arena-access-token');
+        const params = new URLSearchParams();
+        if (user?.address) {
+          params.append('address', user.address);
+        }
+        if (token) {
+          params.append('token', token);
+        }
+        const metaverseUrl = params.toString() 
+          ? `http://localhost:5175?${params.toString()}`
           : 'http://localhost:5175';
         window.open(metaverseUrl, '_blank');
         // Reset globe view after navigation

@@ -32,6 +32,23 @@ export function useServerSideReverseHangman({ tournament }: UseServerSideReverse
 
   // Extract player IDs from tournament
   const playerIds = tournament?.players?.map(p => p.id) || [];
+  
+  // Clear any stale sessionStorage on mount to ensure fresh state
+  useEffect(() => {
+    const gameId = tournament?.id;
+    if (gameId) {
+      const timestamp = sessionStorage.getItem(`reverse-hangman-timestamp-${gameId}`);
+      if (timestamp) {
+        const age = Date.now() - parseInt(timestamp);
+        // Clear if older than 30 seconds
+        if (age > 30000) {
+          console.log('🔄 Clearing stale Reverse Hangman state, will sync from server');
+          sessionStorage.removeItem(`reverse-hangman-state-${gameId}`);
+          sessionStorage.removeItem(`reverse-hangman-timestamp-${gameId}`);
+        }
+      }
+    }
+  }, [tournament?.id]);
 
   const handleStateUpdate = useCallback((state: any) => {
     console.log('Reverse Hangman state update:', {

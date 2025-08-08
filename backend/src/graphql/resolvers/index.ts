@@ -16,9 +16,9 @@ import { channelResolvers } from './channel';
 import { energyResolvers } from './energy';
 import { getQueueService } from '../../services';
 import { getGameManagerService } from '../../services/gameManagerService';
-import { convexService } from '../../services/convexService';
 import { metaverseEventsService } from '../../services/metaverseEventsService';
 import { energyService } from '../../services/energyService';
+import { botSyncService } from '../../services/botSyncService';
 
 interface PubSubAsyncIterator<T> extends AsyncIterator<T> {
   return(): Promise<IteratorResult<T>>;
@@ -410,6 +410,36 @@ export const resolvers = {
           throw new Error('Token ID collision, please try again');
         }
         
+        // Import sprite mapping utility
+        const { getMetaverseCharacter } = require('../../utils/spriteMapping');
+        
+        // Determine metaverse character from sprite ID
+        const metaverseCharacter = input.spriteId 
+          ? getMetaverseCharacter(input.spriteId, input.personality || 'WORKER')
+          : getMetaverseCharacter(null, input.personality || 'WORKER', input.name);
+        
+        // Validate channel if provided
+        let targetChannel = 'main'; // Default channel
+        if (input.channel) {
+          const channelMeta = await prisma.channelMetadata.findFirst({
+            where: { channel: input.channel }
+          });
+          
+          if (!channelMeta) {
+            throw new Error(`Channel ${input.channel} does not exist`);
+          }
+          
+          if (channelMeta.status !== 'ACTIVE') {
+            throw new Error(`Channel ${input.channel} is not active`);
+          }
+          
+          if (channelMeta.currentBots >= channelMeta.maxBots) {
+            throw new Error(`Channel ${input.channel} is full`);
+          }
+          
+          targetChannel = input.channel;
+        }
+        
         // Create the bot
         const newBot = await prisma.bot.create({
           data: {
@@ -419,6 +449,8 @@ export const resolvers = {
             prompt: promptValidation.sanitized,
             modelType: input.modelType,
             personality: input.personality || 'WORKER', // Default to WORKER if not provided
+            metaverseCharacter, // Set the metaverse character for sprite consistency
+            channel: targetChannel, // Set the channel for multi-world support
             creatorId: ctx.user!.id,
             isActive: true,
             stats: {
@@ -447,6 +479,14 @@ export const resolvers = {
         
         // Initialize bot energy using the transaction
         await energyService.initializeBotEnergy(newBot.id, prisma);
+        
+        // Update channel bot count if not main (main is updated by sync service)
+        if (targetChannel !== 'main') {
+          await ctx.prisma.channelMetadata.updateMany({
+            where: { channel: targetChannel },
+            data: { currentBots: { increment: 1 } }
+          });
+        }
         
         // Note: Removed automatic queuing - bots must be manually queued by users
         // This allows users to manage their bots before entering tournaments
@@ -493,9 +533,7 @@ export const resolvers = {
         where: { id: botId },
         include: {
           botSync: true,
-          queueEntries: {
-            where: { status: 'WAITING' },
-          },
+          queueEntries: true, // Get ALL queue entries, not just WAITING
         },
       });
 
@@ -507,23 +545,31 @@ export const resolvers = {
         throw new Error('Not authorized to delete this bot');
       }
 
-      // Check if bot is in active queue
-      if (bot.queueEntries.length > 0) {
+      // Check if bot is in active queue (WAITING or MATCHED status)
+      const activeQueueEntries = bot.queueEntries.filter(
+        entry => entry.status === 'WAITING' || entry.status === 'MATCHED'
+      );
+      
+      if (activeQueueEntries.length > 0) {
         throw new Error('Cannot delete bot while in queue. Please leave queue first.');
+      }
+
+      // Clean up any expired or cancelled queue entries before deletion
+      if (bot.queueEntries.length > 0) {
+        console.log(`Cleaning up ${bot.queueEntries.length} queue entries for bot ${botId}`);
+        await ctx.prisma.queueEntry.deleteMany({
+          where: { botId },
+        });
       }
 
       let metaverseDeleted = false;
 
       try {
-        // If bot is synced to metaverse, delete from there first
-        if (bot.botSync?.syncStatus === 'SYNCED' && bot.metaverseAgentId) {
+        // Clean up from metaverse using the sync service
+        if (bot.metaverseAgentId || bot.botSync) {
           try {
-            // Call Convex to delete the agent
-            await convexService.deleteBotAgent({
-              worldId: bot.botSync.convexWorldId!,
-              agentId: bot.metaverseAgentId,
-              aiArenaBotId: botId,
-            });
+            // Use botSyncService to handle metaverse cleanup
+            await botSyncService.cleanupDeletedBot(botId);
             metaverseDeleted = true;
           } catch (metaverseError: any) {
             console.error('Failed to delete bot from metaverse:', metaverseError);
@@ -536,6 +582,14 @@ export const resolvers = {
         await ctx.prisma.bot.delete({
           where: { id: botId },
         });
+        
+        // Update channel bot count if not main (main is updated by sync service)
+        if (bot.channel && bot.channel !== 'main') {
+          await ctx.prisma.channelMetadata.updateMany({
+            where: { channel: bot.channel },
+            data: { currentBots: { decrement: 1 } }
+          });
+        }
 
         // Publish deletion event
         try {

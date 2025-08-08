@@ -1275,6 +1275,7 @@ class GameManagerService {
     const gameData = {
       ...game,
       spectators: Array.from(game.spectators),
+      aiThinking: Array.from(game.aiThinking), // Serialize the Set
       loopInterval: undefined, // Don't serialize the interval
       frontendReadyTimeout: undefined, // Don't serialize the timeout
     };
@@ -1694,15 +1695,91 @@ class GameManagerService {
     return this.pubsub;
   }
   
+  // Load game from Redis if not in memory
+  private async loadGameFromRedis(gameId: string): Promise<GameInstance | null> {
+    try {
+      const redisKey = `game:${gameId}`;
+      const gameData = await this.redis.get(redisKey);
+      
+      if (!gameData) {
+        console.log(`No game data found in Redis for ${gameId}`);
+        return null;
+      }
+      
+      const parsedData = JSON.parse(gameData);
+      console.log(`Restored game ${gameId} from Redis with status: ${parsedData.status}`);
+      
+      // Reconstruct the game instance
+      const game: GameInstance = {
+        id: parsedData.id,
+        type: parsedData.type,
+        state: parsedData.state,
+        players: parsedData.players,
+        spectators: new Set(parsedData.spectators || []),
+        status: parsedData.status,
+        lastActivity: new Date(parsedData.lastActivity),
+        frontendReady: true, // Set to true since we're rejoining
+        aiThinking: new Set(parsedData.aiThinking || []),
+        processingTurn: false,
+      };
+      
+      // Add to memory cache
+      this.games.set(gameId, game);
+      
+      // Restart game loop if game is active
+      if (game.status === 'active') {
+        console.log(`Restarting game loop for active game ${gameId}`);
+        this.startGameLoop(game);
+      }
+      
+      return game;
+    } catch (error) {
+      console.error(`Error loading game ${gameId} from Redis:`, error);
+      return null;
+    }
+  }
+  
   // Viewer management methods
   async addViewer(gameId: string, userId: string): Promise<number> {
-    const game = this.games.get(gameId);
+    let game = this.games.get(gameId);
+    
+    // If game not in memory, try to load from Redis
     if (!game) {
-      throw new Error(`Game ${gameId} not found`);
+      console.log(`Game ${gameId} not in memory, attempting to load from Redis...`);
+      const loadedGame = await this.loadGameFromRedis(gameId);
+      
+      if (!loadedGame) {
+        throw new Error(`Game ${gameId} not found in memory or Redis`);
+      }
+      game = loadedGame;
     }
     
     game.spectators.add(userId);
     game.lastActivity = new Date();
+    
+    // Send current game state immediately to the joining viewer
+    const stateData = game.type === 'poker' ? {
+      state: {
+        ...game.state,
+        gameSpecific: {
+          bettingRound: game.state.phase,
+          communityCards: game.state.communityCards,
+          pot: game.state.pot,
+          currentBet: game.state.currentBet,
+          handComplete: game.state.phase === 'complete' || game.state.phase === 'showdown',
+          winners: game.state.winners || [],
+          handNumber: game.state.handNumber || 1
+        }
+      }
+    } : { state: game.state };
+    
+    // Send immediate state update to sync the joining viewer
+    this.publishUpdate({
+      gameId,
+      type: 'state',
+      data: stateData,
+      timestamp: new Date(),
+    });
     
     // Notify other viewers
     this.publishUpdate({
@@ -1720,7 +1797,7 @@ class GameManagerService {
       timestamp: formatTimestamp(),
       level: 'info',
       source: 'backend',
-      message: `User ${userId} joined game ${gameId}. Active viewers: ${game.spectators.size}`
+      message: `User ${userId} joined game ${gameId}. Active viewers: ${game.spectators.size}. State synced.`
     });
     
     await this.saveGameState(gameId, game);

@@ -4,6 +4,7 @@ import { api } from '../../convex/_generated/api';
 import { Id } from '../../convex/_generated/dataModel';
 
 export async function waitForInput(convex: ConvexReactClient, inputId: Id<'inputs'>) {
+  // @ts-ignore - TypeScript depth issue with Convex generated types
   const watch = convex.watchQuery(api.aiTown.main.inputStatus, { inputId });
   let result = watch.localQueryResult();
   // The result's undefined if the query's loading and null if the input hasn't

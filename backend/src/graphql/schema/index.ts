@@ -351,6 +351,8 @@ const baseTypeDefs = gql`
     personality: BotPersonality!
     modelType: AIModelType!
     txHash: String!
+    spriteId: String
+    channel: String
   }
 
   # Auth types

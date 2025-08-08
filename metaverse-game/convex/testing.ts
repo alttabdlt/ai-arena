@@ -262,7 +262,7 @@ export const testConvo = internalAction({
       ctx,
       'm1707m46wmefpejw1k50rqz7856qw3ew' as Id<'worlds'>,
       'c:115' as GameId<'conversations'>,
-      'p:0' as GameId<'players'>,
+      'p:1' as GameId<'players'>,
       'p:6' as GameId<'players'>,
     )) as any;
     return await a.readAll();
@@ -292,7 +292,7 @@ export const clearAllAgents = mutation({
       agents: [],
       players: [],
       conversations: [],
-      nextId: 0,
+      nextId: 1,
     });
     
     // Also clear any archived data

@@ -327,7 +327,8 @@ export const queryPromptData = internalQuery({
       .withIndex('worldId', (q) => q.eq('worldId', args.worldId).eq('agentId', agent.id))
       .first();
     if (!agentDescription) {
-      throw new Error(`Agent description for ${agent.id} not found`);
+      console.warn(`Agent description for ${agent.id} not found, using fallback`);
+      // Don't throw - continue with fallback description
     }
     const otherAgent = world.agents.find((a) => a.playerId === args.otherPlayerId);
     let otherAgentDescription;
@@ -337,7 +338,13 @@ export const queryPromptData = internalQuery({
         .withIndex('worldId', (q) => q.eq('worldId', args.worldId).eq('agentId', otherAgent.id))
         .first();
       if (!otherAgentDescription) {
-        throw new Error(`Agent description for ${otherAgent.id} not found`);
+        console.warn(`Agent description for ${otherAgent.id} not found, using fallback`);
+        // Use a fallback description for old/broken agents
+        otherAgentDescription = {
+          agentId: otherAgent.id,
+          identity: `Agent ${otherAgent.id}`,
+          plan: 'Just trying to have a conversation',
+        };
       }
     }
     const lastTogether = await ctx.db
@@ -368,7 +375,11 @@ export const queryPromptData = internalQuery({
       player: { name: playerDescription.name, ...player },
       otherPlayer: { name: otherPlayerDescription.name, ...otherPlayer },
       conversation,
-      agent: { identity: agentDescription.identity, plan: agentDescription.plan, ...agent },
+      agent: { 
+        identity: agentDescription?.identity || `Agent ${agent.id}`, 
+        plan: agentDescription?.plan || 'Just trying to have a conversation', 
+        ...agent 
+      },
       otherAgent: otherAgent && {
         identity: otherAgentDescription!.identity,
         plan: otherAgentDescription!.plan,

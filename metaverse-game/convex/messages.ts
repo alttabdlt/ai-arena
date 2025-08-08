@@ -19,10 +19,32 @@ export const listMessages = query({
         .query('playerDescriptions')
         .withIndex('worldId', (q) => q.eq('worldId', args.worldId).eq('playerId', message.author))
         .first();
-      if (!playerDescription) {
-        throw new Error(`Invalid author ID: ${message.author}`);
+      
+      let authorName: string;
+      if (playerDescription) {
+        authorName = playerDescription.name;
+      } else {
+        // Check if it's an archived player
+        const archivedPlayer = await ctx.db
+          .query('archivedPlayers')
+          .withIndex('worldId', (q) => q.eq('worldId', args.worldId).eq('id', message.author))
+          .first();
+        
+        if (archivedPlayer) {
+          // Try to get archived player's description
+          const archivedDescription = await ctx.db
+            .query('playerDescriptions')
+            .withIndex('worldId', (q) => q.eq('worldId', args.worldId).eq('playerId', archivedPlayer.id))
+            .first();
+          authorName = archivedDescription?.name || `Player ${message.author}`;
+        } else {
+          // Fallback for old players without descriptions
+          console.warn(`No description found for player ${message.author}, using fallback name`);
+          authorName = `Player ${message.author}`;
+        }
       }
-      out.push({ ...message, authorName: playerDescription.name });
+      
+      out.push({ ...message, authorName });
     }
     return out;
   },

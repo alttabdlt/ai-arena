@@ -464,6 +464,20 @@ export const worldStatus = internalQuery({
   },
 });
 
+export const getWorldMapDimensions = internalQuery({
+  args: { worldId: v.id('worlds') },
+  handler: async (ctx, args) => {
+    const map = await ctx.db
+      .query('maps')
+      .withIndex('worldId', (q) => q.eq('worldId', args.worldId))
+      .first();
+    if (!map) {
+      return { width: 48, height: 48 }; // Default dimensions
+    }
+    return { width: map.width, height: map.height };
+  },
+});
+
 export const saveWorld = internalMutation({
   args: {
     engineId: v.id('engines'),

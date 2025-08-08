@@ -63,42 +63,42 @@ export const DELETE_BATCH_SIZE = 64;
 export const HUMAN_IDLE_TOO_LONG = 5 * 60 * 1000;
 
 export const ACTIVITIES = [
-  { description: 'reading a book', emoji: '📖', duration: 60_000 },
-  { description: 'daydreaming', emoji: '🤔', duration: 60_000 },
-  { description: 'gardening', emoji: '🥕', duration: 60_000 },
+  { description: 'reading a book', emoji: '📖', duration: 10_000 },
+  { description: 'daydreaming', emoji: '🤔', duration: 8_000 },
+  { description: 'gardening', emoji: '🥕', duration: 12_000 },
 ];
 
-// Crime metaverse activities by zone
+// Crime metaverse activities by zone (reduced durations for more movement)
 export const CRIME_ACTIVITIES = {
   casino: [
-    { description: 'gambling at the slots', emoji: '🎰', duration: 45_000, personality: 'GAMBLER' },
-    { description: 'playing poker', emoji: '🃏', duration: 90_000, personality: 'GAMBLER' },
-    { description: 'making shady deals', emoji: '🤝', duration: 60_000, personality: 'CRIMINAL' },
-    { description: 'counting winnings', emoji: '💰', duration: 30_000, personality: 'WORKER' },
+    { description: 'gambling at the slots', emoji: '🎰', duration: 8_000, personality: 'GAMBLER' },
+    { description: 'playing poker', emoji: '🃏', duration: 15_000, personality: 'GAMBLER' },
+    { description: 'making shady deals', emoji: '🤝', duration: 10_000, personality: 'CRIMINAL' },
+    { description: 'counting winnings', emoji: '💰', duration: 5_000, personality: 'WORKER' },
   ],
   darkAlley: [
-    { description: 'planning a robbery', emoji: '🔫', duration: 45_000, personality: 'CRIMINAL' },
-    { description: 'selling stolen goods', emoji: '💼', duration: 60_000, personality: 'CRIMINAL' },
-    { description: 'hiding in shadows', emoji: '🌑', duration: 30_000, personality: 'WORKER' },
-    { description: 'rolling dice in the alley', emoji: '🎲', duration: 40_000, personality: 'GAMBLER' },
+    { description: 'planning a robbery', emoji: '🔫', duration: 8_000, personality: 'CRIMINAL' },
+    { description: 'selling stolen goods', emoji: '💼', duration: 10_000, personality: 'CRIMINAL' },
+    { description: 'hiding in shadows', emoji: '🌑', duration: 5_000, personality: 'WORKER' },
+    { description: 'rolling dice in the alley', emoji: '🎲', duration: 7_000, personality: 'GAMBLER' },
   ],
   suburb: [
-    { description: 'decorating the house', emoji: '🏠', duration: 60_000, personality: 'WORKER' },
-    { description: 'upgrading security', emoji: '🔒', duration: 45_000, personality: 'WORKER' },
-    { description: 'hosting a party', emoji: '🎉', duration: 90_000, personality: 'GAMBLER' },
-    { description: 'casing houses', emoji: '👀', duration: 30_000, personality: 'CRIMINAL' },
+    { description: 'decorating the house', emoji: '🏠', duration: 10_000, personality: 'WORKER' },
+    { description: 'upgrading security', emoji: '🔒', duration: 8_000, personality: 'WORKER' },
+    { description: 'hosting a party', emoji: '🎉', duration: 15_000, personality: 'GAMBLER' },
+    { description: 'casing houses', emoji: '👀', duration: 5_000, personality: 'CRIMINAL' },
   ],
   downtown: [
-    { description: 'window shopping', emoji: '🛍️', duration: 45_000, personality: 'WORKER' },
-    { description: 'meeting contacts', emoji: '🤵', duration: 60_000, personality: 'CRIMINAL' },
-    { description: 'street performance', emoji: '🎭', duration: 50_000, personality: 'GAMBLER' },
-    { description: 'people watching', emoji: '👁️', duration: 30_000, personality: 'WORKER' },
+    { description: 'window shopping', emoji: '🛍️', duration: 8_000, personality: 'WORKER' },
+    { description: 'meeting contacts', emoji: '🤵', duration: 10_000, personality: 'CRIMINAL' },
+    { description: 'street performance', emoji: '🎭', duration: 12_000, personality: 'GAMBLER' },
+    { description: 'people watching', emoji: '👁️', duration: 5_000, personality: 'WORKER' },
   ],
   underground: [
-    { description: 'fighting in the ring', emoji: '🥊', duration: 60_000, personality: 'CRIMINAL' },
-    { description: 'betting on fights', emoji: '💸', duration: 45_000, personality: 'GAMBLER' },
-    { description: 'training combat skills', emoji: '⚔️', duration: 90_000, personality: 'CRIMINAL' },
-    { description: 'working as medic', emoji: '🏥', duration: 60_000, personality: 'WORKER' },
+    { description: 'fighting in the ring', emoji: '🥊', duration: 10_000, personality: 'CRIMINAL' },
+    { description: 'betting on fights', emoji: '💸', duration: 8_000, personality: 'GAMBLER' },
+    { description: 'training combat skills', emoji: '⚔️', duration: 12_000, personality: 'CRIMINAL' },
+    { description: 'working as medic', emoji: '🏥', duration: 10_000, personality: 'WORKER' },
   ],
 };
 

@@ -427,7 +427,7 @@ export const recreateAgentsFromInputs = mutation({
     // Now manually recreate these agents in the world
     const agents = [];
     const players = [];
-    let nextId = 0;
+    let nextId = 1;
     
     for (const input of inputsToRecreate) {
       const args = input.args as any;

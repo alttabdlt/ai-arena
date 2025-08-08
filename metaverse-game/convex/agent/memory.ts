@@ -105,7 +105,13 @@ export const loadConversation = internalQuery({
       .withIndex('worldId', (q) => q.eq('worldId', args.worldId).eq('playerId', args.playerId))
       .first();
     if (!playerDescription) {
-      throw new Error(`Player description for ${args.playerId} not found`);
+      console.warn(`Player description for ${args.playerId} not found, using fallback`);
+      // Use a fallback description rather than throwing
+      return {
+        player: { ...player, name: `Player ${args.playerId}` },
+        conversation: null as any,
+        otherPlayer: null as any,
+      };
     }
     const conversation = await ctx.db
       .query('archivedConversations')
@@ -145,7 +151,13 @@ export const loadConversation = internalQuery({
       .withIndex('worldId', (q) => q.eq('worldId', args.worldId).eq('playerId', otherPlayerId))
       .first();
     if (!otherPlayerDescription) {
-      throw new Error(`Player description for ${otherPlayerId} not found`);
+      console.warn(`Player description for ${otherPlayerId} not found, using fallback`);
+      // Use fallback names rather than throwing
+      return {
+        player: { ...player, name: playerDescription?.name || `Player ${args.playerId}` },
+        conversation,
+        otherPlayer: { ...otherPlayer, name: `Player ${otherPlayerId}` },
+      };
     }
     return {
       player: { ...player, name: playerDescription.name },

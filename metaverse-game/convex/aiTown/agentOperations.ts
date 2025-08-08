@@ -26,14 +26,21 @@ export const agentRememberConversation = internalAction({
     operationId: v.string(),
   },
   handler: async (ctx, args) => {
-    await rememberConversation(
-      ctx,
-      args.worldId,
-      args.agentId as GameId<'agents'>,
-      args.playerId as GameId<'players'>,
-      args.conversationId as GameId<'conversations'>,
-    );
-    await sleep(Math.random() * 1000);
+    try {
+      await rememberConversation(
+        ctx,
+        args.worldId,
+        args.agentId as GameId<'agents'>,
+        args.playerId as GameId<'players'>,
+        args.conversationId as GameId<'conversations'>,
+      );
+    } catch (error) {
+      console.error(`Failed to remember conversation for agent ${args.agentId}:`, error);
+      // Continue anyway - we don't want to block the agent
+    }
+    
+    // Increased delay to reduce OCC errors
+    await sleep(Math.random() * 5000 + 1000); // 1-6 seconds
     // @ts-ignore - TypeScript type depth issue with generated Convex API
     await ctx.runMutation(api.aiTown.main.sendInput, {
       worldId: args.worldId,
@@ -58,38 +65,57 @@ export const agentGenerateMessage = internalAction({
     messageUuid: v.string(),
   },
   handler: async (ctx, args) => {
-    let completionFn;
-    switch (args.type) {
-      case 'start':
-        completionFn = startConversationMessage;
-        break;
-      case 'continue':
-        completionFn = continueConversationMessage;
-        break;
-      case 'leave':
-        completionFn = leaveConversationMessage;
-        break;
-      default:
-        assertNever(args.type);
-    }
-    const text = await completionFn(
-      ctx,
-      args.worldId,
-      args.conversationId as GameId<'conversations'>,
-      args.playerId as GameId<'players'>,
-      args.otherPlayerId as GameId<'players'>,
-    );
+    try {
+      let completionFn;
+      switch (args.type) {
+        case 'start':
+          completionFn = startConversationMessage;
+          break;
+        case 'continue':
+          completionFn = continueConversationMessage;
+          break;
+        case 'leave':
+          completionFn = leaveConversationMessage;
+          break;
+        default:
+          assertNever(args.type);
+      }
+      const text = await completionFn(
+        ctx,
+        args.worldId,
+        args.conversationId as GameId<'conversations'>,
+        args.playerId as GameId<'players'>,
+        args.otherPlayerId as GameId<'players'>,
+      );
 
-    await ctx.runMutation(internal.aiTown.agent.agentSendMessage, {
-      worldId: args.worldId,
-      conversationId: args.conversationId,
-      agentId: args.agentId,
-      playerId: args.playerId,
-      text,
-      messageUuid: args.messageUuid,
-      leaveConversation: args.type === 'leave',
-      operationId: args.operationId,
-    });
+      await ctx.runMutation(internal.aiTown.agent.agentSendMessage, {
+        worldId: args.worldId,
+        conversationId: args.conversationId,
+        agentId: args.agentId,
+        playerId: args.playerId,
+        text,
+        messageUuid: args.messageUuid,
+        leaveConversation: args.type === 'leave',
+        operationId: args.operationId,
+      });
+    } catch (error) {
+      console.error(`Failed to generate message for agent ${args.agentId}:`, error);
+      // Send a generic fallback message so the conversation doesn't get stuck
+      const fallbackText = args.type === 'leave' ? "I have to go now." : 
+                          args.type === 'start' ? "Hello there!" : 
+                          "That's interesting.";
+      
+      await ctx.runMutation(internal.aiTown.agent.agentSendMessage, {
+        worldId: args.worldId,
+        conversationId: args.conversationId,
+        agentId: args.agentId,
+        playerId: args.playerId,
+        text: fallbackText,
+        messageUuid: args.messageUuid,
+        leaveConversation: args.type === 'leave',
+        operationId: args.operationId,
+      });
+    }
   },
 });
 
@@ -119,7 +145,8 @@ export const agentDoSomething = internalAction({
     
     // If knocked out, can't do anything
     if (isKnockedOut) {
-      await sleep(Math.random() * 1000);
+      // Increased delay to reduce OCC errors
+    await sleep(Math.random() * 5000 + 1000); // 1-6 seconds
       await ctx.runMutation(api.aiTown.main.sendInput, {
         worldId: args.worldId,
         name: 'finishDoSomething',
@@ -205,7 +232,8 @@ export const agentDoSomething = internalAction({
         if (topTargets.length > 0) {
           const targetData = topTargets[Math.floor(Math.random() * topTargets.length)];
           
-          await sleep(Math.random() * 1000);
+          // Increased delay to reduce OCC errors
+    await sleep(Math.random() * 5000 + 1000); // 1-6 seconds
           await ctx.runMutation(api.aiTown.main.sendInput, {
             worldId: args.worldId,
             name: 'startRobbery',
@@ -243,7 +271,8 @@ export const agentDoSomething = internalAction({
       
       if (fighters.length > 0 && Math.random() < 0.4) {
         const opponent = fighters[Math.floor(Math.random() * fighters.length)];
-        await sleep(Math.random() * 1000);
+        // Increased delay to reduce OCC errors
+    await sleep(Math.random() * 5000 + 1000); // 1-6 seconds
         await ctx.runMutation(api.aiTown.main.sendInput, {
           worldId: args.worldId,
           name: 'startCombat',
@@ -258,21 +287,21 @@ export const agentDoSomething = internalAction({
     }
     
     // Decide whether to do an activity or wander somewhere.
-    if (!player.pathfinding) {
-      if (recentActivity || justLeftConversation) {
-        await sleep(Math.random() * 1000);
-        await ctx.runMutation(api.aiTown.main.sendInput, {
-          worldId: args.worldId,
-          name: 'finishDoSomething',
-          args: {
-            operationId: args.operationId,
-            agentId: agent.id,
-            destination: wanderDestination(map),
-          },
-        });
-        return;
-      } else {
-        // Use zone-specific activities
+    // CRITICAL FIX: Always try to move, even if already pathfinding (clears stuck states)
+    const shouldMove = Math.random() < 0.7; // 70% chance to move
+    
+    if (shouldMove || recentActivity || justLeftConversation || player.pathfinding) {
+      // Move to a random location
+      const destination = wanderDestination(map);
+      
+      // 30% chance to also do a short activity while moving
+      const shouldAlsoDoActivity = Math.random() < 0.3 && !recentActivity;
+      
+      // Increased delay to reduce OCC errors
+    await sleep(Math.random() * 5000 + 1000); // 1-6 seconds
+      
+      if (shouldAlsoDoActivity) {
+        // Use zone-specific activities with movement
         await ctx.scheduler.runAfter(0, internal.aiTown.agentOperations.agentSelectZoneActivity, {
           worldId: args.worldId,
           agentId: agent.id,
@@ -281,8 +310,31 @@ export const agentDoSomething = internalAction({
           personality: personality,
           operationId: args.operationId,
         });
-        return;
+      } else {
+        // Just move without activity - this will clear any stuck pathfinding
+        // Already have sleep above at line 296
+        await ctx.runMutation(api.aiTown.main.sendInput, {
+          worldId: args.worldId,
+          name: 'finishDoSomething',
+          args: {
+            operationId: args.operationId,
+            agentId: agent.id,
+            destination: destination,
+          },
+        });
       }
+      return;
+    } else {
+      // 30% chance to do activity (with movement included from our fix above)
+      await ctx.scheduler.runAfter(0, internal.aiTown.agentOperations.agentSelectZoneActivity, {
+        worldId: args.worldId,
+        agentId: agent.id,
+        playerId: player.id,
+        zone: currentZone,
+        personality: personality,
+        operationId: args.operationId,
+      });
+      return;
     }
     const invitee =
       justLeftConversation || recentlyAttemptedInvite
@@ -296,7 +348,9 @@ export const agentDoSomething = internalAction({
 
     // TODO: We hit a lot of OCC errors on sending inputs in this file. It's
     // easy for them to get scheduled at the same time and line up in time.
-    await sleep(Math.random() * 1000);
+    // Increase random delay to better distribute operations
+    const conversationOffset = parseInt(args.agent.id.split(':')[1]) % 2000;
+    await sleep(Math.random() * 5000 + 1000 + conversationOffset); // 1-8 seconds with offset
     await ctx.runMutation(api.aiTown.main.sendInput, {
       worldId: args.worldId,
       name: 'finishDoSomething',
@@ -370,7 +424,8 @@ export const agentAttemptRobbery = internalAction({
     const maxLoot = Math.floor((targetInventory?.inventory?.totalValue || 100) * 0.2); // Can steal up to 20%
     const lootValue = success ? Math.floor(Math.random() * maxLoot) + 10 : 0;
     
-    await sleep(Math.random() * 2000);
+    // Increased delay to reduce OCC errors
+    await sleep(Math.random() * 5000 + 2000); // 2-7 seconds
     
     await ctx.runMutation(api.aiTown.main.sendInput, {
       worldId: args.worldId,
@@ -454,7 +509,8 @@ export const agentEngageCombat = internalAction({
       },
     });
     
-    await sleep(Math.random() * 3000);
+    // Increased delay to reduce OCC errors
+    await sleep(Math.random() * 5000 + 2000); // 2-7 seconds
     
     // Log combat result
     if (agentWins) {
@@ -538,14 +594,28 @@ export const agentSelectZoneActivity = internalAction({
     // Fall back to any activity if no preferred ones
     const availableActivities = preferredActivities.length > 0 ? preferredActivities : zoneActivities;
     
+    // Get world map dimensions for wandering
+    const world = await ctx.runQuery(internal.aiTown.game.getWorldMapDimensions, {
+      worldId: args.worldId,
+    });
+    
+    // Generate a random destination for movement
+    const destination = {
+      x: 1 + Math.floor(Math.random() * ((world?.width || 48) - 2)),
+      y: 1 + Math.floor(Math.random() * ((world?.height || 48) - 2)),
+    };
+    
     if (availableActivities.length === 0) {
       // No activities in this zone, just wander
+      // Increased delay to reduce OCC errors
+      await sleep(Math.random() * 5000 + 2000); // 2-7 seconds
       await ctx.runMutation(api.aiTown.main.sendInput, {
         worldId: args.worldId,
         name: 'finishDoSomething',
         args: {
           operationId: args.operationId,
           agentId: args.agentId,
+          destination: destination,  // Move to random location
           activity: null,
         },
       });
@@ -555,14 +625,21 @@ export const agentSelectZoneActivity = internalAction({
     // Select a random activity
     const activity = availableActivities[Math.floor(Math.random() * availableActivities.length)];
     
-    await sleep(Math.random() * 1000);
+    // Increased delay to reduce OCC errors
+    await sleep(Math.random() * 5000 + 1000); // 1-6 seconds
     
+    // CRITICAL FIX: Include BOTH destination AND activity
+    // Bot will move to the destination THEN do the activity there
+    // Add random delay to prevent OCC errors
+    // Increased delay to reduce OCC errors
+    await sleep(Math.random() * 5000 + 2000); // 2-7 seconds
     await ctx.runMutation(api.aiTown.main.sendInput, {
       worldId: args.worldId,
       name: 'finishDoSomething',
       args: {
         operationId: args.operationId,
         agentId: args.agentId,
+        destination: destination,  // Move to random location
         activity: {
           description: activity.description,
           emoji: activity.emoji,

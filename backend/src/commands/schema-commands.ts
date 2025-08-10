@@ -1,8 +1,6 @@
 #!/usr/bin/env ts-node
 
 import { PrismaClient } from '@prisma/client';
-import * as fs from 'fs';
-import * as path from 'path';
 import chalk from 'chalk';
 
 const prisma = new PrismaClient();
@@ -433,9 +431,7 @@ async function main() {
 main().catch(console.error);
 
 export {
-  checkSchemaUsage,
-  showGameStorage,
-  validateGameState,
-  listAvailableFields,
-  schemaInfo
+    checkSchemaUsage, listAvailableFields,
+    schemaInfo, showGameStorage,
+    validateGameState
 };

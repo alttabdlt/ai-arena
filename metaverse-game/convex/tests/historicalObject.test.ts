@@ -1,4 +1,4 @@
-import { History, packSampleRecord, unpackSampleRecord } from './historicalObject';
+import { History, packSampleRecord, unpackSampleRecord } from '../engine/historicalObject';
 
 describe('HistoricalObject', () => {
   test('pack sample record roundtrips', () => {

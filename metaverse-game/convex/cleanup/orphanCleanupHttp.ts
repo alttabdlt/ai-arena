@@ -3,7 +3,7 @@ import { api, internal } from '../_generated/api';
 
 export const getAllArenaAgents = httpAction(async (ctx, request) => {
   try {
-    const result = await ctx.runQuery(api.aiTown.orphanCleanup.getAllArenaAgents, {});
+    const result = await ctx.runQuery(api.cleanup.orphanCleanup.getAllArenaAgents, {});
     
     return new Response(JSON.stringify(result), {
       status: 200,
@@ -28,7 +28,7 @@ export const deleteOrphanedAgent = httpAction(async (ctx, request) => {
     const body = await request.json();
     const { worldId, agentId, playerId } = body;
     
-    await ctx.runMutation(internal.aiTown.orphanCleanup.deleteOrphanedAgent, {
+    await ctx.runMutation(internal.cleanup.orphanCleanup.deleteOrphanedAgent, {
       worldId,
       agentId,
       playerId,

@@ -1,4 +1,4 @@
-import { Path, PathComponent, packPathComponent, queryPath, unpackPathComponent } from "./types";
+import { Path, PathComponent, packPathComponent, queryPath, unpackPathComponent } from "../util/types";
 
 describe('queryPath', () => {
   it('should return the correct path component', () => {

@@ -1,7 +1,7 @@
 import { v } from 'convex/values';
 import { internalQuery } from '../_generated/server';
 import { internal } from '../_generated/api';
-import { playerId } from './ids';
+import { playerId } from '../aiTown/ids';
 
 // Simple test function to verify relationship system works
 export const testRelationshipSystem: any = internalQuery({

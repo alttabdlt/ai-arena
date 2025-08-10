@@ -1,4 +1,4 @@
-import { asyncMap } from './asyncMap';
+import { asyncMap } from '../util/asyncMap';
 
 describe('asyncMap', () => {
   it('should map over a list asynchronously', async () => {

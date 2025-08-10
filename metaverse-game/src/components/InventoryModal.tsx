@@ -39,7 +39,7 @@ export default function InventoryModal({ isOpen, onClose, worldId, playerId, aiA
   // Mutations
   const processLootbox = useMutation(api.aiTown.inventory.processLootboxFromQueue);
   const equipItem = useMutation(api.aiTown.inventory.equipItem);
-  const createTestLootbox = useMutation(api.aiTown.testLootbox.createTestLootbox);
+  const createTestLootbox = useMutation(api.tests.testLootbox.createTestLootbox);
 
   const handleOpenLootbox = async (lootboxId: Id<'lootboxQueue'>) => {
     const lootbox = lootboxQueue?.find(l => l._id === lootboxId);

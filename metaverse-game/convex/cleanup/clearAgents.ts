@@ -1,6 +1,6 @@
 import { v } from 'convex/values';
 import { mutation } from '../_generated/server';
-import { GameId } from './ids';
+import { GameId } from '../aiTown/ids';
 
 // Webhook URL for AI Arena backend
 const AI_ARENA_WEBHOOK_URL = process.env.AI_ARENA_WEBHOOK_URL || 'http://localhost:4000/api/webhooks';

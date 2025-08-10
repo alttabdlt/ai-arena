@@ -3,13 +3,13 @@ import { api } from '../../convex/_generated/api';
 import Button from './buttons/Button';
 
 export default function FreezeButton() {
-  const stopAllowed = useQuery(api.testing.stopAllowed) ?? false;
+  const stopAllowed = useQuery(api.tests.testing.stopAllowed) ?? false;
   const defaultWorld = useQuery(api.world.defaultWorldStatus);
 
   const frozen = defaultWorld?.status === 'stoppedByDeveloper';
 
-  const unfreeze = useMutation(api.testing.resume);
-  const freeze = useMutation(api.testing.stop);
+  const unfreeze = useMutation(api.tests.testing.resume);
+  const freeze = useMutation(api.tests.testing.stop);
 
   const flipSwitch = async () => {
     if (frozen) {

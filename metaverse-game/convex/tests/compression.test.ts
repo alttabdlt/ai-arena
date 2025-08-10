@@ -5,7 +5,7 @@ import {
   runLengthDecode,
   runLengthEncode,
   unquantize,
-} from './compression';
+} from '../util/compression';
 
 describe('compression', () => {
   test('quantize (approximately) roundtrips', () => {

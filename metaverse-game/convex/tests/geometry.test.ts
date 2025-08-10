@@ -1,5 +1,5 @@
-import { compressPath, distance, manhattanDistance, normalize, orientationDegrees, pathOverlaps, pathPosition, pointsEqual, vector, vectorLength } from './geometry';
-import { Path, Vector } from './types';
+import { compressPath, distance, manhattanDistance, normalize, orientationDegrees, pathOverlaps, pathPosition, pointsEqual, vector, vectorLength } from '../util/geometry';
+import { Path, Vector } from '../util/types';
 
 describe('distance', () => {
   test('should return the correct distance for two points', () => {

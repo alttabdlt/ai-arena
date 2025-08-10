@@ -1,6 +1,6 @@
 import { v } from 'convex/values';
 import { mutation } from '../_generated/server';
-import { playerId } from './ids';
+import { playerId } from '../aiTown/ids';
 
 // Test mutation for creating lootboxes (DEVELOPMENT ONLY)
 export const createTestLootbox = mutation({

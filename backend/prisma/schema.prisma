@@ -65,6 +65,10 @@ model Bot {
   metaversePosition Json?          @default("{}") // {x: number, y: number, worldInstanceId: string}
   lastZoneChange  DateTime?        // Track zone transitions
   
+  // Relationship tracking
+  marriagePartner String?          // Bot ID of marriage partner
+  relationshipStage Json?          @default("{}") // Track relationship stages with other bots
+  
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   
@@ -91,6 +95,12 @@ model Bot {
   
   // Metaverse sync
   botSync         BotSync?
+  
+  // Experience system
+  experience      BotExperience?
+  
+  // Movement tracking for idle game
+  movement        BotMovement?
   
   @@index([creatorId])
   @@index([createdAt])
@@ -293,6 +303,7 @@ enum AIModel {
   // OpenAI Models
   GPT_4O
   GPT_4O_MINI
+  GPT_3_5_TURBO
   O3
   O3_MINI
   O3_PRO
@@ -300,12 +311,14 @@ enum AIModel {
   // Anthropic Claude Models
   CLAUDE_3_5_SONNET
   CLAUDE_3_5_HAIKU
+  CLAUDE_3_HAIKU
   CLAUDE_3_OPUS
   CLAUDE_4_OPUS
   CLAUDE_4_SONNET
   
   // DeepSeek Models
   DEEPSEEK_CHAT
+  DEEPSEEK_CODER
   DEEPSEEK_R1
   DEEPSEEK_V3
   
@@ -400,6 +413,7 @@ enum ItemRarity {
   RARE
   EPIC
   LEGENDARY
+  GOD_TIER  // Special tier for marriage milestone rewards
 }
 
 enum FurnitureType {
@@ -524,6 +538,42 @@ model BotActivityScore {
   @@index([botId])
 }
 
+model BotExperience {
+  id              String           @id @default(cuid())
+  botId           String           @unique
+  bot             Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
+  
+  // Core XP/Level
+  level           Int              @default(1)
+  currentXP       Int              @default(0)
+  totalXP         Int              @default(0)
+  xpToNextLevel   Int              @default(100)
+  
+  // Category XP (for specialized progression)
+  combatXP        Int              @default(0)
+  socialXP        Int              @default(0)
+  criminalXP      Int              @default(0)
+  gamblingXP      Int              @default(0)
+  tradingXP       Int              @default(0)
+  
+  // Prestige system (for level 50+ bots)
+  prestigeLevel   Int              @default(0)
+  prestigeTokens  Int              @default(0)
+  
+  // Skill points
+  skillPoints     Int              @default(0)
+  allocatedSkills Json             @default("{}")
+  
+  // Tracking
+  lastXPGain      DateTime         @default(now())
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  
+  @@index([botId])
+  @@index([level])
+  @@index([totalXP])
+}
+
 model LootboxReward {
   id                String           @id @default(cuid())
   matchId           String
@@ -618,10 +668,18 @@ model BotEnergy {
   currentEnergy   Int              @default(100)  // Current energy amount
   maxEnergy       Int              @default(100)  // Maximum energy capacity
   lastRegenTime   DateTime         @default(now()) // Last regeneration timestamp
+  regenRate       Int              @default(1)    // Energy per minute
+  
+  // Energy consumption rates
+  walkCost        Int              @default(1)    // Energy per step
+  combatCost      Int              @default(10)   // Energy per combat
+  robberyCost     Int              @default(5)    // Energy per robbery
+  activityCost    Int              @default(3)    // Energy per zone activity
   
   // Energy state
   isPaused        Boolean          @default(false) // Whether bot is paused to save energy
   autoResumeAt    Int?            // Resume when energy reaches this amount
+  totalConsumed   Int              @default(0)    // Total energy consumed lifetime
   
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
@@ -644,4 +702,57 @@ model EnergyPurchase {
   
   @@index([botId])
   @@index([purchasedAt])
+}
+
+// Track bot movement for idle game mechanics
+model BotMovement {
+  id              String           @id @default(cuid())
+  botId           String           @unique
+  bot             Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
+  
+  // Movement tracking
+  totalSteps      Int              @default(0)    // Total steps taken
+  dailySteps      Int              @default(0)    // Steps taken today
+  totalDistance   Float            @default(0)    // Total distance traveled
+  lastStepTime    DateTime         @default(now()) // Last movement timestamp
+  
+  // Step rewards
+  stepStreak      Int              @default(0)    // Current 5-step streak
+  totalLootDrops  Int              @default(0)    // Total loot found from movement
+  totalMovementXP Int              @default(0)    // Total XP earned from movement
+  
+  // Daily reset
+  lastResetDate   DateTime         @default(now()) // Last daily reset
+  
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  
+  @@index([botId])
+}
+
+// Random loot drops in the world
+model LootDrop {
+  id              String           @id @default(cuid())
+  
+  // Loot configuration
+  itemType        EquipmentType    // Type of item
+  rarity          ItemRarity       // Rarity tier
+  minValue        Int              // Minimum gold value
+  maxValue        Int              // Maximum gold value
+  dropChance      Float            // Base drop chance (0.0 to 1.0)
+  
+  // Zone modifiers
+  zoneType        String?          // Specific zone (null = all zones)
+  zoneMultiplier  Float            @default(1.0) // Zone-specific drop rate multiplier
+  
+  // Item properties
+  basePower       Int              @default(0)
+  baseDefense     Int              @default(0)
+  baseScore       Int              @default(0)
+  
+  createdAt       DateTime         @default(now())
+  
+  @@index([itemType])
+  @@index([rarity])
+  @@index([zoneType])
 }

@@ -1,4 +1,4 @@
-import { MinHeap } from './minheap';
+import { MinHeap } from '../util/minheap';
 
 describe('MinHeap', () => {
   const compareNumbers = (a: number, b: number): boolean => a > b;

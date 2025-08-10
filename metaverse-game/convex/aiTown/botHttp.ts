@@ -643,7 +643,7 @@ export const deleteBotFromWorlds = internalMutation({
         // This handles messages, conversations, relationships, activity logs, etc.
         try {
           // Import the cleanup helper function
-          const { comprehensivePlayerCleanupHelper } = await import('./orphanCleanup');
+          const { comprehensivePlayerCleanupHelper } = await import('../cleanup/orphanCleanup');
           
           const cleanupResult = await comprehensivePlayerCleanupHelper(
             ctx,

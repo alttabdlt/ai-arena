@@ -1,0 +1,42 @@
+-- Future migration to add cascade deletes to Bot relations
+-- Run this migration when ready to update the schema
+-- Command: npx prisma migrate dev --name add-cascade-deletes
+
+-- Add CASCADE DELETE to MatchParticipant bot relation
+ALTER TABLE "MatchParticipant" 
+DROP CONSTRAINT "MatchParticipant_botId_fkey",
+ADD CONSTRAINT "MatchParticipant_botId_fkey" 
+  FOREIGN KEY ("botId") 
+  REFERENCES "Bot"("id") 
+  ON DELETE CASCADE 
+  ON UPDATE CASCADE;
+
+-- Add CASCADE DELETE to TournamentParticipant bot relation
+ALTER TABLE "TournamentParticipant" 
+DROP CONSTRAINT "TournamentParticipant_botId_fkey",
+ADD CONSTRAINT "TournamentParticipant_botId_fkey" 
+  FOREIGN KEY ("botId") 
+  REFERENCES "Bot"("id") 
+  ON DELETE CASCADE 
+  ON UPDATE CASCADE;
+
+-- Add CASCADE DELETE to Comment bot relation
+ALTER TABLE "Comment" 
+DROP CONSTRAINT "Comment_botId_fkey",
+ADD CONSTRAINT "Comment_botId_fkey" 
+  FOREIGN KEY ("botId") 
+  REFERENCES "Bot"("id") 
+  ON DELETE CASCADE 
+  ON UPDATE CASCADE;
+
+-- Add CASCADE DELETE to Like bot relation
+ALTER TABLE "Like" 
+DROP CONSTRAINT "Like_botId_fkey",
+ADD CONSTRAINT "Like_botId_fkey" 
+  FOREIGN KEY ("botId") 
+  REFERENCES "Bot"("id") 
+  ON DELETE CASCADE 
+  ON UPDATE CASCADE;
+
+-- After running this migration, update schema.prisma to add:
+-- onDelete: Cascade to these relations

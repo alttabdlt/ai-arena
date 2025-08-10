@@ -11,7 +11,7 @@ async function processBots() {
   console.log("Processing Bot Registrations...\n");
   
   // Check queue status first
-  const queueStatus = await client.query(api.aiTown.batchRegistration.getQueueStatus, {});
+  const queueStatus = await client.query(api.migrations.batchRegistration.getQueueStatus, {});
   console.log("Queue Status:");
   console.log(`  Pending: ${queueStatus.pending}`);
   console.log(`  Processing: ${queueStatus.processing}`);
@@ -23,7 +23,7 @@ async function processBots() {
     console.log("Triggering batch processing...");
     
     // Trigger batch processing
-    const result = await client.mutation(api.aiTown.batchRegistration.triggerBatchProcessing, {});
+    const result = await client.mutation(api.migrations.batchRegistration.triggerBatchProcessing, {});
     console.log("Batch processing result:", result);
     
     // Wait a bit for processing
@@ -31,7 +31,7 @@ async function processBots() {
     await new Promise(resolve => setTimeout(resolve, 3000));
     
     // Check queue status again
-    const newStatus = await client.query(api.aiTown.batchRegistration.getQueueStatus, {});
+    const newStatus = await client.query(api.migrations.batchRegistration.getQueueStatus, {});
     console.log("\nUpdated Queue Status:");
     console.log(`  Pending: ${newStatus.pending}`);
     console.log(`  Processing: ${newStatus.processing}`);

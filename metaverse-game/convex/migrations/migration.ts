@@ -1,6 +1,6 @@
 import { v } from 'convex/values';
 import { mutation, internalMutation } from '../_generated/server';
-import { generateAvatarRarity, generateInitialStats } from './experience';
+import { generateAvatarRarity, generateInitialStats } from '../aiTown/experience';
 import { Id } from '../_generated/dataModel';
 
 // Migration to add idle game fields to existing players
@@ -337,7 +337,7 @@ export const cleanupGhostBots = mutation({
         console.log(`Cleaning up ghost bot: ${ghost.aiArenaBotId}`);
         
         // Import the cleanup helper
-        const { comprehensivePlayerCleanupHelper } = await import('./orphanCleanup');
+        const { comprehensivePlayerCleanupHelper } = await import('../cleanup/orphanCleanup');
         
         // Perform comprehensive cleanup
         const cleanupResult = await comprehensivePlayerCleanupHelper(

@@ -1,7 +1,7 @@
 import { v } from 'convex/values';
 import { internalMutation, internalAction, internalQuery, mutation, query } from '../_generated/server';
 import { internal } from '../_generated/api';
-import { insertInput } from './insertInput';
+import { insertInput } from '../aiTown/insertInput';
 import { Id } from '../_generated/dataModel';
 
 // Process a batch of pending bot registrations
@@ -167,19 +167,19 @@ export const scheduledBatchProcessor = internalAction({
   handler: async (ctx) => {
     // Get all worlds with pending registrations
     // @ts-ignore - TypeScript has issues with deep type instantiation here
-    const worlds = await ctx.runQuery(internal.aiTown.batchRegistration.getWorldsWithPendingRegistrations);
+    const worlds = await ctx.runQuery(internal.migrations.batchRegistration.getWorldsWithPendingRegistrations);
     
     for (const worldId of worlds) {
       // Process batch for each world
       // @ts-ignore - TypeScript has issues with deep type instantiation here
-      await ctx.runMutation(internal.aiTown.batchRegistration.processBatchRegistrations, {
+      await ctx.runMutation(internal.migrations.batchRegistration.processBatchRegistrations, {
         worldId: worldId as Id<'worlds'>,
       });
     }
     
     // Update statuses of processing registrations
     // @ts-ignore - TypeScript has issues with deep type instantiation here
-    await ctx.runMutation(internal.aiTown.batchRegistration.updateRegistrationStatuses);
+    await ctx.runMutation(internal.migrations.batchRegistration.updateRegistrationStatuses);
   },
 });
 
@@ -211,13 +211,13 @@ export const triggerBatchProcessing = mutation({
     if (args.worldId) {
       // Process specific world
       const result: any = await ctx.runMutation(
-        internal.aiTown.batchRegistration.processBatchRegistrations,
+        internal.migrations.batchRegistration.processBatchRegistrations,
         { worldId: args.worldId }
       );
       
       // Update statuses
       await ctx.runMutation(
-        internal.aiTown.batchRegistration.updateRegistrationStatuses,
+        internal.migrations.batchRegistration.updateRegistrationStatuses,
         {}
       );
       
@@ -231,12 +231,12 @@ export const triggerBatchProcessing = mutation({
       
       if (worldStatus) {
         const result: any = await ctx.runMutation(
-          internal.aiTown.batchRegistration.processBatchRegistrations,
+          internal.migrations.batchRegistration.processBatchRegistrations,
           { worldId: worldStatus.worldId }
         );
         
         await ctx.runMutation(
-          internal.aiTown.batchRegistration.updateRegistrationStatuses,
+          internal.migrations.batchRegistration.updateRegistrationStatuses,
           {}
         );
         

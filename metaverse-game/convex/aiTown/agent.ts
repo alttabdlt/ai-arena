@@ -400,7 +400,7 @@ export async function runAgentOperation(ctx: MutationCtx, operation: string, arg
       break;
     case 'cleanupPlayerData':
       // Use the comprehensive cleanup function from orphanCleanup
-      reference = internal.aiTown.orphanCleanup.comprehensivePlayerCleanup;
+      reference = internal.cleanup.orphanCleanup.comprehensivePlayerCleanup;
       // Transform args to match the function signature
       args = {
         worldId: args.worldId,

@@ -12,7 +12,7 @@ import {
   getAllArenaAgents,
   deleteOrphanedAgent,
   removePlayer
-} from './aiTown/orphanCleanupHttp';
+} from './cleanup/orphanCleanupHttp';
 
 const http = httpRouter();
 

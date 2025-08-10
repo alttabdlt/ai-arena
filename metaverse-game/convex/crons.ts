@@ -39,6 +39,14 @@ crons.interval(
   internal.crons.tickIdleExperienceForAllWorlds,
 );
 
+// Clean up ghost bots daily at 3 AM UTC
+crons.daily(
+  'cleanup ghost bots',
+  { hourUTC: 3, minuteUTC: 0 },
+  // @ts-ignore - TypeScript depth issue
+  internal.crons.cleanupGhostBotsDaily,
+);
+
 export default crons;
 
 const TablesToVacuum: TableNames[] = [
@@ -102,6 +110,35 @@ export const tickIdleExperienceForAllWorlds = internalMutation({
         });
       } catch (error) {
         console.error(`Failed to tick idle XP for world ${worldStatus.worldId}:`, error);
+      }
+    }
+    
+    return { worldsProcessed: worldStatuses.length };
+  },
+});
+
+// Daily cleanup of ghost bots
+export const cleanupGhostBotsDaily = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    // Get all active worlds
+    const worldStatuses = await ctx.db
+      .query('worldStatus')
+      .filter((q) => q.eq(q.field('status'), 'running'))
+      .collect();
+    
+    console.log(`Running daily ghost bot cleanup for ${worldStatuses.length} active worlds`);
+    
+    for (const worldStatus of worldStatuses) {
+      try {
+        // Run the cleanup for this world
+        await ctx.scheduler.runAfter(0, internal.migrations.migration.cleanupAllGhostBots, {
+          worldId: worldStatus.worldId,
+          dryRun: false,
+        });
+        console.log(`Scheduled ghost bot cleanup for world ${worldStatus.worldId}`);
+      } catch (error) {
+        console.error(`Failed to schedule ghost bot cleanup for world ${worldStatus.worldId}:`, error);
       }
     }
     

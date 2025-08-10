@@ -1,7 +1,37 @@
 import { v } from 'convex/values';
-import { internalMutation, internalAction, mutation } from '../_generated/server';
+import { internalMutation, internalAction, mutation, MutationCtx } from '../_generated/server';
 import { playerId } from './ids';
 import { internal } from '../_generated/api';
+
+// Helper function to get valid AI Arena bot IDs
+async function getValidArenaBotIds(ctx: MutationCtx): Promise<Set<string>> {
+  // For now, we'll use a simple approach - get all bots with valid agent descriptions
+  // In production, this should query the AI Arena backend API
+  const agentDescriptions = await ctx.db.query('agentDescriptions').collect();
+  const validBotIds = new Set<string>();
+  
+  for (const desc of agentDescriptions) {
+    if (desc.aiArenaBotId) {
+      // Only include bots that have been recently active (within last 24 hours)
+      // This helps filter out old/stale bots
+      const recentActivity = await ctx.db
+        .query('activityLogs')
+        .withIndex('aiArenaBotId', (q) => q.eq('aiArenaBotId', desc.aiArenaBotId!))
+        .order('desc')
+        .first();
+      
+      if (recentActivity && recentActivity.timestamp > Date.now() - 24 * 60 * 60 * 1000) {
+        validBotIds.add(desc.aiArenaBotId);
+      }
+    }
+  }
+  
+  // Also hardcode the known valid bots as a fallback
+  const knownValidBots = ['bot0002', 'bot0001', 'bot0003']; // Axel, Louis, ZY
+  knownValidBots.forEach(id => validBotIds.add(id));
+  
+  return validBotIds;
+}
 
 // Loot rarity tiers and their chances
 const LOOT_RARITY_CHANCES = {
@@ -271,13 +301,24 @@ export const tickIdleExperience = internalMutation({
       return;
     }
 
+    // Get list of valid AI Arena bot IDs
+    const validBotIds = await getValidArenaBotIds(ctx);
+    
     // Get all agents in the world
     const agents = world.agents || [];
     let xpGranted = 0;
+    let ghostBotsSkipped = 0;
 
     for (const agent of agents) {
       // Only grant XP to bots with aiArenaBotId and active agents
       if (!agent.aiArenaBotId || !agent.playerId) {
+        continue;
+      }
+
+      // Skip ghost bots that don't exist in AI Arena
+      if (!validBotIds.has(agent.aiArenaBotId)) {
+        ghostBotsSkipped++;
+        console.log(`Skipping ghost bot: ${agent.aiArenaBotId} (player: ${agent.playerId})`);
         continue;
       }
 
@@ -322,8 +363,8 @@ export const tickIdleExperience = internalMutation({
       }
     }
 
-    console.log(`Idle XP tick: Granted XP to ${xpGranted} bots`);
-    return { botsUpdated: xpGranted };
+    console.log(`Idle XP tick: Granted XP to ${xpGranted} bots, skipped ${ghostBotsSkipped} ghost bots`);
+    return { botsUpdated: xpGranted, ghostBotsSkipped };
   },
 });
 

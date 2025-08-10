@@ -406,6 +406,168 @@ export const cleanupGhostBots = mutation({
   },
 });
 
+// Clean up all ghost bots that don't have valid AI Arena IDs
+export const cleanupAllGhostBots = mutation({
+  args: {
+    worldId: v.id('worlds'),
+    dryRun: v.optional(v.boolean()), // If true, only report what would be deleted
+  },
+  handler: async (ctx, args) => {
+    const world = await ctx.db.get(args.worldId);
+    if (!world) {
+      throw new Error('World not found');
+    }
+    
+    // Get the known valid bot IDs
+    const validBotIds = new Set(['bot0001', 'bot0002', 'bot0003']); // Louis, Axel, ZY
+    
+    // Also check agent descriptions for any other valid bots
+    const agentDescriptions = await ctx.db
+      .query('agentDescriptions')
+      .withIndex('worldId', (q) => q.eq('worldId', args.worldId))
+      .collect();
+    
+    // Add any bots that have valid agent descriptions with proper names
+    for (const desc of agentDescriptions) {
+      if (desc.aiArenaBotId && desc.identity && 
+          (desc.identity.includes('Axel') || 
+           desc.identity.includes('Louis') || 
+           desc.identity.includes('ZY'))) {
+        validBotIds.add(desc.aiArenaBotId);
+      }
+    }
+    
+    const ghostBots: any[] = [];
+    const validAgents: any[] = [];
+    const validPlayers: any[] = [];
+    
+    // Check all agents
+    for (const agent of world.agents) {
+      if (!agent.aiArenaBotId || !validBotIds.has(agent.aiArenaBotId)) {
+        ghostBots.push({
+          agentId: agent.id,
+          playerId: agent.playerId,
+          aiArenaBotId: agent.aiArenaBotId || 'unknown',
+        });
+      } else {
+        validAgents.push(agent);
+      }
+    }
+    
+    // Build valid player IDs from valid agents
+    const validPlayerIds = new Set(validAgents.map(a => a.playerId));
+    
+    // Filter players
+    for (const player of world.players) {
+      if (validPlayerIds.has(player.id)) {
+        validPlayers.push(player);
+      }
+    }
+    
+    console.log(`Found ${ghostBots.length} ghost bots out of ${world.agents.length} total agents`);
+    console.log(`Valid agents: ${validAgents.length}, Valid players: ${validPlayers.length}`);
+    
+    if (args.dryRun) {
+      return {
+        message: 'DRY RUN - No changes made',
+        ghostBots: ghostBots.map(b => ({
+          agentId: b.agentId,
+          playerId: b.playerId,
+          aiArenaBotId: b.aiArenaBotId,
+        })),
+        totalGhostBots: ghostBots.length,
+        validAgents: validAgents.length,
+        validPlayers: validPlayers.length,
+      };
+    }
+    
+    // Clean up each ghost bot
+    const cleanupResults = [];
+    for (const ghost of ghostBots) {
+      try {
+        // Import the cleanup helper
+        const { comprehensivePlayerCleanupHelper } = await import('../cleanup/orphanCleanup');
+        
+        // Perform comprehensive cleanup
+        const cleanupResult = await comprehensivePlayerCleanupHelper(
+          ctx,
+          args.worldId,
+          ghost.playerId,
+          false // Don't keep activity logs for ghost bots
+        );
+        
+        // Delete agent description if exists
+        const agentDesc = await ctx.db
+          .query('agentDescriptions')
+          .withIndex('worldId', (q) => 
+            q.eq('worldId', args.worldId).eq('agentId', ghost.agentId)
+          )
+          .first();
+        if (agentDesc) {
+          await ctx.db.delete(agentDesc._id);
+        }
+        
+        // Delete bot experience if exists
+        if (ghost.aiArenaBotId && ghost.aiArenaBotId !== 'unknown') {
+          const botExp = await ctx.db
+            .query('botExperience')
+            .withIndex('aiArenaBotId', (q) => 
+              q.eq('worldId', args.worldId).eq('aiArenaBotId', ghost.aiArenaBotId)
+            )
+            .first();
+          if (botExp) {
+            await ctx.db.delete(botExp._id);
+          }
+        }
+        
+        cleanupResults.push({
+          agentId: ghost.agentId,
+          success: true,
+        });
+      } catch (error: any) {
+        console.error(`Failed to cleanup ghost bot ${ghost.agentId}:`, error);
+        cleanupResults.push({
+          agentId: ghost.agentId,
+          success: false,
+          error: error.message,
+        });
+      }
+    }
+    
+    // Update world with only valid agents and players
+    await ctx.db.patch(args.worldId, {
+      agents: validAgents,
+      players: validPlayers,
+    });
+    
+    // Clean up orphaned conversations
+    const conversations = world.conversations || [];
+    const validConversations = conversations.filter((conv: any) => {
+      // Keep conversation only if all participants are valid
+      for (const [playerId] of conv.participants) {
+        if (!validPlayerIds.has(playerId)) {
+          return false;
+        }
+      }
+      return true;
+    });
+    
+    await ctx.db.patch(args.worldId, {
+      conversations: validConversations,
+    });
+    
+    return {
+      message: `Cleaned up ${cleanupResults.filter(r => r.success).length} ghost bots`,
+      totalGhostBots: ghostBots.length,
+      successfulCleanups: cleanupResults.filter(r => r.success).length,
+      failedCleanups: cleanupResults.filter(r => !r.success).length,
+      remainingAgents: validAgents.length,
+      remainingPlayers: validPlayers.length,
+      details: cleanupResults,
+    };
+  },
+});
+
 // Master migration runner - runs all migrations in sequence
 export const runAllMigrations = mutation({
   args: {

@@ -1,10 +1,8 @@
-import React from 'react';
+import type { IGameDecision as AIDecision, PokerPlayer } from '@game/shared/types';
+import { formatChips, getCardColor, getCardDisplayValue } from '@game/shared/utils/poker-helpers';
 import { Card, CardContent } from '@ui/card';
 import { Zap } from 'lucide-react';
-import { formatChips, getCardColor, getCardDisplayValue } from '@game/engine/games/poker/utils/poker-helpers';
-import type { PokerPlayer, Card as PokerCard } from '@game/engine/games/poker/PokerTypes';
-import type { IGameDecision as AIDecision } from '@game/engine/core/interfaces';
-import type { PokerAction } from '@game/engine/games/poker';
+import React from 'react';
 
 interface PokerPlayerCardProps {
   player: PokerPlayer;
@@ -18,6 +16,13 @@ interface PokerPlayerCardProps {
   phase: string;
   className?: string;
   compact?: boolean;
+}
+
+function getActionAmount(action: AIDecision['action']): number | undefined {
+  const anyAction = action as unknown as { amount?: number; data?: { amount?: number } };
+  if (typeof anyAction?.amount === 'number') return anyAction.amount;
+  if (typeof anyAction?.data?.amount === 'number') return anyAction.data.amount;
+  return undefined;
 }
 
 export const PokerPlayerCard: React.FC<PokerPlayerCardProps> = ({
@@ -133,15 +138,16 @@ export const PokerPlayerCard: React.FC<PokerPlayerCardProps> = ({
 
 function getActionDisplay(aiDecision: AIDecision): string {
   const action = aiDecision.action;
+  const amount = getActionAmount(action);
   switch (action.type) {
     case 'check':
       return 'Check';
     case 'call':
       return 'Call';
     case 'raise':
-      return `Raise $${(action as PokerAction).amount || 0}`;
+      return amount !== undefined ? `Raise $${amount}` : 'Raise';
     case 'bet':
-      return `Bet $${(action as PokerAction).amount || 0}`;
+      return amount !== undefined ? `Bet $${amount}` : 'Bet';
     case 'all-in':
       return 'All-In';
     case 'fold':

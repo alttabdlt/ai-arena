@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Package, Sword, Shield, Home, Sparkles, Box, ChevronRight } from 'lucide-react';
+import { X, Package, Sword, Shield, Sparkles, Box, ChevronRight } from 'lucide-react';
 import { useQuery, useMutation } from 'convex/react';
 import { api } from '../../convex/_generated/api';
 import { Id } from '../../convex/_generated/dataModel';
@@ -15,7 +15,7 @@ interface InventoryModalProps {
   aiArenaBotId?: string;
 }
 
-type TabType = 'lootboxes' | 'equipment' | 'items' | 'house';
+type TabType = 'lootboxes' | 'equipment' | 'items';
 
 export default function InventoryModal({ isOpen, onClose, worldId, playerId, aiArenaBotId }: InventoryModalProps) {
   const [activeTab, setActiveTab] = useState<TabType>('lootboxes');
@@ -23,6 +23,7 @@ export default function InventoryModal({ isOpen, onClose, worldId, playerId, aiA
   const [showLootboxAnimation, setShowLootboxAnimation] = useState(false);
 
   // Queries
+  // @ts-ignore - Known Convex type depth issue
   const inventory = useQuery(api.aiTown.inventory.getPlayerInventory, 
     playerId ? { worldId, playerId } : 'skip'
   );
@@ -93,8 +94,6 @@ export default function InventoryModal({ isOpen, onClose, worldId, playerId, aiA
         return <Sword className="w-5 h-5" />;
       case 'ARMOR':
         return <Shield className="w-5 h-5" />;
-      case 'FURNITURE':
-        return <Home className="w-5 h-5" />;
       default:
         return <Package className="w-5 h-5" />;
     }
@@ -104,12 +103,10 @@ export default function InventoryModal({ isOpen, onClose, worldId, playerId, aiA
     { id: 'lootboxes', label: 'Lootboxes', icon: <Box className="w-4 h-4" />, count: lootboxQueue?.length || 0 },
     { id: 'equipment', label: 'Equipment', icon: <Sword className="w-4 h-4" /> },
     { id: 'items', label: 'All Items', icon: <Package className="w-4 h-4" />, count: inventory?.items?.length || 0 },
-    { id: 'house', label: 'House', icon: <Home className="w-4 h-4" /> },
   ];
 
   const equippedItems = inventory?.items?.filter(item => item.equipped) || [];
   const unequippedItems = inventory?.items?.filter(item => !item.equipped && item.type !== 'FURNITURE') || [];
-  const furnitureItems = inventory?.items?.filter(item => item.type === 'FURNITURE') || [];
 
   return (
     <>
@@ -289,42 +286,6 @@ export default function InventoryModal({ isOpen, onClose, worldId, playerId, aiA
                   </div>
                 )}
 
-                {/* House Tab */}
-                {activeTab === 'house' && (
-                  <div className="space-y-6">
-                    <div className="bg-gray-800/50 rounded-lg p-6">
-                      <h3 className="text-lg font-semibold text-red-400 mb-4">House Stats</h3>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <p className="text-gray-500">Score</p>
-                          <p className="text-2xl font-bold text-yellow-400">
-                            {inventory?.inventory?.totalValue || 0}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500">Defense</p>
-                          <p className="text-2xl font-bold text-blue-400">
-                            {/* Calculate from furniture defense bonuses */}
-                            {furnitureItems.reduce((sum, item) => sum + item.defenseBonus, 0)}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div>
-                      <h3 className="text-lg font-semibold text-red-400 mb-4">Furniture</h3>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {furnitureItems.length === 0 ? (
-                          <p className="text-gray-500">No furniture owned</p>
-                        ) : (
-                          furnitureItems.map((item) => (
-                            <ItemCard key={item._id} item={item} />
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
               </div>
             </motion.div>
           </motion.div>
@@ -377,8 +338,6 @@ function ItemCard({
         return <Sword className="w-5 h-5" />;
       case 'ARMOR':
         return <Shield className="w-5 h-5" />;
-      case 'FURNITURE':
-        return <Home className="w-5 h-5" />;
       default:
         return <Package className="w-5 h-5" />;
     }

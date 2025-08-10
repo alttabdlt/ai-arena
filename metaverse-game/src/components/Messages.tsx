@@ -25,6 +25,7 @@ export function Messages({
   scrollViewRef: React.RefObject<HTMLDivElement>;
 }) {
   const humanPlayerId = humanPlayer?.id;
+  // @ts-ignore - Known Convex type depth issue
   const descriptions = useQuery(api.world.gameDescriptions, { worldId });
   const messages = useQuery(api.messages.listMessages, {
     worldId,
@@ -69,16 +70,22 @@ export function Messages({
     return null;
   }
   const messageNodes: { time: number; node: React.ReactNode }[] = messages.map((m) => {
+    const isMyMessage = m.author === humanPlayerId;
     const node = (
-      <div key={`text-${m._id}`} className="leading-tight mb-6">
-        <div className="flex gap-4">
-          <span className="uppercase flex-grow">{m.authorName}</span>
-          <time dateTime={m._creationTime.toString()}>
-            {new Date(m._creationTime).toLocaleString()}
+      <div key={`text-${m._id}`} className="mb-4">
+        <div className="flex items-baseline gap-2 mb-1">
+          <span className="text-xs font-semibold text-gray-300">{m.authorName}</span>
+          <time className="text-xs text-gray-500" dateTime={m._creationTime.toString()}>
+            {new Date(m._creationTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </time>
         </div>
-        <div className={clsx('bubble', m.author === humanPlayerId && 'bubble-mine')}>
-          <p className="bg-white -mx-3 -my-1">{m.text}</p>
+        <div className={clsx(
+          'rounded-lg px-3 py-2 max-w-[80%]',
+          isMyMessage 
+            ? 'bg-blue-600 text-white ml-auto' 
+            : 'bg-gray-700 text-gray-100'
+        )}>
+          <p className="text-sm">{m.text}</p>
         </div>
       </div>
     );
@@ -98,8 +105,10 @@ export function Messages({
       if (started) {
         membershipNodes.push({
           node: (
-            <div key={`joined-${playerId}`} className="leading-tight mb-6">
-              <p className="text-brown-700 text-center">{playerName} joined the conversation.</p>
+            <div key={`joined-${playerId}`} className="mb-3">
+              <p className="text-center text-xs text-green-500 font-medium">
+                → {playerName} joined the conversation
+              </p>
             </div>
           ),
           time: started,
@@ -113,8 +122,10 @@ export function Messages({
       const started = conversation.doc.created;
       membershipNodes.push({
         node: (
-          <div key={`joined-${playerId}`} className="leading-tight mb-6">
-            <p className="text-brown-700 text-center">{playerName} joined the conversation.</p>
+          <div key={`joined-${playerId}`} className="mb-3">
+            <p className="text-green-400 text-center text-xs font-mono">
+              → {playerName} joined
+            </p>
           </div>
         ),
         time: started,
@@ -122,8 +133,10 @@ export function Messages({
       const ended = conversation.doc.ended;
       membershipNodes.push({
         node: (
-          <div key={`left-${playerId}`} className="leading-tight mb-6">
-            <p className="text-brown-700 text-center">{playerName} left the conversation.</p>
+          <div key={`left-${playerId}`} className="mb-3">
+            <p className="text-red-400 text-center text-xs font-mono">
+              ← {playerName} left
+            </p>
           </div>
         ),
         // Always sort all "left" messages after the last message.
@@ -135,21 +148,16 @@ export function Messages({
   const nodes = [...messageNodes, ...membershipNodes];
   nodes.sort((a, b) => a.time - b.time);
   return (
-    <div className="chats text-base sm:text-sm">
-      <div className="bg-brown-200 text-black p-2">
+    <div className="flex flex-col h-full">
+      <div className="flex-1 overflow-y-auto bg-gray-800/30 rounded-lg p-4">
         {nodes.length > 0 && nodes.map((n) => n.node)}
         {currentlyTyping && currentlyTyping.playerId !== humanPlayerId && (
-          <div key="typing" className="leading-tight mb-6">
-            <div className="flex gap-4">
-              <span className="uppercase flex-grow">{currentlyTypingName}</span>
-              <time dateTime={currentlyTyping.since.toString()}>
-                {new Date(currentlyTyping.since).toLocaleString()}
-              </time>
-            </div>
-            <div className={clsx('bubble')}>
-              <p className="bg-white -mx-3 -my-1">
-                <i>typing...</i>
-              </p>
+          <div key="typing" className="flex items-center gap-2 text-gray-400 text-sm mb-2">
+            <span>{currentlyTypingName} is typing</span>
+            <div className="flex gap-1">
+              <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
+              <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
+              <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
             </div>
           </div>
         )}

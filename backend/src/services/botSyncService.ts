@@ -738,22 +738,52 @@ export class BotSyncService {
         console.log(`  - Agent ${agent.name} (${agent.agentId}) for deleted bot ${agent.aiArenaBotId}`);
       });
       
-      // Delete orphaned agents from metaverse
+      // Delete orphaned agents from metaverse with retry logic
       if (metaverseData.worldId) {
-        const deleteResult = await convexService.deleteOrphanedAgents(
-          orphanedAgents.map(agent => ({
-            agentId: agent.agentId,
-            playerId: agent.playerId,
-            aiArenaBotId: agent.aiArenaBotId || undefined
-          })),
-          metaverseData.worldId,
-          'Bot no longer exists in Arena database'
-        );
+        let retryCount = 0;
+        const maxRetries = 3;
+        const retryDelay = (attempt: number) => Math.min(1000 * Math.pow(2, attempt), 10000); // Exponential backoff
         
-        if (deleteResult && deleteResult.successful > 0) {
-          console.log(`✅ Cleaned up ${deleteResult.successful} orphaned agents`);
-          if (deleteResult.failed > 0) {
-            console.warn(`⚠️ Failed to clean ${deleteResult.failed} agents`);
+        while (retryCount < maxRetries) {
+          try {
+            const deleteResult = await convexService.deleteOrphanedAgents(
+              orphanedAgents.map(agent => ({
+                agentId: agent.agentId,
+                playerId: agent.playerId,
+                aiArenaBotId: agent.aiArenaBotId || undefined
+              })),
+              metaverseData.worldId,
+              'Bot no longer exists in Arena database'
+            );
+            
+            if (deleteResult && deleteResult.successful > 0) {
+              console.log(`✅ Cleaned up ${deleteResult.successful} orphaned agents`);
+              if (deleteResult.failed > 0) {
+                console.warn(`⚠️ Failed to clean ${deleteResult.failed} agents`);
+              }
+            }
+            break; // Success, exit retry loop
+            
+          } catch (error: any) {
+            retryCount++;
+            
+            // Check if it's a concurrency error
+            if (error.message?.includes('OptimisticConcurrencyControlFailure')) {
+              console.warn(`⚠️ Concurrency conflict during orphan cleanup (attempt ${retryCount}/${maxRetries})`);
+              
+              if (retryCount < maxRetries) {
+                const delay = retryDelay(retryCount);
+                console.log(`⏳ Retrying in ${delay}ms...`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+              } else {
+                console.error('❌ Max retries reached for orphan cleanup. Will try again in next sync cycle.');
+                // Don't throw - just log and continue
+              }
+            } else {
+              // Non-concurrency error, log but don't fail the whole sync
+              console.error('Error during orphan cleanup:', error.message || error);
+              break;
+            }
           }
         }
       }
@@ -764,19 +794,24 @@ export class BotSyncService {
         .map(agent => agent.aiArenaBotId as string);
       
       if (orphanedBotIds.length > 0) {
-        const deletedSyncs = await prisma.botSync.deleteMany({
-          where: {
-            botId: { in: orphanedBotIds }
+        try {
+          const deletedSyncs = await prisma.botSync.deleteMany({
+            where: {
+              botId: { in: orphanedBotIds }
+            }
+          });
+          
+          if (deletedSyncs.count > 0) {
+            console.log(`✅ Cleaned up ${deletedSyncs.count} orphaned sync records`);
           }
-        });
-        
-        if (deletedSyncs.count > 0) {
-          console.log(`✅ Cleaned up ${deletedSyncs.count} orphaned sync records`);
+        } catch (error) {
+          console.error('Error cleaning up orphaned sync records:', error);
         }
       }
       
-    } catch (error) {
-      console.error('Error cleaning up orphaned metaverse bots:', error);
+    } catch (error: any) {
+      // Don't let cleanup errors stop the sync service
+      console.error('Error in orphan cleanup process:', error.message || error);
     }
   }
 

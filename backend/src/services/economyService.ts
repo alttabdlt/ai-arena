@@ -18,28 +18,32 @@ const EQUIPMENT_NAMES: Record<EquipmentType, Record<ItemRarity, string[]>> = {
     UNCOMMON: ['Iron Blade', 'Crystal Wand', 'Sharp Knife'],
     RARE: ['Enchanted Sword', 'Mystic Staff', 'Shadow Dagger'],
     EPIC: ['Flamebrand', 'Arcane Scepter', 'Void Blade'],
-    LEGENDARY: ['Excalibur', 'Staff of Ages', 'Infinity Edge']
+    LEGENDARY: ['Excalibur', 'Staff of Ages', 'Infinity Edge'],
+    GOD_TIER: ['Eternal Bond Blade', 'Soulmate Scepter', 'Unity Edge']
   },
   ARMOR: {
     COMMON: ['Leather Vest', 'Cloth Robe', 'Wooden Shield'],
     UNCOMMON: ['Chainmail', 'Silk Robes', 'Iron Shield'],
     RARE: ['Plate Armor', 'Enchanted Robes', 'Tower Shield'],
     EPIC: ['Dragon Scale Mail', 'Archmage Robes', 'Aegis'],
-    LEGENDARY: ['Godplate', 'Robes of Eternity', 'Bulwark of the Ages']
+    LEGENDARY: ['Godplate', 'Robes of Eternity', 'Bulwark of the Ages'],
+    GOD_TIER: ['Eternal Bond Armor', 'Soulmate Vestments', 'Unity Aegis']
   },
   TOOL: {
     COMMON: ['Basic Toolkit', 'Simple Pickaxe', 'Rope'],
     UNCOMMON: ['Advanced Toolkit', 'Iron Pickaxe', 'Grappling Hook'],
     RARE: ['Master Tools', 'Diamond Pickaxe', 'Teleport Scroll'],
     EPIC: ['Artificer Kit', 'Void Pickaxe', 'Portal Generator'],
-    LEGENDARY: ['Creator Tools', 'Reality Pickaxe', 'Dimension Key']
+    LEGENDARY: ['Creator Tools', 'Reality Pickaxe', 'Dimension Key'],
+    GOD_TIER: ['Eternal Bond Tools', 'Soulmate Kit', 'Unity Constructor']
   },
   ACCESSORY: {
     COMMON: ['Simple Ring', 'Basic Amulet', 'Leather Gloves'],
     UNCOMMON: ['Silver Ring', 'Magic Amulet', 'Silk Gloves'],
     RARE: ['Gold Ring', 'Enchanted Amulet', 'Mage Gloves'],
     EPIC: ['Diamond Ring', 'Ancient Amulet', 'Gauntlets of Power'],
-    LEGENDARY: ['Ring of Omnipotence', 'Amulet of Immortality', 'Gloves of Midas']
+    LEGENDARY: ['Ring of Omnipotence', 'Amulet of Immortality', 'Gloves of Midas'],
+    GOD_TIER: ['Eternal Bond Ring', 'Soulmate Amulet', 'Unity Gauntlets']
   }
 };
 
@@ -50,28 +54,32 @@ const FURNITURE_NAMES: Record<FurnitureType, Record<ItemRarity, string[]>> = {
     UNCOMMON: ['Exotic Plant', 'Fine Art', 'Ornate Rug'],
     RARE: ['Magical Garden', 'Masterpiece', 'Royal Carpet'],
     EPIC: ['Floating Garden', 'Living Portrait', 'Flying Carpet'],
-    LEGENDARY: ['World Tree Sapling', 'Reality Canvas', 'Carpet of the Gods']
+    LEGENDARY: ['World Tree Sapling', 'Reality Canvas', 'Carpet of the Gods'],
+    GOD_TIER: ['Eternal Love Garden', 'Wedding Portrait', 'Unity Tapestry']
   },
   FUNCTIONAL: {
     COMMON: ['Wooden Chair', 'Simple Table', 'Basic Bed'],
     UNCOMMON: ['Cushioned Chair', 'Dining Table', 'Comfortable Bed'],
     RARE: ['Throne', 'Feast Table', 'Royal Bed'],
     EPIC: ['Floating Throne', 'Infinite Table', 'Dream Bed'],
-    LEGENDARY: ['Throne of Power', 'Table of Plenty', 'Bed of Eternity']
+    LEGENDARY: ['Throne of Power', 'Table of Plenty', 'Bed of Eternity'],
+    GOD_TIER: ['Eternal Bond Throne', 'Unity Table', 'Marriage Bed']
   },
   DEFENSIVE: {
     COMMON: ['Door Lock', 'Window Bars', 'Basic Alarm'],
     UNCOMMON: ['Steel Lock', 'Reinforced Bars', 'Motion Sensor'],
     RARE: ['Magic Lock', 'Energy Barrier', 'AI Security'],
     EPIC: ['Dimensional Lock', 'Force Field', 'Quantum Security'],
-    LEGENDARY: ['Absolute Lock', 'Impenetrable Shield', 'Omniscient Guardian']
+    LEGENDARY: ['Absolute Lock', 'Impenetrable Shield', 'Omniscient Guardian'],
+    GOD_TIER: ['Eternal Protection', 'Unity Barrier', 'Soulmate Shield']
   },
   TROPHY: {
     COMMON: ['Participation Trophy', 'Bronze Medal', 'Certificate'],
     UNCOMMON: ['Winner Trophy', 'Silver Medal', 'Plaque'],
     RARE: ['Champion Trophy', 'Gold Medal', 'Crystal Award'],
     EPIC: ['Grand Champion Trophy', 'Platinum Medal', 'Holographic Award'],
-    LEGENDARY: ['Eternal Champion Trophy', 'Infinity Medal', 'Reality Award']
+    LEGENDARY: ['Eternal Champion Trophy', 'Infinity Medal', 'Reality Award'],
+    GOD_TIER: ['Eternal Bond Trophy', 'Marriage Certificate', 'Unity Monument']
   }
 };
 
@@ -103,7 +111,8 @@ export class EconomyService {
       UNCOMMON: { min: 5, max: 15 },
       RARE: { min: 15, max: 30 },
       EPIC: { min: 30, max: 50 },
-      LEGENDARY: { min: 50, max: 100 }
+      LEGENDARY: { min: 50, max: 100 },
+      GOD_TIER: { min: 100, max: 200 }
     };
     
     const range = powerBonusRange[rarity];
@@ -135,7 +144,8 @@ export class EconomyService {
       UNCOMMON: { min: 10, max: 25 },
       RARE: { min: 25, max: 50 },
       EPIC: { min: 50, max: 100 },
-      LEGENDARY: { min: 100, max: 200 }
+      LEGENDARY: { min: 100, max: 200 },
+      GOD_TIER: { min: 200, max: 500 }
     };
     
     const range = scoreBonusRange[rarity];
@@ -187,7 +197,8 @@ export class EconomyService {
       UNCOMMON: 250,
       RARE: 500,
       EPIC: 1000,
-      LEGENDARY: 2500
+      LEGENDARY: 2500,
+      GOD_TIER: 10000
     };
     const currencyReward = currencyRewardMap[lootboxRarity];
     

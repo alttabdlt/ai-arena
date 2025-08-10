@@ -29,11 +29,7 @@ import { PointNotification } from '@shared/components/feedback/notifications/Poi
 import { AchievementNotification } from '@shared/components/feedback/notifications/AchievementNotification';
 import { CombinedLeaderboard } from '@tournament/components/CombinedLeaderboard';
 import { useModelEvaluations } from '@shared/hooks/useModelEvaluation';
-import { IPlayerConfig as PlayerConfig } from '@game/engine/core/interfaces';
-import type { PokerAction } from '@game/engine/games/poker';
-import botGambler from '@/assets/bot-gambler.png';
-import botTerminator from '@/assets/bot-terminator.png';
-import botZenMaster from '@/assets/bot-zen-master.png';
+import { IPlayerConfig as PlayerConfig, PokerAction } from '@game/shared/types';
 
 
 const TournamentView = () => {
@@ -129,38 +125,6 @@ const TournamentView = () => {
   const getAllAchievements = () => [];
   const getTotalAchievementPoints = () => 0;
 
-  // Generate default player configurations
-  const generateDefaultPlayerConfigs = (count: number, defaultModel: PlayerConfig['aiModel'] = 'gpt-4o'): PlayerConfig[] => {
-    const botProfiles = [
-      { id: 'gambler', name: 'The Gambler', avatar: botGambler },
-      { id: 'terminator', name: 'Terminator', avatar: botTerminator },
-      { id: 'zenmaster', name: 'Zen Master', avatar: botZenMaster }
-    ];
-    
-    const additionalNames = ['Shark', 'Bluffer', 'Calculator', 'Rock', 'Maniac', 'Trickster'];
-    
-    const configs: PlayerConfig[] = [];
-    
-    for (let i = 0; i < count; i++) {
-      if (i < botProfiles.length) {
-        configs.push({
-          ...botProfiles[i],
-          aiModel: defaultModel
-        });
-      } else {
-        const avatarIndex = i % botProfiles.length;
-        const nameIndex = (i - botProfiles.length) % additionalNames.length;
-        configs.push({
-          id: `bot-${i}`,
-          name: additionalNames[nameIndex],
-          avatar: botProfiles[avatarIndex].avatar,
-          aiModel: defaultModel
-        });
-      }
-    }
-    
-    return configs;
-  };
 
   // Update player model
   const updatePlayerModel = (playerId: string, model: PlayerConfig['aiModel']) => {

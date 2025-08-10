@@ -8,6 +8,7 @@ import { point } from '../util/types';
 import { Descriptions } from '../../data/characters';
 import { AgentDescription } from './agentDescription';
 import { Agent } from './agent';
+import { generateAvatarRarity } from './experience';
 
 export const agentInputs = {
   finishRememberConversation: inputHandler({
@@ -62,8 +63,14 @@ export const agentInputs = {
         if (!invitee) {
           throw new Error(`Couldn't find player: ${inviteeId}`);
         }
+        // Stop any current movement when starting a conversation
+        if (player.pathfinding) {
+          delete player.pathfinding;
+        }
         Conversation.start(game, now, player, invitee);
         agent.lastInviteAttempt = now;
+        // Don't move if we're starting a conversation
+        return null;
       }
       if (args.destination) {
         movePlayer(game, now, player, args.destination);
@@ -164,7 +171,7 @@ export const agentInputs = {
       return { agentId };
     },
   }),
-  createAgentFromAIArena: inputHandler({
+  createAgentWithPersonality: inputHandler({
     args: {
       name: v.string(),
       character: v.string(),
@@ -172,6 +179,11 @@ export const agentInputs = {
       plan: v.string(),
       aiArenaBotId: v.string(),
       initialZone: v.string(),
+      personality: v.optional(v.union(
+        v.literal('CRIMINAL'),
+        v.literal('GAMBLER'),
+        v.literal('WORKER')
+      )),
     },
     handler: (game, now, args) => {
       // Create player with the provided details
@@ -180,19 +192,20 @@ export const agentInputs = {
         now,
         args.name,
         args.character,
-        args.identity,
+        `A ${args.personality || 'mysterious'} bot from AI Arena`,
       );
       
       // Allocate agent ID
       const agentId = game.allocId('agents');
       
-      // Create agent with AI Arena bot reference
+      // Create agent with AI Arena bot reference and personality
       game.world.agents.set(
         agentId,
         new Agent({
           id: agentId,
           playerId: playerId,
           aiArenaBotId: args.aiArenaBotId,
+          personality: args.personality,
           inProgressOperation: undefined,
           lastConversation: undefined,
           lastInviteAttempt: undefined,
@@ -211,9 +224,95 @@ export const agentInputs = {
         }),
       );
       
-      // TODO: Set initial zone position based on initialZone
-      // This would involve placing the player in the appropriate zone
+      // Set initial zone for the player
+      const player = game.world.players.get(playerId);
+      if (player) {
+        player.currentZone = args.initialZone as any;
+      }
       
+      console.log(`Created bot ${args.name} (${args.personality}) with agent ${agentId} and player ${playerId}`);
+      return { agentId, playerId };
+    },
+  }),
+  
+  // Keep the old handler for backward compatibility
+  createAgentFromAIArena: inputHandler({
+    args: {
+      name: v.string(),
+      character: v.string(),
+      identity: v.string(),
+      plan: v.string(),
+      aiArenaBotId: v.string(),
+      initialZone: v.string(),
+      avatar: v.optional(v.string()),
+    },
+    handler: (game, now, args) => {
+      // Create a more descriptive description based on identity
+      const description = args.identity ? 
+        args.identity.slice(0, 200) : // Use first 200 chars of identity
+        `A bot from AI Arena playing as ${args.character}`;
+      
+      // Player.join creates the player AND the player description
+      const playerId = Player.join(
+        game,
+        now,
+        args.name,
+        args.character,
+        description,
+        undefined, // No token identifier for bots
+        args.avatar, // Pass avatar if provided
+      );
+      
+      const agentId = game.allocId('agents');
+      
+      // Generate avatar rarity for this bot
+      const avatarRarity = generateAvatarRarity();
+      
+      // Determine personality - derive from identity keywords
+      let personality: 'CRIMINAL' | 'GAMBLER' | 'WORKER' = 'WORKER';
+      const identityLower = args.identity.toLowerCase();
+      if (identityLower.includes('criminal') || identityLower.includes('thief') || identityLower.includes('robber')) {
+        personality = 'CRIMINAL';
+      } else if (identityLower.includes('gambler') || identityLower.includes('risk') || identityLower.includes('casino')) {
+        personality = 'GAMBLER';
+      }
+      
+      game.world.agents.set(
+        agentId,
+        new Agent({
+          id: agentId,
+          playerId: playerId,
+          aiArenaBotId: args.aiArenaBotId,
+          personality: personality,
+          inProgressOperation: undefined,
+          lastConversation: undefined,
+          lastInviteAttempt: undefined,
+          toRemember: undefined,
+        }),
+      );
+      
+      game.agentDescriptions.set(
+        agentId,
+        new AgentDescription({
+          agentId: agentId,
+          identity: args.identity,
+          plan: args.plan,
+          aiArenaBotId: args.aiArenaBotId,
+          personality: personality,
+          avatarRarity: avatarRarity as any,
+        }),
+      );
+      
+      // Mark that descriptions were modified so they get saved
+      game.descriptionsModified = true;
+      
+      const player = game.world.players.get(playerId);
+      if (player) {
+        player.currentZone = args.initialZone as any;
+      }
+      
+      console.log(`Created bot ${args.name} with agent ${agentId} and player ${playerId}`);
+      console.log(`Player description created for ${args.name}`);
       return { agentId, playerId };
     },
   }),

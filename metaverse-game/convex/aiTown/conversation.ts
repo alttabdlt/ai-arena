@@ -58,10 +58,24 @@ export class Conversation {
     const member1 = this.participants.get(playerId1)!;
     const member2 = this.participants.get(playerId2)!;
 
-    const player1 = game.world.players.get(playerId1)!;
-    const player2 = game.world.players.get(playerId2)!;
+    const player1 = game.world.players.get(playerId1);
+    const player2 = game.world.players.get(playerId2);
 
-    const playerDistance = distance(player1?.position, player2?.position);
+    // If either player no longer exists, stop the conversation
+    if (!player1 || !player2) {
+      console.warn(`Conversation ${this.id}: Missing player(s) - p1: ${!!player1}, p2: ${!!player2}. Stopping conversation.`);
+      this.stop(game, now);
+      return;
+    }
+
+    // Both players must have valid positions
+    if (!player1.position || !player2.position) {
+      console.warn(`Conversation ${this.id}: Player(s) missing position. Stopping conversation.`);
+      this.stop(game, now);
+      return;
+    }
+
+    const playerDistance = distance(player1.position, player2.position);
 
     // If the players are both in the "walkingOver" state and they're sufficiently close, transition both
     // of them to "participating" and stop their paths.
@@ -217,6 +231,9 @@ export class Conversation {
 
   stop(game: Game, now: number) {
     delete this.isTyping;
+    
+    // Mark conversation for archiving (the game engine will handle archiving and cleanup)
+    // The conversation will be archived in the next game step
     
     // Log conversation end for all participants
     for (const [playerId, member] of this.participants.entries()) {

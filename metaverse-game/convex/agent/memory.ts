@@ -13,6 +13,7 @@ export const MEMORY_ACCESS_THROTTLE = 300_000; // In ms
 // We fetch 10x the number of memories by relevance, to have more candidates
 // for sorting by relevance + recency + importance.
 const MEMORY_OVERFETCH = 10;
+// @ts-ignore - TypeScript depth issue with Convex types
 const selfInternal = internal.agent.memory;
 
 export type Memory = Doc<'memories'>;
@@ -422,9 +423,33 @@ export const getReflectionMemories = internalQuery({
       .query('playerDescriptions')
       .withIndex('worldId', (q) => q.eq('worldId', args.worldId).eq('playerId', args.playerId))
       .first();
-    if (!playerDescription) {
-      throw new Error(`Player description for ${args.playerId} not found`);
+    
+    // If description not found, use a fallback name
+    let playerName = 'Unknown Bot';
+    if (playerDescription) {
+      playerName = playerDescription.name;
+    } else {
+      console.warn(`Player description for ${args.playerId} not found, using fallback`);
+      // Try to find the agent to get aiArenaBotId
+      const agent = world.agents.find((a) => a.playerId === args.playerId);
+      if (agent) {
+        const agentDesc = await ctx.db
+          .query('agentDescriptions')
+          .withIndex('worldId', (q) => q.eq('worldId', args.worldId).eq('agentId', agent.id))
+          .first();
+        if (agentDesc && agentDesc.aiArenaBotId) {
+          // Use last 8 chars for readability
+          playerName = `Bot-${agentDesc.aiArenaBotId.slice(-8)}`;
+        } else {
+          // Use Bot- prefix for better readability
+          playerName = `Bot-${args.playerId.slice(-4)}`;
+        }
+      } else {
+        // Use Bot- prefix for better readability
+        playerName = `Bot-${args.playerId.slice(-4)}`;
+      }
     }
+    
     const memories = await ctx.db
       .query('memories')
       .withIndex('playerId', (q) => q.eq('playerId', player.id))
@@ -440,7 +465,7 @@ export const getReflectionMemories = internalQuery({
       .first();
 
     return {
-      name: playerDescription.name,
+      name: playerName,
       memories,
       lastReflectionTs: lastReflection?._creationTime,
     };

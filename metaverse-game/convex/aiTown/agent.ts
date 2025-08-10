@@ -331,7 +331,9 @@ type AgentOperationName =
   | 'logZoneChange'
   | 'processConversationRelationship'
   | 'processRobberyRelationship'
-  | 'processCombatRelationship';
+  | 'processCombatRelationship'
+  | 'grantMovementXP'
+  | 'generateLootDrop';
 
 export async function runAgentOperation(ctx: MutationCtx, operation: string, args: any) {
   let reference;
@@ -357,19 +359,19 @@ export async function runAgentOperation(ctx: MutationCtx, operation: string, arg
       reference = operations.agentSelectZoneActivity;
       break;
     case 'logConversationStart':
-      reference = operations.logConversationStart;
+      reference = internal.aiTown.agentOperations.logConversationStart;
       break;
     case 'logConversationEnd':
-      reference = operations.logConversationEnd;
+      reference = internal.aiTown.agentOperations.logConversationEnd;
       break;
     case 'logActivityStart':
-      reference = operations.logActivityStart;
+      reference = internal.aiTown.agentOperations.logActivityStart;
       break;
     case 'logZoneChange':
-      reference = operations.logZoneChange;
+      reference = internal.aiTown.agentOperations.logZoneChange;
       break;
     case 'logActivityEnd':
-      reference = operations.logActivityEnd;
+      reference = internal.aiTown.agentOperations.logActivityEnd;
       break;
     case 'processRobberyRelationship':
       reference = internal.aiTown.relationshipService.processInteraction;
@@ -396,6 +398,22 @@ export async function runAgentOperation(ctx: MutationCtx, operation: string, arg
       reference = internal.aiTown.relationshipService.processInteraction;
       // Pass through args as-is for conversation
       break;
+    case 'cleanupPlayerData':
+      // Use the comprehensive cleanup function from orphanCleanup
+      reference = internal.aiTown.orphanCleanup.comprehensivePlayerCleanup;
+      // Transform args to match the function signature
+      args = {
+        worldId: args.worldId,
+        playerId: args.playerId,
+        keepActivityLogs: true, // Keep activity logs for audit trail
+      };
+      break;
+    case 'grantMovementXP':
+      reference = internal.aiTown.idleLoot.grantMovementXP;
+      break;
+    case 'generateLootDrop':
+      reference = internal.aiTown.idleLoot.generateLootDrop;
+      break;
     default:
       throw new Error(`Unknown operation: ${operation}`);
   }
@@ -421,6 +439,27 @@ export const agentSendMessage = internalMutation({
       messageUuid: args.messageUuid,
       worldId: args.worldId,
     });
+    
+    // Log the message to activity logs for visibility
+    const playerName = `Player ${args.playerId.slice(0, 4)}`;
+    const messageType = args.leaveConversation ? 'conversation_end' : 'message';
+    const emoji = args.leaveConversation ? '👋' : '💬';
+    
+    await ctx.db.insert('activityLogs', {
+      worldId: args.worldId,
+      playerId: args.playerId,
+      agentId: args.agentId,
+      timestamp: Date.now(),
+      type: messageType,
+      description: args.leaveConversation 
+        ? `${playerName} left the conversation`
+        : `${playerName}: "${args.text.slice(0, 50)}${args.text.length > 50 ? '...' : ''}"`,
+      emoji,
+      details: {
+        message: args.text,
+      },
+    });
+    
     await insertInput(ctx, args.worldId, 'agentFinishSendingMessage', {
       conversationId: args.conversationId,
       agentId: args.agentId,

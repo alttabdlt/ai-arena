@@ -8,6 +8,7 @@ import * as embeddingsCache from './embeddingsCache';
 import { GameId, conversationId, playerId } from '../aiTown/ids';
 import { NUM_MEMORIES_TO_SEARCH } from '../constants';
 
+// @ts-ignore - Known Convex type depth issue
 const selfInternal = internal.agent.conversation;
 
 // Internal wrapper to avoid deep type instantiation
@@ -300,8 +301,31 @@ export const queryPromptData = internalQuery({
       .query('playerDescriptions')
       .withIndex('worldId', (q) => q.eq('worldId', args.worldId).eq('playerId', args.playerId))
       .first();
-    if (!playerDescription) {
-      throw new Error(`Player description for ${args.playerId} not found`);
+    
+    // If description not found, create a fallback
+    let playerName = 'Unknown Bot';
+    if (playerDescription) {
+      playerName = playerDescription.name;
+    } else {
+      console.warn(`Player description for ${args.playerId} not found, using fallback`);
+      // Try to find the agent to get aiArenaBotId
+      const agent = world.agents.find((a) => a.playerId === args.playerId);
+      if (agent) {
+        const agentDesc = await ctx.db
+          .query('agentDescriptions')
+          .withIndex('worldId', (q) => q.eq('worldId', args.worldId).eq('agentId', agent.id))
+          .first();
+        if (agentDesc && agentDesc.aiArenaBotId) {
+          // Extract bot name from aiArenaBotId if possible
+          playerName = `Bot-${agentDesc.aiArenaBotId.slice(-8)}`;
+        } else {
+          // Use Bot- prefix for better readability
+          playerName = `Bot-${args.playerId.slice(-4)}`;
+        }
+      } else {
+        // Use Bot- prefix for better readability
+        playerName = `Bot-${args.playerId.slice(-4)}`;
+      }
     }
     const otherPlayer = world.players.find((p) => p.id === args.otherPlayerId);
     if (!otherPlayer) {
@@ -311,8 +335,31 @@ export const queryPromptData = internalQuery({
       .query('playerDescriptions')
       .withIndex('worldId', (q) => q.eq('worldId', args.worldId).eq('playerId', args.otherPlayerId))
       .first();
-    if (!otherPlayerDescription) {
-      throw new Error(`Player description for ${args.otherPlayerId} not found`);
+    
+    // If description not found, try to get bot name from agent
+    let otherPlayerName = 'Unknown Bot';
+    if (otherPlayerDescription) {
+      otherPlayerName = otherPlayerDescription.name;
+    } else {
+      console.warn(`Player description for ${args.otherPlayerId} not found, using fallback`);
+      // Try to find the agent to get aiArenaBotId
+      const otherAgent = world.agents.find((a) => a.playerId === args.otherPlayerId);
+      if (otherAgent) {
+        const agentDesc = await ctx.db
+          .query('agentDescriptions')
+          .withIndex('worldId', (q) => q.eq('worldId', args.worldId).eq('agentId', otherAgent.id))
+          .first();
+        if (agentDesc && agentDesc.aiArenaBotId) {
+          // Extract bot name from aiArenaBotId if possible - use last 8 chars for readability
+          otherPlayerName = `Bot-${agentDesc.aiArenaBotId.slice(-8)}`;
+        } else {
+          // Use Bot- prefix for better readability
+          otherPlayerName = `Bot-${args.otherPlayerId.slice(-4)}`;
+        }
+      } else {
+        // Use Bot- prefix for better readability
+        otherPlayerName = `Bot-${args.otherPlayerId.slice(-4)}`;
+      }
     }
     const conversation = world.conversations.find((c) => c.id === args.conversationId);
     if (!conversation) {
@@ -372,8 +419,8 @@ export const queryPromptData = internalQuery({
       }
     }
     return {
-      player: { name: playerDescription.name, ...player },
-      otherPlayer: { name: otherPlayerDescription.name, ...otherPlayer },
+      player: { name: playerName, ...player },
+      otherPlayer: { name: otherPlayerName, ...otherPlayer },
       conversation,
       agent: { 
         identity: agentDescription?.identity || `Agent ${agent.id}`, 

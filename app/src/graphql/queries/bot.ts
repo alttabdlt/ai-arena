@@ -101,6 +101,7 @@ export const GET_BOTS = gql`
       name
       avatar
       modelType
+      personality
       isActive
       isDemo
       channel

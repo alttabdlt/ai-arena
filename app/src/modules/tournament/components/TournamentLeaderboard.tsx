@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@ui/card';
 import { Badge } from '@ui/badge';
 import { Trophy, TrendingUp, Zap, Shield, Target } from 'lucide-react';
-import { formatChips } from '@game/engine/games/poker/utils/poker-helpers';
+import { formatChips } from '@game/shared/utils/poker-helpers';
 // PlayerStats type is defined inline for now since it's not exported from PokerScoringSystem
 interface PlayerStats {
   handsPlayed: number;

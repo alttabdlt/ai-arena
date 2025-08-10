@@ -5,8 +5,8 @@ import {
   getCardDisplayValue, 
   getPhaseDisplayName,
   shouldShowCard 
-} from '@game/engine/games/poker/utils/poker-helpers';
-import type { Card as PokerCard, PokerPhase } from '@game/engine/games/poker/PokerTypes';
+} from '@game/shared/utils/poker-helpers';
+import type { Card as PokerCard, PokerPhase } from '@game/shared/types';
 import { motion } from 'framer-motion';
 
 interface PokerCommunityCardsProps {

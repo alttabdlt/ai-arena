@@ -17,6 +17,7 @@ interface Bot {
   personality: string;
   isActive: boolean;
   isDemo?: boolean;
+  channel?: string;
   createdAt: string;
   creator: {
     id: string;
@@ -451,17 +452,9 @@ const BotsPage = () => {
                         {bot.isActive ? 'Active' : 'Inactive'}
                       </span>
                     </div>
-                    <Button 
-                      variant="ghost" 
-                      size="sm"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        navigate(`/bot/${bot.id}`);
-                      }}
-                    >
-                      View Details
-                      <ChevronRight className="ml-1 h-4 w-4" />
-                    </Button>
+                    <span className="text-xs text-muted-foreground">
+                      {new Date(bot.createdAt).toLocaleDateString()}
+                    </span>
                   </div>
                 </CardContent>
               </Card>

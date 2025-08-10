@@ -2,6 +2,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import PixiGame from './PixiGame.tsx';
 import GameHeader from './GameHeader.tsx';
 import InventoryModal from './InventoryModal.tsx';
+import IdleGainsNotification from './IdleGainsNotification.tsx';
 
 import { useElementSize } from 'usehooks-ts';
 import { Stage } from '@pixi/react';
@@ -29,6 +30,10 @@ export default function Game() {
   const [showInventory, setShowInventory] = useState(false);
   const [selectedChannelName, setSelectedChannelName] = useState<string>('main');
   const [selectedWorldId, setSelectedWorldId] = useState<string | null>(null);
+  const [showIdleGains, setShowIdleGains] = useState(false);
+  const [idleGains, setIdleGains] = useState<any>(null);
+  const [hasShownNotification, setHasShownNotification] = useState(false);
+  const [currentTimestamp, setCurrentTimestamp] = useState(Date.now());
   const [gameWrapperRef, { width, height }] = useElementSize();
   
   // Fetch user's bots from AI Arena backend
@@ -48,6 +53,21 @@ export default function Game() {
       setSelectedWorldId(null);
     }
   }, [selectedChannelName, channels]);
+  
+  
+  // Reset notification flag when switching bots
+  useEffect(() => {
+    setHasShownNotification(false);
+  }, [selectedBotId]);
+
+  // Update timestamp every 15 seconds for stat refresh
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTimestamp(Date.now());
+    }, 15000); // 15 seconds
+
+    return () => clearInterval(interval);
+  }, []);
 
   // Get world status - use selected world or fall back to default
   // @ts-ignore - TypeScript type depth issue with generated Convex API
@@ -56,23 +76,49 @@ export default function Game() {
   // Use selected world ID if available, otherwise use default
   const worldId = selectedWorldId || defaultWorldStatus?.worldId;
   const engineId = defaultWorldStatus?.engineId; // Engine is the same for all worlds
+  
+  // Get world state early so it's available for allAgents
+  const worldState = useQuery(api.world.worldState, worldId ? { worldId: worldId as any } : 'skip');
 
   const game = useServerGame(worldId as any);
 
   // Send a periodic heartbeat to our world to keep it alive.
   useWorldHeartbeat();
-
-  const worldState = useQuery(api.world.worldState, worldId ? { worldId: worldId as any } : 'skip');
   const { historicalTime, timeManager } = useHistoricalTime(worldState?.engine);
 
   const scrollViewRef = useRef<HTMLDivElement>(null);
+  
+  // Get all agents in the world (must be after worldState)
+  const allAgents = worldState?.world?.agents || [];
+  
+  // Calculate and show idle gains notification
+  const selectedPlayerId = selectedElement?.id || (allAgents && allAgents[0]?.playerId);
+  const idleGainsData = useQuery(
+    api.aiTown.idleGains.calculateIdleGains,
+    worldId && selectedPlayerId ? {
+      worldId: worldId as any,
+      playerId: selectedPlayerId,
+      currentTime: currentTimestamp
+    } : 'skip'
+  );
+  
+  // Show idle gains notification when data is available
+  useEffect(() => {
+    if (idleGainsData && !hasShownNotification && selectedBot) {
+      setIdleGains(idleGainsData);
+      setShowIdleGains(true);
+      setHasShownNotification(true);
+      
+      // Auto-hide after user closes or timeout
+      setTimeout(() => {
+        setShowIdleGains(false);
+      }, 30000); // Hide after 30 seconds
+    }
+  }, [idleGainsData, hasShownNotification, selectedBot]);
 
   // Get current player ID for inventory
   // If no player is selected, try to use the first agent with an aiArenaBotId
   const currentPlayerId = selectedElement?.id || '';
-  
-  // Get all agents in the world
-  const allAgents = worldState?.world?.agents || [];
   
   // Find agent with this player ID to get aiArenaBotId
   const currentAgent = currentPlayerId 
@@ -160,12 +206,27 @@ export default function Game() {
   }
   return (
     <div className="flex flex-col h-full w-full">
+      {/* Idle Gains Notification */}
+      {showIdleGains && idleGains && selectedBot && (
+        <IdleGainsNotification
+          gains={idleGains}
+          botName={selectedBot.name}
+          onClose={() => setShowIdleGains(false)}
+          onViewDetails={() => {
+            // Switch to activity tab in PlayerDetails
+            if (selectedElement) {
+              // This would require adding a prop to PlayerDetails to control the tab
+              // For now, just close the notification
+              setShowIdleGains(false);
+            }
+          }}
+        />
+      )}
+      
       {/* Game Header */}
       <GameHeader 
         selectedBotId={selectedBotId}
         onBotSelect={handleBotSelect}
-        onInventoryClick={() => setShowInventory(true)}
-        itemCount={itemCount}
         bots={transformedBots}
         channels={channels}
         selectedChannelName={selectedChannelName}

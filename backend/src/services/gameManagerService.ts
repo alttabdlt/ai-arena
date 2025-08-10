@@ -1,15 +1,30 @@
+/**
+ * SCHEMA NOTE: Game types are now dynamic strings, not hardcoded enums.
+ * 
+ * NO DATABASE CHANGES NEEDED for new games!
+ * Games store their state in Match.gameHistory JSONB field.
+ * 
+ * To add a new game:
+ * 1. Create adapter: GameEngineAdapterFactory.create('your-game')
+ * 2. Register below: this.adapters.set('your-game', adapter)
+ * 3. Store state in JSONB: { gameType: 'your-game', state: {...} }
+ * 
+ * See /backend/SCHEMA.md for storage patterns.
+ */
+
 import { PubSub } from 'graphql-subscriptions';
 import { prisma } from '../config/database';
 import { aiService } from './aiService';
 import Redis from 'ioredis';
 import { GameEngineAdapter, GameEngineAdapterFactory } from './gameEngineAdapter';
 import { fileLoggerService } from './fileLoggerService';
+import { ExperienceService } from './experienceService';
 import { getConnect4TournamentService } from './connect4TournamentService';
 import { formatTimestamp } from '../utils/dateFormatter';
 
 export interface GameInstance {
   id: string;
-  type: 'poker' | 'reverse-hangman' | 'connect4' | 'chess' | 'go';
+  type: string; // Dynamic game type - any game can be added without schema changes
   state: any;
   players: string[];
   spectators: Set<string>;
@@ -47,6 +62,7 @@ class GameManagerService {
     this.adapters.set('poker', GameEngineAdapterFactory.create('poker'));
     this.adapters.set('reverse-hangman', GameEngineAdapterFactory.create('reverse-hangman'));
     this.adapters.set('connect4', GameEngineAdapterFactory.create('connect4'));
+    this.adapters.set('battleship', GameEngineAdapterFactory.create('battleship'));
 
     // Start cleanup interval
     this.startCleanupProcess();
@@ -54,7 +70,7 @@ class GameManagerService {
 
   async createGame(
     gameId: string,
-    type: GameInstance['type'],
+    type: string, // Accept any game type string
     players: string[],
     initialState: any
   ): Promise<GameInstance> {
@@ -197,6 +213,9 @@ class GameManagerService {
         break;
       case 'connect4':
         await this.processConnect4Turn(game);
+        break;
+      case 'battleship':
+        await this.processBattleshipTurn(game);
         break;
       case 'chess':
       case 'go':
@@ -606,6 +625,103 @@ class GameManagerService {
       if (game.type === 'poker' && game.state.handNumber) {
         decisionData.handNumber = game.state.handNumber;
       }
+      
+      this.publishUpdate({
+        gameId: game.id,
+        type: 'decision',
+        data: decisionData,
+        timestamp: new Date(),
+      });
+      
+      // Publish thinking complete event
+      this.publishUpdate({
+        gameId: game.id,
+        type: 'event',
+        data: { event: 'thinking_complete', playerId: currentTurn },
+        timestamp: new Date(),
+      });
+    } catch (error) {
+      console.error(`AI decision failed for player ${currentTurn}:`, error);
+      // Apply timeout action
+      game.state = adapter.processAction(game.state, { 
+        type: 'timeout', 
+        playerId: currentTurn,
+        timestamp: new Date().toISOString()
+      });
+    } finally {
+      // Always clear thinking state
+      game.aiThinking.delete(currentTurn);
+    }
+  }
+
+  private async processBattleshipTurn(game: GameInstance): Promise<void> {
+    const adapter = this.adapters.get('battleship');
+    if (!adapter) {
+      console.error('Battleship adapter not found');
+      return;
+    }
+
+    const currentTurn = adapter.getCurrentTurn(game.state);
+    
+    if (!currentTurn || adapter.isGameComplete(game.state)) {
+      // Check if game is complete
+      if (adapter.isGameComplete(game.state)) {
+        game.status = 'completed';
+        const winner = adapter.getWinner(game.state);
+        if (winner) {
+          console.log(`Game ${game.id} completed. Winner: ${winner}`);
+        }
+        // Handle game completion (including auto-requeue for demo bots)
+        await this.handleGameComplete(game);
+      }
+      return;
+    }
+
+    const currentPlayer = game.state.players.find((p: any) => p.id === currentTurn);
+    if (!currentPlayer || !currentPlayer.isAI) {
+      return;
+    }
+
+    // Check if this AI is already thinking
+    if (game.aiThinking.has(currentTurn)) {
+      console.log(`AI ${currentTurn} is already thinking, skipping turn processing`);
+      return;
+    }
+
+    // Get valid actions
+    const validActions = adapter.getValidActions(game.state, currentTurn);
+    
+    // Mark AI as thinking
+    game.aiThinking.add(currentTurn);
+    console.log(`🚢 [Battleship] AI ${currentPlayer.name} (${currentTurn}) marked as thinking. Currently thinking: ${game.aiThinking.size} players`);
+    
+    // Publish thinking start event
+    this.publishUpdate({
+      gameId: game.id,
+      type: 'event',
+      data: { event: 'thinking_start', playerId: currentTurn },
+      timestamp: new Date(),
+    });
+    
+    // Get AI decision
+    try {
+      const decision = await this.getAIDecision(game, currentTurn, validActions);
+      
+      // Log Battleship decision details
+      console.log('Battleship AI decision received:', {
+        playerId: currentTurn,
+        actionType: decision.type,
+        coordinate: decision.coordinate,
+        shipId: decision.shipId,
+        reasoning: decision.reasoning,
+        confidence: decision.confidence
+      });
+      
+      // Apply decision to game state using adapter
+      game.state = adapter.processAction(game.state, decision);
+
+      // Publish decision event
+      const decisionData: any = { playerId: currentTurn, decision };
       
       this.publishUpdate({
         gameId: game.id,
@@ -1408,13 +1524,13 @@ class GameManagerService {
         orderBy: { finalRank: 'asc' },
       });
       
-      // Generate lootbox rewards for all participants
+      // Generate lootbox rewards and grant XP for all participants
       try {
         const { economyService } = await import('./economyService');
         const totalParticipants = participants.length;
         
         for (const participant of participants) {
-          // Skip demo bots from getting lootboxes
+          // Skip demo bots from getting lootboxes and XP
           if (participant.bot.isDemo) {
             continue;
           }
@@ -1424,8 +1540,55 @@ class GameManagerService {
             ? 1 - ((participant.finalRank - 1) / (totalParticipants - 1))
             : 0.5; // Default to 0.5 if no rank
           
+          // Generate lootbox
           await economyService.generateMatchLootbox(game.id, participant.botId, performance);
           console.log(`Generated lootbox for ${participant.bot.name} with performance ${performance.toFixed(2)}`);
+          
+          // Grant XP based on performance
+          try {
+            const isWinner = participant.finalRank === 1;
+            const xpGain = isWinner 
+              ? ExperienceService.getXPForActivity('match_win')
+              : ExperienceService.getXPForActivity('match_loss');
+            
+            if (xpGain) {
+              const levelUpResult = await ExperienceService.grantXP(participant.botId, xpGain);
+              
+              if (levelUpResult) {
+                console.log(`🎉 ${participant.bot.name} leveled up to ${levelUpResult.newLevel}!`);
+                // Publish level up event
+                this.publishUpdate({
+                  gameId: game.id,
+                  type: 'event',
+                  data: { 
+                    event: 'level_up', 
+                    botId: participant.botId,
+                    newLevel: levelUpResult.newLevel,
+                    unlocked: levelUpResult.unlocked,
+                  },
+                  timestamp: new Date(),
+                });
+              }
+            }
+            
+            // Grant additional XP for tournament participation if this is part of a tournament
+            const match = await prisma.match.findUnique({
+              where: { id: game.id },
+              include: { tournament: true }
+            });
+            
+            if (match?.tournament) {
+              const tournamentXP = isWinner
+                ? ExperienceService.getXPForActivity('tournament_win')
+                : ExperienceService.getXPForActivity('tournament_participation');
+              
+              if (tournamentXP) {
+                await ExperienceService.grantXP(participant.botId, tournamentXP);
+              }
+            }
+          } catch (xpError) {
+            console.error(`Error granting XP to ${participant.bot.name}:`, xpError);
+          }
         }
       } catch (error) {
         console.error('Error generating lootbox rewards:', error);

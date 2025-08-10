@@ -139,20 +139,49 @@ export async function engineInsertInput(
   args: any,
 ): Promise<Id<'inputs'>> {
   const now = Date.now();
-  const prevInput = await ctx.db
-    .query('inputs')
-    .withIndex('byInputNumber', (q) => q.eq('engineId', engineId))
-    .order('desc')
-    .first();
-  const number = prevInput ? prevInput.number + 1 : 0;
-  const inputId = await ctx.db.insert('inputs', {
-    engineId,
-    number,
-    name,
-    args,
-    received: now,
-  });
-  return inputId;
+  const maxRetries = 5;
+  let retryCount = 0;
+  
+  while (retryCount < maxRetries) {
+    try {
+      // Get the latest input number
+      const prevInput = await ctx.db
+        .query('inputs')
+        .withIndex('byInputNumber', (q) => q.eq('engineId', engineId))
+        .order('desc')
+        .first();
+      const number = prevInput ? prevInput.number + 1 : 0;
+      
+      // Try to insert with this number
+      const inputId = await ctx.db.insert('inputs', {
+        engineId,
+        number,
+        name,
+        args,
+        received: now,
+      });
+      
+      // Success! Return the input ID
+      return inputId;
+    } catch (error: any) {
+      // Check if it's a concurrent modification error
+      if (error.message?.includes('changed while this mutation was being run')) {
+        retryCount++;
+        if (retryCount < maxRetries) {
+          // Exponential backoff: wait 50ms, 100ms, 200ms, 400ms
+          const backoffMs = 50 * Math.pow(2, retryCount - 1);
+          await new Promise(resolve => setTimeout(resolve, backoffMs));
+          console.log(`Retrying input insertion (attempt ${retryCount + 1}/${maxRetries}) after ${backoffMs}ms`);
+          continue;
+        }
+      }
+      // If it's not a concurrent modification error or we've exhausted retries, throw
+      throw error;
+    }
+  }
+  
+  // Should never reach here but TypeScript needs this
+  throw new Error(`Failed to insert input after ${maxRetries} retries`);
 }
 
 export const loadInputs = internalQuery({

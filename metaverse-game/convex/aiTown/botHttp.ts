@@ -185,10 +185,12 @@ export const createBotAgent = internalMutation({
   handler: async (ctx, args) => {
     const { worldId: worldIdStr, name, character, identity, plan, aiArenaBotId, initialZone, avatar } = args;
     
+    console.log('createBotAgent called with:', { worldIdStr, name, aiArenaBotId, initialZone });
+    
     // Validate worldId format and convert to Convex ID type
-    // Convex IDs are 32 character strings
-    if (!worldIdStr || worldIdStr.length !== 32) {
-      throw new Error('Invalid worldId format');
+    // Convex IDs are 32-34 character strings (with prefixes)
+    if (!worldIdStr || worldIdStr.length < 32 || worldIdStr.length > 34) {
+      throw new Error(`Invalid worldId format: expected 32-34 chars, got ${worldIdStr.length}`);
     }
     
     // Cast the string to Convex ID type
@@ -625,6 +627,7 @@ export const deleteBotFromWorlds = internalMutation({
     console.log('Deleting bot from all worlds:', args.aiArenaBotId);
     
     let deletedCount = 0;
+    const cleanupResults: any[] = [];
     
     // Find all worlds
     const worlds = await ctx.db.query('worlds').collect();
@@ -634,14 +637,31 @@ export const deleteBotFromWorlds = internalMutation({
       const agent = world.agents.find((a: any) => a.aiArenaBotId === args.aiArenaBotId);
       
       if (agent) {
-        // Remove the agent from the world
-        const updatedAgents = world.agents.filter((a: any) => a.id !== agent.id);
-        const updatedPlayers = world.players.filter((p: any) => p.id !== agent.playerId);
+        console.log(`Found bot ${args.aiArenaBotId} in world ${world._id}, cleaning up...`);
         
-        await ctx.db.patch(world._id, {
-          agents: updatedAgents,
-          players: updatedPlayers,
-        });
+        // First, perform comprehensive cleanup of all related data
+        // This handles messages, conversations, relationships, activity logs, etc.
+        try {
+          // Import the cleanup helper function
+          const { comprehensivePlayerCleanupHelper } = await import('./orphanCleanup');
+          
+          const cleanupResult = await comprehensivePlayerCleanupHelper(
+            ctx,
+            world._id,
+            agent.playerId,
+            false // Don't keep activity logs for deleted bots
+          );
+          
+          cleanupResults.push({
+            worldId: world._id,
+            playerId: agent.playerId,
+            cleanup: cleanupResult
+          });
+          
+          console.log(`Cleanup results for ${agent.playerId}:`, cleanupResult);
+        } catch (cleanupError) {
+          console.error(`Failed to cleanup player data for ${agent.playerId}:`, cleanupError);
+        }
         
         // Delete agent description if it exists
         const agentDesc = await ctx.db
@@ -651,6 +671,30 @@ export const deleteBotFromWorlds = internalMutation({
           
         if (agentDesc) {
           await ctx.db.delete(agentDesc._id);
+        }
+        
+        // Delete bot experience records
+        const botExperience = await ctx.db
+          .query('botExperience')
+          .withIndex('aiArenaBotId', (q: any) => 
+            q.eq('worldId', world._id).eq('aiArenaBotId', args.aiArenaBotId)
+          )
+          .first();
+          
+        if (botExperience) {
+          await ctx.db.delete(botExperience._id);
+        }
+        
+        // Delete player description (if not already deleted by cleanup)
+        const playerDesc = await ctx.db
+          .query('playerDescriptions')
+          .withIndex('worldId', (q: any) => 
+            q.eq('worldId', world._id).eq('playerId', agent.playerId)
+          )
+          .first();
+          
+        if (playerDesc) {
+          await ctx.db.delete(playerDesc._id);
         }
         
         // Delete any inventory items
@@ -663,10 +707,47 @@ export const deleteBotFromWorlds = internalMutation({
           await ctx.db.delete(item._id);
         }
         
+        // Delete any inventory records
+        const inventory = await ctx.db
+          .query('inventories')
+          .withIndex('player', (q: any) => 
+            q.eq('worldId', world._id).eq('playerId', agent.playerId)
+          )
+          .first();
+          
+        if (inventory) {
+          await ctx.db.delete(inventory._id);
+        }
+        
+        // Delete any house records
+        const house = await ctx.db
+          .query('houses')
+          .withIndex('owner', (q: any) => 
+            q.eq('worldId', world._id).eq('ownerId', agent.playerId)
+          )
+          .first();
+          
+        if (house) {
+          await ctx.db.delete(house._id);
+        }
+        
+        // Finally, remove the agent and player from the world arrays
+        const updatedAgents = world.agents.filter((a: any) => a.id !== agent.id);
+        const updatedPlayers = world.players.filter((p: any) => p.id !== agent.playerId);
+        
+        await ctx.db.patch(world._id, {
+          agents: updatedAgents,
+          players: updatedPlayers,
+        });
+        
         deletedCount++;
+        console.log(`✅ Successfully deleted bot ${args.aiArenaBotId} from world ${world._id}`);
       }
     }
     
-    return { deletedCount };
+    return { 
+      deletedCount,
+      cleanupResults: cleanupResults.length > 0 ? cleanupResults : undefined
+    };
   },
 });

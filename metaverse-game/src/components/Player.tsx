@@ -10,6 +10,8 @@ import { useHistoricalValue } from '../hooks/useHistoricalValue.ts';
 import { PlayerDescription } from '../../convex/aiTown/playerDescription.ts';
 import { WorldMap } from '../../convex/aiTown/worldMap.ts';
 import { ServerGame } from '../hooks/serverGame.ts';
+import { useQuery } from 'convex/react';
+import { api } from '../../convex/_generated/api';
 
 export type SelectElement = (element?: { kind: 'player'; id: GameId<'players'> }) => void;
 
@@ -21,13 +23,16 @@ export const Player = ({
   player,
   onClick,
   historicalTime,
+  showXP = false,
+  worldId,
 }: {
   game: ServerGame;
   isViewer: boolean;
   player: ServerPlayer;
-
+  worldId?: Id<'worlds'>;
   onClick: SelectElement;
   historicalTime?: number;
+  showXP?: boolean;
 }) => {
   const playerCharacter = game.playerDescriptions.get(player.id)?.character;
   if (!playerCharacter) {
@@ -63,6 +68,22 @@ export const Player = ({
     !![...game.world.agents.values()].find(
       (a) => a.playerId === player.id && !!a.inProgressOperation,
     );
+  
+  // Get agent and experience data for XP display
+  const agent = [...game.world.agents.values()].find(a => a.playerId === player.id);
+  const hasXPData = agent?.aiArenaBotId && showXP && worldId;
+  
+  // Query real experience data from the database
+  // @ts-ignore - Known Convex type depth issue
+  const experienceData = useQuery(api.aiTown.idleGains.getPlayerIdleStats,
+    hasXPData ? { worldId: worldId!, playerId: player.id as string } : 'skip'
+  );
+  
+  // Use real data from database, default to level 1 if no data exists
+  const level = hasXPData ? (experienceData?.level || 1) : undefined;
+  const currentXP = hasXPData ? (experienceData?.currentXP || 0) : undefined;
+  const maxXP = hasXPData ? 100 * (level || 1) : undefined;
+  
   const tileDim = game.worldMap.tileDim;
   const historicalFacing = { dx: historicalLocation.dx, dy: historicalLocation.dy };
   return (
@@ -83,6 +104,10 @@ export const Player = ({
         textureUrl={character.textureUrl}
         spritesheetData={character.spritesheetData}
         speed={character.speed}
+        level={level}
+        currentXP={currentXP}
+        maxXP={maxXP}
+        showXP={!!hasXPData}
         onClick={() => {
           onClick({ kind: 'player', id: player.id });
         }}

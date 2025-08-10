@@ -377,6 +377,11 @@ const baseTypeDefs = gql`
     # OpenAI Models
     GPT_4O
     GPT_4O_MINI
+    GPT_4_TURBO
+    GPT_4
+    GPT_3_5_TURBO
+    O1_PREVIEW
+    O1_MINI
     O3
     O3_MINI
     O3_PRO
@@ -385,11 +390,13 @@ const baseTypeDefs = gql`
     CLAUDE_3_5_SONNET
     CLAUDE_3_5_HAIKU
     CLAUDE_3_OPUS
+    CLAUDE_3_HAIKU
     CLAUDE_4_OPUS
     CLAUDE_4_SONNET
     
     # DeepSeek Models
     DEEPSEEK_CHAT
+    DEEPSEEK_CODER
     DEEPSEEK_R1
     DEEPSEEK_V3
     

@@ -12,6 +12,7 @@ import {
 import { playerId } from './aiTown/ids';
 import { kickEngine, startEngine, stopEngine } from './aiTown/main';
 import { engineInsertInput } from './engine/abstractGame';
+import { internal } from './_generated/api';
 
 export const defaultWorldStatus = query({
   handler: async (ctx) => {
@@ -60,6 +61,12 @@ export const heartbeatWorld = mutation({
       console.log(`Restarting inactive world ${worldStatus._id}...`);
       await ctx.db.patch(worldStatus._id, { status: 'running' });
       await startEngine(ctx, worldStatus.worldId);
+      
+      // Start idle XP scheduler when world restarts
+      console.log('Starting idle XP scheduler for restarted world', args.worldId);
+      await ctx.scheduler.runAfter(5000, internal.aiTown.idleLoot.scheduleIdleXPTicks, {
+        worldId: args.worldId,
+      });
     }
   },
 });

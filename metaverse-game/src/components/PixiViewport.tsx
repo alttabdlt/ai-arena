@@ -53,4 +53,17 @@ export default PixiComponent('Viewport', {
       }
     });
   },
+  willUnmount(viewport: Viewport) {
+    // Check if viewport exists and can be cleaned up
+    if (viewport && typeof viewport.removeAllListeners === 'function') {
+      try {
+        // Only remove event listeners, don't destroy
+        // PIXI React will handle the actual destruction
+        viewport.removeAllListeners();
+      } catch (error) {
+        // Silently catch any cleanup errors to prevent React crashes
+        // This is expected if the viewport was already cleaned up
+      }
+    }
+  },
 });

@@ -5,11 +5,13 @@ import { GameId, playerId } from './ids';
 
 // Default relationship values
 export const DEFAULT_RELATIONSHIP = {
+  stage: 'stranger' as const,
   respect: 0,
   fear: 0,
   trust: 0,
   loyalty: 0,
   revenge: 0,
+  friendshipScore: 0,
   debt: 0,
 };
 
@@ -91,6 +93,7 @@ export const INTERACTION_EFFECTS = {
   CONVERSATION: {
     both: {
       trust: 2,
+      friendshipScore: 3, // Build friendship through conversation
       // Additional trust based on personality compatibility calculated separately
     },
   },
@@ -141,6 +144,7 @@ export const updateRelationship = internalMutation({
       trust: v.optional(v.number()),
       loyalty: v.optional(v.number()),
       revenge: v.optional(v.number()),
+      friendshipScore: v.optional(v.number()),
       debt: v.optional(v.number()),
     }),
     personality: v.optional(v.union(
@@ -186,35 +190,110 @@ export const updateRelationship = internalMutation({
         trust: clamp(existing.trust + (adjustedChanges.trust || 0), -100, 100),
         loyalty: clamp(existing.loyalty + (adjustedChanges.loyalty || 0), 0, 100),
         revenge: clamp(existing.revenge + (adjustedChanges.revenge || 0), 0, 100),
+        friendshipScore: clamp(existing.friendshipScore + (adjustedChanges.friendshipScore || 0), 0, 100),
         debt: existing.debt + (adjustedChanges.debt || 0),
         lastInteraction: Date.now(),
         interactionCount: existing.interactionCount + 1,
       };
       
+      // Calculate new stage based on metrics
+      const newStage = calculateRelationshipStage(updated) as any;
+      const previousStage = existing.stage;
+      
       // Check if relationship should be deleted (all values near default)
       if (isNearDefault(updated)) {
         await ctx.db.delete(existing._id);
       } else {
-        await ctx.db.patch(existing._id, updated);
+        await ctx.db.patch(existing._id, { ...updated, stage: newStage });
+        
+        // Log significant relationship changes
+        const playerName = `Player ${args.fromPlayer.slice(0, 4)}`;
+        const targetName = `Player ${args.toPlayer.slice(0, 4)}`;
+        
+        // Log stage progression
+        if (newStage !== previousStage) {
+          const emoji = newStage === 'married' ? '💍' :
+                       newStage === 'lover' ? '💕' :
+                       newStage === 'best_friend' ? '🤝' :
+                       newStage === 'friend' ? '👫' :
+                       newStage === 'nemesis' ? '☠️' :
+                       newStage === 'enemy' ? '⚔️' :
+                       newStage === 'rival' ? '⚡' : '👥';
+          
+          await ctx.db.insert('activityLogs', {
+            worldId: args.worldId,
+            playerId: args.fromPlayer,
+            timestamp: Date.now(),
+            type: newStage === 'married' ? 'marriage' : 
+                  ['friend', 'best_friend', 'lover'].includes(newStage) ? 'friendship_formed' :
+                  ['rival', 'enemy', 'nemesis'].includes(newStage) ? 'rivalry_formed' :
+                  'relationship_milestone',
+            description: `${playerName} and ${targetName} are now ${newStage.replace('_', ' ')}s!`,
+            emoji,
+            details: {
+              targetPlayer: args.toPlayer,
+            },
+          });
+        }
+        
+        // Log significant score changes
+        if (adjustedChanges.friendshipScore && Math.abs(adjustedChanges.friendshipScore) >= 5) {
+          const changeStr = adjustedChanges.friendshipScore > 0 ? `+${adjustedChanges.friendshipScore}` : `${adjustedChanges.friendshipScore}`;
+          await ctx.db.insert('activityLogs', {
+            worldId: args.worldId,
+            playerId: args.fromPlayer,
+            timestamp: Date.now(),
+            type: 'activity_start',
+            description: `${playerName}'s friendship with ${targetName}: ${changeStr} (now ${updated.friendshipScore.toFixed(0)})`,
+            emoji: adjustedChanges.friendshipScore > 0 ? '💆' : '💔',
+            details: {
+              targetPlayer: args.toPlayer,
+            },
+          });
+        }
       }
     } else {
       // Create new relationship if values are significant
-      const newRelationship = {
+      const newRelationship: any = {
         worldId: args.worldId,
         fromPlayer: args.fromPlayer,
         toPlayer: args.toPlayer,
+        stage: 'stranger',
         respect: clamp(adjustedChanges.respect || 0, -100, 100),
         fear: clamp(adjustedChanges.fear || 0, 0, 100),
         trust: clamp(adjustedChanges.trust || 0, -100, 100),
         loyalty: clamp(adjustedChanges.loyalty || 0, 0, 100),
         revenge: clamp(adjustedChanges.revenge || 0, 0, 100),
+        friendshipScore: clamp(adjustedChanges.friendshipScore || 0, 0, 100),
         debt: adjustedChanges.debt || 0,
         lastInteraction: Date.now(),
         interactionCount: 1,
       };
       
+      // Calculate initial stage
+      newRelationship.stage = calculateRelationshipStage(newRelationship);
+      
       if (!isNearDefault(newRelationship)) {
-        await ctx.db.insert('relationships', newRelationship);
+        const docId = await ctx.db.insert('relationships', newRelationship);
+        
+        // Log new relationship formation
+        if (newRelationship.stage !== 'stranger') {
+          const playerName = `Player ${args.fromPlayer.slice(0, 4)}`;
+          const targetName = `Player ${args.toPlayer.slice(0, 4)}`;
+          const emoji = newRelationship.stage === 'acquaintance' ? '👋' : '👥';
+          
+          await ctx.db.insert('activityLogs', {
+            worldId: args.worldId,
+            playerId: args.fromPlayer,
+            timestamp: Date.now(),
+            type: 'relationship_milestone',
+            description: `${playerName} and ${targetName} are now ${newRelationship.stage}s`,
+            emoji,
+            details: {
+              targetPlayer: args.toPlayer,
+            },
+          });
+        }
       }
     }
   },
@@ -311,6 +390,7 @@ export const processInteraction = internalMutation({
       const victimChanges = (effects as any).victim;
       
       // Update robber's view of victim
+      // @ts-ignore - TypeScript depth issue
       await ctx.runMutation(internal.aiTown.relationshipService.updateRelationship, {
         worldId: args.worldId,
         fromPlayer: args.actor.playerId,
@@ -543,7 +623,52 @@ function isNearDefault(rel: any, threshold = 5): boolean {
          Math.abs(rel.trust) < threshold &&
          rel.loyalty < threshold &&
          rel.revenge < threshold &&
+         rel.friendshipScore < threshold &&
          Math.abs(rel.debt) < 10;
+}
+
+// Calculate relationship stage based on metrics
+export function calculateRelationshipStage(rel: any): string {
+  // Check for marriage (requires high friendship, trust, and loyalty)
+  if (rel.friendshipScore >= 90 && rel.trust >= 80 && rel.loyalty >= 80) {
+    return 'married';
+  }
+  
+  // Check for lover (high friendship and trust)
+  if (rel.friendshipScore >= 75 && rel.trust >= 60) {
+    return 'lover';
+  }
+  
+  // Check for best friend
+  if (rel.friendshipScore >= 60 && rel.trust >= 40) {
+    return 'best_friend';
+  }
+  
+  // Check for friend
+  if (rel.friendshipScore >= 40 && rel.trust >= 20) {
+    return 'friend';
+  }
+  
+  // Check for acquaintance
+  if (rel.friendshipScore >= 20 || rel.interactionCount >= 3) {
+    return 'acquaintance';
+  }
+  
+  // Check for negative relationships
+  if (rel.revenge >= 70 || (rel.respect < -50 && rel.fear >= 50)) {
+    return 'nemesis';
+  }
+  
+  if (rel.revenge >= 40 || rel.respect < -30) {
+    return 'enemy';
+  }
+  
+  if (rel.revenge >= 20 || rel.respect < -10) {
+    return 'rival';
+  }
+  
+  // Default to stranger
+  return 'stranger';
 }
 
 // Calculate personality compatibility

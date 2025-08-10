@@ -545,9 +545,10 @@ export const resolvers = {
         throw new Error('Not authorized to delete this bot');
       }
 
-      // Check if bot is in active queue (WAITING or MATCHED status)
+      // Check if bot is in active queue (WAITING or MATCHED status, and not expired)
       const activeQueueEntries = bot.queueEntries.filter(
-        entry => entry.status === 'WAITING' || entry.status === 'MATCHED'
+        entry => (entry.status === 'WAITING' || entry.status === 'MATCHED') 
+          && new Date(entry.expiresAt) > new Date()
       );
       
       if (activeQueueEntries.length > 0) {
@@ -556,6 +557,14 @@ export const resolvers = {
 
       // Clean up any expired or cancelled queue entries before deletion
       if (bot.queueEntries.length > 0) {
+        // Log the status of queue entries for debugging
+        const expiredEntries = bot.queueEntries.filter(
+          entry => new Date(entry.expiresAt) < new Date()
+        );
+        if (expiredEntries.length > 0) {
+          console.log(`Found ${expiredEntries.length} expired queue entries for bot ${botId}`);
+        }
+        
         console.log(`Cleaning up ${bot.queueEntries.length} queue entries for bot ${botId}`);
         await ctx.prisma.queueEntry.deleteMany({
           where: { botId },
@@ -578,7 +587,32 @@ export const resolvers = {
           }
         }
 
-        // Delete the bot from database (cascade will handle related records)
+        // Manually delete related records that don't have cascade delete
+        // Count records for logging
+        const [matchCount, tournamentCount, commentCount, likeCount] = await Promise.all([
+          ctx.prisma.matchParticipant.count({ where: { botId } }),
+          ctx.prisma.tournamentParticipant.count({ where: { botId } }),
+          ctx.prisma.comment.count({ where: { botId } }),
+          ctx.prisma.like.count({ where: { botId } })
+        ]);
+
+        if (matchCount > 0 || tournamentCount > 0 || commentCount > 0 || likeCount > 0) {
+          console.log(`Cleaning up related records for bot ${botId}:`);
+          if (matchCount > 0) console.log(`  - ${matchCount} match participations`);
+          if (tournamentCount > 0) console.log(`  - ${tournamentCount} tournament participations`);
+          if (commentCount > 0) console.log(`  - ${commentCount} comments`);
+          if (likeCount > 0) console.log(`  - ${likeCount} likes`);
+        }
+
+        // Delete in transaction to ensure atomicity
+        await ctx.prisma.$transaction([
+          ctx.prisma.matchParticipant.deleteMany({ where: { botId } }),
+          ctx.prisma.tournamentParticipant.deleteMany({ where: { botId } }),
+          ctx.prisma.comment.deleteMany({ where: { botId } }),
+          ctx.prisma.like.deleteMany({ where: { botId } })
+        ]);
+
+        // Delete the bot from database (cascade will handle other related records)
         await ctx.prisma.bot.delete({
           where: { id: botId },
         });
@@ -1323,8 +1357,13 @@ export const resolvers = {
       }
       
       const payload = await authService.verifyRefreshToken(refreshToken);
+      
+      if (!payload || !payload.userId) {
+        throw new Error('Invalid refresh token payload');
+      }
+      
       const user = await ctx.prisma.user.findUnique({
-        where: { id: payload!.userId },
+        where: { id: payload.userId },
       });
       
       if (!user) {
@@ -1427,10 +1466,27 @@ export const resolvers = {
     },
     stats: (bot: any) => {
       // Parse stats JSON if it's a string
-      if (typeof bot.stats === 'string') {
-        return JSON.parse(bot.stats);
+      let stats = bot.stats;
+      if (typeof stats === 'string') {
+        try {
+          stats = JSON.parse(stats);
+        } catch (e) {
+          stats = {};
+        }
       }
-      return bot.stats;
+      
+      // Ensure all required fields have default values
+      const wins = stats.wins || 0;
+      const losses = stats.losses || 0;
+      const totalGames = wins + losses;
+      
+      return {
+        wins: wins,
+        losses: losses,
+        earnings: stats.earnings || '0',
+        winRate: totalGames > 0 ? (wins / totalGames) : 0,
+        avgFinishPosition: stats.avgFinishPosition || 0
+      };
     },
     // Energy field from energyResolvers
     energy: async (parent: any) => {
@@ -1542,13 +1598,18 @@ export const resolvers = {
     },
     currentMatch: async (bot: any, _: any, ctx: Context) => {
       // Find active match where this bot is participating
-      // Order by createdAt DESC to get the newest match first
+      // Only return matches that are actually in progress and recent (within last hour)
       console.log(`Finding current match for bot ${bot.id} (${bot.name})`);
+      
+      // Calculate timestamp for 1 hour ago
+      const oneHourAgo = new Date();
+      oneHourAgo.setHours(oneHourAgo.getHours() - 1);
       
       const matches = await ctx.prisma.match.findMany({
         where: {
-          status: {
-            in: ['SCHEDULED', 'IN_PROGRESS'],
+          status: 'IN_PROGRESS', // Only truly active matches
+          createdAt: {
+            gte: oneHourAgo, // Created within last hour
           },
           participants: {
             some: {

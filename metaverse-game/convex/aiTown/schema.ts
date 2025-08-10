@@ -136,7 +136,14 @@ export const aiTownTables = {
       v.literal('activity_end'),
       v.literal('item_collected'),
       v.literal('trade'),
-      v.literal('message')
+      v.literal('message'),
+      v.literal('relationship_milestone'),
+      v.literal('marriage'),
+      v.literal('friendship_formed'),
+      v.literal('rivalry_formed'),
+      // Idle game tracking
+      v.literal('xp_gained'),
+      v.literal('level_up')
     ),
     description: v.string(),
     emoji: v.optional(v.string()),
@@ -147,6 +154,9 @@ export const aiTownTables = {
       amount: v.optional(v.number()),
       item: v.optional(v.string()),
       message: v.optional(v.string()),
+      // Idle game fields
+      newLevel: v.optional(v.number()),
+      rarity: v.optional(v.string()),
     })),
   })
     .index('player', ['worldId', 'playerId', 'timestamp'])
@@ -274,6 +284,19 @@ export const aiTownTables = {
     fromPlayer: playerId,
     toPlayer: playerId,
     
+    // Relationship stage progression
+    stage: v.union(
+      v.literal('stranger'),
+      v.literal('acquaintance'),
+      v.literal('friend'),
+      v.literal('best_friend'),
+      v.literal('lover'),
+      v.literal('married'),
+      v.literal('rival'),
+      v.literal('enemy'),
+      v.literal('nemesis')
+    ),
+    
     // Core relationship metrics (-100 to 100, except fear 0-100)
     respect: v.number(),
     fear: v.number(),
@@ -281,16 +304,21 @@ export const aiTownTables = {
     loyalty: v.number(),
     revenge: v.number(),
     
+    // Friendship milestone tracking (0-100)
+    friendshipScore: v.number(),
+    
     // Economic tracking
     debt: v.number(), // Negative = they owe me, Positive = I owe them
     
     // Metadata
     lastInteraction: v.number(),
     interactionCount: v.number(),
+    marriedAt: v.optional(v.number()), // Timestamp when married
   })
   .index('fromTo', ['worldId', 'fromPlayer', 'toPlayer'])
   .index('toFrom', ['worldId', 'toPlayer', 'fromPlayer'])
-  .index('lastInteraction', ['worldId', 'lastInteraction']),
+  .index('lastInteraction', ['worldId', 'lastInteraction'])
+  .index('stage', ['worldId', 'stage']),
   
   // Global reputation scores
   reputations: defineTable({
@@ -328,6 +356,34 @@ export const aiTownTables = {
   .index('world', ['worldId'])
   .index('leader', ['worldId', 'leader']),
   
+  // Marriage registry for tracking married bot couples
+  marriages: defineTable({
+    worldId: v.id('worlds'),
+    partner1: playerId,
+    partner2: playerId,
+    marriedAt: v.number(),
+    
+    // Marriage bonuses and perks
+    combinedPowerBonus: v.number(), // Additional power when fighting together
+    combinedDefenseBonus: v.number(), // Additional defense when protecting each other
+    sharedInventory: v.boolean(), // Can share items
+    
+    // Marriage milestones
+    anniversaryCount: v.number(),
+    lastAnniversary: v.optional(v.number()),
+    
+    // Special rewards granted
+    godTierEquipmentGranted: v.boolean(),
+    
+    // Status
+    active: v.boolean(), // False if divorced/widowed
+    endedAt: v.optional(v.number()),
+    endReason: v.optional(v.union(v.literal('divorce'), v.literal('death'))),
+  })
+  .index('partners', ['worldId', 'partner1', 'partner2'])
+  .index('active', ['worldId', 'active'])
+  .index('marriedAt', ['worldId', 'marriedAt']),
+  
   // Pending bot registrations queue for batch processing
   pendingBotRegistrations: defineTable({
     worldId: v.id('worlds'),
@@ -358,4 +414,66 @@ export const aiTownTables = {
     .index('status', ['status', 'createdAt'])
     .index('worldId', ['worldId', 'status'])
     .index('aiArenaBotId', ['aiArenaBotId']),
+  
+  // Bot experience and leveling system
+  botExperience: defineTable({
+    worldId: v.id('worlds'),
+    playerId: playerId,
+    aiArenaBotId: v.string(),
+    
+    // Avatar rarity (affects stat growth and XP multipliers)
+    avatarRarity: v.optional(v.union(
+      v.literal('COMMON'),
+      v.literal('UNCOMMON'),
+      v.literal('RARE'),
+      v.literal('EPIC'),
+      v.literal('LEGENDARY')
+    )),
+    
+    // Core XP/Level
+    level: v.number(),
+    currentXP: v.number(),
+    totalXP: v.number(),
+    xpToNextLevel: v.number(),
+    
+    // Category XP (for specialized progression)
+    combatXP: v.number(),
+    socialXP: v.number(),
+    criminalXP: v.number(),
+    gamblingXP: v.number(),
+    tradingXP: v.number(),
+    
+    // Prestige system (for level 50+ bots)
+    prestigeLevel: v.number(),
+    prestigeTokens: v.number(),
+    
+    // Skill points
+    skillPoints: v.number(),
+    allocatedSkills: v.object({
+      strength: v.optional(v.number()),
+      agility: v.optional(v.number()),
+      defense: v.optional(v.number()),
+      charisma: v.optional(v.number()),
+      luck: v.optional(v.number()),
+      stealth: v.optional(v.number()),
+      intelligence: v.optional(v.number()),
+    }),
+    
+    // Tracking
+    lastXPGain: v.number(),
+    lastLevelUp: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('player', ['worldId', 'playerId'])
+    .index('aiArenaBotId', ['worldId', 'aiArenaBotId'])
+    .index('level', ['worldId', 'level']),
+  
+  // Track when players were last viewed (for idle gains calculations)
+  playerLastViewed: defineTable({
+    worldId: v.id('worlds'),
+    playerId: v.string(),
+    timestamp: v.number(),
+  })
+    .index('by_player', ['worldId', 'playerId']),
 };

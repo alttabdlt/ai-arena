@@ -1,22 +1,18 @@
-import { Card, CardContent, CardHeader, CardTitle } from '@ui/card';
+import { DecisionHistoryEntry, Card as PokerCard } from '@game/shared/types';
+import { getCardColor, getCardDisplayValue } from '@game/shared/utils/poker-helpers';
 import { Badge } from '@ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@ui/card';
 import { ScrollArea } from '@ui/scroll-area';
 import { Clock, Hash } from 'lucide-react';
-import { DecisionHistoryEntry } from '@game/engine/games/poker/PokerGameManager';
-import { formatChips, getCardColor, getCardDisplayValue } from '@game/engine/games/poker/utils/poker-helpers';
-import { Card as PokerCard } from '@game/engine/games/poker/PokerTypes';
 
 // Extended interface to support both poker and reverse hangman
 interface FlexibleDecisionHistoryEntry extends Partial<DecisionHistoryEntry> {
   handNumber?: number;
   roundNumber?: number;
-  playerId: string;
-  playerName: string;
-  gamePhase: string;
-  decision: any;
-  timestamp: number;
+  decision?: any;
   playerCards?: string[];
   communityCards?: string[];
+  gamePhase?: string;
 }
 
 interface DecisionHistoryProps {
@@ -85,13 +81,13 @@ export function DecisionHistory({ history, currentHandNumber }: DecisionHistoryP
                        const entryKey = entry.handNumber ?? entry.roundNumber ?? handNumber;
                        return (
                          <div
-                           key={`${entryKey}-${entry.playerId}-${idx}`}
+                           key={`${entryKey}-${entry.playerId ?? 'unknown'}-${idx}`}
                            className="bg-muted/50 rounded-lg p-3 space-y-2"
                          >
                         <div className="flex items-center justify-between">
-                          <span className="font-medium text-sm">{entry.playerName}</span>
+                          <span className="font-medium text-sm">{entry.playerName ?? 'Unknown Player'}</span>
                           <Badge variant="outline" className="text-xs">
-                            {entry.gamePhase}
+                            {entry.gamePhase ?? entry.phase ?? 'preflop'}
                           </Badge>
                         </div>
                         
@@ -100,9 +96,12 @@ export function DecisionHistory({ history, currentHandNumber }: DecisionHistoryP
                             <span className="text-sm">Action:</span>
                             <Badge variant="secondary">
                               {entry.decision.action.type ? 
-                                entry.decision.action.type.toUpperCase() : 
+                                String(entry.decision.action.type).toUpperCase() : 
                                 'UNKNOWN'}
-                              {entry.decision.action.amount && ` $${entry.decision.action.amount}`}
+                              {(() => {
+                                const amt = entry.decision?.action?.amount ?? entry.decision?.action?.data?.amount;
+                                return amt ? ` $${amt}` : '';
+                              })()}
                             </Badge>
                           </div>
                         )}

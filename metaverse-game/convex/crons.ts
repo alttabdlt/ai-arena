@@ -10,18 +10,33 @@ const crons = cronJobs();
 crons.interval(
   'stop inactive worlds',
   { seconds: IDLE_WORLD_TIMEOUT / 1000 },
+  // @ts-ignore - TypeScript depth issue
   internal.world.stopInactiveWorlds,
 );
 
-crons.interval('restart dead worlds', { seconds: 60 }, internal.world.restartDeadWorlds);
+crons.interval('restart dead worlds', { seconds: 60 }, 
+  // @ts-ignore - TypeScript depth issue
+  internal.world.restartDeadWorlds);
 
-crons.daily('vacuum old entries', { hourUTC: 4, minuteUTC: 20 }, internal.crons.vacuumOldEntries);
+crons.daily('vacuum old entries', { hourUTC: 4, minuteUTC: 20 }, 
+  // @ts-ignore - TypeScript depth issue
+  internal.crons.vacuumOldEntries);
 
 // Process bot registrations every 3 seconds
 crons.interval(
   'process bot registrations',
   { seconds: 3 },
+  // @ts-ignore - TypeScript depth issue
   internal.aiTown.batchRegistration.scheduledBatchProcessor,
+);
+
+// Process idle XP for all active worlds every 60 seconds
+// Reduced frequency to avoid concurrency conflicts with agent operations
+crons.interval(
+  'tick idle experience',
+  { seconds: 60 },
+  // @ts-ignore - TypeScript depth issue
+  internal.crons.tickIdleExperienceForAllWorlds,
 );
 
 export default crons;
@@ -64,6 +79,33 @@ export const vacuumOldEntries = internalMutation({
         });
       }
     }
+  },
+});
+
+// Tick idle experience for all active worlds
+export const tickIdleExperienceForAllWorlds = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    // Get all active worlds
+    const worldStatuses = await ctx.db
+      .query('worldStatus')
+      .filter((q) => q.eq(q.field('status'), 'running'))
+      .collect();
+    
+    console.log(`Processing idle XP for ${worldStatuses.length} active worlds`);
+    
+    for (const worldStatus of worldStatuses) {
+      try {
+        // Run the idle XP tick for this world
+        await ctx.scheduler.runAfter(0, internal.aiTown.idleLoot.tickIdleExperience, {
+          worldId: worldStatus.worldId,
+        });
+      } catch (error) {
+        console.error(`Failed to tick idle XP for world ${worldStatus.worldId}:`, error);
+      }
+    }
+    
+    return { worldsProcessed: worldStatuses.length };
   },
 });
 

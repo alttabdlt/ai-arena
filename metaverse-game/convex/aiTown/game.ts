@@ -281,9 +281,35 @@ export class Game extends AbstractGame {
     for (const player of this.world.players.values()) {
       player.tickPosition(this, now);
     }
+    
+    // Validate and clean up conversations before ticking
+    const conversationsToRemove: Array<GameId<'conversations'>> = [];
     for (const conversation of this.world.conversations.values()) {
-      conversation.tick(this, now);
+      // Check if all participants still exist
+      let isValid = true;
+      for (const participantId of conversation.participants.keys()) {
+        if (!this.world.players.has(participantId)) {
+          console.warn(`Conversation ${conversation.id} has invalid participant ${participantId} - marking for removal`);
+          isValid = false;
+          break;
+        }
+      }
+      
+      if (isValid) {
+        // Conversation is valid, tick it
+        conversation.tick(this, now);
+      } else {
+        // Mark for removal after iteration
+        conversationsToRemove.push(conversation.id);
+      }
     }
+    
+    // Remove invalid conversations
+    for (const conversationId of conversationsToRemove) {
+      console.log(`Removing invalid conversation ${conversationId}`);
+      this.world.conversations.delete(conversationId);
+    }
+    
     for (const agent of this.world.agents.values()) {
       agent.tick(this, now);
     }
@@ -302,6 +328,7 @@ export class Game extends AbstractGame {
 
   async saveStep(ctx: ActionCtx, engineUpdate: EngineUpdate): Promise<void> {
     const diff = this.takeDiff();
+    // @ts-ignore - Known Convex type depth issue
     await ctx.runMutation(internal.aiTown.game.saveWorld, {
       engineId: this.engine._id,
       engineUpdate,
@@ -350,6 +377,8 @@ export class Game extends AbstractGame {
       throw new Error(`No world found with id ${worldId}`);
     }
     const newWorld = diff.world;
+    
+    
     // Archive newly deleted players, conversations, and agents.
     for (const player of existingWorld.players) {
       if (!newWorld.players.some((p) => p.id === player.id)) {

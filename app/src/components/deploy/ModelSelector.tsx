@@ -1,29 +1,29 @@
-import { useState } from 'react';
-import { Card, CardContent } from '@ui/card';
+import { formatEnergyRate } from '@/config/energy';
 import { Badge } from '@ui/badge';
 import { Button } from '@ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@ui/tabs';
+import { Card, CardContent } from '@ui/card';
 import { Input } from '@ui/input';
-import { 
-  Brain, 
-  Zap, 
-  Gem, 
-  Globe, 
-  Target,
-  Search,
-  Info,
-  Check,
-  Activity,
-  Sparkles,
-  ChevronRight
-} from 'lucide-react';
-import { formatEnergyRate } from '@/config/energy';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@ui/tabs';
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from '@ui/tooltip';
+import {
+  Activity,
+  Brain,
+  Check,
+  ChevronRight,
+  Gem,
+  Globe,
+  Info,
+  Search,
+  Sparkles,
+  Target,
+  Zap
+} from 'lucide-react';
+import { useState } from 'react';
 
 export interface ModelInfo {
   id: string;

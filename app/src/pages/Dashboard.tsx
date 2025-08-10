@@ -325,9 +325,14 @@ export default function Dashboard() {
                             description: `${bot.name} has been added to the tournament queue.`,
                           });
                         } catch (error: any) {
+                          const errorMessage = 
+                            error.graphQLErrors?.[0]?.message || 
+                            error.message || 
+                            "Failed to queue bot";
+                            
                           toast({
                             title: "Queue Failed",
-                            description: error.message || "Failed to queue bot",
+                            description: errorMessage,
                             variant: "destructive"
                           });
                         }
@@ -342,9 +347,14 @@ export default function Dashboard() {
                             description: `${bot.name} has been ${bot.isActive ? 'deactivated' : 'activated'}.`,
                           });
                         } catch (error: any) {
+                          const errorMessage = 
+                            error.graphQLErrors?.[0]?.message || 
+                            error.message || 
+                            "Failed to toggle bot status";
+                            
                           toast({
                             title: "Toggle Failed",
-                            description: error.message || "Failed to toggle bot status",
+                            description: errorMessage,
                             variant: "destructive"
                           });
                         }
@@ -364,9 +374,15 @@ export default function Dashboard() {
                               throw new Error(result.data?.deleteBot?.message || 'Failed to delete bot');
                             }
                           } catch (error: any) {
+                            // Extract error message from GraphQL error structure
+                            const errorMessage = 
+                              error.graphQLErrors?.[0]?.message || 
+                              error.message || 
+                              "Failed to delete bot";
+                              
                             toast({
                               title: "Delete Failed",
-                              description: error.message || "Failed to delete bot",
+                              description: errorMessage,
                               variant: "destructive"
                             });
                           }

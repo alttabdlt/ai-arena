@@ -252,7 +252,7 @@ export class AIService {
     gameState: PokerGameState,
     playerState: PlayerState,
     _opponents: number,
-    model: 'gpt-4o' | 'deepseek-chat' | 'claude-3-5-sonnet' | 'claude-3-opus',
+    model: string,
     customPrompt?: string
   ): Promise<AIPokerDecision> {
     console.log('\n=== AIService.getPokerDecision Called ===');
@@ -303,22 +303,95 @@ export class AIService {
       const startTime = Date.now();
       
       switch(model) {
+        // DeepSeek Models
         case 'deepseek-chat':
-          console.log('📡 Calling Deepseek API...');
+        case 'DEEPSEEK_CHAT':
+          console.log('📡 Calling Deepseek Chat API...');
           decision = await this.getDeepseekDecision(prompt, gameState, playerState);
           break;
-        case 'gpt-4o':
-          console.log('📡 Calling OpenAI API...');
-          decision = await this.getOpenAIDecision(prompt, gameState, playerState);
+        case 'DEEPSEEK_R1':
+          console.log('📡 Calling Deepseek R1 API...');
+          decision = await this.getDeepseekDecision(prompt, gameState, playerState, 'deepseek-reasoner');
           break;
+        case 'DEEPSEEK_V3':
+          console.log('📡 Calling Deepseek V3 API...');
+          decision = await this.getDeepseekDecision(prompt, gameState, playerState, 'deepseek-chat');
+          break;
+        case 'DEEPSEEK_CODER':
+          console.log('📡 Calling Deepseek Coder API...');
+          decision = await this.getDeepseekDecision(prompt, gameState, playerState, 'deepseek-coder');
+          break;
+          
+        // OpenAI Models  
+        case 'gpt-4o':
+        case 'GPT_4O':
+          console.log('📡 Calling OpenAI GPT-4o API...');
+          decision = await this.getOpenAIDecision(prompt, gameState, playerState, 'gpt-4o');
+          break;
+        case 'GPT_4O_MINI':
+          console.log('📡 Calling OpenAI GPT-4o-mini API...');
+          decision = await this.getOpenAIDecision(prompt, gameState, playerState, 'gpt-4o-mini');
+          break;
+        case 'GPT_3_5_TURBO':
+          console.log('📡 Calling OpenAI GPT-3.5 API...');
+          decision = await this.getOpenAIDecision(prompt, gameState, playerState, 'gpt-3.5-turbo');
+          break;
+          
+        // Claude Models
         case 'claude-3-5-sonnet':
+        case 'CLAUDE_3_5_SONNET':
           console.log('📡 Calling Claude 3.5 Sonnet API...');
           decision = await this.getClaudeDecision(prompt, gameState, playerState, 'claude-3-5-sonnet-20241022');
           break;
+        case 'CLAUDE_3_5_HAIKU':
+          console.log('📡 Calling Claude 3.5 Haiku API...');
+          decision = await this.getClaudeDecision(prompt, gameState, playerState, 'claude-3-haiku-20240307');
+          break;
+        case 'CLAUDE_3_HAIKU':
+          console.log('📡 Calling Claude 3 Haiku API...');
+          decision = await this.getClaudeDecision(prompt, gameState, playerState, 'claude-3-haiku-20240307');
+          break;
         case 'claude-3-opus':
+        case 'CLAUDE_3_OPUS':
           console.log('📡 Calling Claude 3 Opus API...');
           decision = await this.getClaudeDecision(prompt, gameState, playerState, 'claude-3-opus-20240229');
           break;
+          
+        // Models we don't support yet (fallback to similar models)
+        case 'O3':
+        case 'O3_MINI':
+        case 'O3_PRO':
+          console.log('⚠️ O3 models not yet available, using GPT-4o');
+          decision = await this.getOpenAIDecision(prompt, gameState, playerState, 'gpt-4o');
+          break;
+        case 'CLAUDE_4_OPUS':
+        case 'CLAUDE_4_SONNET':
+          console.log('⚠️ Claude 4 not yet available, using Claude 3.5 Sonnet');
+          decision = await this.getClaudeDecision(prompt, gameState, playerState, 'claude-3-5-sonnet-20241022');
+          break;
+          
+        // Qwen models (fallback to DeepSeek)
+        case 'QWEN_2_5_72B':
+        case 'QWQ_32B':
+        case 'QVQ_72B_PREVIEW':
+        case 'QWEN_2_5_MAX':
+          console.log('⚠️ Qwen models not integrated, using DeepSeek');
+          decision = await this.getDeepseekDecision(prompt, gameState, playerState);
+          break;
+          
+        // Other models (fallback to GPT-4o)
+        case 'GROK_3':
+        case 'KIMI_K2':
+        case 'GEMINI_2_5_PRO':
+        case 'GEMINI_2_5_PRO_DEEP_THINK':
+        case 'LLAMA_3_1_405B':
+        case 'LLAMA_3_1_70B':
+        case 'LLAMA_3_2_90B':
+        case 'MIXTRAL_8X22B':
+          console.log(`⚠️ ${model} not integrated, using GPT-4o`);
+          decision = await this.getOpenAIDecision(prompt, gameState, playerState, 'gpt-4o');
+          break;
+          
         default:
           throw new Error(`Unsupported model: ${model}`);
       }
@@ -668,14 +741,16 @@ Respond with JSON:
   private async getOpenAIDecision(
     prompt: string,
     _gameState: PokerGameState,
-    _playerState: PlayerState
+    _playerState: PlayerState,
+    modelOverride?: string
   ): Promise<AIPokerDecision> {
     if (!this.openai) {
       throw new Error('OpenAI API key not configured');
     }
 
+    const model = modelOverride || 'gpt-4o';
     const response = await this.openai.chat.completions.create({
-      model: 'gpt-4o',
+      model,
       messages: [
         {
           role: 'system',
@@ -711,15 +786,17 @@ Respond with JSON:
   private async getDeepseekDecision(
     prompt: string,
     _gameState: PokerGameState,
-    _playerState: PlayerState
+    _playerState: PlayerState,
+    modelOverride?: string
   ): Promise<AIPokerDecision> {
     if (!this.deepseek) {
       console.error('❌ Deepseek client not initialized');
       throw new Error('Deepseek API key not configured');
     }
 
+    const model = modelOverride || 'deepseek-chat';
     console.log('🔧 Deepseek API call parameters:', {
-      model: 'deepseek-chat',
+      model,
       promptLength: prompt.length,
       hasResponseFormat: true,
       maxTokens: 2000,
@@ -728,7 +805,7 @@ Respond with JSON:
 
     try {
       const response = await this.deepseek.chat.completions.create({
-        model: 'deepseek-chat',
+        model,
         messages: [
           {
             role: 'system',

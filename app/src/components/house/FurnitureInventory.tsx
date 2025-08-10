@@ -197,7 +197,7 @@ export function FurnitureInventory({
                 <motion.div
                   key={item.id}
                   draggable
-                  onDragStart={(e) => handleDragStart(e, item)}
+                  onDragStart={(e) => handleDragStart(e as unknown as React.DragEvent, item)}
                   onDragEnd={onDragEnd}
                   className={cn(
                     "relative cursor-move rounded-lg border-2 p-3 transition-all",

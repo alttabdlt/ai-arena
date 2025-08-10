@@ -175,10 +175,6 @@ export function BotCard({ bot, onQueue, onManage, onDelete }: BotCardProps) {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => navigate(`/bot/${bot.id}`)}>
-                  <Eye className="mr-2 h-4 w-4" />
-                  View Details
-                </DropdownMenuItem>
                 {bot.isActive && !bot.queuePosition && onQueue && (
                   <DropdownMenuItem onClick={onQueue}>
                     <Play className="mr-2 h-4 w-4" />
@@ -304,9 +300,12 @@ export function BotCard({ bot, onQueue, onManage, onDelete }: BotCardProps) {
             size="sm"
             variant="outline"
             className="flex-1"
-            onClick={() => navigate(`/bot/${bot.id}`)}
+            onClick={() => {
+              // Show bot stats in a toast or modal instead
+              window.alert(`${bot.name}\nWins: ${bot.stats.wins}\nLosses: ${bot.stats.losses}\nWin Rate: ${bot.stats.winRate}%`);
+            }}
           >
-            View Details
+            Quick Stats
           </Button>
           <BotInventoryModal 
             bot={bot}

@@ -2,9 +2,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@ui/card';
 import { Badge } from '@ui/badge';
 import { Progress } from '@ui/progress';
 import { Brain, Clock, Target, Lightbulb } from 'lucide-react';
-import { IGameDecision as AIDecision } from '@game/engine/core/interfaces';
-import { DecisionHistoryEntry } from '@game/engine/games/poker/PokerGameManager';
-import { formatChips } from '@game/engine/games/poker/utils/poker-helpers';
+import { IGameDecision as AIDecision, DecisionHistoryEntry } from '@game/shared/types';
+import { formatChips } from '@game/shared/utils/poker-helpers';
 
 interface AIThinkingPanelProps {
   currentThinking: {

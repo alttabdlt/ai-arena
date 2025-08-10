@@ -137,7 +137,7 @@ export default function BotSelector({ selectedBotId, onBotSelect, className = ''
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.2 }}
-            className="absolute top-full mt-2 right-0 w-64 bg-gray-900 border border-gray-700 rounded-lg shadow-2xl overflow-hidden z-50"
+            className="absolute top-full mt-2 right-0 w-64 bg-gray-900 border border-gray-700 rounded-lg shadow-2xl overflow-hidden z-[100]"
           >
             <div className="p-2">
               <div className="text-xs text-gray-500 uppercase tracking-wider px-3 py-1">Your Bots</div>

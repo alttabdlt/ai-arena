@@ -4,7 +4,7 @@ import { AnimatedWordReveal } from './AnimatedWordReveal';
 import { MatchProgressBar } from './MatchProgressBar';
 import { MistakeDisplay } from './MistakeDisplay';
 import { Loader2 } from 'lucide-react';
-import type { ReverseHangmanGameState as ReverseHangmanState, GuessAttempt } from '@game/engine/games/reverse-hangman/ReverseHangmanTypes';
+import type { ReverseHangmanGameState as ReverseHangmanState, GuessAttempt } from '@game/shared/types';
 
 // Simple local mistake type - mistake detection was removed in framework migration
 interface Mistake {

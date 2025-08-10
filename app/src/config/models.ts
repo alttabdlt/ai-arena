@@ -501,6 +501,3 @@ export function getAllModels(): ModelInfo[] {
 export function getModelById(modelId: string): ModelInfo | undefined {
   return getAllModels().find(model => model.id === modelId);
 }
-
-// Export ModelInfo type for use in other components
-export type { ModelInfo };

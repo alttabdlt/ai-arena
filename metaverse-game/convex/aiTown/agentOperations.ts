@@ -15,7 +15,7 @@ import { ACTIVITIES, ACTIVITY_COOLDOWN, CONVERSATION_COOLDOWN,
 import { api, internal } from '../_generated/api';
 import { sleep } from '../util/sleep';
 import { serializedPlayer } from './player';
-import { calculateRelationshipScore } from './relationshipService';
+import { calculateRelationshipScore, calculatePersonalityCompatibility } from './relationshipService';
 
 export const agentRememberConversation = internalAction({
   args: {
@@ -147,6 +147,7 @@ export const agentDoSomething = internalAction({
     if (isKnockedOut) {
       // Increased delay to reduce OCC errors
     await sleep(Math.random() * 5000 + 1000); // 1-6 seconds
+      // @ts-ignore - Known Convex type depth issue
       await ctx.runMutation(api.aiTown.main.sendInput, {
         worldId: args.worldId,
         name: 'finishDoSomething',
@@ -182,6 +183,286 @@ export const agentDoSomething = internalAction({
     // Decide whether to do crime activities based on zone and personality
     const currentZone = player.currentZone || 'downtown';
     const personality = agent.personality || 'WORKER';
+    
+    // First check for nearby players and evaluate relationships for interactions
+    const nearbyPlayersForInteraction = args.otherFreePlayers.filter((p: any) => {
+      const distance = Math.sqrt(
+        Math.pow(p.position.x - player.position.x, 2) + 
+        Math.pow(p.position.y - player.position.y, 2)
+      );
+      return distance < 3; // Very close for interaction
+    });
+    
+    // Process relationships with very nearby players
+    if (nearbyPlayersForInteraction.length > 0 && !justLeftConversation && !recentlyAttemptedInvite) {
+      console.log(`[RELATIONSHIP] Player ${player.id} found ${nearbyPlayersForInteraction.length} nearby players for interaction`);
+      for (const nearbyPlayer of nearbyPlayersForInteraction) {
+        try {
+          console.log(`[RELATIONSHIP] Checking relationship between ${player.id} and ${nearbyPlayer.id}`);
+          // Get relationship with this player
+          const relationship = await ctx.runQuery(internal.aiTown.relationshipService.getRelationship, {
+            worldId: args.worldId,
+            fromPlayer: player.id,
+            toPlayer: nearbyPlayer.id,
+          });
+          console.log(`[RELATIONSHIP] Got relationship:`, relationship);
+        
+        const previousStage = relationship.stage || 'stranger';
+        const playerName = `Player ${player.id.slice(0, 4)}`;
+        const nearbyPlayerName = `Player ${nearbyPlayer.id.slice(0, 4)}`;
+        
+        console.log(`[RELATIONSHIP] Stage for ${playerName} -> ${nearbyPlayerName}: ${previousStage}`);
+        
+        // Friends, lovers, and married bots should interact positively
+        if (['friend', 'best_friend', 'lover', 'married'].includes(previousStage)) {
+          console.log(`[RELATIONSHIP] Already friends or better, considering interaction...`);
+          // High chance to start friendly conversation
+          if (Math.random() < 0.7) {
+            // Log the interaction
+            await ctx.runMutation(internal.aiTown.activityLogger.logActivity, {
+              worldId: args.worldId,
+              playerId: player.id,
+              agentId: agent.id,
+              type: 'conversation_start',
+              description: `${playerName} spotted their ${previousStage.replace('_', ' ')} ${nearbyPlayerName}`,
+              emoji: previousStage === 'married' ? '💑' : previousStage === 'lover' ? '💕' : '👫',
+              details: {
+                targetPlayer: nearbyPlayer.id,
+              },
+            });
+            
+            await sleep(Math.random() * 3000 + 1000);
+            await ctx.runMutation(api.aiTown.main.sendInput, {
+              worldId: args.worldId,
+              name: 'finishDoSomething',
+              args: {
+                operationId: args.operationId,
+                agentId: agent.id,
+                invitee: nearbyPlayer.id, // Start conversation with friend/lover
+              },
+            });
+            
+            // Process positive interaction for relationship progression
+            // Update friendship scores directly
+            await ctx.runMutation(internal.aiTown.relationshipService.updateRelationship, {
+              worldId: args.worldId,
+              fromPlayer: player.id,
+              toPlayer: nearbyPlayer.id,
+              changes: {
+                trust: 3,
+                friendshipScore: 5,
+                respect: 1,
+              },
+              personality,
+            });
+            
+            // Check if relationship stage changed
+            const updatedRelationship = await ctx.runQuery(internal.aiTown.relationshipService.getRelationship, {
+              worldId: args.worldId,
+              fromPlayer: player.id,
+              toPlayer: nearbyPlayer.id,
+            });
+            
+            if (updatedRelationship.stage !== previousStage) {
+              // Log milestone achievement
+              let milestoneType: any = 'relationship_milestone';
+              let milestoneEmoji = '🎉';
+              let milestoneDescription = `${playerName} and ${nearbyPlayerName}'s relationship evolved to ${updatedRelationship.stage.replace('_', ' ')}`;
+              
+              if (updatedRelationship.stage === 'married') {
+                milestoneType = 'marriage';
+                milestoneEmoji = '💍';
+                milestoneDescription = `${playerName} and ${nearbyPlayerName} got married!`;
+              } else if (updatedRelationship.stage === 'friend' || updatedRelationship.stage === 'best_friend') {
+                milestoneType = 'friendship_formed';
+                milestoneEmoji = '🤝';
+                milestoneDescription = `${playerName} and ${nearbyPlayerName} became ${updatedRelationship.stage.replace('_', ' ')}s`;
+              }
+              
+              await ctx.runMutation(internal.aiTown.activityLogger.logActivity, {
+                worldId: args.worldId,
+                playerId: player.id,
+                agentId: agent.id,
+                type: milestoneType,
+                description: milestoneDescription,
+                emoji: milestoneEmoji,
+                details: {
+                  targetPlayer: nearbyPlayer.id,
+                },
+              });
+            }
+            
+            return;
+          } else {
+            console.log(`[RELATIONSHIP] Neutral compatibility - no immediate action`);
+          }
+        }
+        
+        // Enemies should be hostile
+        if (['rival', 'enemy', 'nemesis'].includes(previousStage)) {
+          console.log(`[RELATIONSHIP] Enemies detected!`);
+          // Log hostile encounter
+          await ctx.runMutation(internal.aiTown.activityLogger.logActivity, {
+            worldId: args.worldId,
+            playerId: player.id,
+            agentId: agent.id,
+            type: 'activity_start',
+            description: `${playerName} encountered their ${previousStage} ${nearbyPlayerName}`,
+            emoji: '😠',
+            details: {
+              targetPlayer: nearbyPlayer.id,
+            },
+          });
+          
+          // Criminals may rob enemies
+          if (personality === 'CRIMINAL' && !recentRobbery && Math.random() < 0.6) {
+            await ctx.scheduler.runAfter(0, internal.aiTown.agentOperations.agentAttemptRobbery, {
+              worldId: args.worldId,
+              agentId: agent.id,
+              playerId: player.id,
+              targetPlayerId: nearbyPlayer.id,
+              operationId: args.operationId,
+            });
+            return;
+          }
+          // Otherwise avoid enemies
+          continue;
+        }
+        
+        // Strangers and acquaintances - evaluate for friendship
+        if (['stranger', 'acquaintance'].includes(previousStage)) {
+          console.log(`[RELATIONSHIP] Strangers/acquaintances - evaluating for friendship...`);
+          // For now, assume WORKER personality for all bots (can be improved later)
+          // TODO: Store personality in player data or get from agent
+          const nearbyPersonality = 'WORKER';
+          
+          console.log(`[RELATIONSHIP] Evaluating compatibility: ${personality} vs ${nearbyPersonality}`);
+          
+          // Use personality compatibility from relationshipService
+          const compatibility = calculatePersonalityCompatibility(personality, nearbyPersonality);
+          
+          console.log(`[RELATIONSHIP] Compatibility score: ${compatibility}`);
+          
+          // High compatibility = try to be friends (made easier for testing)
+          // Reduced threshold from 1.0 to 0.7 and increased chance from 0.5 to 0.8
+          if (compatibility >= 0.7 && Math.random() < 0.8) {
+            console.log(`[RELATIONSHIP] High compatibility! Attempting friendship...`);
+            // Log the evaluation
+            await ctx.runMutation(internal.aiTown.activityLogger.logActivity, {
+              worldId: args.worldId,
+              playerId: player.id,
+              agentId: agent.id,
+              type: 'conversation_start',
+              description: `${playerName} is evaluating ${nearbyPlayerName} (compatibility: ${compatibility.toFixed(1)})`,
+              emoji: '🤔',
+              details: {
+                targetPlayer: nearbyPlayer.id,
+              },
+            });
+            
+            await sleep(Math.random() * 3000 + 1000);
+            await ctx.runMutation(api.aiTown.main.sendInput, {
+              worldId: args.worldId,
+              name: 'finishDoSomething',
+              args: {
+                operationId: args.operationId,
+                agentId: agent.id,
+                invitee: nearbyPlayer.id,
+              },
+            });
+            
+            // Build friendship - increase values to progress faster
+            await ctx.runMutation(internal.aiTown.relationshipService.updateRelationship, {
+              worldId: args.worldId,
+              fromPlayer: player.id,
+              toPlayer: nearbyPlayer.id,
+              changes: {
+                trust: 10,  // Increased from 3
+                friendshipScore: 15,  // Increased from 5
+                respect: 5,  // Increased from 1
+              },
+              personality,
+            });
+            
+            // Check if they became friends
+            const updatedRelationship = await ctx.runQuery(internal.aiTown.relationshipService.getRelationship, {
+              worldId: args.worldId,
+              fromPlayer: player.id,
+              toPlayer: nearbyPlayer.id,
+            });
+            
+            if (updatedRelationship.stage !== previousStage && updatedRelationship.stage === 'acquaintance') {
+              await ctx.runMutation(internal.aiTown.activityLogger.logActivity, {
+                worldId: args.worldId,
+                playerId: player.id,
+                agentId: agent.id,
+                type: 'relationship_milestone',
+                description: `${playerName} and ${nearbyPlayerName} are now acquaintances`,
+                emoji: '👋',
+                details: {
+                  targetPlayer: nearbyPlayer.id,
+                },
+              });
+            }
+            
+            return;
+          } else if (compatibility < 0.6) {
+            console.log(`[RELATIONSHIP] Low compatibility - potential rivalry`);
+            // Low compatibility - potential rivalry
+            await ctx.runMutation(internal.aiTown.activityLogger.logActivity, {
+              worldId: args.worldId,
+              playerId: player.id,
+              agentId: agent.id,
+              type: 'activity_start',
+              description: `${playerName} doesn't like the look of ${nearbyPlayerName}`,
+              emoji: '😒',
+              details: {
+                targetPlayer: nearbyPlayer.id,
+              },
+            });
+            
+            // Update relationship negatively
+            await ctx.runMutation(internal.aiTown.relationshipService.updateRelationship, {
+              worldId: args.worldId,
+              fromPlayer: player.id,
+              toPlayer: nearbyPlayer.id,
+              changes: {
+                respect: -5,
+                trust: -3,
+              },
+              personality,
+            });
+            
+            // Check if they became rivals
+            const updatedRelationship = await ctx.runQuery(internal.aiTown.relationshipService.getRelationship, {
+              worldId: args.worldId,
+              fromPlayer: player.id,
+              toPlayer: nearbyPlayer.id,
+            });
+            
+            if (updatedRelationship.stage === 'rival' && previousStage !== 'rival') {
+              await ctx.runMutation(internal.aiTown.activityLogger.logActivity, {
+                worldId: args.worldId,
+                playerId: player.id,
+                agentId: agent.id,
+                type: 'rivalry_formed',
+                description: `${playerName} and ${nearbyPlayerName} are now rivals!`,
+                emoji: '⚡',
+                details: {
+                  targetPlayer: nearbyPlayer.id,
+                },
+              });
+            }
+          }
+        }
+        } catch (error) {
+          console.error(`[RELATIONSHIP ERROR] Failed for player ${player.id} with ${nearbyPlayer.id}:`, error);
+          console.error(`[RELATIONSHIP ERROR] Error details:`, JSON.stringify(error));
+          console.error(`[RELATIONSHIP ERROR] Stack:`, (error as any)?.stack);
+          // Continue with other nearby players
+        }
+      }
+    }
     
     // Criminal activities in appropriate zones
     if (personality === 'CRIMINAL' && currentZone === 'darkAlley' && !recentRobbery && !player.pathfinding) {
@@ -225,9 +506,19 @@ export const agentDoSomething = internalAction({
           return { player: p, score, inventoryValue, relationship };
         }));
         
+        // Filter out friends, lovers, and married partners
+        const validTargets = targetAssessments.filter(t => {
+          const stage = t.relationship.stage || 'stranger';
+          // Never rob friends or positive relationships
+          if (['friend', 'best_friend', 'lover', 'married'].includes(stage)) {
+            return false;
+          }
+          return t.score > 0;
+        });
+        
         // Sort by score and pick the best target (or randomly from top 3 if multiple good targets)
-        targetAssessments.sort((a, b) => b.score - a.score);
-        const topTargets = targetAssessments.slice(0, 3).filter(t => t.score > 0);
+        validTargets.sort((a, b) => b.score - a.score);
+        const topTargets = validTargets.slice(0, 3);
         
         if (topTargets.length > 0) {
           const targetData = topTargets[Math.floor(Math.random() * topTargets.length)];
@@ -349,14 +640,14 @@ export const agentDoSomething = internalAction({
     // TODO: We hit a lot of OCC errors on sending inputs in this file. It's
     // easy for them to get scheduled at the same time and line up in time.
     // Increase random delay to better distribute operations
-    const conversationOffset = parseInt(args.agent.id.split(':')[1]) % 2000;
+    const conversationOffset = parseInt(agent.id.split(':')[1]) % 2000;
     await sleep(Math.random() * 5000 + 1000 + conversationOffset); // 1-8 seconds with offset
     await ctx.runMutation(api.aiTown.main.sendInput, {
       worldId: args.worldId,
       name: 'finishDoSomething',
       args: {
         operationId: args.operationId,
-        agentId: args.agent.id,
+        agentId: agent.id,
         invitee,
       },
     });
@@ -455,6 +746,44 @@ export const agentAttemptRobbery = internalAction({
         amount: lootValue,
       },
     });
+    
+    // Grant XP for the robbery attempt
+    const agentDesc = await ctx.runQuery(internal.aiTown.agentDescription.getAgentDescription, {
+      worldId: args.worldId,
+      agentId: args.agentId,
+    });
+    
+    if (agentDesc?.aiArenaBotId) {
+      await ctx.runMutation(internal.aiTown.experience.grantExperience, {
+        worldId: args.worldId,
+        playerId: args.playerId,
+        aiArenaBotId: agentDesc.aiArenaBotId,
+        activity: success ? 'robbery_success' : 'robbery_fail',
+      });
+      
+      // Grant defense XP to the target if they defended successfully
+      if (!success && target) {
+        const targetDesc = await ctx.runQuery(internal.aiTown.playerDescription.getPlayerDescription, {
+          worldId: args.worldId,
+          playerId: args.targetPlayerId,
+        });
+        
+        // Check if target is a bot (has aiArenaBotId)
+        const targetAgentDesc = await ctx.runQuery(internal.aiTown.agentDescription.getAgentDescriptionByPlayerId, {
+          worldId: args.worldId,
+          playerId: args.targetPlayerId,
+        });
+        
+        if (targetAgentDesc?.aiArenaBotId) {
+          await ctx.runMutation(internal.aiTown.experience.grantExperience, {
+            worldId: args.worldId,
+            playerId: args.targetPlayerId,
+            aiArenaBotId: targetAgentDesc.aiArenaBotId,
+            activity: 'defense_success',
+          });
+        }
+      }
+    }
   },
 });
 
@@ -538,6 +867,36 @@ export const agentEngageCombat = internalAction({
           targetPlayer: args.playerId,
         },
       });
+      
+      // Grant combat XP
+      const agentDesc = await ctx.runQuery(internal.aiTown.agentDescription.getAgentDescription, {
+        worldId: args.worldId,
+        agentId: args.agentId,
+      });
+      
+      if (agentDesc?.aiArenaBotId) {
+        await ctx.runMutation(internal.aiTown.experience.grantExperience, {
+          worldId: args.worldId,
+          playerId: args.playerId,
+          aiArenaBotId: agentDesc.aiArenaBotId,
+          activity: 'combat_win',
+        });
+      }
+      
+      // Grant combat loss XP to opponent if they're a bot
+      const opponentAgentDesc = await ctx.runQuery(internal.aiTown.agentDescription.getAgentDescriptionByPlayerId, {
+        worldId: args.worldId,
+        playerId: args.opponentId,
+      });
+      
+      if (opponentAgentDesc?.aiArenaBotId) {
+        await ctx.runMutation(internal.aiTown.experience.grantExperience, {
+          worldId: args.worldId,
+          playerId: args.opponentId,
+          aiArenaBotId: opponentAgentDesc.aiArenaBotId,
+          activity: 'combat_loss',
+        });
+      }
     } else {
       await ctx.runMutation(internal.aiTown.activityLogger.logActivity, {
         worldId: args.worldId,

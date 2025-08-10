@@ -1,10 +1,16 @@
 import '@rainbow-me/rainbowkit/styles.css';
 import {
-  getDefaultConfig,
   RainbowKitProvider,
   darkTheme,
+  connectorsForWallets,
 } from '@rainbow-me/rainbowkit';
-import { WagmiProvider } from 'wagmi';
+import {
+  metaMaskWallet,
+  rainbowWallet,
+  walletConnectWallet,
+  coinbaseWallet,
+} from '@rainbow-me/rainbowkit/wallets';
+import { createConfig, WagmiProvider, http } from 'wagmi';
 import { hyperevmMainnet, hyperevmTestnet } from './chains';
 import {
   QueryClientProvider,
@@ -14,11 +20,34 @@ import { ReactNode } from 'react';
 
 const queryClient = new QueryClient();
 
-export const config = getDefaultConfig({
-  appName: 'AI Arena',
-  projectId: import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || 'YOUR_PROJECT_ID',
+const projectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || 'YOUR_PROJECT_ID';
+
+const connectors = connectorsForWallets(
+  [
+    {
+      groupName: 'Recommended',
+      wallets: [
+        metaMaskWallet,
+        rainbowWallet,
+        walletConnectWallet,
+        coinbaseWallet,
+      ],
+    },
+  ],
+  {
+    appName: 'AI Arena',
+    projectId,
+  }
+);
+
+// Create manual config with explicit transport configuration
+export const config = createConfig({
   chains: [hyperevmMainnet, hyperevmTestnet],
-  ssr: false,
+  connectors,
+  transports: {
+    [hyperevmMainnet.id]: http('https://rpc.hyperliquid.xyz/evm'),
+    [hyperevmTestnet.id]: http('https://rpc.hyperliquid-testnet.xyz/evm'),
+  },
 });
 
 interface WalletProviderProps {

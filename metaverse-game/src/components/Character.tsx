@@ -15,6 +15,10 @@ export const Character = ({
   emoji = '',
   isViewer = false,
   speed = 0.1,
+  level,
+  currentXP,
+  maxXP,
+  showXP = false,
   onClick,
 }: {
   // Path to the texture packed image.
@@ -35,6 +39,11 @@ export const Character = ({
   isViewer?: boolean;
   // The speed of the animation. Can be tuned depending on the side and speed of the NPC.
   speed?: number;
+  // XP and level display
+  level?: number;
+  currentXP?: number;
+  maxXP?: number;
+  showXP?: boolean;
   onClick: () => void;
 }) => {
   const [spriteSheet, setSpriteSheet] = useState<Spritesheet>();
@@ -103,6 +112,62 @@ export const Character = ({
       />
       {emoji && (
         <Text x={0} y={-24} scale={{ x: -0.8, y: 0.8 }} text={emoji} anchor={{ x: 0.5, y: 0.5 }} />
+      )}
+      {showXP && level && (
+        <>
+          {/* Level Badge */}
+          <Container x={0} y={25}>
+            <Graphics
+              draw={(g) => {
+                g.clear();
+                // Background for level
+                g.beginFill(0x1a1a1a, 0.9);
+                g.drawRoundedRect(-20, -8, 40, 16, 8);
+                g.endFill();
+                // Level color based on tier
+                const levelColor = level >= 50 ? 0x9333ea : // purple
+                                  level >= 30 ? 0x3b82f6 : // blue
+                                  level >= 15 ? 0x10b981 : // green
+                                  level >= 5 ? 0xeab308 :  // yellow
+                                  0x9ca3af; // gray
+                g.beginFill(levelColor, 1);
+                g.drawRoundedRect(-18, -6, 36, 12, 6);
+                g.endFill();
+              }}
+            />
+            <Text
+              text={`Lv${level}`}
+              style={new PIXI.TextStyle({
+                fontSize: 10,
+                fill: 0xffffff,
+                fontWeight: 'bold',
+              })}
+              anchor={{ x: 0.5, y: 0.5 }}
+            />
+          </Container>
+          {/* XP Bar */}
+          {currentXP !== undefined && maxXP && (
+            <Container x={0} y={35}>
+              <Graphics
+                draw={(g) => {
+                  g.clear();
+                  // Background bar
+                  g.beginFill(0x1a1a1a, 0.8);
+                  g.drawRoundedRect(-25, -2, 50, 4, 2);
+                  g.endFill();
+                  // XP progress
+                  const progress = Math.min((currentXP / maxXP) * 50, 50);
+                  if (progress > 0) {
+                    const xpColor = level >= 30 ? 0x9333ea : 0x3b82f6;
+                    g.beginFill(xpColor, 1);
+                    g.drawRoundedRect(-25, -2, progress, 4, 2);
+                    g.endFill();
+                  }
+                }}
+              />
+            </Container>
+          )}
+        </>
       )}
     </Container>
   );

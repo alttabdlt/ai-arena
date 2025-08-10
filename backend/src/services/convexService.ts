@@ -303,6 +303,12 @@ export class ConvexService {
       }
 
       const result = await response.json() as any;
+      
+      // Handle wrapped response from Convex HTTP endpoint
+      if (result.success && result.position) {
+        return result.position;
+      }
+      
       return result;
     } catch (error) {
       console.error('Error getting agent position:', error);
@@ -343,6 +349,32 @@ export class ConvexService {
     }>;
   }): Promise<void> {
     try {
+      // Transform individual rewards into grouped lootboxes with items array
+      const lootboxMap = new Map<string, any>();
+      
+      for (const reward of args.lootboxes) {
+        const lootboxKey = `${reward.matchId}_${reward.rarity}`;
+        
+        if (!lootboxMap.has(lootboxKey)) {
+          lootboxMap.set(lootboxKey, {
+            id: lootboxKey,
+            rarity: reward.rarity,
+            items: [],
+            openedAt: reward.opened && reward.openedAt ? reward.openedAt.toISOString() : undefined,
+          });
+        }
+        
+        const lootbox = lootboxMap.get(lootboxKey);
+        lootbox.items.push({
+          type: reward.itemType,
+          name: reward.itemName,
+          quantity: 1,
+          value: reward.value,
+        });
+      }
+      
+      const transformedLootboxes = Array.from(lootboxMap.values());
+      
       const response = await fetch(`${this.httpUrl}/api/lootbox/sync`, {
         method: 'POST',
         headers: {
@@ -350,7 +382,7 @@ export class ConvexService {
         },
         body: JSON.stringify({
           aiArenaBotId: args.aiArenaBotId,
-          lootboxes: args.lootboxes
+          lootboxes: transformedLootboxes
         }),
       });
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '../../convex/_generated/api';
 import { Id } from '../../convex/_generated/dataModel';
@@ -13,7 +13,13 @@ import {
   Heart,
   Package,
   ArrowRightLeft,
-  AlertTriangle
+  AlertTriangle,
+  Users,
+  HeartHandshake,
+  Sparkles,
+  Shield,
+  ChevronDown,
+  ChevronRight
 } from 'lucide-react';
 
 interface ActivityLogsProps {
@@ -21,6 +27,12 @@ interface ActivityLogsProps {
   aiArenaBotId?: string;
   playerId?: string;
   agentId?: string;
+}
+
+interface ConversationGroup {
+  startLog: any;
+  messages: any[];
+  endLog?: any;
 }
 
 type LogType = 
@@ -35,7 +47,13 @@ type LogType =
   | 'activity_end'
   | 'item_collected'
   | 'trade'
-  | 'message';
+  | 'message'
+  | 'relationship_milestone'
+  | 'marriage'
+  | 'friendship_formed'
+  | 'rivalry_formed'
+  | 'xp_gained'
+  | 'level_up';
 
 const getLogIcon = (type: LogType) => {
   switch (type) {
@@ -60,6 +78,18 @@ const getLogIcon = (type: LogType) => {
       return <Package className="w-4 h-4" />;
     case 'trade':
       return <ArrowRightLeft className="w-4 h-4" />;
+    case 'relationship_milestone':
+      return <Users className="w-4 h-4" />;
+    case 'marriage':
+      return <HeartHandshake className="w-4 h-4" />;
+    case 'friendship_formed':
+      return <Sparkles className="w-4 h-4" />;
+    case 'rivalry_formed':
+      return <Shield className="w-4 h-4" />;
+    case 'xp_gained':
+      return <Sparkles className="w-4 h-4" />;
+    case 'level_up':
+      return <Sparkles className="w-4 h-4" />;
     default:
       return <Activity className="w-4 h-4" />;
   }
@@ -85,6 +115,18 @@ const getLogColor = (type: LogType) => {
       return 'text-purple-400';
     case 'trade':
       return 'text-cyan-400';
+    case 'relationship_milestone':
+      return 'text-blue-500';
+    case 'marriage':
+      return 'text-pink-500';
+    case 'friendship_formed':
+      return 'text-yellow-500';
+    case 'rivalry_formed':
+      return 'text-orange-500';
+    case 'xp_gained':
+      return 'text-purple-400';
+    case 'level_up':
+      return 'text-yellow-400';
     default:
       return 'text-gray-400';
   }
@@ -92,17 +134,75 @@ const getLogColor = (type: LogType) => {
 
 export default function ActivityLogs({ worldId, aiArenaBotId, playerId, agentId }: ActivityLogsProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [expandedConversations, setExpandedConversations] = useState<Set<string>>(new Set());
   
   // Query activity logs from Convex
+  // @ts-ignore - TypeScript depth issue with Convex types
   const logs = useQuery(api.world.getActivityLogs, {
     worldId,
     aiArenaBotId,
     playerId,
-    limit: 100,
+    limit: 200, // Increased to get more conversation history
   });
 
-  // Use real logs only - no more mock data
-  const displayLogs = logs || [];
+  // Group conversation messages together
+  const groupedLogs = useRef<any[]>([]);
+  
+  useEffect(() => {
+    if (!logs) return;
+    
+    const grouped: any[] = [];
+    const conversationMap = new Map<string, ConversationGroup>();
+    let currentConversation: ConversationGroup | null = null;
+    
+    for (const log of logs) {
+      if (log.type === 'conversation_start') {
+        currentConversation = {
+          startLog: log,
+          messages: [],
+        };
+      } else if (log.type === 'message' && currentConversation) {
+        currentConversation.messages.push(log);
+      } else if (log.type === 'conversation_end' && currentConversation) {
+        currentConversation.endLog = log;
+        grouped.push(currentConversation);
+        currentConversation = null;
+      } else {
+        // Non-conversation log or orphaned message
+        if (currentConversation && currentConversation.messages.length > 0) {
+          grouped.push(currentConversation);
+          currentConversation = null;
+        }
+        grouped.push(log);
+      }
+    }
+    
+    // Add any remaining conversation
+    if (currentConversation && currentConversation.messages.length > 0) {
+      grouped.push(currentConversation);
+    }
+    
+    groupedLogs.current = grouped;
+  }, [logs]);
+
+  const displayLogs = groupedLogs.current;
+  
+  const toggleConversation = (logId: string) => {
+    setExpandedConversations(prev => {
+      const next = new Set(prev);
+      if (next.has(logId)) {
+        next.delete(logId);
+      } else {
+        next.add(logId);
+      }
+      return next;
+    });
+  };
+  
+  // Check if a log is conversation-related
+  const isConversationLog = (type: LogType) => {
+    return type === 'conversation_start' || type === 'conversation_end' || type === 'message';
+  };
 
   // Auto-scroll to bottom when new logs arrive
   useEffect(() => {
@@ -135,45 +235,114 @@ export default function ActivityLogs({ worldId, aiArenaBotId, playerId, agentId 
         className="flex-1 overflow-y-auto space-y-2 pr-2"
         style={{ maxHeight: 'calc(100vh - 300px)' }}
       >
-        {displayLogs.map((log) => (
-          <div
-            key={log._id}
-            className="flex items-start gap-3 p-3 bg-gray-800/50 rounded-lg hover:bg-gray-800/70 transition-colors"
-          >
-            <div className={`mt-0.5 ${getLogColor(log.type)}`}>
-              {getLogIcon(log.type)}
-            </div>
+        {displayLogs.map((item, index) => {
+          // Check if this is a conversation group
+          if (item.startLog) {
+            const conversationGroup = item as ConversationGroup;
+            const isExpanded = expandedConversations.has(conversationGroup.startLog._id);
             
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                {log.emoji && <span className="text-sm">{log.emoji}</span>}
-                <p className="text-sm text-gray-200">{log.description}</p>
+            return (
+              <div
+                key={`conv-${conversationGroup.startLog._id}`}
+                className="bg-gray-800/30 rounded-lg p-3 space-y-2"
+              >
+                {/* Conversation header */}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => toggleConversation(conversationGroup.startLog._id)}
+                    className="p-0.5 hover:bg-gray-700 rounded transition-colors"
+                  >
+                    {isExpanded ? 
+                      <ChevronDown className="w-4 h-4 text-gray-400" /> : 
+                      <ChevronRight className="w-4 h-4 text-gray-400" />
+                    }
+                  </button>
+                  <MessageSquare className="w-4 h-4 text-green-400" />
+                  <span className="text-sm font-medium text-gray-200">
+                    Conversation ({conversationGroup.messages.length} messages)
+                  </span>
+                  <span className="text-xs text-gray-500 ml-auto">
+                    {formatDistanceToNow(conversationGroup.startLog.timestamp, { addSuffix: true })}
+                  </span>
+                </div>
+                
+                {/* Conversation participants */}
+                <div className="text-xs text-gray-400 ml-7">
+                  {conversationGroup.startLog.description}
+                </div>
+                
+                {/* Expanded conversation messages */}
+                {isExpanded && (
+                  <div className="ml-7 space-y-2 border-l-2 border-gray-700 pl-3">
+                    {conversationGroup.messages.map((msg) => (
+                      <div key={msg._id} className="space-y-1">
+                        <div className="flex items-baseline gap-2">
+                          <span className="text-xs font-semibold text-gray-300">
+                            {msg.description.split(':')[0]}
+                          </span>
+                          <span className="text-xs text-gray-500">
+                            {formatDistanceToNow(msg.timestamp, { addSuffix: true })}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-100 bg-gray-700/50 rounded px-2 py-1">
+                          {msg.details?.message || msg.description.split(':')[1]?.trim()}
+                        </p>
+                      </div>
+                    ))}
+                    {conversationGroup.endLog && (
+                      <div className="text-xs text-red-400 italic">
+                        {conversationGroup.endLog.description}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          }
+          
+          // Regular log item
+          const log = item;
+          
+          return (
+            <div
+              key={log._id}
+              className="flex items-start gap-3 p-3 bg-gray-800/50 rounded-lg hover:bg-gray-800/70 transition-colors"
+            >
+              <div className={`mt-0.5 ${getLogColor(log.type)}`}>
+                {getLogIcon(log.type)}
               </div>
               
-              {log.details && (
-                <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
-                  {log.details.success !== undefined && (
-                    <span className={log.details.success ? 'text-green-500' : 'text-red-500'}>
-                      {log.details.success ? '✅ Success' : '❌ Failed'}
-                    </span>
-                  )}
-                  {log.details.amount !== undefined && (
-                    <span className="text-yellow-500">
-                      +{log.details.amount} HYPE
-                    </span>
-                  )}
-                  {log.details.zone && (
-                    <span className="capitalize">{log.details.zone}</span>
-                  )}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  {log.emoji && <span className="text-sm">{log.emoji}</span>}
+                  <p className="text-sm text-gray-200">{log.description}</p>
                 </div>
-              )}
-              
-              <p className="text-xs text-gray-600 mt-1">
-                {formatDistanceToNow(log.timestamp, { addSuffix: true })}
-              </p>
+                
+                {log.details && (
+                  <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
+                    {log.details.success !== undefined && (
+                      <span className={log.details.success ? 'text-green-500' : 'text-red-500'}>
+                        {log.details.success ? '✅ Success' : '❌ Failed'}
+                      </span>
+                    )}
+                    {log.details.amount !== undefined && (
+                      <span className="text-yellow-500">
+                        +{log.details.amount} HYPE
+                      </span>
+                    )}
+                    {log.details.zone && (
+                      <span className="capitalize">{log.details.zone}</span>
+                    )}
+                  </div>
+                )}
+                
+                <p className="text-xs text-gray-600 mt-1">
+                  {formatDistanceToNow(log.timestamp, { addSuffix: true })}
+                </p>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

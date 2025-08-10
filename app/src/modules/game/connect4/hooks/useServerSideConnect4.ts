@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSubscription, gql, useMutation } from '@apollo/client';
-import { Connect4GameState } from '@game/engine/games/connect4/Connect4Types';
+import { Connect4GameState } from '@game/shared/types';
 import { SIGNAL_FRONTEND_READY } from '@/graphql/mutations/queue';
 import { Connect4Decision } from '@game/connect4/components/Connect4DecisionHistory';
 import { LEAVE_GAME, JOIN_GAME } from '@/graphql/mutations/game';

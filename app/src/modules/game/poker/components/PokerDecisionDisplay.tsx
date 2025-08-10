@@ -1,13 +1,19 @@
+import type { IGameDecision as AIDecision } from '@game/shared/types';
+import { AnimatePresence, motion } from 'framer-motion';
+import { Brain, Shuffle, TrendingUp } from 'lucide-react';
 import React from 'react';
-import type { IGameDecision as AIDecision } from '@game/engine/core/interfaces';
-import type { PokerAction } from '@game/engine/games/poker';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Brain, TrendingUp, Shuffle } from 'lucide-react';
 
 interface PokerDecisionDisplayProps {
   playerName: string;
   decision: AIDecision;
   isVisible: boolean;
+}
+
+function getActionAmount(action: AIDecision['action']): number | undefined {
+  const anyAction = action as unknown as { amount?: number; data?: { amount?: number } };
+  if (typeof anyAction?.amount === 'number') return anyAction.amount;
+  if (typeof anyAction?.data?.amount === 'number') return anyAction.data.amount;
+  return undefined;
 }
 
 export const PokerDecisionDisplay: React.FC<PokerDecisionDisplayProps> = ({
@@ -17,21 +23,22 @@ export const PokerDecisionDisplay: React.FC<PokerDecisionDisplayProps> = ({
 }) => {
   const getActionDisplay = () => {
     const action = decision.action;
+    const amount = getActionAmount(action);
     switch (action.type) {
       case 'check':
         return 'CHECK';
       case 'call':
         return 'CALL';
       case 'raise':
-        return `RAISE $${(action as PokerAction).amount || 0}`;
+        return amount !== undefined ? `RAISE $${amount}` : 'RAISE';
       case 'bet':
-        return `BET $${(action as PokerAction).amount || 0}`;
+        return amount !== undefined ? `BET $${amount}` : 'BET';
       case 'all-in':
         return 'ALL-IN!';
       case 'fold':
         return 'FOLD';
       default:
-        return action.type.toUpperCase();
+        return (action.type || '').toUpperCase();
     }
   };
 
@@ -100,7 +107,7 @@ export const PokerDecisionDisplay: React.FC<PokerDecisionDisplayProps> = ({
                 <motion.div
                   initial={{ width: 0 }}
                   animate={{ width: `${decision.confidence * 100}%` }}
-                  transition={{ duration: 0.5, ease: "easeOut" }}
+                  transition={{ duration: 0.5, ease: 'easeOut' }}
                   className={`h-full ${getConfidenceColor(decision.confidence)}`}
                 />
               </div>
@@ -122,7 +129,7 @@ export const PokerDecisionDisplay: React.FC<PokerDecisionDisplayProps> = ({
                   <div className="flex items-center gap-2">
                     <TrendingUp className="w-4 h-4 text-blue-500" />
                     <span className="text-muted-foreground">
-                      EV: {decision.metadata.expectedValue > 0 ? '+' : ''}{decision.metadata.expectedValue.toFixed(2)}
+                      EV: {decision.metadata.expectedValue > 0 ? '+' : ''}{Number(decision.metadata.expectedValue).toFixed(2)}
                     </span>
                   </div>
                 )}

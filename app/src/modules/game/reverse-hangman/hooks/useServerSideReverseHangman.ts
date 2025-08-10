@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useServerSideGame } from '@game/hooks/useServerSideGame';
 import { Tournament } from '@shared/types/tournament';
 import { AnimationPhase } from '@game/reverse-hangman/components/PromptGenerationAnimation';
 import { useMutation } from '@apollo/client';
@@ -180,19 +179,24 @@ export function useServerSideReverseHangman({ tournament }: UseServerSideReverse
 
   const gameId = tournament?.id || '';
   
-  const { 
-    gameState, 
-    isInitialized, 
-    isActive, 
-    initializeGame, 
-    toggleGamePause 
-  } = useServerSideGame({
-    gameId,
-    gameType: 'REVERSE_HANGMAN',
-    players: playerIds,
-    onStateUpdate: handleStateUpdate,
-    onEvent: handleEvent
-  });
+  // Local state to replace missing useServerSideGame hook
+  const [gameState, setGameState] = useState<any>(null);
+  const [isInitialized, setIsInitialized] = useState(false);
+  const [isActive, setIsActive] = useState(false);
+  
+  // Functions to replace missing hook functions
+  const initializeGame = useCallback((force?: boolean) => {
+    if (!isInitialized || force) {
+      setIsInitialized(true);
+      setIsActive(true);
+      console.log('🎮 [ReverseHangman] Initializing game');
+    }
+  }, [isInitialized]);
+  
+  const toggleGamePause = useCallback(() => {
+    setIsActive(prev => !prev);
+    console.log('⏸️ [ReverseHangman] Toggling game pause');
+  }, []);
 
   // Join game when component mounts and leave when unmounts
   useEffect(() => {

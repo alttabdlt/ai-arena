@@ -3,7 +3,7 @@ import { Card, CardContent } from '@ui/card';
 import { Avatar, AvatarFallback } from '@ui/avatar';
 import { Zap, Trophy } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { ReverseHangmanPlayer } from '@game/engine/games/reverse-hangman/ReverseHangmanTypes';
+import type { ReverseHangmanPlayer } from '@game/shared/types';
 
 interface ReverseHangmanPlayersProps {
   players: ReverseHangmanPlayer[];

@@ -71,6 +71,15 @@ export const serializedPlayer = {
   position: point,
   facing: vector,
   speed: v.number(),
+  
+  // Idle game mechanics
+  stepsTaken: v.optional(v.number()),
+  lastStepTime: v.optional(v.number()),
+  stepStreak: v.optional(v.number()),
+  currentEnergy: v.optional(v.number()),
+  maxEnergy: v.optional(v.number()),
+  lastEnergyRegen: v.optional(v.number()),
+  lastLootRoll: v.optional(v.number()),
 };
 export type SerializedPlayer = ObjectType<typeof serializedPlayer>;
 
@@ -89,9 +98,20 @@ export class Player {
   position: Point;
   facing: Vector;
   speed: number;
+  
+  // Idle game mechanics
+  stepsTaken: number;
+  lastStepTime: number;
+  stepStreak: number;
+  currentEnergy: number;
+  maxEnergy: number;
+  lastEnergyRegen: number;
+  lastLootRoll: number;
 
   constructor(serialized: SerializedPlayer) {
-    const { id, human, pathfinding, activity, currentZone, equipment, inventoryId, houseId, lastInput, position, facing, speed } = serialized;
+    const { id, human, pathfinding, activity, currentZone, equipment, inventoryId, houseId, 
+            lastInput, position, facing, speed, stepsTaken, lastStepTime, stepStreak,
+            currentEnergy, maxEnergy, lastEnergyRegen, lastLootRoll } = serialized;
     this.id = parseGameId('players', id);
     this.human = human;
     this.pathfinding = pathfinding;
@@ -104,11 +124,48 @@ export class Player {
     this.position = position;
     this.facing = facing;
     this.speed = speed;
+    
+    // Initialize idle game fields
+    this.stepsTaken = stepsTaken || 0;
+    this.lastStepTime = lastStepTime || 0;
+    this.stepStreak = stepStreak || 0;
+    this.currentEnergy = currentEnergy ?? 30;
+    this.maxEnergy = maxEnergy || 30;
+    this.lastEnergyRegen = lastEnergyRegen || Date.now();
+    this.lastLootRoll = lastLootRoll || 0;
   }
 
   tick(game: Game, now: number) {
     if (this.human && this.lastInput < now - HUMAN_IDLE_TOO_LONG) {
       this.leave(game, now);
+    }
+    
+    // Energy consumption and regeneration for bots
+    if (!this.human) {
+      // Energy consumption: 1 energy per 5 minutes (300000ms)
+      const timeSinceLastConsumption = now - this.lastEnergyRegen;
+      const fiveMinutesPassed = Math.floor(timeSinceLastConsumption / 300000); // 300000ms = 5 minutes
+      
+      if (fiveMinutesPassed > 0 && this.currentEnergy > 0) {
+        // Consume energy
+        const energyToConsume = Math.min(fiveMinutesPassed, this.currentEnergy);
+        this.currentEnergy = Math.max(0, this.currentEnergy - energyToConsume);
+        this.lastEnergyRegen = now;
+        
+        // If energy depleted, stop pathfinding
+        if (this.currentEnergy === 0 && this.pathfinding) {
+          console.log(`Bot ${this.id} energy depleted, stopping movement`);
+          stopPlayer(this);
+        }
+      }
+      
+      // Energy regeneration happens through other means (items, rest areas, etc.)
+      // Check if we should auto-resume movement after energy restored
+      if (this.currentEnergy >= 10 && !this.pathfinding) {
+        // Resume movement when we have at least 10 energy
+        console.log(`Bot ${this.id} energy restored to ${this.currentEnergy}, auto-resuming`);
+        // The agent system will handle resuming movement on next tick
+      }
     }
     
     // Check if activity has expired and log it
@@ -186,6 +243,14 @@ export class Player {
       this.speed = 0;
       return;
     }
+    
+    // Check energy before moving (skip for human players)
+    if (!this.human && this.currentEnergy <= 0) {
+      // Out of energy - pause movement
+      stopPlayer(this);
+      console.log(`Bot ${this.id} out of energy, pausing movement`);
+      return;
+    }
 
     // Compute a candidate new position and check if it collides
     // with anything.
@@ -211,10 +276,60 @@ export class Player {
     const oldZone = this.currentZone || getZoneFromPosition(this.position);
     const newZone = getZoneFromPosition(position);
     
+    // Calculate if we actually moved a significant distance (at least 0.5 tiles)
+    const distanceMoved = Math.sqrt(
+      Math.pow(position.x - this.position.x, 2) + 
+      Math.pow(position.y - this.position.y, 2)
+    );
+    
     // Update the player's location.
     this.position = position;
     this.facing = facing;
     this.speed = velocity;
+    
+    // IDLE GAME MECHANICS - Track steps (no longer consumes energy per step)
+    if (!this.human && distanceMoved >= 0.5 && now - this.lastStepTime > 5000) {
+      // We moved at least half a tile and it's been 5 seconds since last XP grant
+      this.stepsTaken++;
+      this.lastStepTime = now;
+      
+      // Only grant XP every 10 steps to reduce frequency
+      this.stepStreak++;
+      if (this.stepStreak >= 10) {
+        this.stepStreak = 0;
+        
+        // Schedule XP grant (reduced frequency)
+        const agent = [...game.world.agents.values()].find(a => a.playerId === this.id);
+        if (agent) {
+          const agentDesc = game.agentDescriptions.get(agent.id);
+          if (agentDesc?.aiArenaBotId) {
+            game.scheduleOperation('grantMovementXP', {
+              worldId: game.worldId,
+              playerId: this.id as string,
+              aiArenaBotId: agentDesc.aiArenaBotId,
+              baseXP: 1,
+              bonusXP: 0, // Remove bonus XP
+            });
+          }
+        }
+      }
+      
+      // Roll for loot drop (10% base chance)
+      if (now - this.lastLootRoll > 1000) { // Max 1 loot roll per second
+        this.lastLootRoll = now;
+        const lootChance = 0.1 * this.getZoneLootMultiplier(newZone);
+        
+        if (Math.random() < lootChance) {
+          // Schedule loot drop
+          game.scheduleOperation('generateLootDrop', {
+            worldId: game.worldId,
+            playerId: this.id as string,
+            zone: newZone,
+            position: { x: position.x, y: position.y },
+          });
+        }
+      }
+    }
     
     // If zone changed, update it and log the change
     if (oldZone !== newZone) {
@@ -232,6 +347,18 @@ export class Player {
         });
       }
     }
+  }
+  
+  // Helper method to get zone-specific loot multiplier
+  getZoneLootMultiplier(zone: string): number {
+    const multipliers: Record<string, number> = {
+      'casino': 1.5,      // +50% loot in casinos
+      'darkAlley': 1.3,   // +30% loot in dark alleys
+      'underground': 1.4, // +40% loot underground
+      'suburb': 1.2,      // +20% loot in suburbs
+      'downtown': 1.0,    // Normal loot downtown
+    };
+    return multipliers[zone] || 1.0;
   }
 
   static join(
@@ -292,6 +419,14 @@ export class Player {
         position,
         facing,
         speed: 0,
+        // Initialize idle game stats
+        stepsTaken: 0,
+        lastStepTime: now,
+        stepStreak: 0,
+        currentEnergy: 30,
+        maxEnergy: 30,
+        lastEnergyRegen: now,
+        lastLootRoll: 0,
       }),
     );
     game.playerDescriptions.set(
@@ -309,18 +444,31 @@ export class Player {
   }
 
   leave(game: Game, now: number) {
-    // Stop our conversation if we're leaving the game.
-    const conversation = [...game.world.conversations.values()].find((c) =>
+    // Stop ALL conversations we're in when leaving the game
+    const conversations = [...game.world.conversations.values()].filter((c) =>
       c.participants.has(this.id),
     );
-    if (conversation) {
+    
+    for (const conversation of conversations) {
+      console.log(`Player ${this.id} leaving: stopping conversation ${conversation.id}`);
       conversation.stop(game, now);
     }
+    
+    // Schedule comprehensive cleanup for this player
+    // This will clean up messages, archived conversations, relationships, etc.
+    game.scheduleOperation('cleanupPlayerData', {
+      worldId: game.worldId,
+      playerId: this.id as string,
+    });
+    
+    // Remove the player from the world
     game.world.players.delete(this.id);
   }
 
   serialize(): SerializedPlayer {
-    const { id, human, pathfinding, activity, currentZone, equipment, inventoryId, houseId, lastInput, position, facing, speed } = this;
+    const { id, human, pathfinding, activity, currentZone, equipment, inventoryId, houseId, 
+            lastInput, position, facing, speed, stepsTaken, lastStepTime, stepStreak,
+            currentEnergy, maxEnergy, lastEnergyRegen, lastLootRoll } = this;
     return {
       id,
       human,
@@ -334,6 +482,13 @@ export class Player {
       position,
       facing,
       speed,
+      stepsTaken,
+      lastStepTime,
+      stepStreak,
+      currentEnergy,
+      maxEnergy,
+      lastEnergyRegen,
+      lastLootRoll,
     };
   }
 }

@@ -1,0 +1,85 @@
+import { IGameState, IGameAction, IGameConfig, IGamePlayer } from './interfaces';
+
+export interface PromptPair {
+  id: string;
+  prompt: string;
+  output: string;
+  difficulty: 'easy' | 'medium' | 'hard' | 'expert';
+  category: string;
+  wordCount: number;
+}
+
+export interface GuessAttempt {
+  guess: string;
+  timestamp: Date;
+  isCorrect: boolean;
+  matchPercentage: number;
+  matchType: 'exact' | 'near' | 'partial' | 'semantic' | 'incorrect';
+  matchDetails?: {
+    wordMatches: number;
+    totalWords: number;
+    matchedWords: string[];
+    matchedWordPositions: Array<{ word: string; position: number }>;
+    missingWords: string[];
+    extraWords: string[];
+    semanticMatches: Array<{ original: string; matched: string; position: number }>;
+    positionTemplate: string;
+  };
+}
+
+export interface ReverseHangmanPlayer extends IGamePlayer {
+  currentGuess?: string;
+  guessHistory: GuessAttempt[];
+  roundsWon: number;
+  totalScore: number;
+  currentRoundAttempts: number; // Track attempts for current round
+  hasCompletedRound: boolean; // Track if player finished their turn
+  roundScore?: number; // Number of attempts used in current round (lower is better)
+}
+
+export interface ReverseHangmanAction extends IGameAction {
+  type: 'guess' | 'skip' | 'timeout';
+  guess?: string;
+}
+
+export interface ReverseHangmanGameState extends IGameState {
+  phase: 'waiting' | 'selecting' | 'playing' | 'won' | 'lost' | 'round-complete';
+  players: ReverseHangmanPlayer[];
+  currentPromptPair?: PromptPair;
+  attempts: GuessAttempt[];
+  maxAttempts: number;
+  roundNumber: number;
+  maxRounds: number;
+  animationPhase?: 'idle' | 'selecting' | 'sending' | 'processing' | 'generating' | 'revealing' | 'complete';
+  allPlayersCompleted: boolean; // Track if all players finished their attempts
+  roundWinner?: string; // Player ID who won the round (fewest attempts)
+}
+
+export interface ReverseHangmanGameConfig extends IGameConfig {
+  maxRounds: number;
+  maxAttempts: number;
+  difficulty?: 'easy' | 'medium' | 'hard' | 'expert' | 'mixed';
+  categories?: string[];
+  promptDatabaseSize?: number;
+  speed?: 'slow' | 'normal' | 'fast';
+  animationDuration?: number;
+}
+
+export interface ReverseHangmanRound {
+  roundNumber: number;
+  promptPair: PromptPair;
+  attempts: GuessAttempt[];
+  winner?: string;
+  score: number;
+  duration: number;
+}
+
+export interface ReverseHangmanTournament {
+  id: string;
+  config: ReverseHangmanGameConfig;
+  rounds: ReverseHangmanRound[];
+  totalScore: number;
+  status: 'setup' | 'playing' | 'completed';
+  startTime: Date;
+  endTime?: Date;
+}

@@ -1,13 +1,13 @@
+import { PokerStyleBonus as StyleBonus } from '@game/shared/types';
+import { Shield, Target, TrendingUp, Trophy, Zap } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { PokerStyleBonus as StyleBonus } from '@game/engine/games/poker/scoring/PokerScoringSystem';
-import { Trophy, Zap, TrendingUp, Shield, Target } from 'lucide-react';
 
 interface StyleBonusNotificationProps {
   bonuses: StyleBonus[];
 }
 
-const getIconForBonus = (type: StyleBonus['type']) => {
-  switch (type) {
+const getIconForBonus = (type: StyleBonus['type'] | string) => {
+  switch (type as string) {
     case 'david-goliath':
       return <Shield className="h-6 w-6" />;
     case 'bluff-master':
@@ -23,8 +23,8 @@ const getIconForBonus = (type: StyleBonus['type']) => {
   }
 };
 
-const getColorForBonus = (type: StyleBonus['type']) => {
-  switch (type) {
+const getColorForBonus = (type: StyleBonus['type'] | string) => {
+  switch (type as string) {
     case 'david-goliath':
       return 'from-purple-500 to-purple-700';
     case 'bluff-master':

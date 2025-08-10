@@ -67,12 +67,12 @@ export function useToggleEquipment() {
       const botId = result.bot.id;
       
       // Update the equipment list in cache
-      const equipmentData = cache.readQuery({
+      const equipmentData = cache.readQuery<{ getBotEquipment: any[] }>({
         query: GET_BOT_EQUIPMENT,
         variables: { botId },
       });
       
-      if (equipmentData) {
+      if (equipmentData && Array.isArray(equipmentData.getBotEquipment)) {
         const updatedEquipment = equipmentData.getBotEquipment.map((item: any) =>
           item.id === result.id ? { ...item, equipped: result.equipped } : item
         );

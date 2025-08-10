@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useAccount, useSendTransaction, useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, useSendTransaction, useWaitForTransactionReceipt, useChainId, useSwitchChain, useEstimateGas, usePublicClient, useConnectorClient } from 'wagmi';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useMutation } from '@apollo/client';
 import { parseEther, formatEther } from 'viem';
@@ -35,10 +35,9 @@ import { WALLET_ADDRESSES, FEE_CONFIG } from '@/config/wallets';
 import { useHypeBalance } from '@shared/hooks/useHypeBalance';
 import { DeploymentStatus, DeploymentState } from '@bot/components/deployment-status';
 import { StardewSpriteSelector, BotPersonality } from '@/services/stardewSpriteSelector';
-import { ModelSelector } from '@/components/deploy/ModelSelector';
-import { CostEstimation } from '@/components/deploy/CostEstimation';
-import { AI_MODELS, formatModelForBackend, ModelInfo } from '@/config/models';
-import { formatEnergyRate } from '@/config/energy';
+import { SimpleModelSelector } from '@/components/deploy/SimpleModelSelector';
+import { SimpleCostEstimation } from '@/components/deploy/SimpleCostEstimation';
+import { SIMPLE_AI_MODELS, formatModelForBackend, type SimpleModelInfo } from '@/config/simpleModels';
 import { Progress } from '@ui/progress';
 
 // Wizard Steps
@@ -54,22 +53,19 @@ export default function Deploy() {
   const { toast } = useToast();
   const navigate = useNavigate();
   const { address, isConnected } = useAccount();
+  const chainId = useChainId();
+  const { switchChain } = useSwitchChain();
+  const publicClient = usePublicClient();
+  const { data: walletClient } = useConnectorClient();
   const [deployBot] = useMutation(DEPLOY_BOT);
   const [registerBotInMetaverse] = useMutation(REGISTER_BOT_IN_METAVERSE);
   const { balance, formatted: formattedBalance, symbol, isLoading: balanceLoading } = useHypeBalance();
   const [currentStep, setCurrentStep] = useState(0);
   
   // Helper function to get selected model info
-  const getSelectedModel = (): ModelInfo | null => {
+  const getSelectedModel = (): SimpleModelInfo | null => {
     if (!formData.modelType) return null;
-    
-    for (const category of Object.keys(AI_MODELS)) {
-      const model = AI_MODELS[category as keyof typeof AI_MODELS].find(
-        m => m.id === formData.modelType
-      );
-      if (model) return model;
-    }
-    return null;
+    return SIMPLE_AI_MODELS.find(m => m.id === formData.modelType) || null;
   };
   const [formData, setFormData] = useState({
     name: '',
@@ -390,6 +386,26 @@ export default function Deploy() {
       return;
     }
 
+    // Check if on correct network (998 for testnet)
+    if (chainId !== 998) {
+      toast({
+        title: "Wrong Network",
+        description: "Switching to HyperEVM Testnet...",
+      });
+      try {
+        await switchChain({ chainId: 998 });
+        // Wait a moment for the switch to complete
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (error) {
+        toast({
+          title: "Network Switch Failed",
+          description: "Please manually switch to HyperEVM Testnet in your wallet.",
+          variant: "destructive"
+        });
+        return;
+      }
+    }
+
     if (!formData.name || !formData.prompt || !formData.modelType || !formData.personality) {
       toast({
         title: "Missing Information",
@@ -399,13 +415,27 @@ export default function Deploy() {
       return;
     }
 
-    // Check balance against flat deployment fee
-    const deploymentFee = parseEther(FEE_CONFIG.DEPLOYMENT_FEE);
+    // Check balance against model-specific deployment fee
+    const selectedModel = SIMPLE_AI_MODELS.find(m => m.id === formData.modelType);
+    if (!selectedModel) {
+      toast({
+        title: "No Model Selected",
+        description: "Please select an AI model first.",
+        variant: "destructive"
+      });
+      return;
+    }
     
-    if (balance && balance < deploymentFee) {
+    // Check if we're on testnet (chain ID 998)
+    const isTestnet = chainId === 998;
+    
+    // Bypass fee for testnet due to HyperEVM MetaMask compatibility issues
+    const deploymentFee = isTestnet ? parseEther('0') : parseEther(selectedModel.deploymentFee);
+    
+    if (!isTestnet && balance && balance < deploymentFee) {
       toast({
         title: "Insufficient Balance",
-        description: `You need ${FEE_CONFIG.DEPLOYMENT_FEE} ${symbol} to deploy a bot. Your balance: ${formattedBalance} ${symbol}`,
+        description: `You need ${selectedModel.deploymentFee} ${symbol} to deploy this bot. Your balance: ${formattedBalance} ${symbol}`,
         variant: "destructive"
       });
       return;
@@ -414,23 +444,162 @@ export default function Deploy() {
     // Proceed with deployment
 
     setIsSubmitting(true);
-    setDeploymentState('wallet-signature');
     setDeploymentError('');
     
+    // Skip fee transaction on testnet
+    if (isTestnet) {
+      console.log('Testnet detected - bypassing deployment fee transaction');
+      
+      // Generate a mock transaction hash for testnet
+      const mockTxHash = `0x${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`.padEnd(66, '0') as `0x${string}`;
+      setTxHash(mockTxHash);
+      setDeploymentState('transaction-confirming');
+      
+      // Simulate transaction confirmation after a short delay
+      setTimeout(() => {
+        // Trigger the bot creation flow directly
+        setDeploymentState('generating-avatar');
+        
+        // Generate avatar and create bot
+        const seed = `${Date.now()}-${Math.random()}`;
+        spriteSelector.selectSprite(
+          formData.personality.toUpperCase() as BotPersonality,
+          seed
+        ).then(sprite => {
+          setDeploymentState('deploying-bot');
+          
+          const spriteId = sprite.config.id;
+          
+          deployBot({
+            variables: {
+              input: {
+                name: formData.name,
+                avatar: sprite.imageData,
+                prompt: formData.prompt,
+                personality: formData.personality.toUpperCase(),
+                modelType: formatModelForBackend(formData.modelType),
+                txHash: mockTxHash,
+                spriteId: spriteId,
+              },
+            },
+          }).then(async (result) => {
+            const botId = result.data?.deployBot?.id;
+            
+            if (botId && deployToMetaverse) {
+              setDeploymentState('registering-metaverse');
+              try {
+                await registerBotInMetaverse({
+                  variables: { botId },
+                });
+                console.log('Bot registered in metaverse successfully');
+              } catch (metaverseError) {
+                console.error('Failed to register bot in metaverse:', metaverseError);
+              }
+            }
+            
+            setDeploymentState('completed');
+            toast({
+              title: "Bot Deployed Successfully!",
+              description: "Your AI bot is ready to compete in tournaments.",
+            });
+            
+            setTimeout(() => {
+              navigate('/bots');
+            }, 2000);
+          }).catch(error => {
+            console.error('Bot deployment error:', error);
+            setDeploymentState('error');
+            setDeploymentError(error.message || 'Failed to deploy bot');
+            setIsSubmitting(false);
+          });
+        }).catch(error => {
+          console.error('Avatar generation error:', error);
+          setDeploymentState('error');
+          setDeploymentError('Failed to generate avatar');
+          setIsSubmitting(false);
+        });
+      }, 1000);
+      
+      return;
+    }
+    
+    // Production/mainnet flow - send actual transaction
+    setDeploymentState('wallet-signature');
+    
     try {
-      // Send deployment fee transaction to deployment wallet
+      // Compute dynamic fee overrides (EIP-1559 if supported, otherwise legacy)
+      const computeFeeOverrides = async (): Promise<
+        Partial<{ gasPrice: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }>
+      > => {
+        try {
+          if (!publicClient) return {};
+          // Unified fee estimation across EIP-1559 and legacy networks
+          // viem will populate either (maxFeePerGas & maxPriorityFeePerGas) or gasPrice
+          // depending on chain support
+          const fees = await publicClient.estimateFeesPerGas();
+          if (!fees) return {};
+          const { gasPrice, maxFeePerGas, maxPriorityFeePerGas } = fees as any;
+          if (gasPrice) return { gasPrice };
+          if (maxFeePerGas && maxPriorityFeePerGas) return { maxFeePerGas, maxPriorityFeePerGas };
+          return {};
+        } catch {
+          return {};
+        }
+      };
+
+      const feeOverrides = await computeFeeOverrides();
+      // Log transaction details for debugging
+      console.log('Sending transaction:', {
+        to: WALLET_ADDRESSES.DEPLOYMENT_WALLET,
+        value: deploymentFee.toString(),
+        valueInHYPE: selectedModel.deploymentFee,
+        chainId: chainId,
+        walletAddress: address,
+      });
+      
+      // Send deployment fee transaction to deployment wallet (wagmi)
       sendTransaction({
         to: WALLET_ADDRESSES.DEPLOYMENT_WALLET as `0x${string}`,
         value: deploymentFee,
+        ...feeOverrides,
       });
       setDeploymentState('transaction-pending');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Deployment error:', error);
+      console.error('Error details:', {
+        message: error?.message,
+        cause: error?.cause,
+        details: error?.details,
+        shortMessage: error?.shortMessage,
+      });
       setDeploymentState('error');
-      setDeploymentError('Failed to send deployment transaction');
+      
+      // Extract meaningful error message
+      let errorMessage = 'Failed to send deployment transaction';
+      if (error?.shortMessage) {
+        errorMessage = error.shortMessage;
+      } else if (error?.message) {
+        if (error.message.includes('insufficient funds')) {
+          errorMessage = 'Insufficient HYPE balance for transaction and gas fees';
+        } else if (error.message.includes('user rejected') || error.message.includes('User denied')) {
+          errorMessage = 'Transaction was rejected by user';
+        } else if (error.message.includes('Internal JSON-RPC error')) {
+          // Try to extract the actual error from the RPC response
+          const match = error.message.match(/Details: (.+?)(?:Version:|$)/);
+          if (match && match[1]) {
+            errorMessage = `RPC Error: ${match[1].trim()}`;
+          } else {
+            errorMessage = 'Internal RPC error - check console for details';
+          }
+        } else {
+          errorMessage = error.message.slice(0, 200); // Truncate long errors
+        }
+      }
+      
+      setDeploymentError(errorMessage);
       toast({
         title: "Deployment Failed",
-        description: "Failed to send deployment transaction.",
+        description: errorMessage,
         variant: "destructive"
       });
       setIsSubmitting(false);
@@ -553,21 +722,19 @@ export default function Deploy() {
                       <CardHeader className="pb-3">
                         <CardTitle className="text-base">Select AI Model</CardTitle>
                         <CardDescription className="text-xs">
-                          Choose from 28 state-of-the-art models across different categories
+                          Select the AI model that will power your bot
                         </CardDescription>
                       </CardHeader>
                       <CardContent>
-                        <ModelSelector
-                          models={AI_MODELS}
-                          selected={formData.modelType}
-                          onSelect={(modelId) => setFormData({ ...formData, modelType: modelId })}
-                          disabled={!isConnected}
+                        <SimpleModelSelector
+                          selectedModel={formData.modelType}
+                          onModelSelect={(modelId) => setFormData({ ...formData, modelType: modelId })}
                         />
                       </CardContent>
                     </Card>
                   </div>
                   <div className="lg:col-span-1">
-                    <CostEstimation 
+                    <SimpleCostEstimation 
                       model={getSelectedModel()}
                       balance={balance ? Number(formatEther(balance)) : 0}
                     />
@@ -663,9 +830,7 @@ export default function Deploy() {
                         <div className="flex justify-between py-2 border-b">
                           <span className="text-sm text-muted-foreground">AI Model</span>
                           <span className="text-sm font-medium">
-                            {AI_MODELS[Object.keys(AI_MODELS).find(cat => 
-                              AI_MODELS[cat as keyof typeof AI_MODELS].some(m => m.id === formData.modelType)
-                            ) || 'reasoning']?.find(m => m.id === formData.modelType)?.name || 'Not selected'}
+                            {SIMPLE_AI_MODELS.find(m => m.id === formData.modelType)?.name || 'Not selected'}
                           </span>
                         </div>
                         <div className="flex justify-between py-2 border-b">
@@ -678,7 +843,7 @@ export default function Deploy() {
                         <div className="flex items-center justify-between mb-3">
                           <span className="text-sm font-medium">Deployment Fee</span>
                           <span className="text-lg font-bold">
-                            {FEE_CONFIG.DEPLOYMENT_FEE} HYPE
+                            {getSelectedModel()?.deploymentFee || '0.1'} HYPE
                           </span>
                         </div>
                         {isConnected && (
@@ -690,7 +855,7 @@ export default function Deploy() {
                               ) : (
                                 <>
                                   <span>{formattedBalance} {symbol}</span>
-                                  {balance && balance >= parseEther(FEE_CONFIG.DEPLOYMENT_FEE) ? (
+                                  {balance && getSelectedModel() && balance >= parseEther(getSelectedModel().deploymentFee) ? (
                                     <CheckCircle className="h-3 w-3 text-green-500" />
                                   ) : (
                                     <AlertCircle className="h-3 w-3 text-destructive" />
@@ -705,7 +870,7 @@ export default function Deploy() {
                             <div className="flex justify-between">
                               <span>Energy Consumption:</span>
                               <span className="font-mono">
-                                {formatEnergyRate(formData.modelType)}
+                                {getSelectedModel().energyPerMatch} energy/match
                               </span>
                             </div>
                           </div>
@@ -767,10 +932,10 @@ export default function Deploy() {
                             <div className="p-4 bg-muted/50 rounded-lg">
                               <div className="flex items-center justify-between mb-2">
                                 <span className="text-sm font-medium">Deployment Fee</span>
-                                <span className="text-xl font-bold">{FEE_CONFIG.DEPLOYMENT_FEE} HYPE</span>
+                                <span className="text-xl font-bold">{getSelectedModel()?.deploymentFee || '0.1'} HYPE</span>
                               </div>
                               <p className="text-xs text-muted-foreground">
-                                One-time fee to create and register your bot
+                                Model-specific fee to create and register your bot
                               </p>
                             </div>
 

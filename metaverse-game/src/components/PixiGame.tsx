@@ -29,6 +29,7 @@ export const PixiGame = (props: {
   const pixiApp = useApp();
   const viewportRef = useRef<Viewport | undefined>();
 
+  // @ts-ignore - TypeScript depth issue
   const humanTokenIdentifier = useQuery(api.world.userStatus, { worldId: props.worldId }) ?? null;
   const humanPlayerId = [...props.game.world.players.values()].find(
     (p) => p.human === humanTokenIdentifier,
@@ -94,7 +95,7 @@ export const PixiGame = (props: {
         if (!agent) return false;
         
         // Check if this agent's aiArenaBotId matches any of our owned bots
-        return props.ownedBots.some(bot => bot.id === agent.aiArenaBotId);
+        return props.ownedBots?.some(bot => bot.id === agent.aiArenaBotId) || false;
       })
     : []; // If ownedBots is undefined, show no players (still loading)
 
@@ -131,16 +132,24 @@ export const PixiGame = (props: {
           ),
       )}
       {lastDestination && <PositionIndicator destination={lastDestination} tileDim={tileDim} />}
-      {players.map((p) => (
-        <Player
-          key={`player-${p.id}`}
-          game={props.game}
-          player={p}
-          isViewer={p.id === humanPlayerId}
-          onClick={props.setSelectedElement}
-          historicalTime={props.historicalTime}
-        />
-      ))}
+      {players.map((p) => {
+        // Check if this player is a bot (has an agent with aiArenaBotId)
+        const agent = [...props.game.world.agents.values()].find(a => a.playerId === p.id);
+        const isBot = !!agent?.aiArenaBotId;
+        
+        return (
+          <Player
+            key={`player-${p.id}`}
+            game={props.game}
+            player={p}
+            worldId={props.worldId}
+            isViewer={p.id === humanPlayerId}
+            onClick={props.setSelectedElement}
+            historicalTime={props.historicalTime}
+            showXP={isBot}
+          />
+        );
+      })}
     </PixiViewport>
   );
 };

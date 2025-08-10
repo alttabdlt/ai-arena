@@ -129,6 +129,17 @@ export const updateRegistrationStatuses = internalMutation({
                 inputId: reg.result.inputId,
               },
             });
+            
+            // Initialize bot experience at level 1
+            if (reg.aiArenaBotId && returnValue.value.playerId) {
+              // @ts-ignore - TypeScript depth issue
+              await ctx.runMutation(internal.aiTown.idleGains.initializeBotExperience, {
+                worldId: reg.worldId,
+                playerId: returnValue.value.playerId,
+                aiArenaBotId: reg.aiArenaBotId,
+              });
+            }
+            
             updatedCount++;
             console.log(`Registration ${reg._id} completed: agent=${returnValue.value.agentId}`);
           } else if (returnValue.kind === 'error') {

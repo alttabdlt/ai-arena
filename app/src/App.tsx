@@ -35,7 +35,7 @@ import DeveloperDocs from "./pages/DeveloperDocs";
 import Queue from "@queue/pages/Queue";
 import NotFound from "./pages/NotFound";
 import HouseEditor from "./pages/HouseEditor";
-import { DeploymentStatus } from "@admin/DeploymentStatus";
+import { DeploymentStatus } from "@/modules/admin/DeploymentStatus";
 
 const App = () => {
   // Start interaction logging

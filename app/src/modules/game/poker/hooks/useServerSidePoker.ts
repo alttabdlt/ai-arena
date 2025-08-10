@@ -1,11 +1,28 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { useSubscription, gql, useMutation } from '@apollo/client';
-import { UsePokerGameState } from './usePokerGameAdapter';
-import { Card, PokerPhase as GamePhase, PokerPlayer as Player } from '@game/engine/games/poker/PokerTypes';
-import { IGameDecision as AIDecision, IPlayerConfig } from '@game/engine/core/interfaces';
-import { PokerStyleBonus as StyleBonus } from '@game/engine/games/poker/scoring/PokerScoringSystem';
+import { JOIN_GAME, LEAVE_GAME, UPDATE_GAME_SPEED } from '@/graphql/mutations/game';
 import { SIGNAL_FRONTEND_READY } from '@/graphql/mutations/queue';
-import { LEAVE_GAME, JOIN_GAME, UPDATE_GAME_SPEED } from '@/graphql/mutations/game';
+import { gql, useMutation, useSubscription } from '@apollo/client';
+import { IGameDecision as AIDecision, Card, PokerPhase as GamePhase, PokerPlayer as Player, PokerStyleBonus as StyleBonus } from '@game/shared/types';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+// Define the game state interface for the hook
+interface UsePokerGameState {
+  players: Player[];
+  communityCards: Card[];
+  pot: number;
+  currentBet: number;
+  phase: GamePhase;
+  currentPlayer: Player | null;
+  winners: any[];
+  isHandComplete: boolean;
+  currentAIThinking: string | null;
+  currentAIReasoning: string | null;
+  recentActions: any[];
+  aiDecisionHistory: Map<string, AIDecision>;
+  recentStyleBonuses: StyleBonus[];
+  recentMisreads: any[];
+  recentPointEvents: any[];
+  recentAchievementEvents: any[];
+}
 
 // GraphQL subscription for game state updates
 const GAME_STATE_UPDATE = gql`
@@ -360,7 +377,7 @@ export function useServerSidePoker({ gameId, tournament }: UseServerSidePokerOpt
         pot: backendState.gameSpecific?.pot || 0,
         currentBet: backendState.gameSpecific?.currentBet || 0,
         phase: (backendState.gameSpecific?.bettingRound || 'preflop') as GamePhase,
-        currentPlayer,
+        currentPlayer: currentPlayer || null,
         isHandComplete: backendState.gameSpecific?.handComplete || false,
         winners: backendState.gameSpecific?.winners || []
       }));
@@ -513,8 +530,11 @@ export function useServerSidePoker({ gameId, tournament }: UseServerSidePokerOpt
     const bonus: StyleBonus = {
       type: data.category || data.type,
       points: data.points,
-      description: data.description
-    };
+      description: data.description,
+      playerId: data.playerId ?? (Array.isArray(data?.players) ? data.players[0] : undefined),
+      handNumber: data.handNumber ?? currentHandNumber.current,
+      timestamp: data.timestamp ?? Date.now()
+    } as StyleBonus;
 
     setGameState(prev => ({
       ...prev,

@@ -25,6 +25,24 @@ export class TransactionService {
     error?: string;
   }> {
     try {
+      // Check if this is a testnet mock transaction (starts with timestamp pattern)
+      const isTestnetMock = /^0x[0-9a-f]{12}/.test(txHash) && txHash.endsWith('00000000');
+      
+      if (isTestnetMock) {
+        console.log('Testnet mock transaction detected - skipping on-chain validation');
+        // For testnet, just check if the transaction hasn't been used before
+        const existingTx = await this.prisma.deploymentTransaction.findUnique({
+          where: { txHash },
+        });
+        
+        if (existingTx) {
+          return { isValid: false, error: 'Transaction already used' };
+        }
+        
+        // Accept testnet mock transactions
+        return { isValid: true };
+      }
+      
       const existingTx = await this.prisma.deploymentTransaction.findUnique({
         where: { txHash },
       });

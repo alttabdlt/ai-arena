@@ -1,26 +1,24 @@
-import React, { useState, useEffect } from 'react';
-import { Card, CardContent } from '@ui/card';
-import { Button } from '@ui/button';
-import { Badge } from '@ui/badge';
+import type { IGameDecision as AIDecision, Card as PokerCard, PokerPhase, PokerPlayer } from '@game/shared/types';
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
+    formatChips,
+    getCardColor,
+    getCardDisplayValue,
+    getPhaseDisplayName,
+    getPlayerPosition,
+    getPlayerStatusColor,
+    shouldShowCard
+} from '@game/shared/utils/poker-helpers';
+import { Badge } from '@ui/badge';
+import { Button } from '@ui/button';
+import { Card, CardContent } from '@ui/card';
+import {
+    Tooltip,
+    TooltipContent,
+    TooltipProvider,
+    TooltipTrigger,
 } from '@ui/tooltip';
-import { Eye, Play, Zap } from 'lucide-react';
-import { 
-  formatChips, 
-  getPhaseDisplayName,
-  shouldShowCard,
-  getCardDisplayValue,
-  getCardColor,
-  getPlayerPosition,
-  getPlayerStatusColor
-} from '@game/engine/games/poker/utils/poker-helpers';
-import type { PokerPlayer, Card as PokerCard, PokerPhase } from '@game/engine/games/poker/PokerTypes';
-import type { IGameDecision as AIDecision } from '@game/engine/core/interfaces';
-import type { PokerAction } from '@game/engine/games/poker';
+import { Eye, Zap } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
 
 interface PokerTableProps {
   players: PokerPlayer[];
@@ -36,6 +34,13 @@ interface PokerTableProps {
   onStartNewHand: () => void;
   viewers?: number;
   getPlayerPoints?: (playerId: string) => { total: number; base: number; style: number; penalty: number } | null;
+}
+
+function getActionAmount(action: AIDecision['action']): number | undefined {
+  const anyAction = action as unknown as { amount?: number; data?: { amount?: number } };
+  if (typeof anyAction?.amount === 'number') return anyAction.amount;
+  if (typeof anyAction?.data?.amount === 'number') return anyAction.data.amount;
+  return undefined;
 }
 
 export const PokerTable: React.FC<PokerTableProps> = ({
@@ -205,12 +210,16 @@ export const PokerTable: React.FC<PokerTableProps> = ({
                               <span className="text-xs text-red-400 font-semibold">All-In</span>
                             ) : aiDecision ? (
                               <span className="text-xs font-medium">
-                                {aiDecision.action.type === 'check' ? 'Check' :
-                                 aiDecision.action.type === 'call' ? 'Call' :
-                                 aiDecision.action.type === 'raise' ? ((aiDecision.action as PokerAction).amount !== undefined ? `Raise $${(aiDecision.action as PokerAction).amount}` : 'Raise') :
-                                 aiDecision.action.type === 'bet' ? ((aiDecision.action as PokerAction).amount !== undefined ? `Bet $${(aiDecision.action as PokerAction).amount}` : 'Bet') :
-                                 aiDecision.action.type === 'all-in' ? 'All-In' :
-                                 aiDecision.action.type}
+                                {(() => {
+                                  const type = aiDecision.action.type;
+                                  const amt = getActionAmount(aiDecision.action);
+                                  if (type === 'check') return 'Check';
+                                  if (type === 'call') return 'Call';
+                                  if (type === 'raise') return amt !== undefined ? `Raise $${amt}` : 'Raise';
+                                  if (type === 'bet') return amt !== undefined ? `Bet $${amt}` : 'Bet';
+                                  if (type === 'all-in') return 'All-In';
+                                  return type;
+                                })()}
                               </span>
                             ) : player.bet > 0 ? (
                               <span className="text-xs text-yellow-400">Bet ${formatChips(player.bet)}</span>
@@ -242,7 +251,10 @@ export const PokerTable: React.FC<PokerTableProps> = ({
                           {/* Action Taken */}
                           <div className="font-medium text-sm">
                             Action: {aiDecision.action.type.toUpperCase()}
-                            {(aiDecision.action as PokerAction).amount && ` $${(aiDecision.action as PokerAction).amount}`}
+                            {(() => {
+                              const amt = getActionAmount(aiDecision.action);
+                              return amt ? ` $${amt}` : '';
+                            })()}
                           </div>
                           
                           {/* Main Reasoning */}

@@ -22,7 +22,11 @@ export const logActivity = internalMutation({
       v.literal('activity_end'),
       v.literal('item_collected'),
       v.literal('trade'),
-      v.literal('message')
+      v.literal('message'),
+      v.literal('relationship_milestone'),
+      v.literal('marriage'),
+      v.literal('friendship_formed'),
+      v.literal('rivalry_formed')
     ),
     description: v.string(),
     emoji: v.optional(v.string()),
@@ -33,6 +37,9 @@ export const logActivity = internalMutation({
       amount: v.optional(v.number()),
       item: v.optional(v.string()),
       message: v.optional(v.string()),
+      oldStage: v.optional(v.string()),
+      newStage: v.optional(v.string()),
+      reward: v.optional(v.string()),
     })),
   },
   handler: async (ctx, args) => {

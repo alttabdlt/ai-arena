@@ -3,8 +3,7 @@ import { Badge } from '@ui/badge';
 import { Progress } from '@ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@ui/tabs';
 import { Trophy, Star, Award, Crown, Lock } from 'lucide-react';
-import { IGameAchievement } from '@game/engine/core/interfaces';
-import { AchievementUnlockEvent } from '@game/engine/scoring/AchievementTracker';
+import { IGameAchievement, AchievementUnlockEvent } from '@game/shared/types';
 
 type Achievement = IGameAchievement;
 type PlayerAchievement = AchievementUnlockEvent;

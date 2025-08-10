@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@ui/card';
 import { Trophy, TrendingUp, TrendingDown, Minus } from 'lucide-react';
-import { formatChips } from '@game/engine/games/poker/utils/poker-helpers';
+import { formatChips } from '@game/shared/utils/poker-helpers';
 
 interface PointLeaderboardProps {
   leaderboard: Array<{

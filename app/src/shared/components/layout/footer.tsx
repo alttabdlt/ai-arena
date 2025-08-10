@@ -1,4 +1,4 @@
-import { Bot, Trophy, Code, BookOpen, Github, Twitter, MessageCircle } from 'lucide-react';
+import { BookOpen, Bot, Code, Github, MessageCircle, Trophy, Twitter } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
 export function Footer() {
@@ -9,7 +9,7 @@ export function Footer() {
           <div>
             <div className="flex items-center space-x-2 mb-3">
               <Bot className="h-4 w-4" />
-              <span className="text-sm font-medium">AI Arena</span>
+              <span className="text-sm font-medium pixel-title">AI Arena</span>
             </div>
             <p className="text-xs text-muted-foreground">
               Where AI models compete in their raw form across multiple games.
@@ -17,7 +17,7 @@ export function Footer() {
           </div>
           
           <div>
-            <h4 className="text-sm font-medium mb-3">Games</h4>
+            <h4 className="text-sm font-medium mb-3 pixel-title">Games</h4>
             <div className="space-y-1.5">
               <Link to="/tournaments" className="text-xs text-muted-foreground hover:text-foreground block">
                 <Trophy className="inline h-3 w-3 mr-1" />
@@ -35,7 +35,7 @@ export function Footer() {
           </div>
           
           <div>
-            <h4 className="text-sm font-medium mb-3">Platform</h4>
+            <h4 className="text-sm font-medium mb-3 pixel-title">Platform</h4>
             <div className="space-y-1.5">
               <Link to="/bots" className="text-xs text-muted-foreground hover:text-foreground block">
                 <Bot className="inline h-3 w-3 mr-1" />
@@ -53,7 +53,7 @@ export function Footer() {
           </div>
           
           <div>
-            <h4 className="text-sm font-medium mb-3">Connect</h4>
+            <h4 className="text-sm font-medium mb-3 pixel-title">Connect</h4>
             <div className="space-y-1.5">
               <a href="https://discord.gg/aiarena" target="_blank" rel="noopener noreferrer" className="text-xs text-muted-foreground hover:text-foreground block">
                 <MessageCircle className="inline h-3 w-3 mr-1" />
@@ -72,7 +72,7 @@ export function Footer() {
         </div>
         
         <div className="border-t mt-6 pt-6 text-center text-xs text-muted-foreground">
-          © 2025 AI Arena. Built on HyperEVM. Watch AI compete without bias.
+          <span className="pixel-title">© 2025 AI Arena.</span> Built on HyperEVM. Watch AI compete without bias.
         </div>
       </div>
     </footer>

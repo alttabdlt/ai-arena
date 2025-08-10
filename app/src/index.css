@@ -5,6 +5,24 @@
 /* PokerBots Arena Gaming Design System */
 
 @layer base {
+
+  /* Pixel fonts */
+  @font-face {
+    font-family: 'UpheavalPro';
+    src: url('/metaverse-game/public/assets/fonts/upheaval_pro.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+  }
+
+  @font-face {
+    font-family: 'VCRMono';
+    src: url('/metaverse-game/public/assets/fonts/vcr_osd_mono.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+  }
+
   :root {
     /* Gaming Background - Deep space theme */
     --background: 222 22% 8%;
@@ -54,7 +72,7 @@
 
     --radius: 0.75rem;
 
-    /* Gaming gradients */
+    /* Pixel gradients */
     --gradient-primary: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--primary-glow)));
     --gradient-secondary: linear-gradient(135deg, hsl(var(--secondary)), hsl(var(--accent)));
     --gradient-gaming: linear-gradient(135deg, hsl(218 100% 60%), hsl(270 60% 50%), hsl(45 100% 60%));
@@ -127,35 +145,69 @@
 
   body {
     @apply bg-background text-foreground;
+    font-family: 'VCRMono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   }
 }
 
 @layer components {
+
   /* Gaming Button Variants */
   .btn-gaming {
-    @apply bg-gradient-to-r from-primary to-primary-glow text-primary-foreground 
-           border-0 shadow-lg hover:shadow-[var(--glow-primary)] 
-           transition-[var(--transition-glow)] font-semibold;
+    @apply bg-gradient-to-r from-primary to-primary-glow text-primary-foreground border-0 shadow-lg hover:shadow-[var(--glow-primary)] transition-[var(--transition-glow)] font-semibold;
   }
-  
+
+  /* Pixel Art Theme Helpers */
+  .pixel-border {
+    box-shadow:
+      0 0 0 2px hsl(var(--border)),
+      0 0 0 4px hsl(var(--background));
+  }
+
+  .pixel-card {
+    @apply card-gaming;
+    image-rendering: pixelated;
+    border-radius: 0;
+    box-shadow:
+      0 0 0 2px hsl(var(--border)),
+      inset 0 0 0 2px rgba(255, 255, 255, 0.03),
+      0 8px 0 0 rgba(0, 0, 0, 0.4);
+  }
+
+  .pixel-btn {
+    @apply inline-flex items-center gap-2 px-3 py-2 uppercase tracking-wider;
+    font-family: 'UpheavalPro', 'VCRMono', monospace;
+    image-rendering: pixelated;
+    border-radius: 0;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(0, 0, 0, 0.2));
+    box-shadow: 0 0 0 2px hsl(var(--border)), 0 4px 0 0 rgba(0, 0, 0, 0.6);
+    transition: transform 0.05s ease;
+  }
+
+  .pixel-btn:active {
+    transform: translateY(2px);
+    box-shadow: 0 0 0 2px hsl(var(--border)), 0 2px 0 0 rgba(0, 0, 0, 0.6);
+  }
+
+  .pixel-title {
+    font-family: 'UpheavalPro', 'VCRMono', monospace;
+    letter-spacing: 1px;
+    text-shadow: 0 2px 0 rgba(0, 0, 0, 0.6), 0 0 12px rgba(255, 255, 255, 0.08);
+  }
+
   .btn-accent {
-    @apply bg-gradient-to-r from-accent to-warning text-accent-foreground 
-           border-0 shadow-lg hover:shadow-[var(--glow-accent)] 
-           transition-[var(--transition-glow)] font-semibold;
+    @apply bg-gradient-to-r from-accent to-warning text-accent-foreground border-0 shadow-lg hover:shadow-[var(--glow-accent)] transition-[var(--transition-glow)] font-semibold;
   }
 
   /* Gaming Card Styles */
   .card-gaming {
-    @apply bg-gradient-to-br from-card to-[hsl(222_20%_15%)] 
-           border-border shadow-[var(--shadow-card)] 
-           backdrop-blur-sm;
+    @apply bg-gradient-to-br from-card to-[hsl(222_20%_15%)] border-border shadow-[var(--shadow-card)] backdrop-blur-sm;
   }
 
   /* Glow Effects */
   .glow-primary {
     @apply shadow-[var(--glow-primary)];
   }
-  
+
   .glow-accent {
     @apply shadow-[var(--glow-accent)];
   }
@@ -164,22 +216,21 @@
   .live-indicator {
     @apply relative;
   }
-  
+
   .live-indicator::before {
     content: '';
-    @apply absolute -inset-1 bg-gradient-to-r from-destructive to-warning 
-           rounded-full blur-sm opacity-75 animate-pulse;
+    @apply absolute -inset-1 bg-gradient-to-r from-destructive to-warning rounded-full blur-sm opacity-75 animate-pulse;
   }
 
   /* Status Badges */
   .status-live {
     @apply bg-destructive text-destructive-foreground animate-pulse;
   }
-  
+
   .status-upcoming {
     @apply bg-warning text-warning-foreground;
   }
-  
+
   .status-completed {
     @apply bg-success text-success-foreground;
   }
@@ -196,6 +247,7 @@
     opacity: 0;
     transform: translateY(4px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -212,6 +264,7 @@
     opacity: 0;
     transform: scale(0.8) rotate(-20deg);
   }
+
   to {
     opacity: 1;
     transform: scale(1) rotate(0deg);
@@ -219,19 +272,25 @@
 }
 
 @keyframes pointer-bounce {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: translateX(-50%) translateY(0);
   }
+
   50% {
     transform: translateX(-50%) translateY(-10px);
   }
 }
 
 @keyframes celebration-pulse {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: scale(1);
     opacity: 1;
   }
+
   50% {
     transform: scale(1.2);
     opacity: 0.8;
@@ -252,7 +311,7 @@
 
 /* Grid background pattern */
 .bg-grid-white\/\[0\.02\] {
-  background-image: 
+  background-image:
     linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
     linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
 }

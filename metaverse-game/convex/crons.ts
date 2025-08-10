@@ -27,7 +27,7 @@ crons.interval(
   'process bot registrations',
   { seconds: 3 },
   // @ts-ignore - TypeScript depth issue
-  internal.aiTown.batchRegistration.scheduledBatchProcessor,
+  internal.migrations.batchRegistration.scheduledBatchProcessor,
 );
 
 // Process idle XP for all active worlds every 60 seconds

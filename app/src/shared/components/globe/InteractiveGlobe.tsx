@@ -1,8 +1,8 @@
-import React, { useRef, useEffect, useState } from 'react';
-import Globe from 'react-globe.gl';
+import { GET_CHANNELS } from '@/graphql/queries/channel';
 import { useQuery } from '@apollo/client';
 import { Tournament } from '@shared/types/tournament';
-import { GET_METAVERSE_BOTS } from '@/graphql/queries/bot';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import Globe from 'react-globe.gl';
 
 interface GlobePoint {
   lat: number;
@@ -18,15 +18,15 @@ interface GlobePoint {
   syncStatus?: string;
 }
 
-interface GlobeArc {
-  startLat: number;
-  startLng: number;
-  endLat: number;
-  endLng: number;
-  color: string;
-  dashLength?: number;
-  dashGap?: number;
-  dashAnimateTime?: number;
+// Minimal feature type for GeoJSON polygons
+interface GeoFeature {
+  type: 'Feature';
+  id?: string | number;
+  properties: Record<string, any>;
+  geometry: {
+    type: 'Polygon' | 'MultiPolygon';
+    coordinates: number[][][] | number[][][][];
+  };
 }
 
 interface InteractiveGlobeProps {
@@ -53,8 +53,98 @@ const PERSONALITY_COLORS = {
   WORKER: '#00ff00'
 };
 
-const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({ 
-  tournaments = [], 
+type ContinentKey = 'north-america' | 'south-america' | 'europe' | 'africa' | 'asia' | 'oceania';
+
+// Default active region when channel data isn't available
+const DEFAULT_REGION: ContinentKey = 'north-america';
+
+// Simple geographic test to approximate continents by centroid location
+function isInNorthAmerica(lat: number, lng: number): boolean {
+  // Covers Greenland to Central America roughly
+  return lat >= 7 && lat <= 83 && lng >= -170 && lng <= -30;
+}
+
+function computeRoughCentroid(feature: GeoFeature): { lat: number; lng: number } | null {
+  try {
+    const coords = feature.geometry.coordinates as any;
+    const collect: Array<[number, number]> = [];
+    if (feature.geometry.type === 'Polygon') {
+      const ring = coords[0];
+      for (const [lng, lat] of ring) collect.push([lng, lat]);
+    } else if (feature.geometry.type === 'MultiPolygon') {
+      const ring = coords[0]?.[0] || [];
+      for (const [lng, lat] of ring) collect.push([lng, lat]);
+    }
+    if (collect.length === 0) return null;
+    const avg = collect.reduce(
+      (acc, cur) => {
+        acc[0] += cur[0];
+        acc[1] += cur[1];
+        return acc;
+      },
+      [0, 0]
+    );
+    const lng = avg[0] / collect.length;
+    const lat = avg[1] / collect.length;
+    return { lat, lng };
+  } catch {
+    return null;
+  }
+}
+
+function isInSouthAmerica(lat: number, lng: number): boolean {
+  return lat >= -57 && lat <= 13 && lng >= -82 && lng <= -34;
+}
+
+function isInEurope(lat: number, lng: number): boolean {
+  return lat >= 35 && lat <= 71 && lng >= -25 && lng <= 45;
+}
+
+function isInAfrica(lat: number, lng: number): boolean {
+  return lat >= -35 && lat <= 37 && lng >= -20 && lng <= 52;
+}
+
+function isInAsia(lat: number, lng: number): boolean {
+  return lat >= 0 && lat <= 81 && lng >= 26 && lng <= 180;
+}
+
+function isInOceania(lat: number, lng: number): boolean {
+  return lat >= -50 && lat <= 0 && lng >= 110 && lng <= 180;
+}
+
+function isInContinent(continent: ContinentKey, lat: number, lng: number): boolean {
+  switch (continent) {
+    case 'north-america':
+      return isInNorthAmerica(lat, lng);
+    case 'south-america':
+      return isInSouthAmerica(lat, lng);
+    case 'europe':
+      return isInEurope(lat, lng);
+    case 'africa':
+      return isInAfrica(lat, lng);
+    case 'asia':
+      return isInAsia(lat, lng);
+    case 'oceania':
+      return isInOceania(lat, lng);
+    default:
+      return false;
+  }
+}
+
+function inferContinentFromRegion(region?: string | null): ContinentKey {
+  if (!region) return DEFAULT_REGION;
+  const val = region.toLowerCase();
+  if (val.startsWith('us') || val.startsWith('na') || val.includes('america')) return 'north-america';
+  if (val.startsWith('sa') || val.includes('south-america')) return 'south-america';
+  if (val.startsWith('eu') || val.includes('europe')) return 'europe';
+  if (val.startsWith('af') || val.includes('africa')) return 'africa';
+  if (val.startsWith('ap') || val.startsWith('asia') || val.includes('ap-') || val.includes('asia')) return 'asia';
+  if (val.startsWith('oc') || val.startsWith('au') || val.includes('oceania') || val.includes('australia')) return 'oceania';
+  return DEFAULT_REGION;
+}
+
+const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
+  tournaments = [],
   onLocationClick,
   onZoomComplete,
   globeRef,
@@ -62,23 +152,46 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
 }) => {
   const internalGlobeRef = useRef<any>(null); // Globe.gl doesn't export proper types
   const globeEl = globeRef || internalGlobeRef;
-  const [points, setPoints] = useState<GlobePoint[]>([]);
-  const [arcs, setArcs] = useState<GlobeArc[]>([]);
   const [globeReady, setGlobeReady] = useState(false);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+  const [worldFeatures, setWorldFeatures] = useState<GeoFeature[]>([]);
+  const [hoverFeature, setHoverFeature] = useState<GeoFeature | null>(null);
+  const [pulse, setPulse] = useState(0);
+  const [activeContinent, setActiveContinent] = useState<ContinentKey>(DEFAULT_REGION);
 
-  // Fetch metaverse bots
-  const { data: metaverseData } = useQuery(GET_METAVERSE_BOTS, {
-    variables: { limit: 500 },
-    pollInterval: 5000 // Poll every 5 seconds
+  // Channels determine which continents are owned and which is active
+  const { data: channelsData } = useQuery(GET_CHANNELS, {
+    variables: { status: 'ACTIVE' },
+    fetchPolicy: 'cache-and-network',
+    pollInterval: 15000,
   });
 
-  // Generate random coordinates for demo purposes
-  const generateRandomCoordinates = () => {
-    const lat = (Math.random() - 0.5) * 180;
-    const lng = (Math.random() - 0.5) * 360;
-    return { lat, lng };
-  };
+  // Map continents to channels that have worlds
+  const continentToChannel = useMemo(() => {
+    const mapping = new Map<ContinentKey, any>();
+    const list = channelsData?.channels || [];
+    for (const ch of list) {
+      const cont = inferContinentFromRegion(ch.region);
+      if (ch.worldId && !mapping.has(cont)) {
+        mapping.set(cont, ch);
+      }
+    }
+    return mapping;
+  }, [channelsData]);
+
+  // Compute owned continents
+  const ownedContinents = useMemo(() => new Set<ContinentKey>([...continentToChannel.keys()]), [continentToChannel]);
+
+  useEffect(() => {
+    const channels = channelsData?.channels || [];
+    if (channels.length > 0) {
+      const preferred = channels.find((c: any) => !!c.worldId) || channels[0];
+      const continent = inferContinentFromRegion(preferred.region);
+      setActiveContinent(continent);
+    } else {
+      setActiveContinent(DEFAULT_REGION);
+    }
+  }, [channelsData]);
 
   // Track window dimensions
   useEffect(() => {
@@ -97,76 +210,49 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
     };
   }, []);
 
-  // Initialize globe data
+  // Load world geojson (countries) to approximate continent outlines
   useEffect(() => {
-    // Create points for active tournaments
-    const tournamentPoints: GlobePoint[] = tournaments
-      .filter(t => t.status === 'in-progress')
-      .map(tournament => {
-        const coords = generateRandomCoordinates();
-        return {
-          ...coords,
-          size: 1.2,
-          color: '#ffffff',
-          name: tournament.name,
-          type: 'tournament' as const,
-          id: tournament.id,
-          intensity: Math.random()
-        };
-      });
-
-    // Create points for metaverse bots
-    const metaverseBotPoints: GlobePoint[] = [];
-    if (metaverseData?.bots) {
-      metaverseData.bots.forEach((bot: any) => {
-        if (bot.currentZone && ZONE_COORDINATES[bot.currentZone as keyof typeof ZONE_COORDINATES]) {
-          const zoneCoords = ZONE_COORDINATES[bot.currentZone as keyof typeof ZONE_COORDINATES];
-          // Add slight randomization to avoid exact overlap
-          const offsetLat = (Math.random() - 0.5) * 2;
-          const offsetLng = (Math.random() - 0.5) * 2;
-          
-          metaverseBotPoints.push({
-            lat: zoneCoords.lat + offsetLat,
-            lng: zoneCoords.lng + offsetLng,
-            size: 0.6,
-            color: PERSONALITY_COLORS[bot.personality as keyof typeof PERSONALITY_COLORS] || '#ffffff',
-            name: bot.name,
-            type: 'metaverse-bot' as const,
-            id: bot.id,
-            intensity: bot.botSync?.syncStatus === 'SYNCED' ? 0.8 : 0.3,
-            personality: bot.personality,
-            zone: bot.currentZone,
-            syncStatus: bot.botSync?.syncStatus
-          });
+    let aborted = false;
+    async function load() {
+      try {
+        // Lightweight world countries geojson (commonly used in D3 examples)
+        const res = await fetch('https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/world.geojson', {
+          cache: 'force-cache'
+        });
+        if (!res.ok) throw new Error('Failed to load world geojson');
+        const json = await res.json();
+        if (!aborted) {
+          const features = (json.features || []) as GeoFeature[];
+          setWorldFeatures(features);
         }
-      });
+      } catch (err) {
+        console.warn('Failed to fetch world geojson, using empty dataset.', err);
+        if (!aborted) setWorldFeatures([]);
+      }
     }
+    load();
+    return () => {
+      aborted = true;
+    };
+  }, []);
 
-    setPoints([...tournamentPoints, ...metaverseBotPoints]);
-
-    // Create arcs between some points for visual effect
-    const connectionArcs: GlobeArc[] = [];
-    for (let i = 0; i < Math.min(tournamentPoints.length - 1, 5); i++) {
-      connectionArcs.push({
-        startLat: tournamentPoints[i].lat,
-        startLng: tournamentPoints[i].lng,
-        endLat: tournamentPoints[i + 1].lat,
-        endLng: tournamentPoints[i + 1].lng,
-        color: '#ffaa00',
-        dashLength: 0.5,
-        dashGap: 0.2,
-        dashAnimateTime: 2000
-      });
-    }
-    setArcs(connectionArcs);
-  }, [tournaments, metaverseData]);
+  // Animation pulse for glow and subtle camera motion
+  useEffect(() => {
+    let rafId: number;
+    const tick = () => {
+      setPulse((p) => (p + 0.016) % (Math.PI * 2));
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, []);
 
   // Configure globe on mount
   useEffect(() => {
     if (globeEl.current && globeReady) {
-      // Auto-rotate
+      // Auto-rotate with slightly slower cinematic speed
       globeEl.current.controls().autoRotate = true;
-      globeEl.current.controls().autoRotateSpeed = 0.5;
+      globeEl.current.controls().autoRotateSpeed = 0.25;
       
       // Set initial camera position
       globeEl.current.pointOfView({
@@ -194,10 +280,45 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
     }
   };
 
-  const handlePointClick = (point: GlobePoint) => {
-    if (onLocationClick && enableZoom) {
-      zoomToLocation(point.lat, point.lng);
-      onLocationClick(point.lat, point.lng);
+  // Determine if a given feature belongs to the active region or owned regions
+  const isFeatureActiveRegion = useMemo(() => {
+    return (feature: GeoFeature): boolean => {
+      const center = computeRoughCentroid(feature);
+      if (!center) return false;
+      return isInContinent(activeContinent, center.lat, center.lng);
+    };
+  }, [activeContinent]);
+
+  const isFeatureOwned = useMemo(() => {
+    return (feature: GeoFeature): boolean => {
+      const center = computeRoughCentroid(feature);
+      if (!center) return false;
+      for (const cont of ownedContinents) {
+        if (isInContinent(cont, center.lat, center.lng)) return true;
+      }
+      return false;
+    };
+  }, [ownedContinents]);
+
+  const handlePolygonClick = (feat: GeoFeature) => {
+    // If clicked on the active region, open the metaverse game
+    if (isFeatureActiveRegion(feat)) {
+      const token = localStorage.getItem('ai-arena-access-token');
+      const params = new URLSearchParams();
+      const address = localStorage.getItem('ai-arena-address') || '';
+      const activeChannel = continentToChannel.get(activeContinent);
+      const channelName = activeChannel?.name || 'main';
+      if (address) params.append('address', address);
+      if (token) params.append('token', token);
+      if (channelName) params.append('channel', channelName);
+      const metaverseUrl = params.toString()
+        ? `http://localhost:5175?${params.toString()}`
+        : 'http://localhost:5175';
+      window.open(metaverseUrl, '_blank');
+    } else {
+      // Future: trigger purchase flow
+      // For now just a subtle console cue
+      console.log('This continent is for sale.');
     }
   };
 
@@ -230,40 +351,56 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
         ref={globeEl}
         width={dimensions.width}
         height={dimensions.height}
-        globeImageUrl="//unpkg.com/three-globe/example/img/earth-night.jpg"
-        backgroundImageUrl="//unpkg.com/three-globe/example/img/night-sky.png"
-        backgroundColor="rgba(0,0,0,0)"
-        pointsData={points}
-        pointAltitude={0.01}
-        pointRadius={(d: any) => d?.type === 'tournament' ? 0.5 : 0.3}
-        pointColor={(d: any) => {
-          if (d?.type === 'tournament') return '#ffaa00';
-          if (d?.type === 'metaverse-bot') return d.color || '#ffffff';
-          return '#ffffff';
-        }}
-        pointLabel={(d: any) => d ? `
-          <div style="color: white; background: rgba(0,0,0,0.8); padding: 4px 8px; border-radius: 4px;">
-            <div style="font-weight: bold;">${d.name || 'Unknown'}</div>
-            ${d.type === 'tournament' ? 
-              '<div style="font-size: 12px;">Live Tournament</div>' : 
-              d.type === 'metaverse-bot' ? 
-              `<div style="font-size: 12px;">Zone: ${d.zone || 'Unknown'}</div>
-               <div style="font-size: 12px;">Personality: ${d.personality || 'Unknown'}</div>` :
-              '<div style="font-size: 12px;">Bot Created</div>'
-            }
-          </div>
-        ` : ''}
-        onPointClick={handlePointClick}
-        arcsData={arcs}
-        arcColor={(d: any) => d?.color || '#ffaa00'}
-        arcDashLength={(d: any) => d?.dashLength || 0.5}
-        arcDashGap={(d: any) => d?.dashGap || 0.2}
-        arcDashAnimateTime={(d: any) => d?.dashAnimateTime || 2000}
+        globeImageUrl={
+          // 1x1 transparent PNG to effectively remove base textures
+          'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAGnwKQm9m6ZQAAAABJRU5ErkJggg=='
+        }
+        bumpImageUrl={undefined as unknown as string}
+        backgroundImageUrl={undefined as unknown as string}
+        backgroundColor="rgba(0,0,0,1)"
+        showAtmosphere={true}
         atmosphereColor="#3a228a"
         atmosphereAltitude={0.25}
+        // Continent/country outlines
+        polygonsData={worldFeatures}
+        polygonGeoJsonGeometry={(d: any) => d.geometry}
+        polygonCapColor={(d: GeoFeature) => {
+          const active = isFeatureActiveRegion(d);
+          const owned = isFeatureOwned(d);
+          if (active) {
+            const alpha = 0.45 + 0.3 * (0.5 + 0.5 * Math.sin(pulse * 2));
+            return `rgba(255,255,255,${alpha.toFixed(3)})`;
+          }
+          if (owned) {
+            return 'rgba(255,255,255,0.15)';
+          }
+          // Dark, nearly black fill for unpurchased regions
+          return 'rgba(8,8,12,0.95)';
+        }}
+        polygonSideColor={() => 'rgba(255,255,255,0.06)'}
+        polygonStrokeColor={(d: GeoFeature) => {
+          if (isFeatureActiveRegion(d)) return 'rgba(255,255,255,0.9)';
+          if (isFeatureOwned(d)) return 'rgba(230,230,255,0.25)';
+          return 'rgba(200,200,220,0.12)';
+        }}
+        polygonAltitude={(d: GeoFeature) => (isFeatureActiveRegion(d) ? 0.012 : isFeatureOwned(d) ? 0.006 : 0.001)}
+        polygonsTransitionDuration={400}
+        polygonLabel={(d: GeoFeature) => {
+          const center = computeRoughCentroid(d);
+          const owned = isFeatureActiveRegion(d);
+          const name = d.properties?.name || 'Unknown';
+          return `
+            <div style="color: white; background: rgba(0,0,0,0.85); padding: 6px 10px; border-radius: 6px;">
+              <div style="font-weight: 700; letter-spacing: .3px;">${name}</div>
+              <div style="font-size: 12px; opacity: .85;">${owned ? 'Owned: Enter Metaverse' : 'For Sale'}</div>
+              ${center ? `<div style=\"font-size: 11px; opacity: .6;\">${center.lat.toFixed(1)}, ${center.lng.toFixed(1)}</div>` : ''}
+            </div>
+          `;
+        }}
+        onPolygonHover={(feat: GeoFeature | null) => setHoverFeature(feat)}
+        onPolygonClick={handlePolygonClick}
         onGlobeReady={handleGlobeReady}
       />
-
     </div>
   );
 };

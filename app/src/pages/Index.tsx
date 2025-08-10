@@ -1,40 +1,29 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { useQuery, useMutation, useSubscription } from '@apollo/client';
+import { START_DEBUG_LOGGING } from '@/graphql/mutations/debug';
+import { ENTER_QUEUE, LEAVE_QUEUE } from '@/graphql/mutations/queue';
+import { SET_TEST_GAME_TYPE } from '@/graphql/mutations/test';
+import { GET_METAVERSE_BOTS } from '@/graphql/queries/bot';
+import { GET_QUEUE_STATUS, QUEUE_UPDATE_SUBSCRIPTION } from '@/graphql/queries/queue';
+import { GET_USER_BOTS } from '@/graphql/queries/user';
+import { useMutation, useQuery, useSubscription } from '@apollo/client';
 import { useAuth } from '@auth/contexts/AuthContext';
-import { useAccount } from 'wagmi';
-import InteractiveGlobe from '@shared/components/globe/InteractiveGlobe';
-import SlotMachineTitle from '@shared/components/animations/SlotMachineTitle';
 import PortalTransition from '@shared/components/animations/PortalTransition';
-import { QueuePositionTracker } from '@queue/components/queue-position-tracker';
+import InteractiveGlobe from '@shared/components/globe/InteractiveGlobe';
+import { Tournament } from '@shared/types/tournament';
+import { Badge } from '@ui/badge';
 import { Button } from '@ui/button';
 import { Card } from '@ui/card';
-import { Badge } from '@ui/badge';
-import { Alert, AlertDescription } from '@ui/alert';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@ui/select';
-import { Trophy, Globe, Gamepad2, Bot, Loader2, X, CheckCircle2, Clock } from 'lucide-react';
-import { Tournament } from '@shared/types/tournament';
-import { motion, AnimatePresence } from 'framer-motion';
-import { GET_USER_BOTS } from '@/graphql/queries/user';
-import { GET_QUEUE_STATUS } from '@/graphql/queries/queue';
-import { ENTER_QUEUE, LEAVE_QUEUE } from '@/graphql/mutations/queue';
-import { QUEUE_UPDATE_SUBSCRIPTION } from '@/graphql/queries/queue';
-import { SET_TEST_GAME_TYPE } from '@/graphql/mutations/test';
-import { START_DEBUG_LOGGING } from '@/graphql/mutations/debug';
-import { GET_METAVERSE_BOTS } from '@/graphql/queries/bot';
+import { AnimatePresence, motion } from 'framer-motion';
+import { Bot, Clock, Gamepad2, Globe, Loader2, Trophy, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAccount } from 'wagmi';
 // import { METAVERSE_STATS_SUBSCRIPTION } from '@/graphql/subscriptions/metaverse';
-import { useToast } from '@shared/hooks/use-toast';
 import { LootboxAnimation } from '@shared/components/animations/LootboxAnimation';
-import { useLootbox } from '@shared/hooks/useLootbox';
-import { debugLogger } from '@shared/services/debugLogger';
 import { DebugLogViewer } from '@shared/components/DebugLogViewer';
 import { DebugSubscriptionListener } from '@shared/components/DebugSubscriptionListener';
+import { useToast } from '@shared/hooks/use-toast';
+import { useLootbox } from '@shared/hooks/useLootbox';
+import { debugLogger } from '@shared/services/debugLogger';
 
 const Index = () => {
   const navigate = useNavigate();
@@ -623,12 +612,12 @@ const Index = () => {
                   </div>
                 </div>
 
-                <div className="inline-flex items-center gap-2 px-4 py-2 bg-primary/10 backdrop-blur-sm rounded-full border border-primary/20 mb-4">
+                <div className="inline-flex items-center gap-2 px-4 py-2 bg-primary/10 backdrop-blur-sm rounded-full border border-primary/20 mb-4 pixel-border">
                   <Globe className="w-4 h-4 text-primary animate-pulse" />
-                  <span className="text-sm font-medium">AI Arena Global Network</span>
+                  <span className="text-sm font-medium pixel-title">AI Arena Global Network</span>
                 </div>
                 
-                <h1 className="text-5xl md:text-7xl font-bold text-white drop-shadow-2xl">
+                <h1 className="text-5xl md:text-7xl font-bold text-white drop-shadow-2xl pixel-title">
                   AI Battle Arena
                   <span className="block text-3xl md:text-5xl mt-2 bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
                     4-Player Tournaments
@@ -646,7 +635,7 @@ const Index = () => {
                       size="lg" 
                       onClick={handlePlayNow}
                       disabled={botsLoading || isLoggingIn}
-                      className="bg-primary hover:bg-primary/90 text-white shadow-xl hover:shadow-2xl transform hover:scale-105 transition-all"
+                      className="pixel-btn bg-primary hover:bg-primary/90 text-white shadow-xl hover:shadow-2xl transform hover:scale-105 transition-all"
                     >
                       {(botsLoading || isLoggingIn) ? (
                         <Loader2 className="mr-2 h-5 w-5 animate-spin" />
@@ -659,7 +648,7 @@ const Index = () => {
                       size="lg" 
                       variant="outline"
                       onClick={() => navigate('/tournaments')}
-                      className="bg-white/10 backdrop-blur-sm border-white/20 text-white hover:bg-white/20"
+                      className="pixel-btn bg-white/10 backdrop-blur-sm border-white/20 text-white hover:bg-white/20"
                     >
                       <Trophy className="mr-2 h-5 w-5" />
                       Watch Live

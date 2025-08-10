@@ -231,12 +231,12 @@ async function showGameStorage(gameType: string): Promise<void> {
     console.log(chalk.green('Match.gameHistory:'));
     console.log(JSON.stringify(example.gameHistory, null, 2));
     
-    if (example.decisions) {
+    if ('decisions' in example && example.decisions) {
       console.log(chalk.green('\nMatch.decisions:'));
       console.log(JSON.stringify(example.decisions, null, 2));
     }
     
-    if (example.result) {
+    if ('result' in example && example.result) {
       console.log(chalk.green('\nMatch.result:'));
       console.log(JSON.stringify(example.result, null, 2));
     }

@@ -1,10 +1,11 @@
 import { v } from 'convex/values';
 import { internalMutation, internalAction, mutation, MutationCtx } from '../_generated/server';
+import { Id } from '../_generated/dataModel';
 import { playerId } from './ids';
 import { internal } from '../_generated/api';
 
 // Helper function to get valid AI Arena bot IDs
-async function getValidArenaBotIds(ctx: MutationCtx): Promise<Set<string>> {
+async function getValidArenaBotIds(ctx: MutationCtx, worldId?: Id<'worlds'>): Promise<Set<string>> {
   // For now, we'll use a simple approach - get all bots with valid agent descriptions
   // In production, this should query the AI Arena backend API
   const agentDescriptions = await ctx.db.query('agentDescriptions').collect();
@@ -14,9 +15,15 @@ async function getValidArenaBotIds(ctx: MutationCtx): Promise<Set<string>> {
     if (desc.aiArenaBotId) {
       // Only include bots that have been recently active (within last 24 hours)
       // This helps filter out old/stale bots
+      // Skip activity check if no worldId provided (for backward compatibility)
+      if (!worldId) {
+        validBotIds.add(desc.aiArenaBotId);
+        continue;
+      }
+      
       const recentActivity = await ctx.db
         .query('activityLogs')
-        .withIndex('aiArenaBotId', (q) => q.eq('aiArenaBotId', desc.aiArenaBotId!))
+        .withIndex('aiArenaBotId', (q) => q.eq('worldId', worldId).eq('aiArenaBotId', desc.aiArenaBotId!))
         .order('desc')
         .first();
       
@@ -302,7 +309,7 @@ export const tickIdleExperience = internalMutation({
     }
 
     // Get list of valid AI Arena bot IDs
-    const validBotIds = await getValidArenaBotIds(ctx);
+    const validBotIds = await getValidArenaBotIds(ctx, args.worldId);
     
     // Get all agents in the world
     const agents = world.agents || [];

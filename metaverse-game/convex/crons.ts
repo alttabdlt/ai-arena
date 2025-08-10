@@ -132,7 +132,7 @@ export const cleanupGhostBotsDaily = internalMutation({
     for (const worldStatus of worldStatuses) {
       try {
         // Run the cleanup for this world
-        await ctx.scheduler.runAfter(0, internal.migrations.migration.cleanupAllGhostBots, {
+        await ctx.scheduler.runAfter(0, internal.migrations.migration.cleanupAllGhostBotsInternal, {
           worldId: worldStatus.worldId,
           dryRun: false,
         });

@@ -1,38 +1,59 @@
-// Basic 1-indexed minheap implementation
-export function MinHeap<T>(compare: (a: T, b: T) => boolean) {
-  const tree = [null as T];
-  let endIndex = 1;
+// Simple MinHeap implementation for pathfinding
+export function MinHeap<T>(compareFn: (a: T, b: T) => boolean) {
+  const heap: T[] = [];
+
+  function bubbleUp(index: number) {
+    while (index > 0) {
+      const parentIndex = Math.floor((index - 1) / 2);
+      if (compareFn(heap[parentIndex], heap[index])) {
+        [heap[parentIndex], heap[index]] = [heap[index], heap[parentIndex]];
+        index = parentIndex;
+      } else {
+        break;
+      }
+    }
+  }
+
+  function bubbleDown(index: number) {
+    while (true) {
+      let smallest = index;
+      const left = 2 * index + 1;
+      const right = 2 * index + 2;
+
+      if (left < heap.length && compareFn(heap[smallest], heap[left])) {
+        smallest = left;
+      }
+      if (right < heap.length && compareFn(heap[smallest], heap[right])) {
+        smallest = right;
+      }
+
+      if (smallest !== index) {
+        [heap[index], heap[smallest]] = [heap[smallest], heap[index]];
+        index = smallest;
+      } else {
+        break;
+      }
+    }
+  }
+
   return {
-    peek: (): T | undefined => tree[1],
-    length: () => endIndex - 1,
-    push: (newValue: T) => {
-      let destinationIndex = endIndex++;
-      let nextToCheck;
-      while ((nextToCheck = destinationIndex >> 1) > 0) {
-        const existing = tree[nextToCheck];
-        if (compare(newValue, existing)) break;
-        tree[destinationIndex] = existing;
-        destinationIndex = nextToCheck;
-      }
-      tree[destinationIndex] = newValue;
+    push(item: T) {
+      heap.push(item);
+      bubbleUp(heap.length - 1);
     },
-    pop: () => {
-      if (endIndex == 1) return undefined;
-      endIndex--;
-      const value = tree[1];
-      const lastValue = tree[endIndex];
-      let destinationIndex = 1;
-      let nextToCheck;
-      while ((nextToCheck = destinationIndex << 1) < endIndex) {
-        if (nextToCheck + 1 <= endIndex && compare(tree[nextToCheck], tree[nextToCheck + 1]))
-          nextToCheck++;
-        const existing = tree[nextToCheck];
-        if (compare(existing, lastValue)) break;
-        tree[destinationIndex] = existing;
-        destinationIndex = nextToCheck;
-      }
-      tree[destinationIndex] = lastValue;
-      return value;
+
+    pop(): T | undefined {
+      if (heap.length === 0) return undefined;
+      if (heap.length === 1) return heap.pop();
+
+      const min = heap[0];
+      heap[0] = heap.pop()!;
+      bubbleDown(0);
+      return min;
+    },
+
+    size(): number {
+      return heap.length;
     },
   };
 }

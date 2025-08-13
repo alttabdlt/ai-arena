@@ -1,11 +1,10 @@
-import { query, mutation } from './_generated/server';
+import { query } from './_generated/server';
 import { v } from 'convex/values';
-import { internal } from './_generated/api';
 
 export const checkPendingInputs = query({
   handler: async (ctx) => {
-    // Get all inputs
-    const allInputs = await ctx.db.query('inputs').collect();
+    // Get limited inputs to avoid hitting document limit
+    const allInputs = await ctx.db.query('inputs').take(1000);
     
     // Filter for createAgentFromAIArena inputs
     const agentInputs = allInputs.filter(input => 
@@ -200,88 +199,6 @@ export const getUnprocessedInputs = query({
   },
 });
 
-// Force recreate agents from processed inputs
-export const testCreateMultipleAgents = mutation({
-  handler: async (ctx) => {
-    // Get the default world
-    const worldStatus = await ctx.db
-      .query('worldStatus')
-      .filter((q) => q.eq(q.field('isDefault'), true))
-      .first();
-    
-    if (!worldStatus) {
-      throw new Error('No default world found');
-    }
-    
-    // Get the current highest input number
-    const inputs = await ctx.db.query('inputs').collect();
-    let maxNumber = Math.max(...inputs.map(i => i.number || 0), 100000);
-    
-    // Create 3 agents in quick succession
-    const inputIds = [];
-    for (let i = 0; i < 3; i++) {
-      const inputId = await ctx.db.insert('inputs', {
-        engineId: worldStatus.engineId,
-        name: 'createAgentFromAIArena',
-        args: {
-          name: `TestBot${i}`,
-          character: `f${i + 1}`,
-          identity: `Test bot ${i} for debugging`,
-          plan: `Test the system ${i}`,
-          aiArenaBotId: `batch-test-${Date.now()}-${i}`,
-          initialZone: 'suburb',
-        },
-        received: Date.now() + i, // Slightly stagger the received times
-        number: maxNumber + i + 1,
-      });
-      inputIds.push(inputId);
-    }
-    
-    return {
-      success: true,
-      inputIds,
-      worldId: worldStatus.worldId,
-      message: 'Created 3 agent inputs',
-    };
-  },
-});
-
-export const testCreateAgent = mutation({
-  handler: async (ctx) => {
-    // Get the default world
-    const worldStatus = await ctx.db
-      .query('worldStatus')
-      .filter((q) => q.eq(q.field('isDefault'), true))
-      .first();
-    
-    if (!worldStatus) {
-      throw new Error('No default world found');
-    }
-    
-    // Send an input to create an agent
-    const inputId = await ctx.db.insert('inputs', {
-      engineId: worldStatus.engineId,
-      name: 'createAgentFromAIArena',
-      args: {
-        name: 'TestBot',
-        character: 'f1',
-        identity: 'A test bot for debugging',
-        plan: 'Test the system',
-        aiArenaBotId: 'test-' + Date.now(),
-        initialZone: 'suburb',
-      },
-      received: Date.now(),
-      number: 99999,
-    });
-    
-    return {
-      success: true,
-      inputId,
-      worldId: worldStatus.worldId,
-    };
-  },
-});
-
 export const checkAgentDetails = query({
   handler: async (ctx) => {
     // Get the default world dynamically
@@ -360,123 +277,6 @@ export const checkRegistrationQueue = query({
       completed: byStatus.completed.length,
       failed: byStatus.failed.length,
       details: byStatus,
-    };
-  },
-});
-
-// Clear all pending registrations
-export const clearRegistrationQueue = mutation({
-  handler: async (ctx) => {
-    const registrations = await ctx.db
-      .query('pendingBotRegistrations')
-      .collect();
-    
-    let deleted = 0;
-    for (const reg of registrations) {
-      await ctx.db.delete(reg._id);
-      deleted++;
-    }
-    
-    return { deleted };
-  },
-});
-
-
-export const recreateAgentsFromInputs = mutation({
-  handler: async (ctx) => {
-    // Get the default world
-    const worldStatus = await ctx.db
-      .query('worldStatus')
-      .filter((q) => q.eq(q.field('isDefault'), true))
-      .first();
-    
-    if (!worldStatus) {
-      throw new Error('No default world found');
-    }
-    
-    const world = await ctx.db.get(worldStatus.worldId);
-    if (!world) {
-      throw new Error('World not found');
-    }
-    
-    // Get all processed createAgentFromAIArena inputs
-    const inputs = await ctx.db
-      .query('inputs')
-      .filter(q => q.eq(q.field('name'), 'createAgentFromAIArena'))
-      .collect();
-    
-    const processedInputs = inputs.filter(i => 
-      i.returnValue && 
-      (i.returnValue as any).kind === 'ok'
-    );
-    
-    // Get the last 2 unique bot IDs
-    const botIds = new Set<string>();
-    const inputsToRecreate = [];
-    
-    for (let i = processedInputs.length - 1; i >= 0; i--) {
-      const input = processedInputs[i];
-      const args = input.args as any;
-      if (args.aiArenaBotId && !botIds.has(args.aiArenaBotId)) {
-        botIds.add(args.aiArenaBotId);
-        inputsToRecreate.push(input);
-        if (botIds.size >= 2) break;
-      }
-    }
-    
-    // Now manually recreate these agents in the world
-    const agents = [];
-    const players = [];
-    let nextId = 1;
-    
-    for (const input of inputsToRecreate) {
-      const args = input.args as any;
-      const returnValue = (input.returnValue as any).value;
-      
-      // Create player
-      const playerId = `p:${nextId}`;
-      nextId++;
-      
-      players.push({
-        id: playerId,
-        human: args.name,
-        name: args.name,
-        character: args.character,
-        identity: args.identity,
-        position: {
-          x: Math.floor(Math.random() * 30),
-          y: Math.floor(Math.random() * 30)
-        },
-        speed: 1,
-        facing: { dx: 0, dy: 1 },
-        lastInput: 0,
-        currentZone: args.initialZone || 'suburb',
-      } as any);
-      
-      // Create agent
-      const agentId = `a:${nextId}`;
-      nextId++;
-      
-      agents.push({
-        id: agentId,
-        playerId: playerId,
-        aiArenaBotId: args.aiArenaBotId,
-        personality: args.personality,
-      });
-    }
-    
-    // Update the world with the recreated agents
-    await ctx.db.patch(worldStatus.worldId, {
-      agents: agents as any,
-      players: players as any,
-      nextId: nextId,
-    });
-    
-    return {
-      success: true,
-      agentsCreated: agents.length,
-      playersCreated: players.length,
-      agents: agents.map(a => ({ id: a.id, aiArenaBotId: a.aiArenaBotId })),
     };
   },
 });

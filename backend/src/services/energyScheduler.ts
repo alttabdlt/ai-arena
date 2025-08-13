@@ -1,6 +1,6 @@
 import * as cron from 'node-cron';
 import { energyService } from './energyService';
-import { logger } from '../utils/logger';
+import { simpleLogger as logger } from '@ai-arena/shared-logger';
 
 export class EnergyScheduler {
   private task: cron.ScheduledTask | null = null;

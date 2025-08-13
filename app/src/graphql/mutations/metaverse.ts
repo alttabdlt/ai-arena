@@ -13,23 +13,7 @@ export const REGISTER_BOT_IN_METAVERSE = gql`
         convexWorldId
         convexAgentId
         convexPlayerId
-        personalityMapped
-        positionSynced
-        statsSynced
-      }
-      metaverseInfo {
-        agentId
-        playerId
-        worldId
-        zone
-        position {
-          x
-          y
-          worldInstanceId
-        }
-        lastZoneChange
-        syncStatus
-        lastSyncedAt
+        errorMessage
       }
     }
   }
@@ -60,19 +44,48 @@ export const UPDATE_BOT_ZONE = gql`
   }
 `;
 
-export const BATCH_REGISTER_BOTS = gql`
-  mutation BatchRegisterBots($botIds: [ID!]!) {
-    batchRegisterBots(botIds: $botIds) {
+export const BATCH_REGISTER_BOTS_IN_METAVERSE = gql`
+  mutation BatchRegisterBotsInMetaverse($botIds: [ID!]!, $batchSize: Int) {
+    batchRegisterBotsInMetaverse(botIds: $botIds, batchSize: $batchSize) {
       success
       message
-      registeredCount
+      totalProcessed
+      successCount
       failedCount
+      failedBotIds
       results {
         botId
         success
         message
         syncStatus
+        errorMessage
       }
     }
+  }
+`;
+
+export const BATCH_SYNC_BOTS_WITH_METAVERSE = gql`
+  mutation BatchSyncBotsWithMetaverse($botIds: [ID!]!, $batchSize: Int) {
+    batchSyncBotsWithMetaverse(botIds: $botIds, batchSize: $batchSize) {
+      success
+      message
+      totalProcessed
+      successCount
+      failedCount
+      failedBotIds
+      results {
+        botId
+        success
+        message
+        syncStatus
+        errorMessage
+      }
+    }
+  }
+`;
+
+export const CLEANUP_INACTIVE_BOT_SYNCS = gql`
+  mutation CleanupInactiveBotSyncs($daysInactive: Int) {
+    cleanupInactiveBotSyncs(daysInactive: $daysInactive)
   }
 `;

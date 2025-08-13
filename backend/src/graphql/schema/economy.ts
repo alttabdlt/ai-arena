@@ -3,10 +3,13 @@ import { gql } from 'graphql-tag';
 export const economyTypeDefs = gql`
   # Enums
   enum EquipmentType {
-    WEAPON
+    SWORD
     ARMOR
     TOOL
     ACCESSORY
+    POTION
+    BOOTS
+    GUN
   }
 
   enum ItemRarity {
@@ -15,6 +18,7 @@ export const economyTypeDefs = gql`
     RARE
     EPIC
     LEGENDARY
+    GOD_TIER
   }
 
   enum FurnitureType {
@@ -43,6 +47,20 @@ export const economyTypeDefs = gql`
     powerBonus: Int!
     defenseBonus: Int!
     equipped: Boolean!
+    
+    # Consumable fields
+    consumable: Boolean!
+    quantity: Int!
+    uses: Int
+    maxUses: Int
+    
+    # Additional bonuses for new equipment types
+    speedBonus: Int!
+    agilityBonus: Int!
+    rangeBonus: Int!
+    healingPower: Int!
+    duration: Int
+    
     metadata: JSON!
     createdAt: DateTime!
     updatedAt: DateTime!
@@ -151,6 +169,31 @@ export const economyTypeDefs = gql`
     factors: JSON!
   }
 
+  type ConsumableUseResult {
+    applied: Boolean!
+    itemName: String!
+    botId: ID!
+    effects: [String!]!
+    buffDuration: Int
+    remainingQuantity: Int
+    itemDeleted: Boolean!
+  }
+
+  type InventorySyncStatus {
+    botId: ID!
+    lastSyncedAt: DateTime
+    syncStatus: String!
+    pendingLootboxes: Int!
+    totalItems: Int!
+    errors: [String!]!
+  }
+
+  type InventorySyncResult {
+    success: Boolean!
+    syncedItems: Int!
+    errors: [String!]!
+  }
+
   # Queries
   extend type Query {
     # Get bot's equipment
@@ -179,6 +222,9 @@ export const economyTypeDefs = gql`
     
     # Get house leaderboard
     getHouseLeaderboard(limit: Int): [BotHouse!]!
+    
+    # Get inventory sync status
+    getInventorySyncStatus(botId: ID!): InventorySyncStatus
   }
 
   # Mutations
@@ -188,6 +234,9 @@ export const economyTypeDefs = gql`
     
     # Equip/unequip item
     toggleEquipment(equipmentId: ID!, equipped: Boolean!): BotEquipment!
+    
+    # Use consumable item
+    useConsumableItem(itemId: ID!): ConsumableUseResult!
     
     # Place furniture
     placeFurniture(furnitureId: ID!, position: JSON!): Furniture!
@@ -211,6 +260,15 @@ export const economyTypeDefs = gql`
     
     # Initialize bot house
     initializeBotHouse(botId: ID!): BotHouse!
+    
+    # Sync bot inventory to metaverse
+    syncBotInventory(botId: ID!): InventorySyncResult!
+    
+    # Sync lootbox to metaverse
+    syncLootboxToMetaverse(lootboxId: ID!): InventorySyncResult!
+    
+    # Sync all pending lootboxes for a bot
+    syncAllPendingLootboxes(botId: ID!): InventorySyncResult!
   }
 
   # Subscriptions

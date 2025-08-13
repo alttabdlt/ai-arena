@@ -1,0 +1,19 @@
+{
+  "name": "@ai-arena/shared-types",
+  "version": "1.0.0",
+  "description": "Shared type definitions for AI Arena platform",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "keywords": ["ai-arena", "types", "shared"],
+  "author": "AI Arena",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  }
+}

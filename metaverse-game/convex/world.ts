@@ -102,8 +102,15 @@ export const restartDeadWorlds = internalMutation({
         throw new Error(`Invalid engine ID: ${worldStatus.engineId}`);
       }
       if (engine.currentTime && engine.currentTime < engineTimeout) {
-        console.warn(`Restarting dead engine ${engine._id}...`);
-        await kickEngine(ctx, worldStatus.worldId);
+        // Only kick the engine if it's actually running
+        if (engine.running) {
+          console.warn(`Restarting dead but running engine ${engine._id}...`);
+          await kickEngine(ctx, worldStatus.worldId);
+        } else {
+          console.warn(`Engine ${engine._id} is not running, starting it...`);
+          // Start the engine instead of kicking it
+          await startEngine(ctx, worldStatus.worldId);
+        }
       }
     }
   },

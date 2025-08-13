@@ -1,6 +1,11 @@
 import { PrismaClient } from '@prisma/client';
 import { economyService } from '../../services/economyService';
+// inventorySyncService moved to metaverse backend
+// import { inventorySyncService } from '../../services/inventorySync';
 import { pubsub, initializePubSub } from '../../config/context';
+import axios from 'axios';
+
+const METAVERSE_BACKEND_URL = process.env.METAVERSE_BACKEND_URL || 'http://localhost:5001';
 
 // Initialize pubsub if not already done
 initializePubSub();
@@ -125,6 +130,30 @@ export const economyResolvers = {
         orderBy: { houseScore: 'desc' },
         take: limit
       });
+    },
+
+    // Get inventory sync status
+    getInventorySyncStatus: async (_: any, { botId }: { botId: string }) => {
+      const botSync = await prisma.botSync.findUnique({
+        where: { botId },
+      });
+
+      const pendingLootboxes = await prisma.lootboxReward.count({
+        where: { botId, opened: false }
+      });
+
+      const totalItems = await prisma.botEquipment.count({
+        where: { botId }
+      });
+
+      return {
+        botId,
+        lastSyncedAt: botSync?.lastSyncedAt || null,
+        syncStatus: botSync?.syncStatus || 'NOT_SYNCED',
+        pendingLootboxes,
+        totalItems,
+        errors: botSync?.syncErrors || [],
+      };
     }
   },
 
@@ -165,6 +194,12 @@ export const economyResolvers = {
       });
       
       return equipment;
+    },
+
+    // Use consumable item
+    useConsumableItem: async (_: any, { itemId }: { itemId: string }) => {
+      const result = await economyService.useConsumableItem(itemId);
+      return result;
     },
 
     // Place furniture
@@ -302,6 +337,55 @@ export const economyResolvers = {
           }
         }
       });
+    },
+
+    // Sync bot inventory to metaverse
+    syncBotInventory: async (_: any, { botId }: { botId: string }) => {
+      try {
+        const response = await axios.post(`${METAVERSE_BACKEND_URL}/api/metaverse/inventory/sync`, { botId });
+        return response.data;
+      } catch (error: any) {
+        console.error('Failed to sync bot inventory:', error.message);
+        return {
+          success: false,
+          syncedItems: 0,
+          errors: [error.message || 'Failed to sync inventory'],
+        };
+      }
+    },
+
+    // Sync lootbox to metaverse
+    syncLootboxToMetaverse: async (_: any, { lootboxId }: { lootboxId: string }) => {
+      try {
+        const response = await axios.post(`${METAVERSE_BACKEND_URL}/api/metaverse/lootbox/sync`, { lootboxId });
+        return {
+          success: response.data.success,
+          syncedItems: response.data.success ? 1 : 0,
+          errors: response.data.success ? [] : [response.data.message],
+        };
+      } catch (error: any) {
+        console.error('Failed to sync lootbox:', error.message);
+        return {
+          success: false,
+          syncedItems: 0,
+          errors: [error.message || 'Failed to sync lootbox'],
+        };
+      }
+    },
+
+    // Sync all pending lootboxes for a bot
+    syncAllPendingLootboxes: async (_: any, { botId }: { botId: string }) => {
+      try {
+        const response = await axios.post(`${METAVERSE_BACKEND_URL}/api/metaverse/lootbox/sync-pending`, { botId });
+        return response.data;
+      } catch (error: any) {
+        console.error('Failed to sync pending lootboxes:', error.message);
+        return {
+          success: false,
+          syncedLootboxes: 0,
+          errors: [error.message || 'Failed to sync pending lootboxes'],
+        };
+      }
     }
   },
 

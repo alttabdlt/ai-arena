@@ -13,7 +13,7 @@ const RARITY_DROP_RATES = {
 
 // Equipment names by type and rarity
 const EQUIPMENT_NAMES: Record<EquipmentType, Record<ItemRarity, string[]>> = {
-  WEAPON: {
+  SWORD: {
     COMMON: ['Rusty Sword', 'Wooden Staff', 'Training Dagger'],
     UNCOMMON: ['Iron Blade', 'Crystal Wand', 'Sharp Knife'],
     RARE: ['Enchanted Sword', 'Mystic Staff', 'Shadow Dagger'],
@@ -44,6 +44,30 @@ const EQUIPMENT_NAMES: Record<EquipmentType, Record<ItemRarity, string[]>> = {
     EPIC: ['Diamond Ring', 'Ancient Amulet', 'Gauntlets of Power'],
     LEGENDARY: ['Ring of Omnipotence', 'Amulet of Immortality', 'Gloves of Midas'],
     GOD_TIER: ['Eternal Bond Ring', 'Soulmate Amulet', 'Unity Gauntlets']
+  },
+  POTION: {
+    COMMON: ['Health Potion', 'Energy Drink', 'Minor Elixir'],
+    UNCOMMON: ['Greater Health Potion', 'Stamina Boost', 'Speed Potion'],
+    RARE: ['Rejuvenation Potion', 'Power Elixir', 'Invisibility Brew'],
+    EPIC: ['Phoenix Potion', 'Berserker Draught', 'Time Warp Elixir'],
+    LEGENDARY: ['Elixir of Immortality', 'Reality Serum', 'Omnipotence Potion'],
+    GOD_TIER: ['Eternal Life Elixir', 'Unity Essence', 'Soulmate Bond Potion']
+  },
+  BOOTS: {
+    COMMON: ['Worn Boots', 'Leather Shoes', 'Running Sneakers'],
+    UNCOMMON: ['Swift Boots', 'Reinforced Boots', 'Silent Steps'],
+    RARE: ['Winged Boots', 'Shadow Walkers', 'Sprint Masters'],
+    EPIC: ['Boots of Hermes', 'Quantum Runners', 'Phase Shifters'],
+    LEGENDARY: ['Seven League Boots', 'Boots of Light Speed', 'Temporal Striders'],
+    GOD_TIER: ['Eternal Motion Boots', 'Unity Runners', 'Soulmate Steps']
+  },
+  GUN: {
+    COMMON: ['Rusty Pistol', 'Basic Rifle', 'Makeshift Shotgun'],
+    UNCOMMON: ['Chrome Revolver', 'Tactical Rifle', 'Combat Shotgun'],
+    RARE: ['Plasma Pistol', 'Sniper Rifle', 'Energy Shotgun'],
+    EPIC: ['Void Cannon', 'Quantum Rifle', 'Singularity Gun'],
+    LEGENDARY: ['Reality Cannon', 'Infinity Rifle', 'Chaos Blaster'],
+    GOD_TIER: ['Eternal Destroyer', 'Unity Cannon', 'Soulmate Blaster']
   }
 };
 
@@ -116,20 +140,76 @@ export class EconomyService {
     };
     
     const range = powerBonusRange[rarity];
-    const powerBonus = Math.floor(Math.random() * (range.max - range.min + 1)) + range.min;
-    const defenseBonus = Math.floor(powerBonus * 0.7); // Defense is 70% of power
+    const basePower = Math.floor(Math.random() * (range.max - range.min + 1)) + range.min;
     
-    return {
+    // Base stats that all equipment types have
+    const equipment: any = {
       name,
       equipmentType: type,
       rarity,
-      powerBonus,
-      defenseBonus,
+      powerBonus: 0,
+      defenseBonus: 0,
+      speedBonus: 0,
+      agilityBonus: 0,
+      rangeBonus: 0,
+      healingPower: 0,
+      consumable: false,
+      quantity: 1,
       metadata: {
         generatedAt: new Date().toISOString(),
         source: 'lootbox'
       }
     };
+    
+    // Apply type-specific bonuses
+    switch (type) {
+      case 'SWORD':
+        equipment.powerBonus = basePower;
+        equipment.defenseBonus = Math.floor(basePower * 0.3);
+        break;
+      
+      case 'ARMOR':
+        equipment.defenseBonus = basePower;
+        equipment.powerBonus = Math.floor(basePower * 0.2);
+        break;
+      
+      case 'BOOTS':
+        equipment.speedBonus = basePower;
+        equipment.agilityBonus = Math.floor(basePower * 0.7);
+        equipment.defenseBonus = Math.floor(basePower * 0.3);
+        break;
+      
+      case 'GUN':
+        equipment.powerBonus = Math.floor(basePower * 1.2); // Guns have higher power
+        equipment.rangeBonus = basePower;
+        equipment.defenseBonus = Math.floor(basePower * 0.1);
+        break;
+      
+      case 'POTION':
+        equipment.consumable = true;
+        equipment.quantity = Math.floor(Math.random() * 3) + 1; // 1-3 potions
+        equipment.healingPower = basePower * 10; // Healing scales with rarity
+        equipment.duration = basePower * 60; // Duration in seconds
+        equipment.uses = 1; // Single use when consumed
+        equipment.maxUses = 1;
+        break;
+      
+      case 'TOOL':
+        equipment.powerBonus = Math.floor(basePower * 0.5);
+        equipment.defenseBonus = Math.floor(basePower * 0.5);
+        equipment.agilityBonus = Math.floor(basePower * 0.3);
+        break;
+      
+      case 'ACCESSORY':
+        // Accessories provide balanced bonuses
+        equipment.powerBonus = Math.floor(basePower * 0.4);
+        equipment.defenseBonus = Math.floor(basePower * 0.4);
+        equipment.agilityBonus = Math.floor(basePower * 0.3);
+        equipment.speedBonus = Math.floor(basePower * 0.3);
+        break;
+    }
+    
+    return equipment;
   }
 
   // Generate random furniture
@@ -432,6 +512,77 @@ export class EconomyService {
         }
       });
     }
+  }
+
+  // Use a consumable item
+  async useConsumableItem(itemId: string): Promise<any> {
+    const item = await prisma.botEquipment.findUnique({
+      where: { id: itemId },
+      include: { bot: true }
+    });
+    
+    if (!item) {
+      throw new Error('Item not found');
+    }
+    
+    if (!item.consumable) {
+      throw new Error('Item is not consumable');
+    }
+    
+    if (item.quantity <= 0) {
+      throw new Error('No items remaining');
+    }
+    
+    // Apply item effects based on type
+    const effects: any = {
+      applied: true,
+      itemName: item.name,
+      botId: item.botId,
+      effects: []
+    };
+    
+    if (item.equipmentType === 'POTION') {
+      // Apply healing effect
+      if (item.healingPower && item.healingPower > 0) {
+        // Update bot energy if it exists
+        const botEnergy = await prisma.botEnergy.findUnique({
+          where: { botId: item.botId }
+        });
+        
+        if (botEnergy) {
+          const newEnergy = Math.min(botEnergy.currentEnergy + item.healingPower, botEnergy.maxEnergy);
+          await prisma.botEnergy.update({
+            where: { botId: item.botId },
+            data: { currentEnergy: newEnergy }
+          });
+          effects.effects.push(`Restored ${item.healingPower} energy`);
+        }
+      }
+      
+      // Apply temporary buffs (would need to be tracked separately)
+      if (item.duration && item.duration > 0) {
+        effects.effects.push(`Applied buff for ${item.duration} seconds`);
+        effects.buffDuration = item.duration;
+      }
+    }
+    
+    // Reduce quantity or remove item
+    if (item.quantity === 1) {
+      // Last item, delete it
+      await prisma.botEquipment.delete({
+        where: { id: itemId }
+      });
+      effects.itemDeleted = true;
+    } else {
+      // Reduce quantity
+      await prisma.botEquipment.update({
+        where: { id: itemId },
+        data: { quantity: item.quantity - 1 }
+      });
+      effects.remainingQuantity = item.quantity - 1;
+    }
+    
+    return effects;
   }
 
   // Calculate and update house score

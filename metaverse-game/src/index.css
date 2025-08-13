@@ -198,35 +198,35 @@ body {
 
 .box {
   border-width: 12px;
-  border-image-source: url(../assets/ui/box.svg);
+  border-image-source: url(/assets/ui/box.svg);
   border-image-repeat: stretch;
   border-image-slice: 12.5%;
 }
 
 .desc {
   border-width: 56px;
-  border-image-source: url(../assets/ui/desc.svg);
+  border-image-source: url(/assets/ui/desc.svg);
   border-image-repeat: stretch;
   border-image-slice: 28%;
 }
 
 .chats {
   border-width: 24px;
-  border-image-source: url(../assets/ui/chats.svg);
+  border-image-source: url(/assets/ui/chats.svg);
   border-image-repeat: stretch;
   border-image-slice: 40%;
 }
 
 .login-prompt {
   border-width: 48px;
-  border-image-source: url(../assets/ui/jewel_box.svg);
+  border-image-source: url(/assets/ui/jewel_box.svg);
   border-image-repeat: stretch;
   border-image-slice: 40%;
 }
 
 .button {
   border-width: 1em;
-  border-image-source: url(../assets/ui/button.svg);
+  border-image-source: url(/assets/ui/button.svg);
   border-image-repeat: stretch;
   border-image-slice: 25%;
   cursor: pointer;

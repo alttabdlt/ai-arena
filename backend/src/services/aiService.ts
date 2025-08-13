@@ -1,6 +1,32 @@
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
 
+// Type definition for all supported AI models
+type AIGameModel = 
+  // OpenAI models
+  | 'gpt-4o' | 'GPT_4O'
+  | 'gpt-4o-mini' | 'GPT_4O_MINI'
+  | 'gpt-3.5-turbo' | 'GPT_3_5_TURBO'
+  | 'O3' | 'O3_MINI' | 'O3_PRO'
+  // Claude models
+  | 'claude-3-5-sonnet' | 'CLAUDE_3_5_SONNET'
+  | 'claude-3-5-haiku' | 'CLAUDE_3_5_HAIKU'
+  | 'claude-3-haiku' | 'CLAUDE_3_HAIKU'
+  | 'claude-3-opus' | 'CLAUDE_3_OPUS'
+  | 'CLAUDE_4_OPUS' | 'CLAUDE_4_SONNET'
+  // DeepSeek models
+  | 'deepseek-chat' | 'DEEPSEEK_CHAT'
+  | 'deepseek-r1' | 'DEEPSEEK_R1'
+  | 'deepseek-v3' | 'DEEPSEEK_V3'
+  | 'deepseek-coder' | 'DEEPSEEK_CODER'
+  // Qwen models
+  | 'QWEN_2_5_72B' | 'QWQ_32B' | 'QVQ_72B_PREVIEW' | 'QWEN_2_5_MAX'
+  // Other models
+  | 'GROK_3' | 'KIMI_K2'
+  | 'GEMINI_2_5_PRO' | 'GEMINI_2_5_PRO_DEEP_THINK'
+  | 'LLAMA_3_1_405B' | 'LLAMA_3_1_70B' | 'LLAMA_3_2_90B'
+  | 'MIXTRAL_8X22B';
+
 export interface SidePot {
   amount: number;
   eligiblePlayers: string[];
@@ -302,9 +328,11 @@ export class AIService {
       let decision: AIPokerDecision;
       const startTime = Date.now();
       
-      switch(model) {
+      // Convert model to uppercase format for consistency
+      const modelUpperCase = model.toUpperCase().replace(/-/g, '_');
+      
+      switch(modelUpperCase) {
         // DeepSeek Models
-        case 'deepseek-chat':
         case 'DEEPSEEK_CHAT':
           console.log('📡 Calling Deepseek Chat API...');
           decision = await this.getDeepseekDecision(prompt, gameState, playerState);
@@ -323,7 +351,6 @@ export class AIService {
           break;
           
         // OpenAI Models  
-        case 'gpt-4o':
         case 'GPT_4O':
           console.log('📡 Calling OpenAI GPT-4o API...');
           decision = await this.getOpenAIDecision(prompt, gameState, playerState, 'gpt-4o');
@@ -338,7 +365,6 @@ export class AIService {
           break;
           
         // Claude Models
-        case 'claude-3-5-sonnet':
         case 'CLAUDE_3_5_SONNET':
           console.log('📡 Calling Claude 3.5 Sonnet API...');
           decision = await this.getClaudeDecision(prompt, gameState, playerState, 'claude-3-5-sonnet-20241022');
@@ -351,7 +377,6 @@ export class AIService {
           console.log('📡 Calling Claude 3 Haiku API...');
           decision = await this.getClaudeDecision(prompt, gameState, playerState, 'claude-3-haiku-20240307');
           break;
-        case 'claude-3-opus':
         case 'CLAUDE_3_OPUS':
           console.log('📡 Calling Claude 3 Opus API...');
           decision = await this.getClaudeDecision(prompt, gameState, playerState, 'claude-3-opus-20240229');
@@ -966,7 +991,7 @@ Respond with JSON:
     botId: string,
     gameState: any,
     playerState: any,
-    model: 'gpt-4o' | 'deepseek-chat' | 'claude-3-5-sonnet' | 'claude-3-opus',
+    model: AIGameModel,
     customPrompt?: string
   ): Promise<any> {
     console.log(`🎮 Reverse Hangman AI Decision Request - Bot: ${botId}, Model: ${model}`);
@@ -979,25 +1004,99 @@ Respond with JSON:
     try {
       let decision: any;
       
-      switch(model) {
-        case 'deepseek-chat':
-          console.log('📡 Calling Deepseek API for Reverse Hangman...');
+      // Convert model to uppercase format for consistency
+      const modelUpperCase = model.toUpperCase().replace(/-/g, '_');
+      
+      switch(modelUpperCase) {
+        // DeepSeek Models
+        case 'DEEPSEEK_CHAT':
+          console.log('📡 Calling Deepseek Chat API for Reverse Hangman...');
           decision = await this.getDeepseekReverseHangmanDecision(prompt);
           break;
-        case 'gpt-4o':
-          console.log('📡 Calling OpenAI API for Reverse Hangman...');
+        case 'DEEPSEEK_R1':
+          console.log('📡 Calling Deepseek R1 API for Reverse Hangman...');
+          decision = await this.getDeepseekReverseHangmanDecision(prompt);
+          break;
+        case 'DEEPSEEK_V3':
+          console.log('📡 Calling Deepseek V3 API for Reverse Hangman...');
+          decision = await this.getDeepseekReverseHangmanDecision(prompt);
+          break;
+        case 'DEEPSEEK_CODER':
+          console.log('📡 Calling Deepseek Coder API for Reverse Hangman...');
+          decision = await this.getDeepseekReverseHangmanDecision(prompt);
+          break;
+          
+        // OpenAI Models
+        case 'GPT_4O':
+          console.log('📡 Calling OpenAI GPT-4o API for Reverse Hangman...');
           decision = await this.getOpenAIReverseHangmanDecision(prompt);
           break;
-        case 'claude-3-5-sonnet':
+        case 'GPT_4O_MINI':
+          console.log('📡 Calling OpenAI GPT-4o-mini API for Reverse Hangman...');
+          decision = await this.getOpenAIReverseHangmanDecision(prompt);
+          break;
+        case 'GPT_3_5_TURBO':
+          console.log('📡 Calling OpenAI GPT-3.5 API for Reverse Hangman...');
+          decision = await this.getOpenAIReverseHangmanDecision(prompt);
+          break;
+          
+        // Claude Models
+        case 'CLAUDE_3_5_SONNET':
           console.log('📡 Calling Claude 3.5 Sonnet API for Reverse Hangman...');
           decision = await this.getClaudeReverseHangmanDecision(prompt, 'claude-3-5-sonnet-20241022');
           break;
-        case 'claude-3-opus':
+        case 'CLAUDE_3_5_HAIKU':
+          console.log('📡 Calling Claude 3.5 Haiku API for Reverse Hangman...');
+          decision = await this.getClaudeReverseHangmanDecision(prompt, 'claude-3-haiku-20240307');
+          break;
+        case 'CLAUDE_3_HAIKU':
+          console.log('📡 Calling Claude 3 Haiku API for Reverse Hangman...');
+          decision = await this.getClaudeReverseHangmanDecision(prompt, 'claude-3-haiku-20240307');
+          break;
+        case 'CLAUDE_3_OPUS':
           console.log('📡 Calling Claude 3 Opus API for Reverse Hangman...');
           decision = await this.getClaudeReverseHangmanDecision(prompt, 'claude-3-opus-20240229');
           break;
+          
+        // Models with fallbacks
+        case 'O3':
+        case 'O3_MINI':
+        case 'O3_PRO':
+          console.log('⚠️ O3 models not yet available, using GPT-4o for Reverse Hangman');
+          decision = await this.getOpenAIReverseHangmanDecision(prompt);
+          break;
+        case 'CLAUDE_4_OPUS':
+        case 'CLAUDE_4_SONNET':
+          console.log('⚠️ Claude 4 not yet available, using Claude 3.5 Sonnet for Reverse Hangman');
+          decision = await this.getClaudeReverseHangmanDecision(prompt, 'claude-3-5-sonnet-20241022');
+          break;
+          
+        // Qwen models (fallback to DeepSeek)
+        case 'QWEN_2_5_72B':
+        case 'QWQ_32B':
+        case 'QVQ_72B_PREVIEW':
+        case 'QWEN_2_5_MAX':
+          console.log('⚠️ Qwen models not integrated, using DeepSeek for Reverse Hangman');
+          decision = await this.getDeepseekReverseHangmanDecision(prompt);
+          break;
+          
+        // Other models (fallback to GPT-4o)
+        case 'GROK_3':
+        case 'KIMI_K2':
+        case 'GEMINI_2_5_PRO':
+        case 'GEMINI_2_5_PRO_DEEP_THINK':
+        case 'LLAMA_3_1_405B':
+        case 'LLAMA_3_1_70B':
+        case 'LLAMA_3_2_90B':
+        case 'MIXTRAL_8X22B':
+          console.log(`⚠️ ${model} not integrated, using GPT-4o for Reverse Hangman`);
+          decision = await this.getOpenAIReverseHangmanDecision(prompt);
+          break;
+          
         default:
-          throw new Error(`Unsupported model: ${model}`);
+          console.log(`⚠️ Unknown model ${model}, attempting with GPT-4o for Reverse Hangman`);
+          decision = await this.getOpenAIReverseHangmanDecision(prompt);
+          break;
       }
       
       return decision;
@@ -1274,7 +1373,7 @@ Respond with JSON: {action: 'guess_prompt', prompt_guess: 'your refined guess he
     botId: string,
     gameState: any,
     playerState: any,
-    model: 'gpt-4o' | 'deepseek-chat' | 'claude-3-5-sonnet' | 'claude-3-opus',
+    model: AIGameModel,
     customPrompt?: string
   ): Promise<any> {
     const requestId = `ai-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -1303,25 +1402,99 @@ Respond with JSON: {action: 'guess_prompt', prompt_guess: 'your refined guess he
 
       let decision: any;
       
-      switch(model) {
-        case 'deepseek-chat':
-          console.log(`[${requestId}] 📡 Calling Deepseek API for Connect4...`);
+      // Convert model to uppercase format for consistency
+      const modelUpperCase = model.toUpperCase().replace(/-/g, '_');
+      
+      switch(modelUpperCase) {
+        // DeepSeek Models
+        case 'DEEPSEEK_CHAT':
+          console.log(`[${requestId}] 📡 Calling Deepseek Chat API for Connect4...`);
           decision = await this.getDeepseekConnect4Decision(prompt, requestId);
           break;
-        case 'gpt-4o':
-          console.log('📡 Calling OpenAI API for Connect4...');
+        case 'DEEPSEEK_R1':
+          console.log(`[${requestId}] 📡 Calling Deepseek R1 API for Connect4...`);
+          decision = await this.getDeepseekConnect4Decision(prompt, requestId);
+          break;
+        case 'DEEPSEEK_V3':
+          console.log(`[${requestId}] 📡 Calling Deepseek V3 API for Connect4...`);
+          decision = await this.getDeepseekConnect4Decision(prompt, requestId);
+          break;
+        case 'DEEPSEEK_CODER':
+          console.log(`[${requestId}] 📡 Calling Deepseek Coder API for Connect4...`);
+          decision = await this.getDeepseekConnect4Decision(prompt, requestId);
+          break;
+          
+        // OpenAI Models
+        case 'GPT_4O':
+          console.log(`[${requestId}] 📡 Calling OpenAI GPT-4o API for Connect4...`);
           decision = await this.getOpenAIConnect4Decision(prompt);
           break;
-        case 'claude-3-5-sonnet':
-          console.log('📡 Calling Claude 3.5 Sonnet API for Connect4...');
+        case 'GPT_4O_MINI':
+          console.log(`[${requestId}] 📡 Calling OpenAI GPT-4o-mini API for Connect4...`);
+          decision = await this.getOpenAIConnect4Decision(prompt);
+          break;
+        case 'GPT_3_5_TURBO':
+          console.log(`[${requestId}] 📡 Calling OpenAI GPT-3.5 API for Connect4...`);
+          decision = await this.getOpenAIConnect4Decision(prompt);
+          break;
+          
+        // Claude Models
+        case 'CLAUDE_3_5_SONNET':
+          console.log(`[${requestId}] 📡 Calling Claude 3.5 Sonnet API for Connect4...`);
           decision = await this.getClaudeConnect4Decision(prompt, 'claude-3-5-sonnet-20241022');
           break;
-        case 'claude-3-opus':
-          console.log('📡 Calling Claude 3 Opus API for Connect4...');
+        case 'CLAUDE_3_5_HAIKU':
+          console.log(`[${requestId}] 📡 Calling Claude 3.5 Haiku API for Connect4...`);
+          decision = await this.getClaudeConnect4Decision(prompt, 'claude-3-haiku-20240307');
+          break;
+        case 'CLAUDE_3_HAIKU':
+          console.log(`[${requestId}] 📡 Calling Claude 3 Haiku API for Connect4...`);
+          decision = await this.getClaudeConnect4Decision(prompt, 'claude-3-haiku-20240307');
+          break;
+        case 'CLAUDE_3_OPUS':
+          console.log(`[${requestId}] 📡 Calling Claude 3 Opus API for Connect4...`);
           decision = await this.getClaudeConnect4Decision(prompt, 'claude-3-opus-20240229');
           break;
+          
+        // Models with fallbacks
+        case 'O3':
+        case 'O3_MINI':
+        case 'O3_PRO':
+          console.log(`[${requestId}] ⚠️ O3 models not yet available, using GPT-4o for Connect4`);
+          decision = await this.getOpenAIConnect4Decision(prompt);
+          break;
+        case 'CLAUDE_4_OPUS':
+        case 'CLAUDE_4_SONNET':
+          console.log(`[${requestId}] ⚠️ Claude 4 not yet available, using Claude 3.5 Sonnet for Connect4`);
+          decision = await this.getClaudeConnect4Decision(prompt, 'claude-3-5-sonnet-20241022');
+          break;
+          
+        // Qwen models (fallback to DeepSeek)
+        case 'QWEN_2_5_72B':
+        case 'QWQ_32B':
+        case 'QVQ_72B_PREVIEW':
+        case 'QWEN_2_5_MAX':
+          console.log(`[${requestId}] ⚠️ Qwen models not integrated, using DeepSeek for Connect4`);
+          decision = await this.getDeepseekConnect4Decision(prompt, requestId);
+          break;
+          
+        // Other models (fallback to GPT-4o)
+        case 'GROK_3':
+        case 'KIMI_K2':
+        case 'GEMINI_2_5_PRO':
+        case 'GEMINI_2_5_PRO_DEEP_THINK':
+        case 'LLAMA_3_1_405B':
+        case 'LLAMA_3_1_70B':
+        case 'LLAMA_3_2_90B':
+        case 'MIXTRAL_8X22B':
+          console.log(`[${requestId}] ⚠️ ${model} not integrated, using GPT-4o for Connect4`);
+          decision = await this.getOpenAIConnect4Decision(prompt);
+          break;
+          
         default:
-          throw new Error(`Unsupported model: ${model}`);
+          console.log(`[${requestId}] ⚠️ Unknown model ${model}, attempting with GPT-4o for Connect4`);
+          decision = await this.getOpenAIConnect4Decision(prompt);
+          break;
       }
       
       console.log(`[${requestId}] ✅ AI decision prepared, returning:`, {

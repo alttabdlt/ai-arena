@@ -1,8 +1,9 @@
 import { ConvexError, Infer, Value, v } from 'convex/values';
+import { internal } from '../_generated/api';
 import { Doc, Id } from '../_generated/dataModel';
 import { ActionCtx, DatabaseReader, MutationCtx, internalQuery } from '../_generated/server';
 import { engine } from '../engine/schema';
-import { internal } from '../_generated/api';
+import { MAX_INPUTS_PER_ENGINE } from '../constants';
 
 export abstract class AbstractGame {
   abstract tickDuration: number;
@@ -139,20 +140,43 @@ export async function engineInsertInput(
   args: any,
 ): Promise<Id<'inputs'>> {
   const now = Date.now();
-  const maxRetries = 5;
-  let retryCount = 0;
+  const maxRetries = 8;
+  let attempt = 0;
+
+  // RATE LIMITING: Check if we have too many unprocessed inputs
+  // This prevents input explosions that caused the 32k document limit issues
+  const engine = await ctx.db.get(engineId);
+  if (!engine) throw new Error(`No engine found with id ${engineId}`);
   
-  while (retryCount < maxRetries) {
+  // Count unprocessed inputs (those without returnValue)
+  const unprocessedCount = await ctx.db
+    .query('inputs')
+    .withIndex('byInputNumber', (q) => 
+      q.eq('engineId', engineId).gt('number', engine.processedInputNumber ?? -1)
+    )
+    .take(MAX_INPUTS_PER_ENGINE + 1)
+    .then(inputs => inputs.length);
+  
+  if (unprocessedCount >= MAX_INPUTS_PER_ENGINE) {
+    console.error(`⚠️ RATE LIMIT HIT: ${unprocessedCount} unprocessed inputs for engine ${engineId}, rejecting new input: ${name}`);
+    throw new Error(`Rate limit exceeded: Too many unprocessed inputs (${unprocessedCount}/${MAX_INPUTS_PER_ENGINE}). Please wait for the engine to process existing inputs.`);
+  }
+
+  // Allocate input numbers using the engine document as a sequence to prevent
+  // concurrent writers from racing on the inputs index scan.
+  while (attempt < maxRetries) {
+    attempt += 1;
+    const engine = await ctx.db.get(engineId);
+    if (!engine) throw new Error(`No engine found with id ${engineId}`);
+
+    const number = (engine.nextInputNumber ?? 0);
     try {
-      // Get the latest input number
-      const prevInput = await ctx.db
-        .query('inputs')
-        .withIndex('byInputNumber', (q) => q.eq('engineId', engineId))
-        .order('desc')
-        .first();
-      const number = prevInput ? prevInput.number + 1 : 0;
-      
-      // Try to insert with this number
+      // Reserve the number by incrementing on the engine doc first. This write
+      // will conflict if another writer updated nextInputNumber concurrently,
+      // causing an automatic retry in our loop.
+      await ctx.db.patch(engineId, { nextInputNumber: number + 1 });
+
+      // Now insert the input with the reserved number.
       const inputId = await ctx.db.insert('inputs', {
         engineId,
         number,
@@ -161,27 +185,30 @@ export async function engineInsertInput(
         received: now,
       });
       
-      // Success! Return the input ID
+      // Log if we're getting close to the limit
+      if (unprocessedCount > MAX_INPUTS_PER_ENGINE * 0.8) {
+        console.warn(`⚠️ Input buffer at ${Math.round((unprocessedCount / MAX_INPUTS_PER_ENGINE) * 100)}% capacity for engine ${engineId}`);
+      }
+      
       return inputId;
     } catch (error: any) {
-      // Check if it's a concurrent modification error
-      if (error.message?.includes('changed while this mutation was being run')) {
-        retryCount++;
-        if (retryCount < maxRetries) {
-          // Exponential backoff: wait 50ms, 100ms, 200ms, 400ms
-          const backoffMs = 50 * Math.pow(2, retryCount - 1);
-          await new Promise(resolve => setTimeout(resolve, backoffMs));
-          console.log(`Retrying input insertion (attempt ${retryCount + 1}/${maxRetries}) after ${backoffMs}ms`);
-          continue;
-        }
+      // OCC conflict on engine.patch or rare input insert collision.
+      if (attempt < maxRetries && (
+        error?.message?.includes('changed while this mutation was being run') ||
+        error?.message?.includes('optimistic concurrency') ||
+        error?.message?.includes('OCC')
+      )) {
+        // Small decorrelated jitter to spread retries
+        const backoff = 10 + Math.floor(Math.random() * 40) * attempt;
+        await new Promise((r) => setTimeout(r, backoff));
+        continue;
       }
-      // If it's not a concurrent modification error or we've exhausted retries, throw
+      console.error(`[INPUT ERROR] Failed to insert ${name}: ${error?.message ?? error}`);
       throw error;
     }
   }
-  
-  // Should never reach here but TypeScript needs this
-  throw new Error(`Failed to insert input after ${maxRetries} retries`);
+
+  throw new Error(`Failed to insert input after ${maxRetries} attempts for ${name}`);
 }
 
 export const loadInputs = internalQuery({

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '../../convex/_generated/api';
 import { Id } from '../../convex/_generated/dataModel';
-import closeImg from '../../assets/close.svg';
+import closeImg from '/assets/ui/close.svg';
 import { SelectElement } from './Player';
 import { Messages } from './Messages';
 import ActivityLogs from './ActivityLogs';
@@ -23,6 +23,8 @@ export default function PlayerDetails({
   playerId,
   setSelectedElement,
   scrollViewRef,
+  userBotIds = [],
+  userBots = [],
 }: {
   worldId: Id<'worlds'>;
   engineId: Id<'engines'>;
@@ -30,6 +32,8 @@ export default function PlayerDetails({
   playerId?: GameId<'players'>;
   setSelectedElement: SelectElement;
   scrollViewRef: React.RefObject<HTMLDivElement>;
+  userBotIds?: string[];
+  userBots?: any[];
 }) {
   // 1. All useState hooks first
   const [activeTab, setActiveTab] = useState<'stats' | 'inventory' | 'chat' | 'activity'>('activity');
@@ -61,7 +65,23 @@ export default function PlayerDetails({
   const playerDescription = playerId && game.playerDescriptions.get(playerId);
   const agent = player && [...game.world.agents.values()].find(a => a.playerId === player.id);
   
-  // 4. Conditional useQuery hooks - always called but with skip conditions
+  // Check if the current bot is owned by the user
+  const isOwnedBot = agent?.aiArenaBotId ? userBotIds.includes(agent.aiArenaBotId) : false;
+  
+  // Find the bot name from userBots if available
+  const userBot = agent?.aiArenaBotId ? userBots.find(bot => bot.id === agent.aiArenaBotId) : null;
+  const botName = userBot?.name || playerDescription?.name || agent?.personality || 'Unknown Bot';
+  
+  // Force refresh experience data every 5 seconds
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setRefreshTrigger(prev => prev + 1);
+    }, 5000); // Refresh every 5 seconds
+    return () => clearInterval(interval);
+  }, []);
+  
+  // 4. Conditional useQuery hooks - always called but with skip conditions  
   const experienceData = useQuery(api.aiTown.idleGains.getPlayerIdleStats,
     player && agent?.aiArenaBotId ? { worldId, playerId: player.id as string } : 'skip'
   );
@@ -181,7 +201,7 @@ export default function PlayerDetails({
       <div className="mb-4">
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-lg font-bold">
-            {playerDescription?.name}
+            {botName}
           </h2>
           <button
             className="text-gray-400 hover:text-gray-200 transition-colors p-1"
@@ -288,9 +308,10 @@ export default function PlayerDetails({
       {/* Tab Content */}
       <div className="flex-1 overflow-y-auto">
         {activeTab === 'stats' && (
-          <BotStatsPanel
+          isOwnedBot ? (
+            <BotStatsPanel
             stats={{
-              name: playerDescription?.name || 'Unknown Bot',
+              name: botName,
               personality: agent?.personality || 'WORKER',
               tokenId: agent?.aiArenaBotId?.slice(-4),
               level: experienceData?.level || 1,
@@ -312,8 +333,8 @@ export default function PlayerDetails({
                 luck: experienceData?.allocatedSkills?.luck || 10,
               },
               totalSteps: experienceData?.stepsTaken || 0,
-              dailySteps: player?.stepsTaken || 0,  // Will track daily in future
-              stepStreak: 0,  // Will implement streak tracking
+              dailySteps: Math.min(experienceData?.stepsTaken || 0, 1000),  // Show today's steps (capped at 1000 for display)
+              stepStreak: experienceData?.stepStreak || 0,
               currentEnergy: botEnergy?.currentEnergy || 0,
               maxEnergy: botEnergy?.maxEnergy || 30,
               energyRegenRate: botEnergy?.regenerationRate || 1,
@@ -331,9 +352,18 @@ export default function PlayerDetails({
               enemies: 0,
             }}
           />
+          ) : (
+            <div className="flex flex-col items-center justify-center h-64 text-gray-400">
+              <ChartBar className="w-12 h-12 mb-4 opacity-50" />
+              <p className="text-sm text-center">
+                You can only view detailed stats<br />for your own bots
+              </p>
+            </div>
+          )
         )}
         
         {activeTab === 'inventory' && (
+          isOwnedBot ? (
           <InventoryPanel
             items={inventory?.items?.map((item: any) => ({
               id: item.id,
@@ -352,6 +382,14 @@ export default function PlayerDetails({
             maxSlots={50}
             onItemClick={(item) => console.log('Item clicked:', item)}
           />
+          ) : (
+            <div className="flex flex-col items-center justify-center h-64 text-gray-400">
+              <Package className="w-12 h-12 mb-4 opacity-50" />
+              <p className="text-sm text-center">
+                You can only view inventory<br />for your own bots
+              </p>
+            </div>
+          )
         )}
         
         {activeTab === 'chat' && (

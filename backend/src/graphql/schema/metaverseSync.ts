@@ -1,72 +1,67 @@
 import { gql } from 'graphql-tag';
 
 export const metaverseSyncTypeDefs = gql`
+  enum SyncStatus {
+    PENDING
+    IN_PROGRESS
+    SYNCED
+    FAILED
+  }
+
   type BotSync {
     id: ID!
-    botId: String!
-    bot: Bot!
+    botId: ID!
     syncStatus: SyncStatus!
-    lastSyncedAt: DateTime
-    syncErrors: [String!]!
-    convexWorldId: String
     convexAgentId: String
+    convexWorldId: String
     convexPlayerId: String
-    personalityMapped: Boolean!
-    positionSynced: Boolean!
-    statsSynced: Boolean!
+    errorMessage: String
+    lastSyncedAt: DateTime
     createdAt: DateTime!
     updatedAt: DateTime!
   }
 
-  enum SyncStatus {
-    PENDING
-    SYNCING
-    SYNCED
-    FAILED
-    DISABLED
-  }
-
-  type MetaversePosition {
-    x: Float!
-    y: Float!
-    worldInstanceId: String!
-  }
-
-  type MetaverseInfo {
-    agentId: String
-    playerId: String
-    worldId: String
-    zone: String
-    position: MetaversePosition
-    lastZoneChange: DateTime
-    syncStatus: SyncStatus
-    lastSyncedAt: DateTime
-  }
-
-  type BotMetaverseData {
-    bot: Bot!
-    metaverse: MetaverseInfo
-  }
-
-  type RegisterBotResponse {
+  type SyncResult {
     success: Boolean!
     message: String!
     botSync: BotSync
-    metaverseInfo: MetaverseInfo
   }
 
-  type SyncStatsResponse {
+  type BatchSyncResult {
     success: Boolean!
     message: String!
-    stats: JSON
+    totalProcessed: Int!
+    successCount: Int!
+    failedCount: Int!
+    failedBotIds: [String!]!
+    results: [BotSyncStatus!]!
   }
 
-  type UpdateZoneResponse {
+  type BotSyncStatus {
+    botId: ID!
     success: Boolean!
-    message: String!
-    zone: String!
-    position: MetaversePosition!
-    worldInstanceId: String!
+    message: String
+    syncStatus: SyncStatus
+    errorMessage: String
+  }
+
+  type MetaverseStatus {
+    hasMetaverseAgent: Boolean!
+    syncStatus: SyncStatus!
+    lastSyncedAt: DateTime
+    agentId: String
+    worldId: String
+    playerId: String
+  }
+
+  type DeployedBot {
+    id: ID!
+    name: String!
+    personality: BotPersonality!
+    agentId: String
+    worldId: String
+    syncStatus: SyncStatus
+    lastSyncedAt: DateTime
   }
 
   input PositionInput {
@@ -75,39 +70,46 @@ export const metaverseSyncTypeDefs = gql`
   }
 
   extend type Query {
-    # Get bot sync status
-    getBotSyncStatus(botId: ID!): BotSync
+    # Get bot metaverse status
+    getBotMetaverseStatus(botId: ID!): MetaverseStatus!
     
-    # Get all bots in a specific zone
-    getBotsInZone(zone: String!): [Bot!]!
+    # Get all deployed bots
+    getDeployedBots: [DeployedBot!]!
     
-    # Get bot metaverse info
-    getBotMetaverseInfo(botId: ID!): BotMetaverseData
+    # Check if bot needs sync (for optimization)
+    isBotSyncNeeded(botId: ID!): Boolean!
+    
+    # Get count of bots needing sync
+    getBotsNeedingSync(limit: Int = 100): [String!]!
   }
 
   extend type Mutation {
-    # Register an AI Arena bot in AI Town metaverse
-    registerBotInMetaverse(botId: ID!): RegisterBotResponse!
+    # Register bot in metaverse
+    registerBotInMetaverse(botId: ID!): SyncResult!
     
-    # Sync bot stats from AI Arena to AI Town
-    syncBotStats(botId: ID!): SyncStatsResponse!
+    # Batch register multiple bots in metaverse (for scale)
+    batchRegisterBotsInMetaverse(
+      botIds: [ID!]!
+      batchSize: Int = 50
+    ): BatchSyncResult!
     
-    # Update bot zone position
-    updateBotZone(
+    # Sync bot stats with metaverse
+    syncBotWithMetaverse(botId: ID!): SyncResult!
+    
+    # Batch sync multiple bot stats (for scale)
+    batchSyncBotsWithMetaverse(
+      botIds: [ID!]!
+      batchSize: Int = 50
+    ): BatchSyncResult!
+    
+    # Update bot position in metaverse
+    updateBotMetaversePosition(
       botId: ID!
-      newZone: String!
-      position: PositionInput!
-    ): UpdateZoneResponse!
-  }
-
-  # Extend Bot type with metaverse fields
-  extend type Bot {
-    # Metaverse integration
-    metaverseAgentId: String
-    metaverseCharacter: String
-    currentZone: String
-    metaversePosition: MetaversePosition
-    lastZoneChange: DateTime
-    botSync: BotSync
+      zone: String!
+      position: PositionInput
+    ): SyncResult!
+    
+    # Clean up inactive bot syncs (for scale management)
+    cleanupInactiveBotSyncs(daysInactive: Int = 7): Int!
   }
 `;

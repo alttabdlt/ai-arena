@@ -35,6 +35,7 @@ export default function Game() {
   const [hasShownNotification, setHasShownNotification] = useState(false);
   const [currentTimestamp, setCurrentTimestamp] = useState(Date.now());
   const [gameWrapperRef, { width, height }] = useElementSize();
+  const [focusOnPlayer, setFocusOnPlayer] = useState<((playerId: string) => void) | null>(null);
   
   // Fetch user's bots from AI Arena backend
   const { bots: userBots, loading: botsLoading, error: botsError } = useUserBots();
@@ -103,7 +104,8 @@ export default function Game() {
   const allAgents = worldState?.world?.agents || [];
   
   // Calculate and show idle gains notification
-  const selectedPlayerId = selectedElement?.id || (allAgents && allAgents[0]?.playerId);
+  // Fix: Ensure we never pass null as playerId
+  const selectedPlayerId = selectedElement?.id || (allAgents && allAgents.length > 0 && allAgents[0]?.playerId) || undefined;
   const idleGainsData = useQuery(
     api.aiTown.idleGains.calculateIdleGains,
     worldId && selectedPlayerId ? {
@@ -211,6 +213,18 @@ export default function Game() {
       setSelectedElement({ kind: 'player', id: bot.playerId });
     }
   };
+  
+  // Focus camera when selected bot changes
+  useEffect(() => {
+    if (selectedBot?.playerId && focusOnPlayer) {
+      // Small delay to ensure the camera function is ready
+      const timer = setTimeout(() => {
+        focusOnPlayer(selectedBot.playerId);
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [selectedBot?.playerId, focusOnPlayer]);
+
 
   if (!worldId || !engineId || !game) {
     return null;
@@ -270,6 +284,7 @@ export default function Game() {
                   historicalTime={historicalTime}
                   setSelectedElement={setSelectedElement}
                   ownedBots={transformedBots}
+                  setFocusOnPlayer={setFocusOnPlayer}
                 />
               </ConvexProvider>
             </Stage>
@@ -286,6 +301,8 @@ export default function Game() {
             playerId={selectedElement?.id}
             setSelectedElement={setSelectedElement}
             scrollViewRef={scrollViewRef}
+            userBotIds={userBots?.map(bot => bot.id) || []}
+            userBots={transformedBots}
           />
         </div>
         </div>

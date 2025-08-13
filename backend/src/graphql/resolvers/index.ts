@@ -1,24 +1,28 @@
-import { Context } from '../../config/context';
-import { DateTimeResolver } from 'graphql-scalars';
-import GraphQLJSON from 'graphql-type-json';
-import { aiService } from '../../services/aiService';
-import { TransactionService } from '../../services/transactionService';
-import { AuthService } from '../../services/authService';
-import { PromptValidator } from '../../utils/promptValidation';
-import { isHexString } from 'ethers';
 import { Prisma, QueueType } from '@prisma/client';
+import axios from 'axios';
+import { isHexString } from 'ethers';
+import { DateTimeResolver } from 'graphql-scalars';
 import { PubSub } from 'graphql-subscriptions';
-import { gameManagerResolvers } from './gameManager';
-import { economyResolvers } from './economy';
-import { metaverseSyncResolvers } from './metaverseSync';
-import { deploymentResolvers } from './deployment';
-import { channelResolvers } from './channel';
-import { energyResolvers } from './energy';
+import GraphQLJSON from 'graphql-type-json';
+import { Context } from '../../config/context';
 import { getQueueService } from '../../services';
-import { getGameManagerService } from '../../services/gameManagerService';
-import { metaverseEventsService } from '../../services/metaverseEventsService';
+import { aiService } from '../../services/aiService';
+import { AuthService } from '../../services/authService';
+import { BotDeploymentService } from '../../services/botDeploymentService';
+// botSyncService moved to metaverse backend
 import { energyService } from '../../services/energyService';
-import { botSyncService } from '../../services/botSyncService';
+import { getGameManagerService } from '../../services/gameManagerService';
+// metaverseEventsService moved to metaverse backend
+import { TransactionService } from '../../services/transactionService';
+import { PromptValidator } from '../../utils/promptValidation';
+import { getMetaverseCharacter } from '@ai-arena/shared-utils';
+import { logger } from '@ai-arena/shared-logger';
+// channelResolvers moved to metaverse backend
+// deploymentResolvers moved to metaverse backend
+import { economyResolvers } from './economy';
+import { energyResolvers } from './energy';
+import { gameManagerResolvers } from './gameManager';
+import { metaverseSyncResolvers } from './metaverseSync';
 
 interface PubSubAsyncIterator<T> extends AsyncIterator<T> {
   return(): Promise<IteratorResult<T>>;
@@ -31,6 +35,7 @@ interface TypedPubSub extends PubSub {
 
 // Use the singleton aiService instance
 const DEPLOYMENT_FEE = '0.01'; // 0.01 HYPE
+const METAVERSE_BACKEND_URL = process.env.METAVERSE_BACKEND_URL || 'http://localhost:5001';
 
 export const resolvers = {
   DateTime: DateTimeResolver,
@@ -68,6 +73,14 @@ export const resolvers = {
       if (filter) {
         if (filter.modelType) where.modelType = filter.modelType;
         if (filter.isActive !== undefined) where.isActive = filter.isActive;
+        if (filter.hasMetaverseAgent !== undefined) {
+          // Filter by presence of metaverseAgentId
+          if (filter.hasMetaverseAgent) {
+            where.metaverseAgentId = { not: null };
+          } else {
+            where.metaverseAgentId = null;
+          }
+        }
         if (filter.creatorAddress) {
           // Need to find user by address first
           const user = await ctx.prisma.user.findUnique({
@@ -351,14 +364,124 @@ export const resolvers = {
     // Metaverse sync queries
     ...metaverseSyncResolvers.Query,
     
-    // Deployment queries
-    ...deploymentResolvers.Query,
+    // Deployment queries - moved to metaverse backend
+    // ...deploymentResolvers.Query,
     
-    // Channel queries
-    ...channelResolvers.Query,
+    // Channel queries - moved to metaverse backend
+    // ...channelResolvers.Query,
     
     // Energy queries
     ...energyResolvers.Query,
+    
+    // Channel queries (proxy to metaverse backend)
+    channels: async (_: any, args: { type?: string; status?: string }) => {
+      try {
+        const response = await axios.post(`${METAVERSE_BACKEND_URL}/graphql`, {
+          query: `
+            query GetChannels($type: String, $status: String) {
+              channels(type: $type, status: $status) {
+                id
+                name
+                type
+                status
+                currentBots
+                maxBots
+                loadPercentage
+                worldId
+                region
+                description
+              }
+            }
+          `,
+          variables: { type: args.type, status: args.status }
+        });
+        return response.data.data.channels;
+      } catch (error: any) {
+        console.error('Failed to fetch channels from metaverse backend:', error.message);
+        // Return empty array as fallback
+        return [];
+      }
+    },
+    
+    channel: async (_: any, { name }: { name: string }) => {
+      try {
+        const response = await axios.post(`${METAVERSE_BACKEND_URL}/graphql`, {
+          query: `
+            query GetChannel($name: String!) {
+              channel(name: $name) {
+                id
+                name
+                type
+                status
+                currentBots
+                maxBots
+                loadPercentage
+                worldId
+                region
+                description
+              }
+            }
+          `,
+          variables: { name }
+        });
+        return response.data.data.channel;
+      } catch (error: any) {
+        console.error('Failed to fetch channel from metaverse backend:', error.message);
+        return null;
+      }
+    },
+    
+    myBotChannels: async (_: any, __: any, ctx: Context) => {
+      if (!ctx.user) {
+        return [];
+      }
+      
+      try {
+        // Get user's bots
+        const bots = await ctx.prisma.bot.findMany({
+          where: { creatorId: ctx.user.id },
+          select: { channel: true },
+          distinct: ['channel']
+        });
+        
+        const channelNames = [...new Set(bots.map(b => b.channel))];
+        
+        // Fetch channel details from metaverse backend
+        const channels = await Promise.all(
+          channelNames.map(async (name) => {
+            try {
+              const response = await axios.post(`${METAVERSE_BACKEND_URL}/graphql`, {
+                query: `
+                  query GetChannel($name: String!) {
+                    channel(name: $name) {
+                      id
+                      name
+                      type
+                      status
+                      currentBots
+                      maxBots
+                      loadPercentage
+                      worldId
+                      region
+                      description
+                    }
+                  }
+                `,
+                variables: { name }
+              });
+              return response.data.data.channel;
+            } catch {
+              return null;
+            }
+          })
+        );
+        
+        return channels.filter(c => c !== null);
+      } catch (error: any) {
+        console.error('Failed to fetch user channels:', error.message);
+        return [];
+      }
+    },
   },
 
   Mutation: {
@@ -409,9 +532,6 @@ export const resolvers = {
         if (existingBot) {
           throw new Error('Token ID collision, please try again');
         }
-        
-        // Import sprite mapping utility
-        const { getMetaverseCharacter } = require('../../utils/spriteMapping');
         
         // Determine metaverse character from sprite ID
         const metaverseCharacter = input.spriteId 
@@ -494,9 +614,43 @@ export const resolvers = {
         return newBot;
       });
       
+      // Automatically deploy bot to metaverse with retry
+      const botDeploymentService = BotDeploymentService.getInstance(ctx.prisma);
+      let deploymentSuccess = false;
+      let retryCount = 0;
+      const maxRetries = 3;
+      let finalBot = bot;
+      
+      while (!deploymentSuccess && retryCount < maxRetries) {
+        try {
+          await botDeploymentService.deployBotToMetaverse(finalBot.id);
+          logger.info(`✅ Bot ${finalBot.name} automatically deployed to metaverse`);
+          deploymentSuccess = true;
+          
+          // Refresh bot data to get metaverse IDs
+          const refreshedBot = await ctx.prisma.bot.findUnique({
+            where: { id: finalBot.id },
+            include: { creator: true }
+          });
+          if (refreshedBot) {
+            finalBot = refreshedBot;
+          }
+        } catch (metaverseError: any) {
+          retryCount++;
+          if (retryCount < maxRetries) {
+            logger.warn(`Deployment attempt ${retryCount} failed for bot ${finalBot.name}, retrying...`);
+            await new Promise(resolve => setTimeout(resolve, 2000 * retryCount)); // Exponential backoff
+          } else {
+            // Log error but don't fail the bot creation
+            logger.error(`Failed to auto-deploy bot ${finalBot.name} to metaverse after ${maxRetries} attempts:`, metaverseError.message);
+            // The bot is still created successfully, metaverse deployment can be retried later
+          }
+        }
+      }
+      
       // TODO: Emit bot deployed event for subscriptions
       
-      return bot;
+      return finalBot;
     },
     
     toggleBotActive: async (_: any, { botId }: { botId: string }, ctx: Context) => {
@@ -545,30 +699,16 @@ export const resolvers = {
         throw new Error('Not authorized to delete this bot');
       }
 
-      // Check if bot is in active queue (WAITING or MATCHED status, and not expired)
-      const activeQueueEntries = bot.queueEntries.filter(
-        entry => (entry.status === 'WAITING' || entry.status === 'MATCHED') 
-          && new Date(entry.expiresAt) > new Date()
-      );
-      
-      if (activeQueueEntries.length > 0) {
-        throw new Error('Cannot delete bot while in queue. Please leave queue first.');
-      }
+      // Proactively remove any queue entries for this bot to allow deletion.
+      // This handles stale WAITING/MATCHED entries that can block deletion even when the UI shows empty queue.
+      await ctx.prisma.queueEntry.deleteMany({ where: { botId } });
 
-      // Clean up any expired or cancelled queue entries before deletion
-      if (bot.queueEntries.length > 0) {
-        // Log the status of queue entries for debugging
-        const expiredEntries = bot.queueEntries.filter(
-          entry => new Date(entry.expiresAt) < new Date()
-        );
-        if (expiredEntries.length > 0) {
-          console.log(`Found ${expiredEntries.length} expired queue entries for bot ${botId}`);
-        }
-        
-        console.log(`Cleaning up ${bot.queueEntries.length} queue entries for bot ${botId}`);
-        await ctx.prisma.queueEntry.deleteMany({
-          where: { botId },
-        });
+      // (No-op) Kept for logging symmetry; entries already removed above
+      // If any remain due to race conditions, remove them again defensively
+      const remainingEntries = await ctx.prisma.queueEntry.count({ where: { botId } });
+      if (remainingEntries > 0) {
+        console.log(`Deleting ${remainingEntries} remaining queue entries for bot ${botId} (post-cleanup)`);
+        await ctx.prisma.queueEntry.deleteMany({ where: { botId } });
       }
 
       let metaverseDeleted = false;
@@ -577,9 +717,10 @@ export const resolvers = {
         // Clean up from metaverse using the sync service
         if (bot.metaverseAgentId || bot.botSync) {
           try {
-            // Use botSyncService to handle metaverse cleanup
-            await botSyncService.cleanupDeletedBot(botId);
-            metaverseDeleted = true;
+            // TODO: Call metaverse backend API to handle cleanup
+            // await axios.delete(`${METAVERSE_BACKEND_URL}/api/metaverse/bots/${botId}`);
+            console.log('Bot cleanup in metaverse skipped - service moved to metaverse backend');
+            metaverseDeleted = false;
           } catch (metaverseError: any) {
             console.error('Failed to delete bot from metaverse:', metaverseError);
             // Continue with deletion even if metaverse deletion fails
@@ -627,12 +768,14 @@ export const resolvers = {
 
         // Publish deletion event
         try {
-          await metaverseEventsService.publishBotActivity('bot_deleted', {
-            botId,
-            metaverseAgentId: bot.metaverseAgentId,
-            deletedBy: ctx.user.id,
-            timestamp: new Date().toISOString(),
-          });
+          // TODO: Publish event via metaverse backend API
+          // await axios.post(`${METAVERSE_BACKEND_URL}/api/metaverse/events/bot-deleted`, {
+          //   botId,
+          //   metaverseAgentId: bot.metaverseAgentId,
+          //   deletedBy: ctx.user.id,
+          //   timestamp: new Date().toISOString(),
+          // });
+          console.log('Bot deletion event skipped - service moved to metaverse backend');
         } catch (eventError) {
           console.error('Failed to publish bot deletion event:', eventError);
         }
@@ -1396,14 +1539,65 @@ export const resolvers = {
     // Metaverse sync mutations
     ...metaverseSyncResolvers.Mutation,
     
-    // Deployment mutations
-    ...deploymentResolvers.Mutation,
+    // Deployment mutations - moved to metaverse backend
+    // ...deploymentResolvers.Mutation,
     
-    // Channel mutations
-    ...channelResolvers.Mutation,
+    // Channel mutations - moved to metaverse backend
+    // ...channelResolvers.Mutation,
     
     // Energy mutations
     ...energyResolvers.Mutation,
+    
+    // Channel mutations (proxy to metaverse backend)
+    switchChannel: async (_: any, { botId, channelName }: { botId: string; channelName: string }, ctx: Context) => {
+      if (!ctx.user) {
+        throw new Error('Not authenticated');
+      }
+      
+      // Verify bot ownership
+      const bot = await ctx.prisma.bot.findUnique({
+        where: { id: botId },
+      });
+      
+      if (!bot) {
+        throw new Error('Bot not found');
+      }
+      
+      if (bot.creatorId !== ctx.user.id) {
+        throw new Error('Not authorized');
+      }
+      
+      try {
+        // Call metaverse backend to switch channel
+        const response = await axios.post(`${METAVERSE_BACKEND_URL}/graphql`, {
+          query: `
+            mutation SwitchChannel($botId: String!, $channelName: String!) {
+              switchChannel(botId: $botId, channelName: $channelName) {
+                id
+                channel
+              }
+            }
+          `,
+          variables: { botId, channelName }
+        });
+        
+        if (response.data.errors) {
+          throw new Error(response.data.errors[0].message);
+        }
+        
+        // Update bot channel in local database
+        const updatedBot = await ctx.prisma.bot.update({
+          where: { id: botId },
+          data: { channel: channelName },
+          include: { creator: true },
+        });
+        
+        return updatedBot;
+      } catch (error: any) {
+        console.error('Failed to switch channel:', error.message);
+        throw new Error(`Failed to switch channel: ${error.message}`);
+      }
+    },
   },
 
   Subscription: {
@@ -1456,6 +1650,18 @@ export const resolvers = {
     channel: (parent: any) => {
       // The channel field is already on the bot from Prisma
       return parent.channel || 'main';
+    },
+    metaverseAgentId: (parent: any) => {
+      // Return the metaverseAgentId field from the bot
+      return parent.metaverseAgentId || null;
+    },
+    currentZone: (parent: any) => {
+      // Return the currentZone field from the bot
+      return parent.currentZone || null;
+    },
+    lastZoneChange: (parent: any) => {
+      // Return the lastZoneChange field from the bot
+      return parent.lastZoneChange || null;
     },
     socialStats: async (_bot: any) => {
       return {

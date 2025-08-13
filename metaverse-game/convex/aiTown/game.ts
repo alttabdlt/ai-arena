@@ -25,7 +25,6 @@ import { internal } from '../_generated/api';
 import { HistoricalObject } from '../engine/historicalObject';
 import { AgentDescription, serializedAgentDescription } from './agentDescription';
 import { parseMap, serializeMap } from '../util/object';
-import { ActivityHooks } from './activityHooks';
 
 const gameState = v.object({
   world: v.object(serializedWorld),

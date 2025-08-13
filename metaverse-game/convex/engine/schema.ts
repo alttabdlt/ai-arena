@@ -41,6 +41,10 @@ export const engine = v.object({
   // How far has the engine processed in the input queue?
   processedInputNumber: v.optional(v.number()),
 
+  // Next input number to allocate atomically for new inputs. This avoids
+  // scanning the inputs table and reduces OCC conflicts during heavy load.
+  nextInputNumber: v.optional(v.number()),
+
   running: v.boolean(),
 
   // Monotonically increasing counter that serializes all engine runs. If we ever

@@ -10,7 +10,7 @@ export const clearStuckInputs = mutation({
     maxAgeMinutes: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const maxAge = (args.maxAgeMinutes || 5) * 60 * 1000; // Default 5 minutes
+    const maxAge = (args.maxAgeMinutes || 30) * 60 * 1000; // Default 30 minutes to allow bot deployment
     const cutoffTime = Date.now() - maxAge;
     
     // Find the default world
@@ -54,7 +54,7 @@ export const clearStuckInputs = mutation({
       }
     }
     
-    console.log(`✅ Cleared ${clearedCount} stuck inputs older than ${args.maxAgeMinutes || 5} minutes`);
+    console.log(`✅ Cleared ${clearedCount} stuck inputs older than ${args.maxAgeMinutes || 30} minutes`);
     return { cleared: clearedCount };
   },
 });

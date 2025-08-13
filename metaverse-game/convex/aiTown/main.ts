@@ -1,17 +1,18 @@
 import { ConvexError, v } from 'convex/values';
-import { DatabaseReader, MutationCtx, internalAction, mutation, query } from '../_generated/server';
-import { insertInput } from './insertInput';
-import { Game } from './game';
 import { internal } from '../_generated/api';
-import { sleep } from '../util/sleep';
 import { Id } from '../_generated/dataModel';
+import { DatabaseReader, MutationCtx, internalAction, mutation, query } from '../_generated/server';
 import { ENGINE_ACTION_DURATION } from '../constants';
+import { sleep } from '../util/sleep';
+import { Game } from './game';
+import { insertInput } from './insertInput';
 
 export async function createEngine(ctx: MutationCtx) {
   const now = Date.now();
   const engineId = await ctx.db.insert('engines', {
     currentTime: now,
     generationNumber: 0,
+    nextInputNumber: 0,
     running: true,
   });
   return engineId;

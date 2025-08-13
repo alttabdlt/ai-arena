@@ -1,3 +1,4 @@
+import React from 'react';
 import { Character } from './Character.tsx';
 import { orientationDegrees } from '../../convex/util/geometry.ts';
 import { characters } from '../../data/characters.ts';
@@ -34,11 +35,33 @@ export const Player = ({
   historicalTime?: number;
   showXP?: boolean;
 }) => {
-  const playerCharacter = game.playerDescriptions.get(player.id)?.character;
+  const playerDescription = game.playerDescriptions.get(player.id);
+  let playerCharacter = playerDescription?.character;
+  
+  // Fallback character for human players or missing character descriptions
   if (!playerCharacter) {
-    console.warn(`Player ${player.id} has no character description - skipping render`);
-    return null;
+    // Only log once per player to avoid console spam
+    if (!logged.has(player.id)) {
+      logged.add(player.id);
+      console.warn(`Player ${player.id} has no character - using fallback. Description exists: ${!!playerDescription}`);
+    }
+    // Use different defaults based on context
+    // For AI Arena bots, try to determine from agent descriptions
+    const agent = [...(game.world.agents.values() || [])].find(a => a.playerId === player.id);
+    if (agent) {
+      // Map personality to default characters
+      const personalityDefaults: Record<string, string> = {
+        'CRIMINAL': 'criminal1',
+        'GAMBLER': 'gambler1', 
+        'WORKER': 'worker1'
+      };
+      playerCharacter = personalityDefaults[agent.personality || ''] || 'f1';
+    } else {
+      // Use f1 as default for human players, f8 for others
+      playerCharacter = player.human ? 'f1' : 'f8';
+    }
   }
+  
   const character = characters.find((c) => c.name === playerCharacter);
 
   const locationBuffer = game.world.historicalLocations?.get(player.id);
@@ -48,11 +71,23 @@ export const Player = ({
     playerLocation(player),
     locationBuffer,
   );
+  // Use fallback character if not found
+  let characterToUse = character;
   if (!character) {
     if (!logged.has(playerCharacter)) {
       logged.add(playerCharacter);
-      toast.error(`Unknown character ${playerCharacter}`);
+      console.warn(`Unknown character ${playerCharacter}, using fallback f1`);
     }
+    // Use f1 as fallback for unknown characters
+    characterToUse = characters.find((c) => c.name === 'f1');
+    if (!characterToUse) {
+      console.error('Fallback character f1 not found!');
+      return null;
+    }
+  }
+  
+  // TypeScript guard - characterToUse is definitely defined here
+  if (!characterToUse) {
     return null;
   }
 
@@ -72,6 +107,17 @@ export const Player = ({
   // Get agent and experience data for XP display
   const agent = [...game.world.agents.values()].find(a => a.playerId === player.id);
   const hasXPData = agent?.aiArenaBotId && showXP && worldId;
+  
+  // Force refresh experience data every 5 seconds for real-time updates
+  const [, setRefreshTrigger] = React.useState(0);
+  React.useEffect(() => {
+    if (hasXPData) {
+      const interval = setInterval(() => {
+        setRefreshTrigger(prev => prev + 1);
+      }, 5000); // Refresh every 5 seconds
+      return () => clearInterval(interval);
+    }
+  }, [hasXPData]);
   
   // Query real experience data from the database
   // @ts-ignore - Known Convex type depth issue
@@ -101,9 +147,9 @@ export const Player = ({
             : undefined
         }
         isViewer={isViewer}
-        textureUrl={character.textureUrl}
-        spritesheetData={character.spritesheetData}
-        speed={character.speed}
+        textureUrl={characterToUse.textureUrl}
+        spritesheetData={characterToUse.spritesheetData}
+        speed={characterToUse.speed}
         level={level}
         currentXP={currentXP}
         maxXP={maxXP}

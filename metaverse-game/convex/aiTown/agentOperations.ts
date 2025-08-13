@@ -1,21 +1,27 @@
 import { v } from 'convex/values';
-import { internalAction } from '../_generated/server';
-import { WorldMap, serializedWorldMap } from './worldMap';
-import { rememberConversation } from '../agent/memory';
-import { GameId, agentId, conversationId, playerId } from './ids';
-import {
-  continueConversationMessage,
-  leaveConversationMessage,
-  startConversationMessage,
-} from '../agent/conversation';
-import { assertNever } from '../util/assertNever';
-import { serializedAgent } from './agent';
-import { ACTIVITIES, ACTIVITY_COOLDOWN, CONVERSATION_COOLDOWN, 
-         ROBBERY_COOLDOWN, COMBAT_COOLDOWN, PERSONALITY_BONUS } from '../constants';
 import { api, internal } from '../_generated/api';
+import { internalAction } from '../_generated/server';
+import {
+    continueConversationMessage,
+    leaveConversationMessage,
+    startConversationMessage,
+} from '../agent/conversation';
+import { rememberConversation } from '../agent/memory';
+import {
+    ACTIVITY_COOLDOWN,
+    COMBAT_COOLDOWN,
+    CONVERSATION_COOLDOWN,
+    CRIME_ACTIVITIES,
+    PERSONALITY_BONUS,
+    ROBBERY_COOLDOWN
+} from '../constants';
+import { assertNever } from '../util/assertNever';
 import { sleep } from '../util/sleep';
+import { serializedAgent } from './agent';
+import { GameId, agentId, conversationId, playerId } from './ids';
 import { serializedPlayer } from './player';
-import { calculateRelationshipScore, calculatePersonalityCompatibility } from './relationshipService';
+import { calculatePersonalityCompatibility, calculateRelationshipScore } from './relationshipService';
+import { WorldMap, serializedWorldMap } from './worldMap';
 
 export const agentRememberConversation = internalAction({
   args: {
@@ -119,6 +125,17 @@ export const agentGenerateMessage = internalAction({
   },
 });
 
+// Helper to validate if a bot is not a ghost
+function isValidBot(aiArenaBotId?: string): boolean {
+  if (!aiArenaBotId) return false;
+  
+  // Check for ghost bot pattern (starts with 'cme' and length > 20)
+  const isGhostPattern = aiArenaBotId.startsWith('cme') && aiArenaBotId.length > 20;
+  
+  // If it matches ghost pattern, it's invalid
+  return !isGhostPattern;
+}
+
 export const agentDoSomething = internalAction({
   args: {
     worldId: v.id('worlds'),
@@ -132,6 +149,38 @@ export const agentDoSomething = internalAction({
     const { player, agent } = args;
     const map = new WorldMap(args.map);
     const now = Date.now();
+    
+    // Double-check that this agent itself isn't a ghost
+    if (!isValidBot(agent.aiArenaBotId)) {
+      console.log(`Ghost bot ${agent.aiArenaBotId} attempting action, skipping`);
+      // Prefer lightweight cleanup to avoid exceeding Convex read limits.
+      try {
+        await ctx.runMutation(api.cleanup.orphanCleanup.batchDeleteOrphanedAgents, {
+          worldId: args.worldId,
+          agents: [
+            {
+              agentId: agent.id,
+              playerId: player.id,
+              aiArenaBotId: agent.aiArenaBotId,
+            },
+          ],
+          reason: 'Proactive ghost cleanup from agentOperations',
+        });
+      } catch (e) {
+        console.warn('Failed to clean up ghost bot proactively (lightweight):', (e as any)?.message);
+      }
+      await sleep(100);
+      // @ts-ignore
+      await ctx.runMutation(api.aiTown.main.sendInput, {
+        worldId: args.worldId,
+        name: 'finishDoSomething',
+        args: {
+          operationId: args.operationId,
+          agentId: agent.id,
+        },
+      });
+      return;
+    }
     // Don't try to start a new conversation if we were just in one.
     const justLeftConversation =
       agent.lastConversation && now < agent.lastConversation + CONVERSATION_COOLDOWN;
@@ -185,7 +234,13 @@ export const agentDoSomething = internalAction({
     const personality = agent.personality || 'WORKER';
     
     // First check for nearby players and evaluate relationships for interactions
+    // Filter out any ghost bots that might have slipped through
     const nearbyPlayersForInteraction = args.otherFreePlayers.filter((p: any) => {
+      // Skip if no AI Arena bot ID (could be a ghost)
+      if (!p.aiArenaBotId || !isValidBot(p.aiArenaBotId)) {
+        return false;
+      }
+      
       const distance = Math.sqrt(
         Math.pow(p.position.x - player.position.x, 2) + 
         Math.pow(p.position.y - player.position.y, 2)
@@ -231,7 +286,8 @@ export const agentDoSomething = internalAction({
               },
             });
             
-            await sleep(Math.random() * 3000 + 1000);
+            // Increased delay to reduce concurrent interaction conflicts
+            await sleep(Math.random() * 5000 + 2000); // 2-7 seconds
             await ctx.runMutation(api.aiTown.main.sendInput, {
               worldId: args.worldId,
               name: 'finishDoSomething',
@@ -360,7 +416,8 @@ export const agentDoSomething = internalAction({
               },
             });
             
-            await sleep(Math.random() * 3000 + 1000);
+            // Increased delay to reduce concurrent interaction conflicts
+            await sleep(Math.random() * 5000 + 2000); // 2-7 seconds
             await ctx.runMutation(api.aiTown.main.sendInput, {
               worldId: args.worldId,
               name: 'finishDoSomething',
@@ -468,6 +525,11 @@ export const agentDoSomething = internalAction({
     if (personality === 'CRIMINAL' && currentZone === 'darkAlley' && !recentRobbery && !player.pathfinding) {
       // Look for robbery targets and assess their value
       const nearbyPlayers = args.otherFreePlayers.filter((p: any) => {
+        // Skip ghost bots
+        if (!p.aiArenaBotId || !isValidBot(p.aiArenaBotId)) {
+          return false;
+        }
+        
         const distance = Math.sqrt(
           Math.pow(p.position.x - player.position.x, 2) + 
           Math.pow(p.position.y - player.position.y, 2)
@@ -940,8 +1002,6 @@ export const agentSelectZoneActivity = internalAction({
     operationId: v.string(),
   },
   handler: async (ctx, args) => {
-    const { CRIME_ACTIVITIES } = await import('../constants');
-    
     // Get zone-specific activities
     const zoneActivities = CRIME_ACTIVITIES[args.zone] || [];
     

@@ -260,6 +260,76 @@ export class QueueService {
     return result.count;
   }
 
+  async cleanupTournamentQueueEntries(tournamentId: string): Promise<void> {
+    // Update all MATCHED queue entries for this tournament to EXPIRED
+    const result = await this.prisma.queueEntry.updateMany({
+      where: {
+        tournamentId,
+        status: 'MATCHED',
+      },
+      data: {
+        status: 'EXPIRED',
+      },
+    });
+    
+    if (result.count > 0) {
+      console.log(`Cleaned up ${result.count} queue entries for completed tournament ${tournamentId}`);
+    }
+  }
+
+  async cleanupOrphanedMatchedEntries(): Promise<number> {
+    // Find MATCHED entries older than 2 hours
+    const oldMatchedEntries = await this.prisma.queueEntry.findMany({
+      where: {
+        status: 'MATCHED',
+        matchedAt: {
+          lt: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2 hours ago
+        },
+      },
+      select: {
+        id: true,
+        tournamentId: true,
+      },
+    });
+    
+    if (oldMatchedEntries.length === 0) {
+      return 0;
+    }
+    
+    // Check which tournaments are still active
+    const tournamentIds = [...new Set(oldMatchedEntries.map(e => e.tournamentId).filter(Boolean))];
+    const activeTournaments = await this.prisma.tournament.findMany({
+      where: {
+        id: { in: tournamentIds as string[] },
+        status: { in: ['UPCOMING', 'LIVE'] },
+      },
+      select: { id: true },
+    });
+    
+    const activeTournamentIds = new Set(activeTournaments.map(t => t.id));
+    
+    // Find entries to clean up (not associated with active tournaments)
+    const entriesToCleanup = oldMatchedEntries.filter(
+      entry => !entry.tournamentId || !activeTournamentIds.has(entry.tournamentId)
+    );
+    
+    if (entriesToCleanup.length > 0) {
+      const result = await this.prisma.queueEntry.updateMany({
+        where: {
+          id: { in: entriesToCleanup.map(e => e.id) },
+        },
+        data: {
+          status: 'EXPIRED',
+        },
+      });
+      
+      console.log(`Cleaned up ${result.count} orphaned MATCHED queue entries`);
+      return result.count;
+    }
+    
+    return 0;
+  }
+
   async getQueueStatus(): Promise<any> {
     const queueCounts = await this.prisma.queueEntry.groupBy({
       by: ['queueType'],
@@ -443,6 +513,8 @@ export class QueueService {
   }
 
   async cleanupDuplicateEntries(): Promise<void> {
+    // Also clean up orphaned MATCHED entries periodically
+    await this.cleanupOrphanedMatchedEntries();
     try {
       // Find all WAITING entries
       const waitingEntries = await this.prisma.queueEntry.findMany({
@@ -523,7 +595,10 @@ export class QueueService {
           
           for (const match of matches) {
             try {
-              // Mark entries as MATCHED before creating tournament
+              // Create the tournament first to get the ID
+              const tournamentId = await this.createTournament(match.botIds);
+              
+              // Mark entries as MATCHED with tournament reference
               await this.prisma.queueEntry.updateMany({
                 where: {
                   id: {
@@ -532,11 +607,10 @@ export class QueueService {
                 },
                 data: {
                   status: 'MATCHED',
+                  matchedAt: new Date(),
+                  tournamentId: tournamentId,
                 },
               });
-              
-              // Create the tournament
-              await this.createTournament(match.botIds);
               console.log(`Successfully created tournament for ${match.botIds.length} bots`);
               
               // Notify queue update after successful creation
@@ -582,7 +656,7 @@ export class QueueService {
     }
   }
 
-  private async createTournament(botIds: string[]) {
+  private async createTournament(botIds: string[]): Promise<string> {
     console.log(`Creating tournament for bots: ${botIds.join(', ')}`);
     
     // Check energy for all bots before creating tournament
@@ -712,7 +786,7 @@ export class QueueService {
         const connect4TournamentService = getConnect4TournamentService(this.prisma, this.pubsub);
         const tournamentBracket = await connect4TournamentService.createTournament(tournament.id, botIds);
         
-        // Update queue entries to matched
+        // Update queue entries to matched with tournament ID
         await this.prisma.queueEntry.updateMany({
           where: {
             botId: { in: botIds },
@@ -721,6 +795,7 @@ export class QueueService {
           data: {
             status: 'MATCHED',
             matchedAt: new Date(),
+            tournamentId: tournament.id,
           },
         });
 
@@ -775,7 +850,7 @@ export class QueueService {
         }
         
         console.log(`Tournament ${tournament.id} created with Connect4 bracket`);
-        return; // Exit early for Connect4
+        return tournament.id; // Return tournament ID for Connect4
       }
 
       // Create match record with game type (for non-Connect4 games)
@@ -821,7 +896,7 @@ export class QueueService {
         });
       }
 
-      // Update queue entries to matched
+      // Update queue entries to matched with tournament ID
       await this.prisma.queueEntry.updateMany({
         where: {
           botId: { in: botIds },
@@ -830,6 +905,7 @@ export class QueueService {
         data: {
           status: 'MATCHED',
           matchedAt: new Date(),
+          tournamentId: tournament.id,
         },
       });
 
@@ -993,6 +1069,8 @@ export class QueueService {
 
         console.log(`Tournament ${tournament.id} created and started with match ${match.id}`);
       }
+      
+      return tournament.id; // Return tournament ID for all game types
     } catch (error) {
       console.error('Error creating tournament:', error);
       throw error;

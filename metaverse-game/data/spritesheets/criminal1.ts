@@ -2,6 +2,8 @@ import { SpritesheetData } from './types';
 
 export const data: SpritesheetData = {
   frames: {
+    // Criminal sprites - assuming they start at row 0 of the crime-city-sprites.png
+    // Standard RPG layout: down, left, right, up in rows
     left: {
       frame: { x: 0, y: 32, w: 32, h: 32 },
       sourceSize: { w: 32, h: 32 },

@@ -11,7 +11,6 @@ import cors from 'cors';
 import { typeDefs } from './graphql/schema';
 import { resolvers } from './graphql/resolvers';
 import { createContext } from './config/context';
-import webhookRoutes from './routes/webhooks';
 import { setupWebSocketServer } from './websocket/server';
 import { prisma } from './config/database';
 import Redis from 'ioredis';
@@ -20,8 +19,6 @@ import { logWalletConfig } from './config/wallets';
 import { PubSub } from 'graphql-subscriptions';
 import { initializeServices, getQueueService, getTransactionService } from './services';
 import { fileLoggerService } from './services/fileLoggerService';
-import { botSyncService } from './services/botSyncService';
-import { worldInitializationService } from './services/worldInitializationService';
 import { energyScheduler } from './services/energyScheduler';
 
 // Override console methods to capture backend logs
@@ -225,7 +222,7 @@ async function startServer() {
   });
 
   // Webhook routes
-  app.use('/api/webhooks', webhookRoutes);
+  // Webhook routes moved to metaverse backend
 
   const customWsServer = setupWebSocketServer(parseInt(WS_PORT.toString()));
 
@@ -260,13 +257,6 @@ async function startServer() {
     // Game manager service is initialized as a singleton
     console.log('🎮 Game manager service ready');
     
-    // Initialize metaverse world instances
-    await worldInitializationService.initialize();
-    
-    // Start bot sync service
-    await botSyncService.start();
-    console.log('🤖 Bot sync service started');
-    
     // Start energy scheduler
     energyScheduler.start();
     console.log('⚡ Energy scheduler started - processing hourly consumption');
@@ -284,7 +274,6 @@ async function startServer() {
     // Stop services
     getQueueService().stopMatchmaking();
     await getGameManagerService().shutdown();
-    botSyncService.stop();
     energyScheduler.stop();
     
     httpServer.close();

@@ -99,11 +99,34 @@ export class Agent {
     // If we have been wandering but haven't thought about something to do for
     // a while, do something.
     if (!conversation && !doingActivity && (!player.pathfinding || !recentlyAttemptedInvite)) {
+      // Filter out ghost bots from other players
+      const otherAgents = [...game.world.agents.values()];
+      const validPlayerIds = new Set<string>();
+      
+      // Build a set of valid player IDs (non-ghost bots)
+      for (const agent of otherAgents) {
+        if (agent.playerId && agent.aiArenaBotId) {
+          // Check if it's a known valid bot ID or not a ghost bot pattern
+          const isGhostPattern = agent.aiArenaBotId.startsWith('cme') && agent.aiArenaBotId.length > 20;
+          if (!isGhostPattern || ['bot0001', 'bot0002', 'bot0003'].includes(agent.aiArenaBotId)) {
+            validPlayerIds.add(agent.playerId);
+          }
+        }
+      }
+      
+      // Also include human players (those without agents)
+      for (const p of game.world.players.values()) {
+        if (p.human) {
+          validPlayerIds.add(p.id);
+        }
+      }
+      
       this.startOperation(game, now, 'agentDoSomething', {
         worldId: game.worldId,
         player: player.serialize(),
         otherFreePlayers: [...game.world.players.values()]
           .filter((p) => p.id !== player.id)
+          .filter((p) => validPlayerIds.has(p.id)) // Filter out ghost bots
           .filter(
             (p) => ![...game.world.conversations.values()].find((c) => c.participants.has(p.id)),
           )

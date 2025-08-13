@@ -24,6 +24,7 @@ export const PixiGame = (props: {
   height: number;
   setSelectedElement: SelectElement;
   ownedBots?: any[];
+  setFocusOnPlayer?: (fn: (playerId: string) => void) => void;
 }) => {
   // PIXI setup.
   const pixiApp = useApp();
@@ -99,7 +100,7 @@ export const PixiGame = (props: {
       })
     : []; // If ownedBots is undefined, show no players (still loading)
 
-  // Zoom on the user’s avatar when it is created
+  // Zoom on the user's avatar when it is created
   useEffect(() => {
     if (!viewportRef.current || humanPlayerId === undefined) return;
 
@@ -109,6 +110,33 @@ export const PixiGame = (props: {
       scale: 1.5,
     });
   }, [humanPlayerId]);
+
+  // Function to focus camera on a specific player
+  const focusOnPlayer = (playerId: string) => {
+    if (!viewportRef.current || !playerId || playerId === 'null') return;
+    
+    const player = props.game.world.players.get(playerId as any);
+    if (!player) {
+      if (playerId !== 'null' && playerId !== undefined) {
+        console.log(`Player ${playerId} not found`);
+      }
+      return;
+    }
+    
+    // Animate viewport to center on player
+    viewportRef.current.animate({
+      position: new PIXI.Point(player.position.x * tileDim, player.position.y * tileDim),
+      scale: 1.5,
+      time: 500, // 500ms animation
+    });
+  };
+
+  // Expose focusOnPlayer to parent component
+  useEffect(() => {
+    if (props.setFocusOnPlayer) {
+      props.setFocusOnPlayer(focusOnPlayer);
+    }
+  }, [props.game.world.players, tileDim]);
 
   return (
     <PixiViewport

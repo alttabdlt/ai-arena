@@ -261,3 +261,17 @@ export function tileIndexToCoords(index: number): { x: number; y: number } {
     y: Math.floor(index / tilesPerRow) * 32
   };
 }
+
+// Generate a default map for the game
+const defaultMap = generateSuburbMap(32, 32);
+
+// Map configuration exports for init.ts
+export const mapwidth = 32;
+export const mapheight = 32;
+export const tilesetpath = '/assets/crime-tiles.png';
+export const tilesetpxw = 512;
+export const tilesetpxh = 512;
+export const tiledim = 32;
+export const bgtiles = [defaultMap];
+export const objmap = [defaultMap.map(row => row.map(() => -1))]; // Empty object layer
+export const animatedsprites: any[] = []; // No animated sprites for now

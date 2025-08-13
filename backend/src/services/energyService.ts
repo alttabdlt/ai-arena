@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { logger } from '../utils/logger';
+import { simpleLogger as logger } from '@ai-arena/shared-logger';
 
 const prisma = new PrismaClient();
 

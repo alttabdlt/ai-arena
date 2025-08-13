@@ -1,7 +1,6 @@
 import { gql } from 'graphql-tag';
 import { economyTypeDefs } from './economy';
 import { metaverseSyncTypeDefs } from './metaverseSync';
-import { deploymentTypeDefs } from './deployment';
 import { energyTypeDefs } from './energy';
 
 const baseTypeDefs = gql`
@@ -49,6 +48,11 @@ const baseTypeDefs = gql`
     
     # Metaverse fields
     channel: String!
+    metaverseAgentId: String
+    currentZone: String
+    lastZoneChange: DateTime
+    metaversePosition: MetaversePosition
+    botSync: BotSync
     
     # Economy fields
     equipment: [BotEquipment!]!
@@ -57,6 +61,12 @@ const baseTypeDefs = gql`
     lootboxRewards: [LootboxReward!]!
     robbingPower: Int!
     defenseLevel: Int!
+  }
+  
+  type MetaversePosition {
+    x: Float!
+    y: Float!
+    worldInstanceId: String!
   }
   
   type BotStats {
@@ -1190,4 +1200,4 @@ const baseTypeDefs = gql`
 `;
 
 // Export merged type definitions
-export const typeDefs = [baseTypeDefs, economyTypeDefs, metaverseSyncTypeDefs, deploymentTypeDefs, energyTypeDefs];
+export const typeDefs = [baseTypeDefs, economyTypeDefs, metaverseSyncTypeDefs, energyTypeDefs];

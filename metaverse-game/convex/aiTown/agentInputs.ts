@@ -311,8 +311,8 @@ export const agentInputs = {
         player.currentZone = args.initialZone as any;
       }
       
-      console.log(`Created bot ${args.name} with agent ${agentId} and player ${playerId}`);
-      console.log(`Player description created for ${args.name}`);
+      console.log(`✅ Successfully created bot ${args.name} with agent ${agentId} and player ${playerId}`);
+      console.log(`Player description created for ${args.name}, personality: ${personality}, zone: ${args.initialZone}`);
       return { agentId, playerId };
     },
   }),

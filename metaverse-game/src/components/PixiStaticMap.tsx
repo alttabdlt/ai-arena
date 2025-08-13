@@ -1,25 +1,10 @@
 import { PixiComponent, applyDefaultProps } from '@pixi/react';
 import * as PIXI from 'pixi.js';
 import { AnimatedSprite, WorldMap } from '../../convex/aiTown/worldMap';
-import * as campfire from '../../data/animations/campfire.json';
-import * as gentlesparkle from '../../data/animations/gentlesparkle.json';
-import * as gentlewaterfall from '../../data/animations/gentlewaterfall.json';
-import * as gentlesplash from '../../data/animations/gentlesplash.json';
-import * as windmill from '../../data/animations/windmill.json';
-
+// Removed gentle-themed animations - not used in crime metaverse
+// Add crime-themed animations here when needed
 const animations = {
-  'campfire.json': { spritesheet: campfire, url: '/assets/spritesheets/campfire.png' },
-  'gentlesparkle.json': {
-    spritesheet: gentlesparkle,
-    url: '/assets/spritesheets/gentlesparkle32.png',
-  },
-  'gentlewaterfall.json': {
-    spritesheet: gentlewaterfall,
-    url: '/assets/spritesheets/gentlewaterfall32.png',
-  },
-  'windmill.json': { spritesheet: windmill, url: '/assets/spritesheets/windmill.png' },
-  'gentlesplash.json': { spritesheet: gentlesplash,
-    url: '/assets/spritesheets/gentlewaterfall32.png',},
+  // Example: 'police-siren.json': { spritesheet: policeSiren, url: '/assets/spritesheets/police-siren.png' },
 };
 
 export const PixiStaticMap = PixiComponent('StaticMap', {
@@ -44,19 +29,21 @@ export const PixiStaticMap = PixiComponent('StaticMap', {
     const screenxtiles = map.width;      // Width in tiles
     const screenytiles = map.height;     // Height in tiles
 
-    console.log('Map debugging:', {
+    console.log('🗺️ Map loading:', {
       tileSetUrl: map.tileSetUrl,
-      tileSetDimX: map.tileSetDimX, 
-      tileSetDimY: map.tileSetDimY,
+      tileSetDimensions: `${map.tileSetDimX}x${map.tileSetDimY}`,
       tileDim: map.tileDim,
-      numxtiles,
-      numytiles,
+      tileGrid: `${numxtiles}x${numytiles} tiles`,
       totalTiles: tiles.length,
-      screenxtiles,
-      screenytiles,
-      bgLayersCount: map.bgTiles.length,
-      objectLayersCount: map.objectTiles.length
+      mapSize: `${screenxtiles}x${screenytiles} tiles`,
+      layers: `${map.bgTiles.length} background, ${map.objectTiles.length} object`,
     });
+    
+    // Verify tileset URL is correct
+    if (map.tileSetUrl.includes('gentle')) {
+      console.error('⚠️ Map is using old gentle tileset! Should be using crime-tiles.png');
+      console.error('Current tileSetUrl:', map.tileSetUrl);
+    }
 
     const container = new PIXI.Container();
     const allLayers = [...map.bgTiles, ...map.objectTiles];
@@ -93,17 +80,20 @@ export const PixiStaticMap = PixiComponent('StaticMap', {
 
     // TODO: Add layers.
     const spritesBySheet = new Map<string, AnimatedSprite[]>();
-    for (const sprite of map.animatedSprites) {
-      const sheet = sprite.sheet;
-      if (!spritesBySheet.has(sheet)) {
-        spritesBySheet.set(sheet, []);
+    // Only process animated sprites if they exist
+    if (map.animatedSprites && map.animatedSprites.length > 0) {
+      for (const sprite of map.animatedSprites) {
+        const sheet = sprite.sheet;
+        if (!spritesBySheet.has(sheet)) {
+          spritesBySheet.set(sheet, []);
+        }
+        spritesBySheet.get(sheet)!.push(sprite);
       }
-      spritesBySheet.get(sheet)!.push(sprite);
     }
     for (const [sheet, sprites] of spritesBySheet.entries()) {
       const animation = (animations as any)[sheet];
       if (!animation) {
-        console.error('Could not find animation', sheet);
+        // Skip missing animations silently - crime city doesn't use animated sprites
         continue;
       }
       const { spritesheet, url } = animation;

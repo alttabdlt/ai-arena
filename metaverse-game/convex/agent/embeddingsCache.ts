@@ -17,7 +17,7 @@ export async function fetchBatch(ctx: ActionCtx, texts: string[]) {
   const textHashes = await Promise.all(texts.map((text) => hashText(text)));
   const results = new Array<number[]>(texts.length);
   const cacheResults = await ctx.runQuery(selfInternal.getEmbeddingsByText, {
-    textHashes,
+    textHashes: textHashes as ArrayBuffer[],
   });
   for (const { index, embedding } of cacheResults) {
     results[index] = embedding;
@@ -42,7 +42,7 @@ export async function fetchBatch(ctx: ActionCtx, texts: string[]) {
     }
   }
   if (toWrite.length > 0) {
-    await ctx.runMutation(selfInternal.writeEmbeddings, { embeddings: toWrite });
+    await ctx.runMutation(selfInternal.writeEmbeddings, { embeddings: toWrite as { embedding: number[], textHash: ArrayBuffer }[] });
   }
   return {
     embeddings: results,

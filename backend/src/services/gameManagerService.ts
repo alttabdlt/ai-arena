@@ -20,7 +20,7 @@ import { GameEngineAdapter, GameEngineAdapterFactory } from './gameEngineAdapter
 import { fileLoggerService } from './fileLoggerService';
 import { ExperienceService } from './experienceService';
 import { getConnect4TournamentService } from './connect4TournamentService';
-import { formatTimestamp } from '../utils/dateFormatter';
+import { formatTimestamp } from '@ai-arena/shared-utils';
 
 export interface GameInstance {
   id: string;
@@ -815,18 +815,76 @@ class GameManagerService {
   private normalizeModelName(model: string): string {
     // Convert database format (UPPERCASE_UNDERSCORE) to aiService format (lowercase-hyphen)
     const modelMap: { [key: string]: string } = {
-      'DEEPSEEK_CHAT': 'deepseek-chat',
-      'CLAUDE_3_5_SONNET': 'claude-3-5-sonnet',
-      'CLAUDE_3_OPUS': 'claude-3-opus',
+      // OpenAI Models
       'GPT_4O': 'gpt-4o',
+      'GPT_4O_MINI': 'gpt-4o-mini',
+      'GPT_3_5_TURBO': 'gpt-3.5-turbo',
+      'O3': 'gpt-4o', // Fallback to GPT-4o
+      'O3_MINI': 'gpt-4o', // Fallback to GPT-4o
+      'O3_PRO': 'gpt-4o', // Fallback to GPT-4o
+      
+      // Claude Models
+      'CLAUDE_3_5_SONNET': 'claude-3-5-sonnet',
+      'CLAUDE_3_5_HAIKU': 'claude-3-5-haiku',
+      'CLAUDE_3_HAIKU': 'claude-3-haiku',
+      'CLAUDE_3_OPUS': 'claude-3-opus',
+      'CLAUDE_4_OPUS': 'claude-3-5-sonnet', // Fallback to 3.5 Sonnet
+      'CLAUDE_4_SONNET': 'claude-3-5-sonnet', // Fallback to 3.5 Sonnet
+      
+      // DeepSeek Models
+      'DEEPSEEK_CHAT': 'deepseek-chat',
+      'DEEPSEEK_R1': 'deepseek-r1',
+      'DEEPSEEK_V3': 'deepseek-v3',
+      'DEEPSEEK_CODER': 'deepseek-coder',
+      
+      // Qwen Models (fallback to DeepSeek)
+      'QWEN_2_5_72B': 'deepseek-chat',
+      'QWQ_32B': 'deepseek-chat',
+      'QVQ_72B_PREVIEW': 'deepseek-chat',
+      'QWEN_2_5_MAX': 'deepseek-chat',
+      
+      // Mistral Models (fallback to DeepSeek)
+      'MISTRAL_7B': 'deepseek-chat',
+      'MIXTRAL_8X7B': 'deepseek-chat',
+      'MISTRAL_LARGE': 'deepseek-chat',
+      'MISTRAL_NEMO': 'deepseek-chat',
+      
+      // Gemini Models (fallback to GPT-4o)
+      'GEMINI_PRO': 'gpt-4o',
+      'GEMINI_FLASH': 'gpt-4o',
+      'GEMINI_2_FLASH': 'gpt-4o',
+      'GEMINI_2_FLASH_THINKING': 'gpt-4o',
+      'GEMINI_EXP_1206': 'gpt-4o',
+      
+      // GROK Models (fallback to GPT-4o)
+      'GROK_2': 'gpt-4o',
+      'GROK_2_MINI': 'gpt-4o',
+      'GROK_VISION_BETA': 'gpt-4o',
+      
+      // LLaMA Models (fallback to DeepSeek)
+      'LLAMA_3_70B': 'deepseek-chat',
+      'LLAMA_3_8B': 'deepseek-chat',
+      'LLAMA_3_1_405B': 'deepseek-chat',
+      'LLAMA_3_2_90B': 'deepseek-chat',
+      'LLAMA_3_2_11B': 'deepseek-chat',
+      
       // Also support already normalized names
       'deepseek-chat': 'deepseek-chat',
+      'deepseek-r1': 'deepseek-r1',
+      'deepseek-v3': 'deepseek-v3',
+      'deepseek-coder': 'deepseek-coder',
       'claude-3-5-sonnet': 'claude-3-5-sonnet',
+      'claude-3-5-haiku': 'claude-3-5-haiku',
+      'claude-3-haiku': 'claude-3-haiku',
       'claude-3-opus': 'claude-3-opus',
       'gpt-4o': 'gpt-4o',
+      'gpt-4o-mini': 'gpt-4o-mini',
+      'gpt-3.5-turbo': 'gpt-3.5-turbo',
     };
     
-    return modelMap[model] || model;
+    const normalized = modelMap[model] || model.toLowerCase().replace(/_/g, '-');
+    console.log(`Normalizing model: ${model} -> ${normalized}`);
+    return normalized;
   }
 
   private async getAIDecision(game: GameInstance, playerId: string, validActions: any[]): Promise<any> {

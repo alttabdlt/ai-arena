@@ -144,19 +144,19 @@ export const characters = [
   },
   {
     name: 'criminal1',
-    textureUrl: '/assets/crime-characters.png',
+    textureUrl: '/assets/crime-city-sprites.png',
     spritesheetData: criminal1SpritesheetData,
     speed: 0.1,
   },
   {
     name: 'gambler1',
-    textureUrl: '/assets/crime-characters.png',
+    textureUrl: '/assets/crime-city-sprites.png',
     spritesheetData: gambler1SpritesheetData,
     speed: 0.1,
   },
   {
     name: 'worker1',
-    textureUrl: '/assets/crime-characters.png',
+    textureUrl: '/assets/crime-city-sprites.png',
     spritesheetData: worker1SpritesheetData,
     speed: 0.1,
   },

@@ -250,34 +250,6 @@ export default function BotStatsPanel({ stats, className = '' }: BotStatsPanelPr
         </div>
       </div>
       
-      {/* Movement & Energy */}
-      <div className="bg-gray-800/30 rounded-lg p-3">
-        <div className="flex items-center gap-2 mb-2">
-          <Footprints className="w-3.5 h-3.5 text-purple-400" />
-          <h4 className="text-xs font-semibold text-gray-300">Movement & Energy</h4>
-        </div>
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          <div className="flex justify-between">
-            <span className="text-gray-400">Total Steps</span>
-            <span className="text-gray-300 font-medium">{formatNumber(stats.totalSteps)}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-400">Today</span>
-            <span className="text-gray-300 font-medium">{formatNumber(stats.dailySteps)}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-400">Streak</span>
-            <span className="text-orange-400 font-medium">{stats.stepStreak} days</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-400">Energy</span>
-            <span className="text-yellow-400 font-medium">
-              {stats.currentEnergy}/{stats.maxEnergy}
-            </span>
-          </div>
-        </div>
-      </div>
-      
       {/* Loot Stats */}
       <div className="bg-gray-800/30 rounded-lg p-3">
         <div className="flex items-center gap-2 mb-2">

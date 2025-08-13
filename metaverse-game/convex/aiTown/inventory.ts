@@ -38,6 +38,7 @@ async function processLootboxFromQueueInternal(ctx: any, args: { worldId: any, l
         'RARE': 5,
         'EPIC': 10,
         'LEGENDARY': 25,
+        'GOD_TIER': 100,
       };
       const rarityMultiplier = rarityMap[reward.rarity as keyof typeof rarityMap] || 1;
       
@@ -216,6 +217,9 @@ export const calculatePlayerEquipmentInternal = internalQuery({
 });
 
 // Place furniture in house
+// TEMPORARILY DISABLED: placeFurniture uses houses table which has been removed
+// Will be re-enabled when houses are properly implemented
+/*
 export const placeFurniture = internalMutation({
   args: {
     worldId: v.id('worlds'),
@@ -270,6 +274,7 @@ export const placeFurniture = internalMutation({
     return { success: true, newScore: totalScore, newDefense: totalDefense };
   },
 });
+*/
 
 // Get player inventory (exposed as public query for UI)
 export const getPlayerInventory = query({

@@ -1,0 +1,23 @@
+{
+  "name": "@ai-arena/shared-events",
+  "version": "1.0.0",
+  "description": "Shared event types for AI Arena distributed system",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "clean": "rm -rf dist",
+    "prepare": "npm run build"
+  },
+  "keywords": ["events", "types", "ai-arena"],
+  "author": "AI Arena",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "files": [
+    "dist"
+  ]
+}

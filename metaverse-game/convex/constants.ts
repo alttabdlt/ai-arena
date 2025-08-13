@@ -1,7 +1,7 @@
 export const ACTION_TIMEOUT = 120_000; // more time for local dev
 // export const ACTION_TIMEOUT = 60_000;// normally fine
 
-export const IDLE_WORLD_TIMEOUT = 5 * 60 * 1000;
+export const IDLE_WORLD_TIMEOUT = 30 * 60 * 1000; // 30 minutes to allow bot deployments to complete
 export const WORLD_HEARTBEAT_INTERVAL = 60 * 1000;
 
 export const MAX_STEP = 10 * 60 * 1000;
@@ -57,8 +57,10 @@ export const MESSAGE_COOLDOWN = 1000;
 export const AGENT_WAKEUP_THRESHOLD = 1000;
 
 // How old we let memories be before we vacuum them
-export const VACUUM_MAX_AGE = 2 * 7 * 24 * 60 * 60 * 1000;
-export const DELETE_BATCH_SIZE = 64;
+// Aggressive cleanup: 2 hours for inputs, longer for other data
+export const VACUUM_MAX_AGE = 2 * 60 * 60 * 1000; // 2 hours (was 1 day)
+export const DELETE_BATCH_SIZE = 200; // Increased from 100 for faster cleanup
+export const MAX_INPUTS_PER_ENGINE = 1000; // New: limit inputs to prevent explosion
 
 export const HUMAN_IDLE_TOO_LONG = 5 * 60 * 1000;
 

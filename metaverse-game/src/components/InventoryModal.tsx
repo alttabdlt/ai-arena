@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Package, Sword, Shield, Sparkles, Box, ChevronRight } from 'lucide-react';
+import { X, Package, Sword, Shield, Sparkles, Box, ChevronRight, Footprints, Crosshair, Beaker } from 'lucide-react';
 import { useQuery, useMutation } from 'convex/react';
 import { api } from '../../convex/_generated/api';
 import { Id } from '../../convex/_generated/dataModel';
@@ -15,7 +15,7 @@ interface InventoryModalProps {
   aiArenaBotId?: string;
 }
 
-type TabType = 'lootboxes' | 'equipment' | 'items';
+type TabType = 'lootboxes' | 'potions' | 'swords' | 'armor' | 'boots' | 'guns' | 'all';
 
 export default function InventoryModal({ isOpen, onClose, worldId, playerId, aiArenaBotId }: InventoryModalProps) {
   const [activeTab, setActiveTab] = useState<TabType>('lootboxes');
@@ -39,7 +39,7 @@ export default function InventoryModal({ isOpen, onClose, worldId, playerId, aiA
   // Mutations
   const processLootbox = useMutation(api.aiTown.inventory.processLootboxFromQueue);
   const equipItem = useMutation(api.aiTown.inventory.equipItem);
-  const createTestLootbox = useMutation(api.tests.testLootbox.createTestLootbox);
+  // Removed test lootbox creation - use real lootbox system instead
 
   const handleOpenLootbox = async (lootboxId: Id<'lootboxQueue'>) => {
     const lootbox = lootboxQueue?.find(l => l._id === lootboxId);
@@ -66,7 +66,8 @@ export default function InventoryModal({ isOpen, onClose, worldId, playerId, aiA
   const handleCreateTestLootbox = async () => {
     if (!aiArenaBotId) return;
     try {
-      const result = await createTestLootbox({ worldId, playerId, aiArenaBotId });
+      // Test lootbox creation removed - integrate with real tournament rewards instead
+      const result = { success: false, message: 'Test lootboxes disabled - earn them from tournaments!' };
       console.log('Test lootbox created:', result);
     } catch (error) {
       console.error('Failed to create test lootbox:', error);
@@ -75,6 +76,8 @@ export default function InventoryModal({ isOpen, onClose, worldId, playerId, aiA
 
   const getRarityColor = (rarity: string) => {
     switch (rarity) {
+      case 'GOD_TIER':
+        return 'border-red-600 bg-gradient-to-br from-red-900/30 to-yellow-900/30 text-red-400 animate-pulse';
       case 'LEGENDARY':
         return 'border-yellow-500 bg-yellow-500/10 text-yellow-400';
       case 'EPIC':
@@ -90,19 +93,36 @@ export default function InventoryModal({ isOpen, onClose, worldId, playerId, aiA
 
   const getItemIcon = (type: string) => {
     switch (type) {
-      case 'WEAPON':
+      case 'SWORD':
         return <Sword className="w-5 h-5" />;
       case 'ARMOR':
         return <Shield className="w-5 h-5" />;
+      case 'POTION':
+        return <Beaker className="w-5 h-5" />;
+      case 'BOOTS':
+        return <Footprints className="w-5 h-5" />;
+      case 'GUN':
+        return <Crosshair className="w-5 h-5" />;
       default:
         return <Package className="w-5 h-5" />;
     }
   };
 
+  // Filter items by type
+  const potions = inventory?.items?.filter(item => item.type === 'POTION') || [];
+  const swords = inventory?.items?.filter(item => item.type === 'SWORD') || [];
+  const armors = inventory?.items?.filter(item => item.type === 'ARMOR') || [];
+  const boots = inventory?.items?.filter(item => item.type === 'BOOTS') || [];
+  const guns = inventory?.items?.filter(item => item.type === 'GUN') || [];
+
   const tabs: { id: TabType; label: string; icon: React.ReactNode; count?: number }[] = [
     { id: 'lootboxes', label: 'Lootboxes', icon: <Box className="w-4 h-4" />, count: lootboxQueue?.length || 0 },
-    { id: 'equipment', label: 'Equipment', icon: <Sword className="w-4 h-4" /> },
-    { id: 'items', label: 'All Items', icon: <Package className="w-4 h-4" />, count: inventory?.items?.length || 0 },
+    { id: 'potions', label: 'Potions', icon: <Beaker className="w-4 h-4" />, count: potions.length },
+    { id: 'swords', label: 'Swords', icon: <Sword className="w-4 h-4" />, count: swords.length },
+    { id: 'armor', label: 'Armor', icon: <Shield className="w-4 h-4" />, count: armors.length },
+    { id: 'boots', label: 'Boots', icon: <Footprints className="w-4 h-4" />, count: boots.length },
+    { id: 'guns', label: 'Guns', icon: <Crosshair className="w-4 h-4" />, count: guns.length },
+    { id: 'all', label: 'All', icon: <Package className="w-4 h-4" />, count: inventory?.items?.length || 0 },
   ];
 
   const equippedItems = inventory?.items?.filter(item => item.equipped) || [];
@@ -228,50 +248,120 @@ export default function InventoryModal({ isOpen, onClose, worldId, playerId, aiA
                   </div>
                 )}
 
-                {/* Equipment Tab */}
-                {activeTab === 'equipment' && (
-                  <div className="space-y-6">
-                    <div>
-                      <h3 className="text-lg font-semibold text-red-400 mb-4">Equipped</h3>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {equippedItems.length === 0 ? (
-                          <p className="text-gray-500">No items equipped</p>
-                        ) : (
-                          equippedItems.map((item) => (
-                            <ItemCard
-                              key={item._id}
-                              item={item}
-                              onAction={() => handleEquipItem(item._id)}
-                              actionLabel="Unequip"
-                              equipped
-                            />
-                          ))
-                        )}
+                {/* Potions Tab */}
+                {activeTab === 'potions' && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {potions.length === 0 ? (
+                      <div className="col-span-full text-center py-12 text-gray-500">
+                        <Beaker className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                        <p>No potions available</p>
+                        <p className="text-sm mt-2">Earn potions from tournaments and lootboxes!</p>
                       </div>
-                    </div>
+                    ) : (
+                      potions.map((item) => (
+                        <ItemCard 
+                          key={item._id} 
+                          item={item}
+                          onAction={() => {/* TODO: Use consumable */}}
+                          actionLabel={item.quantity && item.quantity > 1 ? `Use (${item.quantity})` : "Use"}
+                        />
+                      ))
+                    )}
+                  </div>
+                )}
 
-                    <div>
-                      <h3 className="text-lg font-semibold text-red-400 mb-4">Available</h3>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {unequippedItems.length === 0 ? (
-                          <p className="text-gray-500">No items available to equip</p>
-                        ) : (
-                          unequippedItems.map((item) => (
-                            <ItemCard
-                              key={item._id}
-                              item={item}
-                              onAction={() => handleEquipItem(item._id)}
-                              actionLabel="Equip"
-                            />
-                          ))
-                        )}
+                {/* Swords Tab */}
+                {activeTab === 'swords' && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {swords.length === 0 ? (
+                      <div className="col-span-full text-center py-12 text-gray-500">
+                        <Sword className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                        <p>No swords in inventory</p>
                       </div>
-                    </div>
+                    ) : (
+                      swords.map((item) => (
+                        <ItemCard 
+                          key={item._id} 
+                          item={item}
+                          onAction={() => handleEquipItem(item._id)}
+                          actionLabel={item.equipped ? "Unequip" : "Equip"}
+                          equipped={item.equipped}
+                        />
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {/* Armor Tab */}
+                {activeTab === 'armor' && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {armors.length === 0 ? (
+                      <div className="col-span-full text-center py-12 text-gray-500">
+                        <Shield className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                        <p>No armor pieces available</p>
+                      </div>
+                    ) : (
+                      armors.map((item) => (
+                        <ItemCard 
+                          key={item._id} 
+                          item={item}
+                          onAction={() => handleEquipItem(item._id)}
+                          actionLabel={item.equipped ? "Unequip" : "Equip"}
+                          equipped={item.equipped}
+                        />
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {/* Boots Tab */}
+                {activeTab === 'boots' && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {boots.length === 0 ? (
+                      <div className="col-span-full text-center py-12 text-gray-500">
+                        <Footprints className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                        <p>No boots available</p>
+                        <p className="text-sm mt-2">Boots increase movement speed and agility!</p>
+                      </div>
+                    ) : (
+                      boots.map((item) => (
+                        <ItemCard 
+                          key={item._id} 
+                          item={item}
+                          onAction={() => handleEquipItem(item._id)}
+                          actionLabel={item.equipped ? "Unequip" : "Equip"}
+                          equipped={item.equipped}
+                        />
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {/* Guns Tab */}
+                {activeTab === 'guns' && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {guns.length === 0 ? (
+                      <div className="col-span-full text-center py-12 text-gray-500">
+                        <Crosshair className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                        <p>No guns in arsenal</p>
+                        <p className="text-sm mt-2">Guns provide ranged combat advantages!</p>
+                      </div>
+                    ) : (
+                      guns.map((item) => (
+                        <ItemCard 
+                          key={item._id} 
+                          item={item}
+                          onAction={() => handleEquipItem(item._id)}
+                          actionLabel={item.equipped ? "Unequip" : "Equip"}
+                          equipped={item.equipped}
+                        />
+                      ))
+                    )}
                   </div>
                 )}
 
                 {/* All Items Tab */}
-                {activeTab === 'items' && (
+                {activeTab === 'all' && (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                     {inventory?.items?.length === 0 ? (
                       <div className="col-span-full text-center py-12 text-gray-500">
@@ -280,7 +370,20 @@ export default function InventoryModal({ isOpen, onClose, worldId, playerId, aiA
                       </div>
                     ) : (
                       inventory?.items?.map((item) => (
-                        <ItemCard key={item._id} item={item} />
+                        <ItemCard 
+                          key={item._id} 
+                          item={item}
+                          onAction={item.type === 'POTION' ? 
+                            () => {/* TODO: Use consumable */} : 
+                            () => handleEquipItem(item._id)
+                          }
+                          actionLabel={
+                            item.type === 'POTION' ? 
+                              (item.quantity && item.quantity > 1 ? `Use (${item.quantity})` : "Use") :
+                              (item.equipped ? "Unequip" : "Equip")
+                          }
+                          equipped={item.equipped}
+                        />
                       ))
                     )}
                   </div>
@@ -334,10 +437,16 @@ function ItemCard({
 
   const getItemIcon = (type: string) => {
     switch (type) {
-      case 'WEAPON':
+      case 'SWORD':
         return <Sword className="w-5 h-5" />;
       case 'ARMOR':
         return <Shield className="w-5 h-5" />;
+      case 'POTION':
+        return <Beaker className="w-5 h-5" />;
+      case 'BOOTS':
+        return <Footprints className="w-5 h-5" />;
+      case 'GUN':
+        return <Crosshair className="w-5 h-5" />;
       default:
         return <Package className="w-5 h-5" />;
     }
@@ -361,7 +470,7 @@ function ItemCard({
       
       <div className="text-sm text-gray-400 space-y-1">
         <p className="capitalize">{item.type.toLowerCase()}</p>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-2">
           {item.powerBonus > 0 && (
             <span className="text-red-400">+{item.powerBonus} Power</span>
           )}
@@ -370,6 +479,24 @@ function ItemCard({
           )}
           {item.scoreBonus > 0 && (
             <span className="text-yellow-400">+{item.scoreBonus} Score</span>
+          )}
+          {item.speedBonus > 0 && (
+            <span className="text-green-400">+{item.speedBonus} Speed</span>
+          )}
+          {item.agilityBonus > 0 && (
+            <span className="text-purple-400">+{item.agilityBonus} Agility</span>
+          )}
+          {item.rangeBonus > 0 && (
+            <span className="text-orange-400">+{item.rangeBonus} Range</span>
+          )}
+          {item.healingPower > 0 && (
+            <span className="text-pink-400">+{item.healingPower} Healing</span>
+          )}
+          {item.duration && item.duration > 0 && (
+            <span className="text-cyan-400">{item.duration}s Duration</span>
+          )}
+          {item.consumable && item.quantity && (
+            <span className="text-gray-300">x{item.quantity}</span>
           )}
         </div>
       </div>

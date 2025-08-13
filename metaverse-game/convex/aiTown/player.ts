@@ -47,6 +47,7 @@ export const serializedPlayer = {
   human: v.optional(v.string()),
   pathfinding: v.optional(pathfinding),
   activity: v.optional(activity),
+  wasAutoResumed: v.optional(v.boolean()),
   
   // Crime metaverse fields
   currentZone: v.optional(v.union(
@@ -63,7 +64,7 @@ export const serializedPlayer = {
   
   // Inventory tracking
   inventoryId: v.optional(v.id('inventories')),
-  houseId: v.optional(v.id('houses')),
+  // houseId: v.optional(v.id('houses')), // TODO: Re-enable when houses are implemented
   
   // The last time they did something.
   lastInput: v.number(),
@@ -91,7 +92,8 @@ export class Player {
   currentZone?: 'casino' | 'darkAlley' | 'suburb' | 'downtown' | 'underground';
   equipment?: { powerBonus: number; defenseBonus: number };
   inventoryId?: string;
-  houseId?: string;
+  // houseId?: string; // TODO: Re-enable when houses are implemented
+  wasAutoResumed?: boolean;  // Track if we've already logged auto-resume
 
   lastInput: number;
 
@@ -109,17 +111,18 @@ export class Player {
   lastLootRoll: number;
 
   constructor(serialized: SerializedPlayer) {
-    const { id, human, pathfinding, activity, currentZone, equipment, inventoryId, houseId, 
+    const { id, human, pathfinding, activity, currentZone, equipment, inventoryId, // houseId, 
             lastInput, position, facing, speed, stepsTaken, lastStepTime, stepStreak,
-            currentEnergy, maxEnergy, lastEnergyRegen, lastLootRoll } = serialized;
+            currentEnergy, maxEnergy, lastEnergyRegen, lastLootRoll, wasAutoResumed } = serialized;
     this.id = parseGameId('players', id);
     this.human = human;
+    this.wasAutoResumed = wasAutoResumed;
     this.pathfinding = pathfinding;
     this.activity = activity;
     this.currentZone = currentZone;
     this.equipment = equipment;
     this.inventoryId = inventoryId as string | undefined;
-    this.houseId = houseId as string | undefined;
+    // this.houseId = houseId as string | undefined; // TODO: Re-enable when houses are implemented
     this.lastInput = lastInput;
     this.position = position;
     this.facing = facing;
@@ -142,29 +145,50 @@ export class Player {
     
     // Energy consumption and regeneration for bots
     if (!this.human) {
-      // Energy consumption: 1 energy per 5 minutes (300000ms)
-      const timeSinceLastConsumption = now - this.lastEnergyRegen;
-      const fiveMinutesPassed = Math.floor(timeSinceLastConsumption / 300000); // 300000ms = 5 minutes
+      // Energy consumption: 1 energy per 10 minutes (600000ms) when moving - SLOWER consumption
+      // Energy regeneration: 1 energy per 5 minutes (300000ms) when stopped - FASTER regeneration
+      // Minimum energy: Never go below 5 to prevent permanent stoppage
+      const timeSinceLastUpdate = now - this.lastEnergyRegen;
+      const MIN_ENERGY = 5;
       
-      if (fiveMinutesPassed > 0 && this.currentEnergy > 0) {
-        // Consume energy
-        const energyToConsume = Math.min(fiveMinutesPassed, this.currentEnergy);
-        this.currentEnergy = Math.max(0, this.currentEnergy - energyToConsume);
-        this.lastEnergyRegen = now;
+      if (this.pathfinding && this.currentEnergy > MIN_ENERGY) {
+        // Consume energy when moving (slower rate now)
+        const tenMinutesPassed = Math.floor(timeSinceLastUpdate / 600000); // 600000ms = 10 minutes
         
-        // If energy depleted, stop pathfinding
-        if (this.currentEnergy === 0 && this.pathfinding) {
-          console.log(`Bot ${this.id} energy depleted, stopping movement`);
-          stopPlayer(this);
+        if (tenMinutesPassed > 0) {
+          const energyToConsume = Math.min(tenMinutesPassed, this.currentEnergy - MIN_ENERGY);
+          this.currentEnergy = Math.max(MIN_ENERGY, this.currentEnergy - energyToConsume);
+          this.lastEnergyRegen = now;
+          
+          // If energy at minimum, log but don't stop
+          if (this.currentEnergy <= MIN_ENERGY) {
+            console.log(`Bot ${this.id} at minimum energy (${MIN_ENERGY}), continuing slowly`);
+            // Bot continues moving even at minimum energy
+          }
+        }
+      } else if (!this.pathfinding && this.currentEnergy < this.maxEnergy) {
+        // Regenerate energy when stopped (faster rate now)
+        const fiveMinutesPassed = Math.floor(timeSinceLastUpdate / 300000); // 300000ms = 5 minutes
+        
+        if (fiveMinutesPassed > 0) {
+          const energyToRegen = Math.min(fiveMinutesPassed * 2, this.maxEnergy - this.currentEnergy); // 2x regen rate
+          this.currentEnergy = Math.min(this.maxEnergy, this.currentEnergy + energyToRegen);
+          this.lastEnergyRegen = now;
+          console.log(`Bot ${this.id} regenerated ${energyToRegen} energy, now at ${this.currentEnergy}/${this.maxEnergy}`);
         }
       }
       
-      // Energy regeneration happens through other means (items, rest areas, etc.)
-      // Check if we should auto-resume movement after energy restored
+      // Auto-resume pathfinding when energy recovers
       if (this.currentEnergy >= 10 && !this.pathfinding) {
         // Resume movement when we have at least 10 energy
-        console.log(`Bot ${this.id} energy restored to ${this.currentEnergy}, auto-resuming`);
+        if (!this.wasAutoResumed) {
+          console.log(`Bot ${this.id} energy restored to ${this.currentEnergy}, auto-resuming`);
+          this.wasAutoResumed = true;
+        }
         // The agent system will handle resuming movement on next tick
+      } else if (this.pathfinding && this.wasAutoResumed) {
+        // Reset flag when bot starts moving again
+        this.wasAutoResumed = false;
       }
     }
     
@@ -287,18 +311,18 @@ export class Player {
     this.facing = facing;
     this.speed = velocity;
     
-    // IDLE GAME MECHANICS - Track steps (no longer consumes energy per step)
-    if (!this.human && distanceMoved >= 0.5 && now - this.lastStepTime > 5000) {
-      // We moved at least half a tile and it's been 5 seconds since last XP grant
+    // IDLE GAME MECHANICS - Track steps and grant XP
+    if (!this.human && distanceMoved >= 0.5) {
+      // We moved at least half a tile - no cooldown needed
       this.stepsTaken++;
       this.lastStepTime = now;
       
-      // Only grant XP every 10 steps to reduce frequency
+      // Grant XP every 5 steps for more frequent rewards
       this.stepStreak++;
-      if (this.stepStreak >= 10) {
+      if (this.stepStreak >= 5) {
         this.stepStreak = 0;
         
-        // Schedule XP grant (reduced frequency)
+        // Schedule XP grant for movement
         const agent = [...game.world.agents.values()].find(a => a.playerId === this.id);
         if (agent) {
           const agentDesc = game.agentDescriptions.get(agent.id);
@@ -466,9 +490,9 @@ export class Player {
   }
 
   serialize(): SerializedPlayer {
-    const { id, human, pathfinding, activity, currentZone, equipment, inventoryId, houseId, 
+    const { id, human, pathfinding, activity, currentZone, equipment, inventoryId, // houseId, 
             lastInput, position, facing, speed, stepsTaken, lastStepTime, stepStreak,
-            currentEnergy, maxEnergy, lastEnergyRegen, lastLootRoll } = this;
+            currentEnergy, maxEnergy, lastEnergyRegen, lastLootRoll, wasAutoResumed } = this;
     return {
       id,
       human,
@@ -477,7 +501,7 @@ export class Player {
       currentZone,
       equipment,
       inventoryId: inventoryId as any,
-      houseId: houseId as any,
+      // houseId: houseId as any, // TODO: Re-enable when houses are implemented
       lastInput,
       position,
       facing,
@@ -489,6 +513,7 @@ export class Player {
       maxEnergy,
       lastEnergyRegen,
       lastLootRoll,
+      wasAutoResumed,
     };
   }
 }

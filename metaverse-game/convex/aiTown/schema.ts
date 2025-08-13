@@ -78,16 +78,8 @@ export const aiTownTables = {
     .index('conversation', ['worldId', 'player1', 'conversationId'])
     .index('playerHistory', ['worldId', 'player1', 'ended']),
   
-  // Zone management tables for the crime metaverse
-  zones: defineTable({
-    zoneType: ZoneType,
-    name: v.string(),
-    mapId: v.id('maps'),
-    maxPlayers: v.number(),
-    maxBots: v.number(),
-    currentPlayers: v.number(),
-    currentBots: v.number(),
-  }).index('zoneType', ['zoneType']),
+  // NOTE: zones table removed - not used in current implementation
+  // Zone management is handled through worldInstances instead
   
   // World instances per zone for scaling
   worldInstances: defineTable({
@@ -170,10 +162,13 @@ export const aiTownTables = {
     itemId: v.string(), // Unique item ID from AI Arena
     name: v.string(),
     type: v.union(
-      v.literal('WEAPON'),
+      v.literal('SWORD'),     // Renamed from WEAPON
       v.literal('ARMOR'),
       v.literal('TOOL'),
       v.literal('ACCESSORY'),
+      v.literal('POTION'),    // New: consumable items
+      v.literal('BOOTS'),     // New: footwear
+      v.literal('GUN'),       // New: ranged weapons
       v.literal('FURNITURE')
     ),
     category: v.optional(v.union(
@@ -187,18 +182,33 @@ export const aiTownTables = {
       v.literal('UNCOMMON'),
       v.literal('RARE'),
       v.literal('EPIC'),
-      v.literal('LEGENDARY')
+      v.literal('LEGENDARY'),
+      v.literal('GOD_TIER')   // Added GOD_TIER rarity
     ),
     powerBonus: v.number(),
     defenseBonus: v.number(),
     scoreBonus: v.optional(v.number()), // For furniture
+    
+    // New consumable fields
+    consumable: v.optional(v.boolean()),
+    quantity: v.optional(v.number()),    // Stack count for consumables
+    uses: v.optional(v.number()),        // Current uses remaining
+    maxUses: v.optional(v.number()),     // Maximum uses
+    
+    // Additional bonuses for new equipment types
+    speedBonus: v.optional(v.number()),     // Movement speed (boots)
+    agilityBonus: v.optional(v.number()),   // Dodge/accuracy (boots, accessories)
+    rangeBonus: v.optional(v.number()),     // Attack range (guns)
+    healingPower: v.optional(v.number()),   // Healing amount (potions)
+    duration: v.optional(v.number()),       // Effect duration in seconds (buff potions)
+    
     equipped: v.boolean(),
-    houseId: v.optional(v.id('houses')), // If placed in a house
-    position: v.optional(v.object({
-      x: v.number(),
-      y: v.number(),
-      rotation: v.number()
-    })), // Position if placed in house
+    // houseId: v.optional(v.id('houses')), // TODO: Re-enable when houses are implemented
+    // position: v.optional(v.object({      // TODO: Re-enable for house furniture placement
+    //   x: v.number(),
+    //   y: v.number(),
+    //   rotation: v.number()
+    // }))
     metadata: v.object({
       description: v.optional(v.string()),
       specialEffect: v.optional(v.string()),
@@ -208,33 +218,11 @@ export const aiTownTables = {
     createdAt: v.number(),
   })
     .index('owner', ['worldId', 'ownerId'])
-    .index('equipped', ['worldId', 'ownerId', 'equipped'])
-    .index('house', ['worldId', 'houseId']),
+    .index('equipped', ['worldId', 'ownerId', 'equipped']),
+    // .index('house', ['worldId', 'houseId']), // TODO: Re-enable when houses are implemented
   
-  // Houses for bots
-  houses: defineTable({
-    worldId: v.id('worlds'),
-    ownerId: playerId, // Bot who owns this house
-    houseScore: v.number(),
-    defenseLevel: v.number(),
-    gridSize: v.object({
-      width: v.number(),
-      height: v.number(),
-    }),
-    worldPosition: v.object({
-      x: v.number(),
-      y: v.number(),
-      zone: v.string(), // Which zone the house is in
-    }),
-    lastRobbed: v.optional(v.number()),
-    robberyCooldown: v.optional(v.number()),
-    visitors: v.array(playerId), // Recent visitors
-    partyActive: v.boolean(),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  })
-    .index('owner', ['worldId', 'ownerId'])
-    .index('zone', ['worldId', 'worldPosition.zone']),
+  // NOTE: houses table removed - not implemented in current system
+  // House functionality will be added in future phases
   
   // Bot inventories tracking
   inventories: defineTable({
@@ -258,7 +246,8 @@ export const aiTownTables = {
       v.literal('UNCOMMON'),
       v.literal('RARE'),
       v.literal('EPIC'),
-      v.literal('LEGENDARY')
+      v.literal('LEGENDARY'),
+      v.literal('GOD_TIER')
     ),
     rewards: v.array(v.object({
       itemId: v.string(),
@@ -341,20 +330,8 @@ export const aiTownTables = {
   .index('player', ['worldId', 'playerId'])
   .index('respect', ['worldId', 'globalRespect']),
   
-  // Faction/gang affiliations (emergent from relationships)
-  factions: defineTable({
-    worldId: v.id('worlds'),
-    name: v.string(),
-    leader: playerId,
-    members: v.array(playerId),
-    territory: v.optional(v.string()), // Primary zone
-    enemyFactions: v.array(v.string()), // Store faction IDs as strings
-    avgRespect: v.number(),
-    
-    createdAt: v.number(),
-  })
-  .index('world', ['worldId'])
-  .index('leader', ['worldId', 'leader']),
+  // NOTE: factions table removed - not implemented yet
+  // Faction system will be added when alliance/betrayal mechanics are built
   
   // Marriage registry for tracking married bot couples
   marriages: defineTable({

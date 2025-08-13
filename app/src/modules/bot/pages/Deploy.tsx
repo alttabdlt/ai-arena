@@ -3,6 +3,7 @@ import { useAccount, useSendTransaction, useWaitForTransactionReceipt, useChainI
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useMutation } from '@apollo/client';
 import { parseEther, formatEther } from 'viem';
+import { useAuth } from '@/modules/auth/contexts/AuthContext';
 import { Button } from '@ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ui/card';
 import { Input } from '@ui/input';
@@ -23,7 +24,8 @@ import {
   Code,
   User,
   FileText,
-  Rocket
+  Rocket,
+  Shield
 } from 'lucide-react';
 import { useToast } from '@shared/hooks/use-toast';
 import { Alert, AlertDescription } from '@ui/alert';
@@ -53,6 +55,7 @@ export default function Deploy() {
   const { toast } = useToast();
   const navigate = useNavigate();
   const { address, isConnected } = useAccount();
+  const { user, isAuthenticated, isAuthReady, login } = useAuth();
   const chainId = useChainId();
   const { switchChain } = useSwitchChain();
   const publicClient = usePublicClient();
@@ -386,6 +389,26 @@ export default function Deploy() {
       return;
     }
 
+    // Ensure user is authenticated
+    if (!isAuthenticated) {
+      toast({
+        title: "Authentication Required",
+        description: "Authenticating with your wallet...",
+      });
+      try {
+        await login();
+        // Wait for auth to be ready
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (authError) {
+        toast({
+          title: "Authentication Failed",
+          description: "Please try connecting your wallet again.",
+          variant: "destructive"
+        });
+        return;
+      }
+    }
+
     // Check if on correct network (998 for testnet)
     if (chainId !== 998) {
       toast({
@@ -426,13 +449,10 @@ export default function Deploy() {
       return;
     }
     
-    // Check if we're on testnet (chain ID 998)
-    const isTestnet = chainId === 998;
+    // Always use real deployment fee - no testnet bypass
+    const deploymentFee = parseEther(selectedModel.deploymentFee);
     
-    // Bypass fee for testnet due to HyperEVM MetaMask compatibility issues
-    const deploymentFee = isTestnet ? parseEther('0') : parseEther(selectedModel.deploymentFee);
-    
-    if (!isTestnet && balance && balance < deploymentFee) {
+    if (balance && balance < deploymentFee) {
       toast({
         title: "Insufficient Balance",
         description: `You need ${selectedModel.deploymentFee} ${symbol} to deploy this bot. Your balance: ${formattedBalance} ${symbol}`,
@@ -446,84 +466,7 @@ export default function Deploy() {
     setIsSubmitting(true);
     setDeploymentError('');
     
-    // Skip fee transaction on testnet
-    if (isTestnet) {
-      console.log('Testnet detected - bypassing deployment fee transaction');
-      
-      // Generate a mock transaction hash for testnet
-      const mockTxHash = `0x${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`.padEnd(66, '0') as `0x${string}`;
-      setTxHash(mockTxHash);
-      setDeploymentState('transaction-confirming');
-      
-      // Simulate transaction confirmation after a short delay
-      setTimeout(() => {
-        // Trigger the bot creation flow directly
-        setDeploymentState('generating-avatar');
-        
-        // Generate avatar and create bot
-        const seed = `${Date.now()}-${Math.random()}`;
-        spriteSelector.selectSprite(
-          formData.personality.toUpperCase() as BotPersonality,
-          seed
-        ).then(sprite => {
-          setDeploymentState('deploying-bot');
-          
-          const spriteId = sprite.config.id;
-          
-          deployBot({
-            variables: {
-              input: {
-                name: formData.name,
-                avatar: sprite.imageData,
-                prompt: formData.prompt,
-                personality: formData.personality.toUpperCase(),
-                modelType: formatModelForBackend(formData.modelType),
-                txHash: mockTxHash,
-                spriteId: spriteId,
-              },
-            },
-          }).then(async (result) => {
-            const botId = result.data?.deployBot?.id;
-            
-            if (botId && deployToMetaverse) {
-              setDeploymentState('registering-metaverse');
-              try {
-                await registerBotInMetaverse({
-                  variables: { botId },
-                });
-                console.log('Bot registered in metaverse successfully');
-              } catch (metaverseError) {
-                console.error('Failed to register bot in metaverse:', metaverseError);
-              }
-            }
-            
-            setDeploymentState('completed');
-            toast({
-              title: "Bot Deployed Successfully!",
-              description: "Your AI bot is ready to compete in tournaments.",
-            });
-            
-            setTimeout(() => {
-              navigate('/bots');
-            }, 2000);
-          }).catch(error => {
-            console.error('Bot deployment error:', error);
-            setDeploymentState('error');
-            setDeploymentError(error.message || 'Failed to deploy bot');
-            setIsSubmitting(false);
-          });
-        }).catch(error => {
-          console.error('Avatar generation error:', error);
-          setDeploymentState('error');
-          setDeploymentError('Failed to generate avatar');
-          setIsSubmitting(false);
-        });
-      }, 1000);
-      
-      return;
-    }
-    
-    // Production/mainnet flow - send actual transaction
+    // Always use real transactions - no testnet bypass
     setDeploymentState('wallet-signature');
     
     try {

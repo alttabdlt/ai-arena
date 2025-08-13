@@ -59,7 +59,7 @@ export const enqueueBackgroundMusicGeneration = internalAction({
 });
 
 export const handleReplicateWebhook = httpAction(async (ctx, request) => {
-  const req = await request.json();
+  const req = await request.json() as { id?: string };
   if (req.id) {
     const prediction = await client().predictions.get(req.id);
     const response = await fetch(prediction.output);

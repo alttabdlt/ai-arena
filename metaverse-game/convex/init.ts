@@ -2,7 +2,7 @@ import { v } from 'convex/values';
 import { internal } from './_generated/api';
 import { DatabaseReader, MutationCtx, mutation } from './_generated/server';
 import { Descriptions } from '../data/characters';
-import * as map from '../data/gentle';
+import * as map from '../data/maps/crimeCity';
 import { insertInput } from './aiTown/insertInput';
 import { Id } from './_generated/dataModel';
 import { createEngine } from './aiTown/main';
@@ -106,7 +106,7 @@ async function shouldCreateAgents(
     .order('asc')
     .filter((q) => q.eq(q.field('name'), 'createAgent'))
     .filter((q) => q.eq(q.field('returnValue'), undefined))
-    .collect();
+    .take(100); // Limit to prevent reading too many documents
   if (unactionedJoinInputs.length > 0) {
     return false;
   }

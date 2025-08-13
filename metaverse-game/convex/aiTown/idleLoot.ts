@@ -4,40 +4,11 @@ import { Id } from '../_generated/dataModel';
 import { playerId } from './ids';
 import { internal } from '../_generated/api';
 
-// Helper function to get valid AI Arena bot IDs
-async function getValidArenaBotIds(ctx: MutationCtx, worldId?: Id<'worlds'>): Promise<Set<string>> {
-  // For now, we'll use a simple approach - get all bots with valid agent descriptions
-  // In production, this should query the AI Arena backend API
-  const agentDescriptions = await ctx.db.query('agentDescriptions').collect();
-  const validBotIds = new Set<string>();
-  
-  for (const desc of agentDescriptions) {
-    if (desc.aiArenaBotId) {
-      // Only include bots that have been recently active (within last 24 hours)
-      // This helps filter out old/stale bots
-      // Skip activity check if no worldId provided (for backward compatibility)
-      if (!worldId) {
-        validBotIds.add(desc.aiArenaBotId);
-        continue;
-      }
-      
-      const recentActivity = await ctx.db
-        .query('activityLogs')
-        .withIndex('aiArenaBotId', (q) => q.eq('worldId', worldId).eq('aiArenaBotId', desc.aiArenaBotId!))
-        .order('desc')
-        .first();
-      
-      if (recentActivity && recentActivity.timestamp > Date.now() - 24 * 60 * 60 * 1000) {
-        validBotIds.add(desc.aiArenaBotId);
-      }
-    }
-  }
-  
-  // Also hardcode the known valid bots as a fallback
-  const knownValidBots = ['bot0002', 'bot0001', 'bot0003']; // Axel, Louis, ZY
-  knownValidBots.forEach(id => validBotIds.add(id));
-  
-  return validBotIds;
+// Helper function to check if a bot is valid (not a ghost bot)
+function isValidBot(agent: any): boolean {
+  // A valid bot has an aiArenaBotId (from AI Arena)
+  // Ghost bots are those without aiArenaBotId or with null/undefined values
+  return !!(agent.aiArenaBotId && agent.aiArenaBotId.trim() !== '');
 }
 
 // Loot rarity tiers and their chances
@@ -285,12 +256,12 @@ export const grantMovementXP = internalAction({
     bonusXP: v.number(),
   },
   handler: async (ctx, args) => {
-    // Grant XP through the experience system (only once, simplified)
+    // Grant XP through the experience system (zone_activity grants 8 XP vs idle's 2 XP)
     await ctx.runMutation(internal.aiTown.experience.grantExperience, {
       worldId: args.worldId,
       playerId: args.playerId,
       aiArenaBotId: args.aiArenaBotId,
-      activity: 'idle', // Use idle activity which grants less XP
+      activity: 'zone_activity', // Changed from 'idle' to grant more XP per movement
     });
   },
 });
@@ -308,9 +279,6 @@ export const tickIdleExperience = internalMutation({
       return;
     }
 
-    // Get list of valid AI Arena bot IDs
-    const validBotIds = await getValidArenaBotIds(ctx, args.worldId);
-    
     // Get all agents in the world
     const agents = world.agents || [];
     let xpGranted = 0;
@@ -318,14 +286,17 @@ export const tickIdleExperience = internalMutation({
 
     for (const agent of agents) {
       // Only grant XP to bots with aiArenaBotId and active agents
-      if (!agent.aiArenaBotId || !agent.playerId) {
+      if (!agent.playerId) {
         continue;
       }
 
-      // Skip ghost bots that don't exist in AI Arena
-      if (!validBotIds.has(agent.aiArenaBotId)) {
+      // Skip ghost bots (agents without valid aiArenaBotId)
+      if (!isValidBot(agent)) {
         ghostBotsSkipped++;
-        console.log(`Skipping ghost bot: ${agent.aiArenaBotId} (player: ${agent.playerId})`);
+        // Only log if there's a malformed aiArenaBotId
+        if (agent.aiArenaBotId) {
+          console.log(`Skipping invalid agent with malformed ID: ${agent.aiArenaBotId} (player: ${agent.playerId})`);
+        }
         continue;
       }
 
@@ -356,12 +327,12 @@ export const tickIdleExperience = internalMutation({
       const multiplier = zoneMultipliers[currentZone as keyof typeof zoneMultipliers] || 1.0;
       const xpAmount = Math.ceil(baseXP * multiplier);
 
-      // Grant the idle XP
+      // Grant the idle XP (aiArenaBotId is guaranteed to exist here because of isValidBot check)
       try {
         await ctx.scheduler.runAfter(0, internal.aiTown.experience.grantExperience, {
           worldId: args.worldId,
           playerId: agent.playerId,
-          aiArenaBotId: agent.aiArenaBotId,
+          aiArenaBotId: agent.aiArenaBotId!,  // Safe to assert non-null after isValidBot check
           activity: 'idle', // New idle activity type
         });
         xpGranted++;

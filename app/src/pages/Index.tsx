@@ -476,13 +476,13 @@ const Index = () => {
   const handleEnterMetaverse = () => {
     // Start zoom animation on globe
     if (metaverseBotsData?.bots && metaverseBotsData.bots.length > 0) {
-      // Find the zone with most bots
+      // Find the zone with most bots (only count active bots with zones)
       const zoneCounts: Record<string, number> = {};
-      metaverseBotsData.bots.forEach((bot: any) => {
-        if (bot.currentZone) {
+      metaverseBotsData.bots
+        .filter((bot: any) => bot.isActive && bot.currentZone)
+        .forEach((bot: any) => {
           zoneCounts[bot.currentZone] = (zoneCounts[bot.currentZone] || 0) + 1;
-        }
-      });
+        });
       
       // Only try to find popular zone if we have any zones
       const zoneEntries = Object.entries(zoneCounts);
@@ -870,7 +870,8 @@ const Index = () => {
               variant="secondary" 
               className="ml-2 bg-white/20 text-white border-white/30"
             >
-              {metaverseStats?.metaverseStats?.totalBots || metaverseBotsData.bots.length} bots online
+              {metaverseStats?.metaverseStats?.totalBots || 
+                metaverseBotsData.bots.filter((bot: any) => bot.isActive).length} bots online
             </Badge>
           )}
         </Button>
@@ -884,15 +885,18 @@ const Index = () => {
                     .map((z: any) => `${z.zone}: ${z.count}`)
                     .join(' • ');
                 } else if (metaverseBotsData?.bots) {
-                  const zones = metaverseBotsData.bots.reduce((acc: Record<string, number>, bot: any) => {
+                  const activeBots = metaverseBotsData.bots.filter((bot: any) => bot.isActive);
+                  const zones = activeBots.reduce((acc: Record<string, number>, bot: any) => {
                     if (bot.currentZone) acc[bot.currentZone] = (acc[bot.currentZone] || 0) + 1;
                     return acc;
                   }, {});
-                  return Object.entries(zones)
-                    .sort(([,a], [,b]) => (b as number) - (a as number))
-                    .slice(0, 2)
-                    .map(([zone, count]) => `${zone}: ${count}`)
-                    .join(' • ');
+                  return Object.entries(zones).length > 0
+                    ? Object.entries(zones)
+                        .sort(([,a], [,b]) => (b as number) - (a as number))
+                        .slice(0, 2)
+                        .map(([zone, count]) => `${zone}: ${count}`)
+                        .join(' • ')
+                    : `${activeBots.length} bots active`;
                 }
                 return '';
               })()}

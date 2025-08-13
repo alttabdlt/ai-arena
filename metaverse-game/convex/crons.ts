@@ -4,6 +4,7 @@ import { internal } from './_generated/api';
 import { internalMutation } from './_generated/server';
 import { TableNames } from './_generated/dataModel';
 import { v } from 'convex/values';
+import { startEngine, kickEngine } from './aiTown/main';
 
 const crons = cronJobs();
 
@@ -30,6 +31,14 @@ crons.interval(
   internal.migrations.batchRegistration.scheduledBatchProcessor,
 );
 
+// Engine health check - ensure engine is running when there are pending registrations
+crons.interval(
+  'engine health check',
+  { seconds: 30 },
+  // @ts-ignore - TypeScript depth issue
+  internal.crons.ensureEngineRunning,
+);
+
 // Process idle XP for all active worlds every 60 seconds
 // Reduced frequency to avoid concurrency conflicts with agent operations
 crons.interval(
@@ -45,6 +54,56 @@ crons.daily(
   { hourUTC: 3, minuteUTC: 0 },
   // @ts-ignore - TypeScript depth issue
   internal.crons.cleanupGhostBotsDaily,
+);
+
+// Clean up stuck inputs every hour
+crons.interval(
+  'clear stuck inputs',
+  { seconds: 3600 }, // Every hour
+  // @ts-ignore - TypeScript depth issue
+  internal.cleanup.clearStuckInputs.clearStuckInputs,
+);
+
+// CRITICAL: Aggressive input cleanup every 30 minutes to prevent accumulation
+crons.interval(
+  'aggressive input cleanup',
+  { minutes: 30 },
+  // @ts-ignore - TypeScript depth issue
+  internal.cleanup.inputCleanup.aggressiveInputCleanup,
+  {} // Empty args object since all args are optional
+);
+
+// Clean activity logs every 2 hours (they accumulate fast)
+crons.interval(
+  'cleanup activity logs',
+  { hours: 2 },
+  // @ts-ignore - TypeScript depth issue
+  internal.crons.cleanupActivityLogs,
+);
+
+// Clean up old bot registrations daily at 4 AM UTC
+crons.daily(
+  'cleanup old registrations',
+  { hourUTC: 4, minuteUTC: 0 },
+  // @ts-ignore - TypeScript depth issue
+  internal.migrations.batchRegistration.cleanupOldRegistrations,
+);
+
+// Comprehensive document cleanup - runs every 6 hours
+crons.interval(
+  'comprehensive document cleanup',
+  { hours: 6 },
+  // @ts-ignore - TypeScript depth issue
+  internal.cleanup.documentCleanup.runFullCleanup,
+  {} // Empty args object
+);
+
+// System health monitoring - runs every 5 minutes
+crons.interval(
+  'system health check',
+  { minutes: 5 },
+  // @ts-ignore - TypeScript depth issue
+  internal.monitoring.systemHealth.checkAndAlert,
 );
 
 export default crons;
@@ -171,5 +230,91 @@ export const vacuumTable = internalMutation({
     } else {
       console.log(`Vacuumed ${soFar + results.page.length} entries from ${tableName}`);
     }
+  },
+});
+
+// Clean up old activity logs (they accumulate VERY fast)
+export const cleanupActivityLogs = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const cutoff = Date.now() - (4 * 60 * 60 * 1000); // Keep only last 4 hours
+    const batchSize = 500;
+    let totalDeleted = 0;
+    let hasMore = true;
+    
+    console.log('🧹 Starting activity log cleanup...');
+    
+    while (hasMore && totalDeleted < 10000) { // Cap at 10k per run
+      const oldLogs = await ctx.db
+        .query('activityLogs')
+        .filter(q => q.lt(q.field('timestamp'), cutoff))
+        .take(batchSize);
+      
+      for (const log of oldLogs) {
+        await ctx.db.delete(log._id);
+        totalDeleted++;
+      }
+      
+      hasMore = oldLogs.length === batchSize;
+    }
+    
+    console.log(`✅ Deleted ${totalDeleted} old activity logs`);
+    return { deleted: totalDeleted };
+  },
+});
+
+// Ensure engine is running when there are pending registrations
+export const ensureEngineRunning = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    // Check if there are any pending registrations
+    const pendingRegs = await ctx.db
+      .query('pendingBotRegistrations')
+      .withIndex('status', (q) => q.eq('status', 'pending'))
+      .first();
+    
+    if (!pendingRegs) {
+      return { message: 'No pending registrations' };
+    }
+    
+    // Get all world statuses
+    const worldStatuses = await ctx.db
+      .query('worldStatus')
+      .filter((q) => q.eq(q.field('isDefault'), true))
+      .collect();
+    
+    let enginesProcessed = 0;
+    const now = Date.now();
+    
+    for (const worldStatus of worldStatuses) {
+      // Check if world is running
+      if (worldStatus.status !== 'running') {
+        console.log(`Activating world ${worldStatus.worldId} due to pending registrations`);
+        await ctx.db.patch(worldStatus._id, { 
+          status: 'running',
+          lastViewed: now,
+        });
+      }
+      
+      // Check if engine needs to be started or kicked
+      const engine = await ctx.db.get(worldStatus.engineId);
+      if (engine) {
+        if (!engine.running) {
+          console.log(`Starting engine ${worldStatus.engineId} due to pending registrations`);
+          await startEngine(ctx, worldStatus.worldId);
+          enginesProcessed++;
+        } else {
+          // Check if engine is stalled (no activity for 2 minutes)
+          const engineTimeout = now - 120000;
+          if (engine.currentTime && engine.currentTime < engineTimeout) {
+            console.log(`Kicking stalled engine ${worldStatus.engineId}`);
+            await kickEngine(ctx, worldStatus.worldId);
+            enginesProcessed++;
+          }
+        }
+      }
+    }
+    
+    return { enginesProcessed };
   },
 });

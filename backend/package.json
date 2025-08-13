@@ -22,6 +22,10 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@ai-arena/shared-events": "file:../shared/events",
+    "@ai-arena/shared-logger": "file:../shared/logger",
+    "@ai-arena/shared-types": "file:../shared/types",
+    "@ai-arena/shared-utils": "file:../shared/utils",
     "@anthropic-ai/sdk": "^0.27.3",
     "@apollo/server": "^4.12.2",
     "@graphql-tools/schema": "^10.0.23",

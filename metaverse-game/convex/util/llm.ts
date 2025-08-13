@@ -700,7 +700,8 @@ export async function ollamaFetchEmbedding(text: string) {
       await tryPullOllama(config.embeddingModel, error);
       throw new Error(`Failed to fetch embeddings: ${resp.status}`);
     }
-    return (await resp.json()).embedding as number[];
+    const result = await resp.json() as { embedding: number[] };
+    return result.embedding;
   });
   return { embedding: result };
 }

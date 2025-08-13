@@ -25,11 +25,15 @@ export const getAllArenaAgents = httpAction(async (ctx, request) => {
 
 export const deleteOrphanedAgent = httpAction(async (ctx, request) => {
   try {
-    const body = await request.json();
+    const body = await request.json() as {
+      worldId: string;
+      agentId: string;
+      playerId: string;
+    };
     const { worldId, agentId, playerId } = body;
     
     await ctx.runMutation(internal.cleanup.orphanCleanup.deleteOrphanedAgent, {
-      worldId,
+      worldId: worldId as any,
       agentId,
       playerId,
       reason: 'Orphaned agent cleanup via HTTP'
@@ -56,7 +60,10 @@ export const deleteOrphanedAgent = httpAction(async (ctx, request) => {
 
 export const removePlayer = httpAction(async (ctx, request) => {
   try {
-    const body = await request.json();
+    const body = await request.json() as {
+      worldId: string;
+      playerId: string;
+    };
     const { worldId, playerId } = body;
     
     // Get the world to verify it exists
@@ -73,7 +80,7 @@ export const removePlayer = httpAction(async (ctx, request) => {
 
     // Send input to remove the player
     await ctx.runMutation(api.aiTown.main.sendInput, {
-      worldId,
+      worldId: worldId as any,
       name: 'leave',
       args: { playerId }
     });

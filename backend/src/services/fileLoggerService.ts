@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { promisify } from 'util';
-import { formatTimestamp } from '../utils/dateFormatter';
+import { formatTimestamp } from '@ai-arena/shared-utils';
 
 const writeFile = promisify(fs.writeFile);
 const mkdir = promisify(fs.mkdir);

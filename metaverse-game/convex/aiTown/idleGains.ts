@@ -322,6 +322,7 @@ export const getPlayerIdleStats = query({
       allocatedSkills: experience?.allocatedSkills || {},
       // Movement and energy
       stepsTaken: player?.stepsTaken || 0,
+      stepStreak: player?.stepStreak || 0,
       currentEnergy: player?.currentEnergy || 30,
       maxEnergy: player?.maxEnergy || 30,
       // Loot and activities
@@ -381,98 +382,5 @@ export const initializeBotExperience = internalMutation({
     
     console.log(`Initialized bot experience for ${playerId} at level 1`);
     return experienceId;
-  },
-});
-
-// Migration: Initialize experience for all existing bots
-export const initializeAllBotExperience = mutation({
-  args: {
-    worldId: v.id('worlds'),
-  },
-  handler: async (ctx, { worldId }) => {
-    // Get the world
-    const world = await ctx.db.get(worldId);
-    if (!world) {
-      throw new Error('World not found');
-    }
-    
-    // Get all agents in the world
-    const agents = world.agents || [];
-    let initialized = 0;
-    let skipped = 0;
-    
-    for (const agent of agents) {
-      if (!agent.aiArenaBotId || !agent.playerId) {
-        skipped++;
-        continue;
-      }
-      
-      // Check if experience already exists
-      const existing = await ctx.db
-        .query('botExperience')
-        .withIndex('player', q => q.eq('worldId', worldId).eq('playerId', agent.playerId))
-        .first();
-      
-      if (existing) {
-        skipped++;
-        continue;
-      }
-      
-      // Initialize experience for this bot
-      await ctx.db.insert('botExperience', {
-        worldId,
-        playerId: agent.playerId,
-        aiArenaBotId: agent.aiArenaBotId,
-        level: 1,
-        currentXP: 0,
-        totalXP: 0,
-        xpToNextLevel: 100,
-        combatXP: 0,
-        socialXP: 0,
-        criminalXP: 0,
-        gamblingXP: 0,
-        tradingXP: 0,
-        prestigeLevel: 0,
-        prestigeTokens: 0,
-        skillPoints: 0,
-        allocatedSkills: {},
-        lastXPGain: 0,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      });
-      
-      initialized++;
-    }
-    
-    console.log(`Migration complete: initialized ${initialized} bots, skipped ${skipped}`);
-    return { initialized, skipped, total: agents.length };
-  },
-});
-
-// Initialize experience for all worlds (run once)
-export const initializeAllWorldsExperience = mutation({
-  args: {},
-  handler: async (ctx) => {
-    // Get all worlds
-    const worldStatuses = await ctx.db
-      .query('worldStatus')
-      .collect();
-    
-    const results = [];
-    
-    for (const worldStatus of worldStatuses) {
-      try {
-        // @ts-ignore - TypeScript depth issue
-        const result = await ctx.runMutation(internal.aiTown.idleGains.initializeAllBotExperience, {
-          worldId: worldStatus.worldId,
-        });
-        results.push({ worldId: worldStatus.worldId, ...result });
-      } catch (error) {
-        console.error(`Failed to initialize experience for world ${worldStatus.worldId}:`, error);
-        results.push({ worldId: worldStatus.worldId, error: String(error) });
-      }
-    }
-    
-    return { worldsProcessed: worldStatuses.length, results };
   },
 });

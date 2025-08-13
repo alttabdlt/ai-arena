@@ -49,14 +49,46 @@ export const Character = ({
   const [spriteSheet, setSpriteSheet] = useState<Spritesheet>();
   useEffect(() => {
     const parseSheet = async () => {
-      const sheet = new Spritesheet(
-        BaseTexture.from(textureUrl, {
+      try {
+        const baseTexture = BaseTexture.from(textureUrl, {
           scaleMode: PIXI.SCALE_MODES.NEAREST,
-        }),
-        spritesheetData,
-      );
-      await sheet.parse();
-      setSpriteSheet(sheet);
+        });
+        
+        // Wait for texture to load to get actual dimensions
+        if (!baseTexture.valid) {
+          await new Promise((resolve) => {
+            baseTexture.once('loaded', resolve);
+          });
+        }
+        
+        // Validate sprite coordinates against texture dimensions
+        const textureWidth = baseTexture.width;
+        const textureHeight = baseTexture.height;
+        const validatedData = { ...spritesheetData };
+        
+        // Check and fix any frames that exceed texture bounds
+        if (validatedData.frames) {
+          Object.entries(validatedData.frames).forEach(([key, frame]: [string, any]) => {
+            if (frame.frame) {
+              // Ensure sprite doesn't exceed texture bounds
+              if (frame.frame.x + frame.frame.w > textureWidth) {
+                console.warn(`Sprite ${key} exceeds texture width, clamping from ${frame.frame.x} to ${textureWidth - frame.frame.w}`);
+                frame.frame.x = Math.max(0, textureWidth - frame.frame.w);
+              }
+              if (frame.frame.y + frame.frame.h > textureHeight) {
+                console.warn(`Sprite ${key} exceeds texture height, clamping from ${frame.frame.y} to ${textureHeight - frame.frame.h}`);
+                frame.frame.y = Math.max(0, textureHeight - frame.frame.h);
+              }
+            }
+          });
+        }
+        
+        const sheet = new Spritesheet(baseTexture, validatedData);
+        await sheet.parse();
+        setSpriteSheet(sheet);
+      } catch (error) {
+        console.error('Error loading sprite sheet:', error);
+      }
     };
     void parseSheet();
   }, []);

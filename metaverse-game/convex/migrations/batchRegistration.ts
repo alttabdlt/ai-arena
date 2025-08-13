@@ -48,14 +48,49 @@ export const processBatchRegistrations = internalMutation({
       throw new Error(`World status not found for world ${args.worldId}`);
     }
     
-    // Get the current highest input number for this engine
+    // Ensure world is running
+    if (worldStatus.status !== 'running') {
+      console.log(`Activating world ${args.worldId} for batch processing`);
+      await ctx.db.patch(worldStatus._id, { 
+        status: 'running',
+        lastViewed: Date.now(),
+      });
+    }
+    
+    // Get the engine to check its state and get the next input number
+    const engine = await ctx.db.get(worldStatus.engineId);
+    if (!engine) {
+      throw new Error(`Engine ${worldStatus.engineId} not found`);
+    }
+    
+    // CRITICAL: Ensure nextNumber is higher than processedInputNumber
+    // The engine only loads inputs where number > processedInputNumber
     const lastInput = await ctx.db
       .query('inputs')
       .withIndex('byInputNumber', (q) => q.eq('engineId', worldStatus.engineId))
       .order('desc')
       .first();
     
-    let nextNumber = lastInput ? lastInput.number + 1 : 0;
+    // Calculate the next number as the maximum of:
+    // 1. processedInputNumber + 1 (ensures input will be loaded)
+    // 2. nextInputNumber (maintains sequence)
+    // 3. last input number + 1 (fallback)
+    const processedNum = engine.processedInputNumber ?? -1;
+    const nextFromEngine = engine.nextInputNumber ?? 0;
+    const nextFromLastInput = lastInput ? lastInput.number + 1 : 0;
+    
+    let nextNumber = Math.max(
+      processedNum + 1,
+      nextFromEngine,
+      nextFromLastInput
+    );
+    
+    console.log(`Starting batch registration:`, {
+      processedInputNumber: processedNum,
+      engineNextInputNumber: nextFromEngine,
+      lastInputNumber: lastInput?.number ?? -1,
+      calculatedNextNumber: nextNumber
+    });
     const batchTimestamp = Date.now();
     const inputIds: Id<'inputs'>[] = [];
     
@@ -88,12 +123,55 @@ export const processBatchRegistrations = internalMutation({
       });
     }
     
-    console.log(`Created ${inputIds.length} inputs for batch processing`);
+    console.log(`Created ${inputIds.length} inputs for batch processing with numbers ${nextNumber - inputIds.length} to ${nextNumber - 1}`);
+    
+    // CRITICAL: Update the engine's nextInputNumber to maintain synchronization
+    await ctx.db.patch(worldStatus.engineId, { 
+      nextInputNumber: nextNumber 
+    });
+    console.log(`Updated engine nextInputNumber to ${nextNumber}`);
+    
+    // Now start or kick the engine AFTER inputs are created
+    const updatedEngine = await ctx.db.get(worldStatus.engineId);
+    if (updatedEngine) {
+      if (!updatedEngine.running) {
+        console.log(`Starting engine ${worldStatus.engineId} after creating inputs`);
+        await ctx.db.patch(worldStatus.engineId, { running: true });
+        
+        // Schedule the engine to run
+        await ctx.scheduler.runAfter(0, internal.aiTown.main.runStep, {
+          worldId: args.worldId,
+          generationNumber: updatedEngine.generationNumber,
+          maxDuration: 60000,
+        });
+      } else {
+        // Engine is already running, check if it's active
+        const now = Date.now();
+        const engineAge = updatedEngine.currentTime ? now - updatedEngine.currentTime : Infinity;
+        
+        // Only kick if engine seems stalled (no activity for > 5 seconds)
+        if (engineAge > 5000) {
+          console.log(`Engine ${worldStatus.engineId} seems stalled (${Math.round(engineAge / 1000)}s old), kicking to process new inputs`);
+          await ctx.scheduler.runAfter(0, internal.aiTown.main.runStep, {
+            worldId: args.worldId,
+            generationNumber: updatedEngine.generationNumber,
+            maxDuration: 10000, // Short duration just to process the new inputs
+          });
+        } else {
+          console.log(`Engine ${worldStatus.engineId} is already running actively (${Math.round(engineAge / 1000)}s old), inputs will be processed`);
+        }
+      }
+    }
     
     return {
       processed: pendingRegistrations.length,
       registrationIds,
       inputIds,
+      engineState: {
+        nextInputNumber: nextNumber,
+        processedInputNumber: updatedEngine?.processedInputNumber,
+        running: updatedEngine?.running,
+      }
     };
   },
 });
@@ -109,13 +187,34 @@ export const updateRegistrationStatuses = internalMutation({
       .collect();
     
     let updatedCount = 0;
+    const now = Date.now();
+    const STUCK_TIMEOUT = 10 * 60 * 1000; // 10 minutes
     
     for (const reg of processingRegistrations) {
+      // Check if registration is stuck (processing for more than 10 minutes)
+      if (reg.processedAt && (now - reg.processedAt) > STUCK_TIMEOUT) {
+        console.log(`Registration ${reg._id} stuck for ${Math.round((now - reg.processedAt) / 1000)}s, clearing...`);
+        await ctx.db.patch(reg._id, {
+          status: 'failed',
+          completedAt: now,
+          error: `Cleared as stuck after ${Math.round((now - reg.processedAt) / 1000)}s`,
+        });
+        updatedCount++;
+        continue;
+      }
       // Check if the input has been processed
       if (reg.result?.inputId) {
         const input = await ctx.db.get(reg.result.inputId);
         
-        if (input && input.returnValue) {
+        if (!input) {
+          console.error(`Input ${reg.result.inputId} not found for registration ${reg._id}`);
+          continue;
+        }
+        
+        // Log input status for debugging
+        console.log(`Checking input ${reg.result.inputId} for registration ${reg._id}: number=${input.number}, has returnValue=${!!input.returnValue}`);
+        
+        if (input.returnValue) {
           const returnValue = input.returnValue as any;
           
           if (returnValue.kind === 'ok' && returnValue.value) {
@@ -141,7 +240,7 @@ export const updateRegistrationStatuses = internalMutation({
             }
             
             updatedCount++;
-            console.log(`Registration ${reg._id} completed: agent=${returnValue.value.agentId}`);
+            console.log(`✅ Registration ${reg._id} completed: agent=${returnValue.value.agentId}, player=${returnValue.value.playerId}`);
           } else if (returnValue.kind === 'error') {
             // Error - mark as failed
             await ctx.db.patch(reg._id, {
@@ -151,8 +250,12 @@ export const updateRegistrationStatuses = internalMutation({
               retryCount: (reg.retryCount || 0) + 1,
             });
             updatedCount++;
-            console.log(`Registration ${reg._id} failed: ${returnValue.message}`);
+            console.log(`❌ Registration ${reg._id} failed: ${returnValue.message}`);
           }
+        } else {
+          // Input exists but hasn't been processed yet
+          const timeSinceProcessing = now - (reg.processedAt || 0);
+          console.log(`⏳ Input ${reg.result.inputId} for registration ${reg._id} still processing (${Math.round(timeSinceProcessing / 1000)}s)`);
         }
       }
     }

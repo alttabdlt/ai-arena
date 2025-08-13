@@ -30,11 +30,14 @@ export function useUserChannels() {
           fetchPolicy: 'network-only'
         });
         
-        if (result.data?.myBotChannels) {
+        if (result.data?.myBotChannels && result.data.myBotChannels.length > 0) {
           setChannels(result.data.myBotChannels);
-          console.log('✅ Loaded user-specific channels');
+          console.log('✅ Loaded user-specific channels:', result.data.myBotChannels);
+          setLoading(false);
+        } else {
+          // No user-specific channels or empty array, fall back to public channels
+          throw new Error('No user-specific channels, falling back to public');
         }
-        setLoading(false);
       } catch (err) {
         console.warn('Could not fetch user channels, trying public channels...', err);
         
@@ -42,13 +45,12 @@ export function useUserChannels() {
         try {
           const publicResult = await apolloClient.query({
             query: GET_ALL_CHANNELS,
-            variables: { status: 'ACTIVE' },
             fetchPolicy: 'network-only'
           });
           
           if (publicResult.data?.channels) {
             setChannels(publicResult.data.channels);
-            console.log('✅ Loaded public channels as fallback');
+            console.log('✅ Loaded public channels as fallback:', publicResult.data.channels);
           }
           setLoading(false);
         } catch (publicErr) {

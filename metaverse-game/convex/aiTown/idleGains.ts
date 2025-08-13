@@ -286,11 +286,26 @@ export const getPlayerIdleStats = query({
     playerId: v.string(),
   },
   handler: async (ctx, { worldId, playerId }) => {
-    // Get bot experience
-    const experience = await ctx.db
+    // Get bot experience - try player index first
+    let experience = await ctx.db
       .query('botExperience')
       .withIndex('player', q => q.eq('worldId', worldId).eq('playerId', playerId))
       .first();
+    
+    // If not found by playerId, try by aiArenaBotId
+    if (!experience) {
+      const agent = await ctx.db
+        .query('agentDescriptions')
+        .withIndex('worldId', q => q.eq('worldId', worldId).eq('agentId', playerId))
+        .first();
+      
+      if (agent?.aiArenaBotId) {
+        experience = await ctx.db
+          .query('botExperience')
+          .withIndex('aiArenaBotId', q => q.eq('worldId', worldId).eq('aiArenaBotId', agent.aiArenaBotId!))
+          .first();
+      }
+    }
     
     // Get player data
     const world = await ctx.db.get(worldId);

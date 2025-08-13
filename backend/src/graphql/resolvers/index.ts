@@ -408,7 +408,7 @@ export const resolvers = {
         const response = await axios.post(`${METAVERSE_BACKEND_URL}/graphql`, {
           query: `
             query GetChannel($name: String!) {
-              channel(name: $name) {
+              channelByName(name: $name) {
                 id
                 name
                 type
@@ -424,7 +424,7 @@ export const resolvers = {
           `,
           variables: { name }
         });
-        return response.data.data.channel;
+        return response.data.data.channelByName;
       } catch (error: any) {
         console.error('Failed to fetch channel from metaverse backend:', error.message);
         return null;
@@ -469,7 +469,7 @@ export const resolvers = {
                 `,
                 variables: { name }
               });
-              return response.data.data.channel;
+              return response.data.data.channelByName;
             } catch {
               return null;
             }
@@ -677,6 +677,58 @@ export const resolvers = {
       });
     },
 
+    updateBotExperience: async (_: any, args: {
+      botId: string;
+      level: number;
+      currentXP: number;
+      totalXP: number;
+      xpToNextLevel: number;
+      combatXP?: number;
+      socialXP?: number;
+      criminalXP?: number;
+      gamblingXP?: number;
+      tradingXP?: number;
+    }, ctx: Context) => {
+      // Find existing experience record
+      const existing = await ctx.prisma.botExperience.findUnique({
+        where: { botId: args.botId }
+      });
+      
+      // Update or create the experience record
+      const experience = await ctx.prisma.botExperience.upsert({
+        where: { botId: args.botId },
+        update: {
+          level: args.level,
+          currentXP: args.currentXP,
+          totalXP: args.totalXP,
+          xpToNextLevel: args.xpToNextLevel,
+          combatXP: args.combatXP ?? existing?.combatXP ?? 0,
+          socialXP: args.socialXP ?? existing?.socialXP ?? 0,
+          criminalXP: args.criminalXP ?? existing?.criminalXP ?? 0,
+          gamblingXP: args.gamblingXP ?? existing?.gamblingXP ?? 0,
+          tradingXP: args.tradingXP ?? existing?.tradingXP ?? 0,
+          lastXPGain: new Date()
+        },
+        create: {
+          botId: args.botId,
+          level: args.level,
+          currentXP: args.currentXP,
+          totalXP: args.totalXP,
+          xpToNextLevel: args.xpToNextLevel,
+          combatXP: args.combatXP ?? 0,
+          socialXP: args.socialXP ?? 0,
+          criminalXP: args.criminalXP ?? 0,
+          gamblingXP: args.gamblingXP ?? 0,
+          tradingXP: args.tradingXP ?? 0,
+          prestigeLevel: 0,
+          prestigeTokens: 0,
+          skillPoints: (args.level - 1) * 3, // 3 skill points per level
+          lastXPGain: new Date()
+        }
+      });
+      
+      return experience;
+    },
     deleteBot: async (_: any, { botId }: { botId: string }, ctx: Context) => {
       if (!ctx.user) {
         throw new Error('Not authenticated');
@@ -1729,6 +1781,35 @@ export const resolvers = {
       return ctx.prisma.botActivityScore.findUnique({
         where: { botId: bot.id },
       });
+    },
+    experience: async (bot: any, _: any, ctx: Context) => {
+      // Try to get existing experience record
+      let experience = await ctx.prisma.botExperience.findUnique({
+        where: { botId: bot.id }
+      });
+      
+      // If no experience record exists, create one with default values
+      if (!experience) {
+        experience = await ctx.prisma.botExperience.create({
+          data: {
+            botId: bot.id,
+            level: 1,
+            currentXP: 0,
+            totalXP: 0,
+            xpToNextLevel: 100,
+            combatXP: 0,
+            socialXP: 0,
+            criminalXP: 0,
+            gamblingXP: 0,
+            tradingXP: 0,
+            prestigeLevel: 0,
+            prestigeTokens: 0,
+            skillPoints: 0
+          }
+        });
+      }
+      
+      return experience;
     },
     lootboxRewards: async (bot: any, _: any, ctx: Context) => {
       if (bot.lootboxRewards) return bot.lootboxRewards;

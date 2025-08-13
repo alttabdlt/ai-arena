@@ -18,8 +18,8 @@ export const GET_MY_CHANNELS = gql`
 `;
 
 export const GET_ALL_CHANNELS = gql`
-  query GetAllChannels($type: ChannelType, $status: ChannelStatus) {
-    channels(type: $type, status: $status) {
+  query GetAllChannels {
+    channels(status: ACTIVE) {
       id
       name
       type

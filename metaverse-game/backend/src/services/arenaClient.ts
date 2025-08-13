@@ -173,6 +173,75 @@ export class ArenaClient {
   }
 
   /**
+   * Update bot experience from metaverse
+   */
+  async updateBotExperience(
+    botId: string, 
+    experience: {
+      level: number;
+      currentXP: number;
+      totalXP: number;
+      xpToNextLevel: number;
+      combatXP?: number;
+      socialXP?: number;
+      criminalXP?: number;
+      gamblingXP?: number;
+      tradingXP?: number;
+    }
+  ): Promise<boolean> {
+    try {
+      const mutation = `
+        mutation UpdateBotExperience(
+          $botId: String!
+          $level: Int!
+          $currentXP: Int!
+          $totalXP: Int!
+          $xpToNextLevel: Int!
+          $combatXP: Int
+          $socialXP: Int
+          $criminalXP: Int
+          $gamblingXP: Int
+          $tradingXP: Int
+        ) {
+          updateBotExperience(
+            botId: $botId
+            level: $level
+            currentXP: $currentXP
+            totalXP: $totalXP
+            xpToNextLevel: $xpToNextLevel
+            combatXP: $combatXP
+            socialXP: $socialXP
+            criminalXP: $criminalXP
+            gamblingXP: $gamblingXP
+            tradingXP: $tradingXP
+          ) {
+            id
+            level
+          }
+        }
+      `;
+
+      const response = await this.client.post('/graphql', {
+        query: mutation,
+        variables: {
+          botId,
+          ...experience
+        }
+      });
+
+      if (response.data.errors) {
+        throw new Error(response.data.errors[0].message);
+      }
+
+      logger.info(`Updated experience for bot ${botId} to level ${experience.level}`);
+      return true;
+    } catch (error) {
+      logger.error(`Failed to update experience for bot ${botId}:`, error);
+      return false;
+    }
+  }
+
+  /**
    * Report tournament result from metaverse
    */
   async reportTournamentResult(result: TournamentResult): Promise<boolean> {

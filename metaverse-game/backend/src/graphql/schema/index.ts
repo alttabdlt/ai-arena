@@ -23,6 +23,7 @@ const baseTypeDefs = gql`
 
   enum ChannelType {
     MAIN
+    TEST
     PRODUCTION
     STAGING
     DEVELOPMENT
@@ -107,6 +108,7 @@ const baseTypeDefs = gql`
     loadPercentage: Float!
     worldId: String
     region: String
+    description: String
     metadata: JSON
   }
 

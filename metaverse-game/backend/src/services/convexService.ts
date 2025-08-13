@@ -292,6 +292,31 @@ export class ConvexService {
     }
   }
 
+  // Get bot experience from metaverse
+  async getBotExperience(worldId: string, aiArenaBotId: string): Promise<any> {
+    try {
+      const response = await fetch(`${this.httpUrl}/api/bots/experience`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ worldId, aiArenaBotId }),
+      });
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          return null; // No experience record yet
+        }
+        throw new Error(`Failed to get bot experience: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Error getting bot experience:', error);
+      return null;
+    }
+  }
+
   // Get agent position from metaverse
   async getAgentPosition(worldId: string, agentId: string): Promise<{
     position: { x: number; y: number };

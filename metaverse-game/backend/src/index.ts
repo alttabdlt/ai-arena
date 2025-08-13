@@ -87,6 +87,7 @@ async function startServer() {
   // Create Apollo Server
   const apolloServer = new ApolloServer({
     schema,
+    introspection: true, // Enable introspection for debugging
     plugins: [
       ApolloServerPluginDrainHttpServer({ httpServer }),
       {
@@ -99,6 +100,10 @@ async function startServer() {
         },
       },
     ],
+    formatError: (err) => {
+      console.error('GraphQL Error:', err);
+      return err;
+    },
   });
 
   await apolloServer.start();
@@ -141,7 +146,7 @@ async function startServer() {
   });
 
   // Start server
-  httpServer.listen(PORT, () => {
+  httpServer.listen(PORT, async () => {
     console.log(chalk.green(`
 ╔════════════════════════════════════════════╗
 ║     AI Arena Metaverse Backend Started     ║
@@ -152,6 +157,14 @@ async function startServer() {
 ║  🏥 Health:     http://localhost:${PORT}/health  ║
 ╚════════════════════════════════════════════╝
     `));
+    
+    // Start the bot sync service after server is ready
+    try {
+      await botSyncService.start();
+      console.log(chalk.cyan('🤖 Bot sync service started successfully'));
+    } catch (error) {
+      console.error(chalk.red('Failed to start bot sync service:'), error);
+    }
   });
 
   // Graceful shutdown

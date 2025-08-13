@@ -6,7 +6,8 @@ import {
   handleBotStatsSync,
   handleGetBotPosition,
   handleLootboxSync,
-  handleBotDeletion
+  handleBotDeletion,
+  getBotExperience
 } from './aiTown/botHttp';
 import {
   getAllArenaAgents,
@@ -58,6 +59,12 @@ http.route({
   path: '/api/bots/delete',
   method: 'POST',
   handler: handleBotDeletion,
+});
+
+http.route({
+  path: '/api/bots/experience',
+  method: 'POST',
+  handler: getBotExperience,
 });
 
 // Orphan cleanup endpoints

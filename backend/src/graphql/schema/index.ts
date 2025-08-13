@@ -58,6 +58,9 @@ const baseTypeDefs = gql`
     equipment: [BotEquipment!]!
     house: BotHouse
     activityScore: BotActivityScore
+    
+    # Experience fields
+    experience: BotExperience
     lootboxRewards: [LootboxReward!]!
     robbingPower: Int!
     defenseLevel: Int!
@@ -75,6 +78,26 @@ const baseTypeDefs = gql`
     earnings: String!
     winRate: Float!
     avgFinishPosition: Float!
+  }
+  
+  type BotExperience {
+    id: ID!
+    botId: String!
+    level: Int!
+    currentXP: Int!
+    totalXP: Int!
+    xpToNextLevel: Int!
+    combatXP: Int!
+    socialXP: Int!
+    criminalXP: Int!
+    gamblingXP: Int!
+    tradingXP: Int!
+    prestigeLevel: Int!
+    prestigeTokens: Int!
+    skillPoints: Int!
+    lastXPGain: DateTime
+    createdAt: DateTime!
+    updatedAt: DateTime!
   }
   
   type DeploymentTransaction {
@@ -272,6 +295,20 @@ const baseTypeDefs = gql`
     deployBot(input: DeployBotInput!): Bot!
     toggleBotActive(botId: String!): Bot!
     deleteBot(botId: String!): DeleteBotResponse!
+    
+    # Experience mutations
+    updateBotExperience(
+      botId: String!
+      level: Int!
+      currentXP: Int!
+      totalXP: Int!
+      xpToNextLevel: Int!
+      combatXP: Int
+      socialXP: Int
+      criminalXP: Int
+      gamblingXP: Int
+      tradingXP: Int
+    ): BotExperience!
     
     # Queue mutations
     enterQueue(botId: String!, queueType: QueueType!): QueueEntry!

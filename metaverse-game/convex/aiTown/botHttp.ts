@@ -318,19 +318,58 @@ export const registerBot = mutation({
       }
     }
     
-    // Check if there's already a pending registration for this bot
-    const existingRegistration = await ctx.db
-      .query('pendingBotRegistrations')
-      .withIndex('aiArenaBotId', (q) => q.eq('aiArenaBotId', aiArenaBotId))
-      .first();
+    // Check if there's already a pending registration for this bot (unless forceNew is true)
+    const forceNew = (args as any).forceNew || false;
     
-    if (existingRegistration) {
-      console.log(`Found existing registration for bot ${aiArenaBotId}: ${existingRegistration._id}`);
-      return {
-        registrationId: existingRegistration._id,
-        status: existingRegistration.status,
-        message: 'Registration already exists'
-      };
+    if (!forceNew) {
+      const existingRegistration = await ctx.db
+        .query('pendingBotRegistrations')
+        .withIndex('aiArenaBotId', (q) => q.eq('aiArenaBotId', aiArenaBotId))
+        .first();
+      
+      if (existingRegistration) {
+        // Validate that the agent actually exists if registration is completed
+        if (existingRegistration.status === 'completed' && existingRegistration.result?.agentId) {
+          const agentIdParts = existingRegistration.result.agentId.split(':');
+          if (agentIdParts.length === 2) {
+            const agentDocId = agentIdParts[1];
+            const agent = await ctx.db.get(agentDocId as any);
+            
+            if (!agent) {
+              // Agent doesn't exist, delete this registration and continue with new one
+              console.log(`Found orphaned registration ${existingRegistration._id} - agent ${existingRegistration.result.agentId} doesn't exist, clearing...`);
+              await ctx.db.delete(existingRegistration._id);
+            } else {
+              // Agent exists, return the existing registration
+              console.log(`Found existing registration for bot ${aiArenaBotId}: ${existingRegistration._id}`);
+              return {
+                registrationId: existingRegistration._id,
+                status: existingRegistration.status,
+                message: 'Registration already exists'
+              };
+            }
+          }
+        } else {
+          // Registration not completed yet, return it
+          console.log(`Found pending registration for bot ${aiArenaBotId}: ${existingRegistration._id}`);
+          return {
+            registrationId: existingRegistration._id,
+            status: existingRegistration.status,
+            message: 'Registration already exists'
+          };
+        }
+      }
+    } else {
+      // Force new registration - delete any existing one
+      const existingRegistration = await ctx.db
+        .query('pendingBotRegistrations')
+        .withIndex('aiArenaBotId', (q) => q.eq('aiArenaBotId', aiArenaBotId))
+        .first();
+      
+      if (existingRegistration) {
+        console.log(`Force new registration - deleting existing registration ${existingRegistration._id}`);
+        await ctx.db.delete(existingRegistration._id);
+      }
     }
     
     // Get personality from identity (it should be mentioned there)
@@ -876,6 +915,55 @@ export const handleBotDeletion = httpAction(async (ctx, request) => {
   } catch (error: any) {
     console.error('Bot deletion error:', error);
     return new Response(JSON.stringify({ error: error.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+});
+
+// Get bot experience data
+export const getBotExperience = httpAction(async (ctx, request) => {
+  const body = await request.json() as {
+    worldId: string;
+    aiArenaBotId: string;
+  };
+  
+  const { worldId, aiArenaBotId } = body;
+  
+  if (!worldId || !aiArenaBotId) {
+    return new Response(JSON.stringify({ error: 'Missing required fields: worldId, aiArenaBotId' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  
+  try {
+    // Convert worldId string to Convex ID
+    const worldIdDoc = worldId as any;
+    
+    // Get experience data
+    const experience = await ctx.runQuery(api.aiTown.experience.getBotExperience, {
+      worldId: worldIdDoc,
+      aiArenaBotId,
+    });
+    
+    if (!experience) {
+      return new Response(JSON.stringify({ error: 'No experience record found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    
+    return new Response(JSON.stringify(experience), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error: any) {
+    console.error('Error getting bot experience:', error);
+    return new Response(JSON.stringify({ 
+      error: 'Failed to get bot experience',
+      details: error.message 
+    }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });

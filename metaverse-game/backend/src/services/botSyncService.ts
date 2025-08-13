@@ -3,12 +3,14 @@ import { ConvexService } from './convexService';
 import { MetaverseEventsService } from './metaverseEventsService';
 import { WorldDiscoveryService } from './worldDiscoveryService';
 import { ChannelService } from './channelService';
+import { ArenaClient } from './arenaClient';
 
 const prisma = new PrismaClient();
 const convexService = ConvexService.getInstance();
 const metaverseEventsService = MetaverseEventsService.getInstance();
 const worldDiscoveryService = WorldDiscoveryService.getInstance();
 const channelService = ChannelService.getInstance();
+const arenaClient = ArenaClient.getInstance();
 
 export class BotSyncService {
   private static instance: BotSyncService;
@@ -340,6 +342,34 @@ export class BotSyncService {
               );
 
               console.log(`📍 Updated position for bot ${sync.bot.name}: Zone ${agentData.zone} (${agentData.position.x}, ${agentData.position.y})`);
+            }
+
+            // Sync experience data
+            try {
+              const experience = await convexService.getBotExperience(
+                sync.convexWorldId,
+                sync.botId
+              );
+
+              if (experience) {
+                const success = await arenaClient.updateBotExperience(sync.botId, {
+                  level: experience.level,
+                  currentXP: experience.currentXP,
+                  totalXP: experience.totalXP,
+                  xpToNextLevel: experience.xpToNextLevel,
+                  combatXP: experience.combatXP,
+                  socialXP: experience.socialXP,
+                  criminalXP: experience.criminalXP,
+                  gamblingXP: experience.gamblingXP,
+                  tradingXP: experience.tradingXP,
+                });
+
+                if (success) {
+                  console.log(`✅ Synced experience for bot ${sync.bot.name}: Level ${experience.level}`);
+                }
+              }
+            } catch (error) {
+              console.error(`Failed to sync experience for bot ${sync.botId}:`, error);
             }
           }
         } catch (error: any) {

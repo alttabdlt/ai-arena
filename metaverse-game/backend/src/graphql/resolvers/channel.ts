@@ -39,7 +39,35 @@ export const channelResolvers = {
       }
     },
 
-    channel: async (_: any, args: { name: string }) => {
+    channel: async (_: any, args: { id: string }) => {
+      try {
+        const channel = await prisma.channelMetadata.findUnique({
+          where: { id: args.id }
+        });
+
+        if (!channel) {
+          return null;
+        }
+
+        return {
+          id: channel.id,
+          name: channel.channel,
+          type: channel.channelType,
+          status: channel.status,
+          currentBots: channel.currentBots,
+          maxBots: channel.maxBots,
+          loadPercentage: (channel.currentBots / channel.maxBots) * 100,
+          worldId: channel.worldId,
+          region: channel.region,
+          description: (channel.metadata as any)?.description || null
+        };
+      } catch (error: any) {
+        console.error('Error fetching channel:', error);
+        throw new GraphQLError('Failed to fetch channel');
+      }
+    },
+
+    channelByName: async (_: any, args: { name: string }) => {
       try {
         const channel = await prisma.channelMetadata.findFirst({
           where: { channel: args.name }
@@ -62,8 +90,8 @@ export const channelResolvers = {
           description: (channel.metadata as any)?.description || null
         };
       } catch (error: any) {
-        console.error('Error fetching channel:', error);
-        throw new GraphQLError('Failed to fetch channel');
+        console.error('Error fetching channelByName:', error);
+        throw new GraphQLError('Failed to fetch channel by name');
       }
     },
 

@@ -372,4 +372,35 @@ router.post('/world/heartbeat', async (req, res) => {
   }
 });
 
+// Verify if an agent exists in Convex
+router.post('/agent/verify', async (req, res) => {
+  try {
+    const { worldId, agentId } = req.body;
+    
+    if (!worldId || !agentId) {
+      return res.status(400).json({ 
+        error: 'Missing required fields: worldId and agentId' 
+      });
+    }
+    
+    // Get Convex service
+    const convexService = ConvexService.getInstance();
+    
+    // Check if the agent exists by getting its position
+    const agentData = await convexService.getAgentPosition(worldId, agentId);
+    
+    res.json({ 
+      exists: agentData !== null,
+      agentId,
+      worldId
+    });
+  } catch (error) {
+    logger.error('Error verifying agent:', error);
+    res.status(500).json({ 
+      error: 'Failed to verify agent',
+      exists: false 
+    });
+  }
+});
+
 export default router;

@@ -3,9 +3,10 @@ import { gql } from 'graphql-tag';
 export const metaverseSyncTypeDefs = gql`
   enum SyncStatus {
     PENDING
-    IN_PROGRESS
+    SYNCING
     SYNCED
     FAILED
+    DISABLED
   }
 
   type BotSync {

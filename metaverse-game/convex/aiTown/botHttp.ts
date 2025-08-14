@@ -295,25 +295,41 @@ export const registerBot = mutation({
       if (existingAgentRef) {
         console.log(`Found existing agent for AI Arena bot ${aiArenaBotId}: ${existingAgentRef.id}`);
         
-        // Verify the agent actually exists
+        // Verify the agent actually exists (check if there's a corresponding player)
         const agentIdParts = existingAgentRef.id.split(':');
-        const agentExists = agentIdParts.length === 2 && agentIdParts[0] === 'a';
+        let agentExists = false;
         
-        if (agentExists) {
-          // Check if there's a corresponding player
-          const existingPlayer = worldData.players?.find(
+        // Check if there's a player with the ID from the agent reference
+        if (agentIdParts.length === 2 && agentIdParts[0] === 'a') {
+          // In this schema, agents have corresponding players
+          const correspondingPlayer = worldData.players?.find(
             (player: any) => player.id === existingAgentRef.playerId
           );
           
-          if (existingPlayer) {
-            // Both agent and player exist, can safely return
-            console.log(`Verified existing agent ${existingAgentRef.id} for bot ${aiArenaBotId}`);
-            return { 
-              agentId: existingAgentRef.id, 
-              playerId: existingPlayer.id,
-              message: 'Agent already exists, returning existing IDs'
-            };
+          if (correspondingPlayer) {
+            agentExists = true;
+          } else {
+            console.log(`Agent ${existingAgentRef.id} has no corresponding player, will create new one`);
+            agentExists = false;
           }
+        }
+        
+        if (agentExists) {
+          // Agent and player exist, can safely return
+          console.log(`Verified existing agent ${existingAgentRef.id} for bot ${aiArenaBotId}`);
+          return { 
+            agentId: existingAgentRef.id, 
+            playerId: existingAgentRef.playerId,
+            message: 'Agent already exists, returning existing IDs'
+          };
+        } else {
+          // Agent doesn't exist in database, remove stale reference from world
+          console.log(`Removing stale agent reference ${existingAgentRef.id} from world`);
+          const updatedAgents = worldData.agents.filter(
+            (agent: any) => agent.id !== existingAgentRef.id
+          );
+          await ctx.db.patch(worldId, { agents: updatedAgents });
+          // Continue to create a new agent
         }
       }
     }
@@ -451,54 +467,52 @@ export const createBotAgent = internalMutation({
       if (existingAgentRef) {
         console.log(`Found agent reference for AI Arena bot ${aiArenaBotId}: ${existingAgentRef.id}`);
         
-        // Verify the agent actually exists in the database
-        // Parse the agent ID to query the agents table
-        const agentIdParts = existingAgentRef.id.split(':');
-        const agentExists = agentIdParts.length === 2 && agentIdParts[0] === 'a';
+        // Verify the agent actually exists by checking for corresponding player
+        // This is the ONLY reliable way to know if an agent is valid
+        const existingPlayer = worldData.players?.find(
+          (player: any) => player.id === existingAgentRef.playerId
+        );
         
-        if (agentExists) {
-          // Check if there's a corresponding player
-          const existingPlayer = worldData.players?.find(
-            (player: any) => player.id === existingAgentRef.playerId
-          );
+        if (existingPlayer) {
+          // Player exists, so agent is valid
+          console.log(`✅ Verified existing agent ${existingAgentRef.id} with player ${existingPlayer.id} for bot ${aiArenaBotId}`);
           
-          if (existingPlayer) {
-            // Both agent and player exist, can safely return
-            console.log(`Verified existing agent ${existingAgentRef.id} for bot ${aiArenaBotId}`);
+          // Double-check the agent ID format is valid
+          const agentIdParts = existingAgentRef.id.split(':');
+          if (agentIdParts.length === 2 && agentIdParts[0] === 'a') {
             return { 
               agentId: existingAgentRef.id, 
               playerId: existingPlayer.id,
-              message: 'Agent already exists, returning existing IDs'
+              message: 'Agent already exists and is valid, returning existing IDs'
             };
           } else {
-            console.log(`Agent ${existingAgentRef.id} exists but player ${existingAgentRef.playerId} not found - will clean up`);
+            console.warn(`⚠️ Agent ${existingAgentRef.id} has invalid format, will recreate`);
           }
         }
         
-        // Agent reference is stale - remove it from the world data
-        console.log(`Removing stale agent reference ${existingAgentRef.id} for bot ${aiArenaBotId}`);
-        const agentIndex = worldData.agents.indexOf(existingAgentRef);
-        if (agentIndex !== -1) {
-          worldData.agents.splice(agentIndex, 1);
-          
-          // Also remove the player if it exists
-          if (existingAgentRef.playerId && worldData.players) {
-            const playerIndex = worldData.players.findIndex(
-              (p: any) => p.id === existingAgentRef.playerId
-            );
-            if (playerIndex !== -1) {
-              worldData.players.splice(playerIndex, 1);
-            }
-          }
-          
-          // Update the world to remove stale references
-          await ctx.db.patch(worldId, {
-            agents: worldData.agents,
-            players: worldData.players,
-          });
-          
-          console.log(`Cleaned up stale references for bot ${aiArenaBotId}, proceeding with new registration`);
+        // No corresponding player found - agent reference is definitely stale
+        console.log(`❌ Agent ${existingAgentRef.id} has no corresponding player - removing stale reference`);
+        
+        // Remove stale agent reference from world
+        const updatedAgents = worldData.agents.filter(
+          (agent: any) => agent.id !== existingAgentRef.id
+        );
+        
+        // Also remove orphaned player if it somehow exists without being found above
+        let updatedPlayers = worldData.players || [];
+        if (existingAgentRef.playerId) {
+          updatedPlayers = updatedPlayers.filter(
+            (p: any) => p.id !== existingAgentRef.playerId
+          );
         }
+        
+        // Update the world to remove all stale references
+        await ctx.db.patch(worldId, {
+          agents: updatedAgents,
+          players: updatedPlayers,
+        });
+        
+        console.log(`✅ Cleaned up stale agent ${existingAgentRef.id} for bot ${aiArenaBotId}, proceeding with new registration`);
       }
     }
     

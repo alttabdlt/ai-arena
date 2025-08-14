@@ -83,9 +83,24 @@ export class BotSyncService {
     // Check for position updates from metaverse
     await this.checkMetaverseUpdates();
 
-    // Clean up orphaned metaverse bots (every 3rd run)
-    if (Math.random() < 0.33) {
-      await this.cleanupOrphanedMetaverseBots();
+    // Clean up orphaned metaverse bots (every 10th run instead of every 3rd)
+    // Also check if we're not in the middle of deployments
+    if (Math.random() < 0.10) { // Reduced from 33% to 10% chance
+      // Check if any bots were deployed in the last 10 minutes
+      const recentDeployments = await prisma.botSync.count({
+        where: {
+          createdAt: {
+            gte: new Date(Date.now() - 10 * 60 * 1000) // 10 minutes ago
+          }
+        }
+      });
+      
+      if (recentDeployments === 0) {
+        console.log('🧹 No recent deployments, safe to run cleanup');
+        await this.cleanupOrphanedMetaverseBots();
+      } else {
+        console.log(`⏳ Skipping cleanup due to ${recentDeployments} recent deployments`);
+      }
     }
 
     // Clean up failed syncs periodically (every 5th run)
@@ -209,16 +224,32 @@ export class BotSyncService {
         );
         
         if (agentExists === null) {
-          console.warn(`⚠️ Agent ${bot.botSync.convexAgentId} not found, skipping stats sync for bot ${bot.id}`);
+          console.warn(`⚠️ Agent ${bot.botSync.convexAgentId} not found, clearing stale ID for bot ${bot.id}`);
+          
+          // Clear the stale agent ID from the main Bot table
+          await prisma.bot.update({
+            where: { id: bot.id },
+            data: {
+              metaverseAgentId: null,
+              currentZone: null,
+              metaversePosition: Prisma.JsonNull,
+            }
+          });
+          
+          // Reset the sync record to trigger redeployment
           await prisma.botSync.update({
             where: { id: bot.botSync.id },
             data: {
-              syncStatus: 'FAILED',
-              syncErrors: JSON.stringify(['Agent not found in metaverse']),
+              syncStatus: 'PENDING',
+              syncErrors: JSON.stringify(['Agent not found - cleared for redeployment']),
               convexAgentId: null,
               convexPlayerId: null,
+              statsSynced: false,
+              retryCount: 0,
             }
           });
+          
+          console.log(`✅ Cleared stale agent ID and reset sync for bot ${bot.id} - will redeploy on next sync`);
           return;
         }
         
@@ -281,24 +312,72 @@ export class BotSyncService {
 
         try {
           // Get agent data from Convex
-          const agentData = await convexService.getAgentPosition(
+          let agentData = await convexService.getAgentPosition(
             sync.convexWorldId,
             sync.convexAgentId
           );
 
-          // If agent doesn't exist, mark sync as failed
+          // If agent doesn't exist, retry before marking as failed
           if (agentData === null) {
-            console.warn(`⚠️ Agent ${sync.convexAgentId} not found for bot ${sync.botId}`);
-            await prisma.botSync.update({
-              where: { id: sync.id },
-              data: {
-                syncStatus: 'FAILED',
-                syncErrors: JSON.stringify(['Agent not found in metaverse']),
-                convexAgentId: null,
-                convexPlayerId: null,
+            console.warn(`⚠️ Agent ${sync.convexAgentId} not found for bot ${sync.botId}, retrying...`);
+            
+            // Retry up to 3 times with exponential backoff
+            let retryCount = 0;
+            let retryDelay = 1000; // Start with 1 second
+            
+            while (retryCount < 3 && agentData === null) {
+              await new Promise(resolve => setTimeout(resolve, retryDelay));
+              
+              agentData = await convexService.getAgentPosition(
+                sync.convexWorldId,
+                sync.convexAgentId
+              );
+              
+              if (agentData === null) {
+                retryCount++;
+                retryDelay *= 2; // Exponential backoff
+                console.log(`🔄 Retry ${retryCount}/3 for agent ${sync.convexAgentId}`);
               }
-            });
-            continue;
+            }
+            
+            // If still not found after retries, check if bot was recently deployed
+            if (agentData === null) {
+              const timeSinceSync = Date.now() - new Date(sync.lastSyncedAt || sync.createdAt).getTime();
+              
+              // If sync is less than 5 minutes old, skip cleanup (might still be deploying)
+              if (timeSinceSync < 5 * 60 * 1000) {
+                console.log(`⏳ Skipping cleanup for recently deployed bot ${sync.botId} (${Math.floor(timeSinceSync / 1000)}s old)`);
+                continue;
+              }
+              
+              console.error(`❌ Agent ${sync.convexAgentId} definitively not found for bot ${sync.botId} after retries`);
+              
+              // Clear the stale agent ID from the main Bot table
+              await prisma.bot.update({
+                where: { id: sync.botId },
+                data: {
+                  metaverseAgentId: null,
+                  currentZone: null,
+                  metaversePosition: Prisma.JsonNull,
+                }
+              });
+              
+              // Reset sync to PENDING for redeployment
+              await prisma.botSync.update({
+                where: { id: sync.id },
+                data: {
+                  syncStatus: 'PENDING',
+                  syncErrors: JSON.stringify(['Agent not found after retries - cleared for redeployment']),
+                  convexAgentId: null,
+                  convexPlayerId: null,
+                  statsSynced: false,
+                  retryCount: 0,
+                }
+              });
+              
+              console.log(`✅ Cleared stale agent ID for bot ${sync.botId} - will redeploy on next sync`);
+              continue;
+            }
           }
 
           if (agentData && agentData.position) {
@@ -566,6 +645,29 @@ export class BotSyncService {
         });
 
         if (result && result.agentId) {
+          // SAFEGUARD: Verify the agent actually exists before saving the ID
+          console.log(`🔍 Verifying agent ${result.agentId} exists before saving...`);
+          const agentExists = await convexService.getAgentPosition(worldId, result.agentId);
+          
+          if (agentExists === null) {
+            console.error(`❌ Agent ${result.agentId} was created but doesn't exist! Not saving stale ID.`);
+            // Mark as failed and retry later
+            await prisma.botSync.update({
+              where: { id: botSync.id },
+              data: {
+                syncStatus: 'FAILED',
+                syncErrors: JSON.stringify([`Agent ${result.agentId} created but not found`]),
+                convexAgentId: null,
+                convexPlayerId: null
+              }
+            });
+            deployed--;
+            failed++;
+            continue;
+          }
+          
+          console.log(`✅ Agent ${result.agentId} verified to exist`);
+          
           // Update bot with metaverse data and character
           await prisma.bot.update({
             where: { id: bot.id },
@@ -662,11 +764,17 @@ export class BotSyncService {
       console.log('🧹 Cleaning up failed syncs...');
       
       // Find syncs that failed due to invalid world IDs
+      // But exclude recently created syncs that might still be deploying
+      const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+      
       const invalidSyncs = await prisma.botSync.findMany({
         where: {
           OR: [
             { 
-              syncStatus: 'FAILED'
+              syncStatus: 'FAILED',
+              createdAt: {
+                lt: tenMinutesAgo // Only clean up if older than 10 minutes
+              }
             },
             {
               convexWorldId: 'm17dkz0psv5e7b812sjjxwpwgd7n374s' // Known invalid ID

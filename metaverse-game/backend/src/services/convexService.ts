@@ -347,9 +347,22 @@ export class ConvexService {
           worldDiscoveryService.clearCache('main');
         }
         
+        // Distinguish between different error types
         if (response.status === 404) {
-          return null; // Agent not found
+          // Check if it's an agent not found vs other 404s
+          if (errorText.includes('Agent not found') || errorText.includes('Player not found')) {
+            console.log(`🔍 Agent ${agentId} not found in world ${worldId}`);
+            return null; // Agent definitively doesn't exist
+          }
+          return null; // Other 404 errors
         }
+        
+        // For temporary errors (500, 502, 503, 504), we should retry at a higher level
+        if (response.status >= 500) {
+          console.warn(`⚠️ Temporary server error getting agent position: ${response.status} ${response.statusText}`);
+          throw new Error(`Temporary server error: ${response.statusText}`);
+        }
+        
         throw new Error(`Failed to get agent position: ${response.statusText}`);
       }
 

@@ -453,7 +453,7 @@ export const resolvers = {
               const response = await axios.post(`${METAVERSE_BACKEND_URL}/graphql`, {
                 query: `
                   query GetChannel($name: String!) {
-                    channel(name: $name) {
+                    channelByName(name: $name) {
                       id
                       name
                       type

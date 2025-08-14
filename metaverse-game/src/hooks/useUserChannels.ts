@@ -32,7 +32,7 @@ export function useUserChannels() {
         
         if (result.data?.myBotChannels && result.data.myBotChannels.length > 0) {
           setChannels(result.data.myBotChannels);
-          console.log('✅ Loaded user-specific channels:', result.data.myBotChannels);
+          console.log('✅ Loaded user-specific channels');
           setLoading(false);
         } else {
           // No user-specific channels or empty array, fall back to public channels
@@ -50,7 +50,7 @@ export function useUserChannels() {
           
           if (publicResult.data?.channels) {
             setChannels(publicResult.data.channels);
-            console.log('✅ Loaded public channels as fallback:', publicResult.data.channels);
+            console.log('✅ Loaded public channels as fallback, count:', publicResult.data.channels.length);
           }
           setLoading(false);
         } catch (publicErr) {

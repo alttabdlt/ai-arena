@@ -19,7 +19,7 @@ export const GET_CHANNELS = gql`
 
 export const GET_CHANNEL = gql`
   query GetChannel($name: String!) {
-    channel(name: $name) {
+    channelByName(name: $name) {
       id
       name
       type

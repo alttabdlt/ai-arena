@@ -42,21 +42,23 @@ export default function BotSelector({ selectedBotId, onBotSelect, className = ''
       const newSelectedBot = bots.find(bot => bot.id === selectedBotId) || bots[0];
       if (newSelectedBot && newSelectedBot.id !== selectedBot?.id) {
         setSelectedBot(newSelectedBot);
+        // Only call onBotSelect for initial selection or when selectedBotId prop changes
+        if (!selectedBot && newSelectedBot) {
+          onBotSelect(newSelectedBot);
+        }
       }
     } else {
       setSelectedBot(null);
     }
   }, [bots, selectedBotId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    if (selectedBot && selectedBot.id !== selectedBotId) {
-      onBotSelect(selectedBot);
-    }
-  }, [selectedBot, selectedBotId, onBotSelect]);
+  // Removed problematic useEffect that was causing infinite loop
+  // onBotSelect should only be called from user interactions
 
   const handleBotSelect = (bot: BotData) => {
     setSelectedBot(bot);
     setIsOpen(false);
+    onBotSelect(bot);
   };
 
   const getPersonalityIcon = (personality?: string) => {

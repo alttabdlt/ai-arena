@@ -45,6 +45,7 @@ import type * as aiTown_relationshipService from "../aiTown/relationshipService.
 import type * as aiTown_world from "../aiTown/world.js";
 import type * as aiTown_worldMap from "../aiTown/worldMap.js";
 import type * as aiTown_zoneConfig from "../aiTown/zoneConfig.js";
+import type * as cleanup_cleanStaleAgents from "../cleanup/cleanStaleAgents.js";
 import type * as cleanup_clearStuckInputs from "../cleanup/clearStuckInputs.js";
 import type * as cleanup_documentCleanup from "../cleanup/documentCleanup.js";
 import type * as cleanup_emergencyCleanup from "../cleanup/emergencyCleanup.js";
@@ -121,6 +122,7 @@ declare const fullApi: ApiFromModules<{
   "aiTown/world": typeof aiTown_world;
   "aiTown/worldMap": typeof aiTown_worldMap;
   "aiTown/zoneConfig": typeof aiTown_zoneConfig;
+  "cleanup/cleanStaleAgents": typeof cleanup_cleanStaleAgents;
   "cleanup/clearStuckInputs": typeof cleanup_clearStuckInputs;
   "cleanup/documentCleanup": typeof cleanup_documentCleanup;
   "cleanup/emergencyCleanup": typeof cleanup_emergencyCleanup;

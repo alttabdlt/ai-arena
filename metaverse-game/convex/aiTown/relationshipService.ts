@@ -300,56 +300,8 @@ export const updateRelationship = internalMutation({
 });
 
 // Update global reputation
-export const updateReputation = internalMutation({
-  args: {
-    worldId: v.id('worlds'),
-    playerId: playerId,
-    changes: v.object({
-      globalRespect: v.optional(v.number()),
-      dangerLevel: v.optional(v.number()),
-      reliability: v.optional(v.number()),
-      robberyCount: v.optional(v.number()),
-      combatWins: v.optional(v.number()),
-      combatLosses: v.optional(v.number()),
-      successfulTrades: v.optional(v.number()),
-    }),
-  },
-  handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query('reputations')
-      .withIndex('player', q => 
-        q.eq('worldId', args.worldId)
-         .eq('playerId', args.playerId)
-      )
-      .first();
-    
-    if (existing) {
-      await ctx.db.patch(existing._id, {
-        globalRespect: existing.globalRespect + (args.changes.globalRespect || 0),
-        dangerLevel: Math.max(0, existing.dangerLevel + (args.changes.dangerLevel || 0)),
-        reliability: existing.reliability + (args.changes.reliability || 0),
-        robberyCount: existing.robberyCount + (args.changes.robberyCount || 0),
-        combatWins: existing.combatWins + (args.changes.combatWins || 0),
-        combatLosses: existing.combatLosses + (args.changes.combatLosses || 0),
-        successfulTrades: existing.successfulTrades + (args.changes.successfulTrades || 0),
-        lastUpdated: Date.now(),
-      });
-    } else {
-      await ctx.db.insert('reputations', {
-        worldId: args.worldId,
-        playerId: args.playerId,
-        globalRespect: args.changes.globalRespect || 0,
-        dangerLevel: Math.max(0, args.changes.dangerLevel || 0),
-        reliability: args.changes.reliability || 0,
-        robberyCount: args.changes.robberyCount || 0,
-        combatWins: args.changes.combatWins || 0,
-        combatLosses: args.changes.combatLosses || 0,
-        successfulTrades: args.changes.successfulTrades || 0,
-        lastUpdated: Date.now(),
-      });
-    }
-  },
-});
+// updateReputation function removed - reputation table no longer exists
+// In the simplified idle game, relationship scores handle reputation dynamics
 
 // Process interaction between two players
 export const processInteraction = internalMutation({
@@ -411,17 +363,7 @@ export const processInteraction = internalMutation({
         personality: args.target.personality,
       });
       
-      // Update reputations
-      if (robberChanges.globalRespect) {
-        await ctx.runMutation(internal.aiTown.relationshipService.updateReputation, {
-          worldId: args.worldId,
-          playerId: args.actor.playerId,
-          changes: {
-            globalRespect: robberChanges.globalRespect,
-            robberyCount: robberChanges.robberyCount,
-          },
-        });
-      }
+      // Reputation updates removed - handled by relationship scores
       
     } else if (args.type === 'COMBAT_WIN') {
       const winnerChanges = (effects as any).winner;
@@ -445,22 +387,7 @@ export const processInteraction = internalMutation({
         personality: args.target.personality,
       });
       
-      // Update reputations
-      await ctx.runMutation(internal.aiTown.relationshipService.updateReputation, {
-        worldId: args.worldId,
-        playerId: args.actor.playerId,
-        changes: {
-          globalRespect: winnerChanges.globalRespect,
-          combatWins: winnerChanges.combatWins,
-          dangerLevel: winnerChanges.dangerLevel,
-        },
-      });
-      
-      await ctx.runMutation(internal.aiTown.relationshipService.updateReputation, {
-        worldId: args.worldId,
-        playerId: args.target.playerId,
-        changes: { combatLosses: 1 },
-      });
+      // Reputation updates removed - handled by relationship scores
       
     } else if (args.type === 'SUCCESSFUL_TRADE' || args.type === 'CONVERSATION') {
       const changes = (effects as any).both;
@@ -482,26 +409,7 @@ export const processInteraction = internalMutation({
         personality: args.target.personality,
       });
       
-      // Update reputations for trades
-      if (args.type === 'SUCCESSFUL_TRADE') {
-        await ctx.runMutation(internal.aiTown.relationshipService.updateReputation, {
-          worldId: args.worldId,
-          playerId: args.actor.playerId,
-          changes: {
-            successfulTrades: 1,
-            reliability: changes.reliability || 0,
-          },
-        });
-        
-        await ctx.runMutation(internal.aiTown.relationshipService.updateReputation, {
-          worldId: args.worldId,
-          playerId: args.target.playerId,
-          changes: {
-            successfulTrades: 1,
-            reliability: changes.reliability || 0,
-          },
-        });
-      }
+      // Trade reputation updates removed - handled by relationship scores
     }
   },
 });

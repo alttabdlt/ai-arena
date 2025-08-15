@@ -46,17 +46,13 @@ export const MAX_CONVERSATION_MESSAGES = 4;
 // once we can await on an input being processed.
 export const INPUT_DELAY = 1000;
 
-// How many memories to get from the agent's memory.
-// This is over-fetched by 10x so we can prioritize memories by more than relevance.
-export const NUM_MEMORIES_TO_SEARCH = 3;
-
 // Wait for at least one second before sending another message (reduced for dynamic gameplay).
 export const MESSAGE_COOLDOWN = 1000;
 
 // Don't run a turn of the agent more than once a second.
 export const AGENT_WAKEUP_THRESHOLD = 1000;
 
-// How old we let memories be before we vacuum them
+// How old we let inputs be before we vacuum them
 // Aggressive cleanup: 2 hours for inputs, longer for other data
 export const VACUUM_MAX_AGE = 2 * 60 * 60 * 1000; // 2 hours (was 1 day)
 export const DELETE_BATCH_SIZE = 200; // Increased from 100 for faster cleanup

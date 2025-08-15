@@ -67,28 +67,40 @@ export function mapPersonalityToAgent(
   personality: BotPersonality,
   customPrompt?: string,
   existingCharacter?: string,
+  avatarData?: string,
 ): AgentDescription {
   // Select a random template for the personality type
   const templates = personalityTemplates[personality];
   const template = templates[Math.floor(Math.random() * templates.length)];
   
-  // Use existing character if provided and valid, otherwise select random
+  // Determine character sprite
   let character: string;
-  if (existingCharacter) {
-    // Check if the existing character is valid
-    const validCharacters = ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 
-                            'criminal1', 'gambler1', 'worker1'];
-    if (validCharacters.includes(existingCharacter)) {
-      character = existingCharacter;
-    } else {
-      // Fall back to random selection if invalid
-      const sprites = characterSprites[personality];
-      character = sprites[Math.floor(Math.random() * sprites.length)];
-    }
-  } else {
-    // Select a random character sprite for the personality type
+  const validCharacters = ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 
+                          'criminal1', 'gambler1', 'worker1'];
+  
+  // First priority: Check if avatarData is a valid character ID (new system)
+  if (avatarData && validCharacters.includes(avatarData)) {
+    character = avatarData;
+    console.log(`✅ Using character ID from avatar: ${character} for bot ${botName}`);
+  }
+  // Second priority: Use existing character if valid
+  else if (existingCharacter && validCharacters.includes(existingCharacter)) {
+    character = existingCharacter;
+    console.log(`✅ Using existing character: ${character} for bot ${botName}`);
+  }
+  // Legacy support: Try to extract position from old data URL format
+  else if (avatarData && avatarData.startsWith('data:image')) {
+    // This is a legacy bot with data URL avatar
+    // Fall back to personality-based selection
     const sprites = characterSprites[personality];
     character = sprites[Math.floor(Math.random() * sprites.length)];
+    console.log(`⚠️ Legacy bot ${botName} with data URL avatar, using personality default: ${character}`);
+  }
+  // Default: Select based on personality
+  else {
+    const sprites = characterSprites[personality];
+    character = sprites[Math.floor(Math.random() * sprites.length)];
+    console.log(`ℹ️ No avatar data for ${botName}, using personality default: ${character}`);
   }
   
   // Build the identity, incorporating custom prompt if provided

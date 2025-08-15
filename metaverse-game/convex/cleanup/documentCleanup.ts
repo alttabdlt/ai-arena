@@ -10,8 +10,6 @@ export const analyzeDocumentCounts = query({
     const tables = [
       'inputs',
       'activityLogs', 
-      'memories',
-      'memoryEmbeddings',
       'messages',
       'pendingBotRegistrations',
       'archivedConversations',
@@ -114,52 +112,6 @@ export const cleanOldActivityLogs = internalMutation({
   },
 });
 
-// Clean old memories and embeddings
-export const cleanOldMemories = internalMutation({
-  args: {
-    daysToKeep: v.optional(v.number()),
-    limit: v.optional(v.number())
-  },
-  handler: async (ctx, args) => {
-    const daysToKeep = args.daysToKeep ?? 14; // Default 14 days
-    const limit = args.limit ?? 200;
-    
-    const cutoffTime = Date.now() - (daysToKeep * 24 * 60 * 60 * 1000);
-    
-    // Clean memories
-    const oldMemories = await ctx.db
-      .query('memories')
-      .filter(q => q.lt(q.field('_creationTime'), cutoffTime))
-      .take(limit);
-    
-    let memoriesDeleted = 0;
-    let embeddingsDeleted = 0;
-    
-    for (const memory of oldMemories) {
-      // Delete associated embeddings first
-      const embeddings = await ctx.db
-        .query('memoryEmbeddings')
-        .filter(q => q.eq(q.field('_id'), memory.embeddingId))
-        .collect();
-      
-      for (const embedding of embeddings) {
-        await ctx.db.delete(embedding._id);
-        embeddingsDeleted++;
-      }
-      
-      // Delete memory
-      await ctx.db.delete(memory._id);
-      memoriesDeleted++;
-    }
-    
-    return {
-      memoriesDeleted,
-      embeddingsDeleted,
-      remainingOldMemories: oldMemories.length === limit,
-      cutoffDate: new Date(cutoffTime).toISOString()
-    };
-  },
-});
 
 // Clean completed bot registrations
 export const cleanCompletedRegistrations = internalMutation({
@@ -275,7 +227,6 @@ export const runFullCleanup = internalMutation({
     const results = {
       inputs: { deleted: 0 },
       activityLogs: { deleted: 0 },
-      memories: { deleted: 0, embeddings: 0 },
       registrations: { deleted: 0 },
       messages: { deleted: 0, conversations: 0 },
       totalDeleted: 0
@@ -294,14 +245,6 @@ export const runFullCleanup = internalMutation({
       { daysToKeep: aggressive ? 14 : 30, limit: 500 }
     );
     results.activityLogs.deleted = logsResult.deletedCount;
-    
-    // Clean memories (14 days normally, 7 days aggressive)
-    const memoriesResult = await ctx.runMutation(
-      internal.cleanup.documentCleanup.cleanOldMemories,
-      { daysToKeep: aggressive ? 7 : 14, limit: 300 }
-    );
-    results.memories.deleted = memoriesResult.memoriesDeleted;
-    results.memories.embeddings = memoriesResult.embeddingsDeleted;
     
     // Clean registrations (24 hours normally, 6 hours aggressive)
     const registrationsResult = await ctx.runMutation(
@@ -322,8 +265,6 @@ export const runFullCleanup = internalMutation({
     results.totalDeleted = 
       results.inputs.deleted +
       results.activityLogs.deleted +
-      results.memories.deleted +
-      results.memories.embeddings +
       results.registrations.deleted +
       results.messages.deleted +
       results.messages.conversations;
@@ -363,16 +304,6 @@ export const getCleanupStatus = query({
     
     if (oldLogs.length === 100) {
       recommendations.push('⚠️ MEDIUM: Old activity logs detected (>30 days). Run cleanOldActivityLogs.');
-    }
-    
-    // Check memories
-    const oldMemories = await ctx.db
-      .query('memories')
-      .filter(q => q.lt(q.field('_creationTime'), now - 14 * 24 * 60 * 60 * 1000))
-      .take(100);
-    
-    if (oldMemories.length === 100) {
-      recommendations.push('⚠️ MEDIUM: Old memories detected (>14 days). Run cleanOldMemories.');
     }
     
     // Check completed registrations

@@ -59,7 +59,8 @@ export const listMessages = query({
             // No agent found - maybe it's an archived player
             const archivedPlayer = await ctx.db
               .query('archivedPlayers')
-              .withIndex('worldId', (q) => q.eq('worldId', args.worldId).eq('id', message.author))
+              .withIndex('worldId', (q) => q.eq('worldId', args.worldId))
+              .filter((q) => q.eq(q.field('id'), message.author))
               .first();
             
             if (archivedPlayer) {
@@ -123,8 +124,7 @@ export const writeMessage = mutation({
     }
     
     await insertInput(ctx, args.worldId, 'finishSendingMessage', {
-      conversationId: args.conversationId,
-      playerId: args.playerId,
+      conversationId: args.conversationId as any,
       timestamp: Date.now(),
     });
   },

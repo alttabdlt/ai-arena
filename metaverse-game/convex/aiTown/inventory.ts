@@ -32,6 +32,19 @@ async function processLootboxFromQueueInternal(ctx: any, args: { worldId: any, l
     let totalValue = 0;
     
     for (const reward of lootboxEntry.rewards) {
+      // Types should already be correctly mapped from backend
+      // SWORD, GUN, ARMOR, BOOTS, POTION, TOOL, ACCESSORY, FURNITURE
+      let mappedType = reward.type;
+      
+      // Only remap ACCESSORY to BOOTS if it's footwear
+      if (reward.type === 'ACCESSORY' && 
+          (reward.name.toLowerCase().includes('boot') || 
+           reward.name.toLowerCase().includes('shoe') ||
+           reward.stats.speedBonus > 0 || reward.stats.agilityBonus > 0)) {
+        mappedType = 'BOOTS';
+      }
+      // All other types stay as-is
+      
       const rarityMap = {
         'COMMON': 1,
         'UNCOMMON': 2,
@@ -50,17 +63,28 @@ async function processLootboxFromQueueInternal(ctx: any, args: { worldId: any, l
         ownerId: lootboxEntry.playerId,
         itemId: reward.itemId,
         name: reward.name,
-        type: reward.type as any,
-        category: reward.type === 'FURNITURE' ? 'DECORATION' : undefined,
+        type: mappedType as any,
+        category: mappedType === 'FURNITURE' ? 'DECORATION' : undefined,
         rarity: reward.rarity as any,
-        powerBonus: reward.stats.powerBonus,
-        defenseBonus: reward.stats.defenseBonus,
+        powerBonus: reward.stats.powerBonus || 0,
+        defenseBonus: reward.stats.defenseBonus || 0,
+        speedBonus: reward.stats.speedBonus || 0,
+        agilityBonus: reward.stats.agilityBonus || 0,
+        rangeBonus: reward.stats.rangeBonus || 0,
+        healingPower: reward.stats.healingPower || 0,
+        duration: reward.duration || undefined,
         scoreBonus: reward.stats.scoreBonus,
+        // Handle consumables (potions)
+        consumable: mappedType === 'POTION' || reward.consumable,
+        quantity: reward.quantity || (mappedType === 'POTION' ? 1 : undefined),
+        uses: reward.uses || (mappedType === 'POTION' ? 1 : undefined),
+        maxUses: reward.maxUses || (mappedType === 'POTION' ? 1 : undefined),
         equipped: false,
         metadata: {
           description: `A ${reward.rarity.toLowerCase()} ${reward.name.toLowerCase()}`,
           tradeable: true,
           condition: 100,
+          specialEffect: mappedType === 'POTION' ? 'Consumable on use' : undefined,
         },
         createdAt: Date.now(),
       });
@@ -110,53 +134,46 @@ export const processLootboxFromQueue = mutation({
   },
 });
 
-// Equip an item (exposed as public mutation for UI)
+// Equip an item (exposed as public mutation for UI) - delegates to equipment module
 export const equipItem = mutation({
   args: {
     worldId: v.id('worlds'),
     playerId: playerId,
     itemId: v.id('items'),
   },
-  handler: async (ctx, args) => {
-    const item = await ctx.db.get(args.itemId);
-    if (!item || item.ownerId !== args.playerId) {
-      return { success: false, message: 'Item not found or not owned by player' };
-    }
-    
-    // Unequip any item of the same type
-    const sameTypeItems = await ctx.db
-      .query('items')
-      .withIndex('equipped', (q: any) => 
-        q.eq('worldId', args.worldId)
-          .eq('ownerId', args.playerId)
-          .eq('equipped', true)
-      )
-      .collect();
-      
-    for (const equippedItem of sameTypeItems) {
-      if (equippedItem.type === item.type) {
-        await ctx.db.patch(equippedItem._id, { equipped: false });
-      }
-    }
-    
-    // Equip the new item
-    await ctx.db.patch(args.itemId, { equipped: true });
-    
-    // Calculate new total equipment bonuses
-    const equipmentStats: { powerBonus: number; defenseBonus: number } = await ctx.runQuery(internal.aiTown.inventory.calculatePlayerEquipmentInternal, {
+  handler: async (ctx, args): Promise<any> => {
+    // Use the new multi-slot equipment system
+    const result: any = await ctx.runMutation(internal.aiTown.equipment.equipItem, {
       worldId: args.worldId,
       playerId: args.playerId,
+      itemId: args.itemId,
     });
     
-    // Update player equipment stats through the input system
-    await insertInput(ctx, args.worldId, 'updatePlayerEquipment', {
-      playerId: args.playerId as any, // Cast to handle type mismatch
-      timestamp: Date.now(),
-      powerBonus: equipmentStats.powerBonus,
-      defenseBonus: equipmentStats.defenseBonus,
-    });
+    if (result.success) {
+      // Calculate new total equipment bonuses with all slots
+      const equipmentStats: any = await ctx.runQuery(internal.aiTown.equipment.calculateEquipmentStats, {
+        worldId: args.worldId,
+        playerId: args.playerId,
+      });
+      
+      // Update player equipment stats through the input system
+      await insertInput(ctx, args.worldId, 'updatePlayerEquipment', {
+        playerId: args.playerId as any, // Cast to handle type mismatch
+        timestamp: Date.now(),
+        powerBonus: equipmentStats.powerBonus,
+        defenseBonus: equipmentStats.defenseBonus,
+      });
+      
+      return { 
+        success: true, 
+        slot: result.slot,
+        equipped: result.item,
+        unequipped: result.unequipped,
+        newStats: equipmentStats 
+      };
+    }
     
-    return { success: true, newStats: equipmentStats };
+    return { success: false, message: 'Failed to equip item' };
   },
 });
 
@@ -166,25 +183,20 @@ export const calculatePlayerEquipment = query({
     worldId: v.id('worlds'),
     playerId: playerId,
   },
-  handler: async (ctx, args) => {
-    const equippedItems = await ctx.db
-      .query('items')
-      .withIndex('equipped', (q: any) => 
-        q.eq('worldId', args.worldId)
-          .eq('ownerId', args.playerId)
-          .eq('equipped', true)
-      )
-      .collect();
-      
-    let totalPower = 0;
-    let totalDefense = 0;
+  handler: async (ctx, args): Promise<any> => {
+    // Use the new equipment module for multi-slot calculations
+    const stats = await ctx.runQuery(internal.aiTown.equipment.calculateEquipmentStats, {
+      worldId: args.worldId,
+      playerId: args.playerId,
+    });
     
-    for (const item of equippedItems) {
-      totalPower += item.powerBonus;
-      totalDefense += item.defenseBonus;
-    }
-    
-    return { powerBonus: totalPower, defenseBonus: totalDefense };
+    return {
+      powerBonus: stats.powerBonus,
+      defenseBonus: stats.defenseBonus,
+      speedBonus: stats.speedBonus,
+      agilityBonus: stats.agilityBonus,
+      rangeBonus: stats.rangeBonus,
+    };
   },
 });
 
@@ -194,25 +206,20 @@ export const calculatePlayerEquipmentInternal = internalQuery({
     worldId: v.id('worlds'),
     playerId: playerId,
   },
-  handler: async (ctx, args) => {
-    const equippedItems = await ctx.db
-      .query('items')
-      .withIndex('equipped', (q: any) => 
-        q.eq('worldId', args.worldId)
-          .eq('ownerId', args.playerId)
-          .eq('equipped', true)
-      )
-      .collect();
-      
-    let totalPower = 0;
-    let totalDefense = 0;
+  handler: async (ctx, args): Promise<any> => {
+    // Use the new equipment module for multi-slot calculations
+    const stats = await ctx.runQuery(internal.aiTown.equipment.calculateEquipmentStats, {
+      worldId: args.worldId,
+      playerId: args.playerId,
+    });
     
-    for (const item of equippedItems) {
-      totalPower += item.powerBonus;
-      totalDefense += item.defenseBonus;
-    }
-    
-    return { powerBonus: totalPower, defenseBonus: totalDefense };
+    return {
+      powerBonus: stats.powerBonus,
+      defenseBonus: stats.defenseBonus,
+      speedBonus: stats.speedBonus,
+      agilityBonus: stats.agilityBonus,
+      rangeBonus: stats.rangeBonus,
+    };
   },
 });
 

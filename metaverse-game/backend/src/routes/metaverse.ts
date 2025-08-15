@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { api } from '../../../convex/_generated/api';
 import { ConvexService } from '../services/convexService';
+import { logger } from '@ai-arena/shared-logger';
 
 const router: Router = Router();
 
@@ -78,6 +79,13 @@ router.post('/bots/register', async (req, res) => {
     let plan = planFromBody as string | undefined;
     let initialZone = initialZoneFromBody as string | undefined;
 
+    // IMPORTANT: If avatar is provided and is a valid character ID, use it as the character
+    const validCharacters = ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8'];
+    if (!character && avatar && validCharacters.includes(avatar)) {
+      character = avatar;
+      console.log(`Using avatar as character: ${character} for bot ${name}`);
+    }
+
     if (!character || !identity || !plan || !initialZone) {
       const characterMap: Record<string, string[]> = {
         CRIMINAL: ['f1', 'f2', 'f3', 'f4'],
@@ -100,8 +108,10 @@ router.post('/bots/register', async (req, res) => {
         WORKER: 'suburb',
       };
       if (!character) {
+        // Only randomly select if avatar wasn't provided or invalid
         const characters = characterMap[personalityUpper] || ['f1'];
         character = characters[Math.floor(Math.random() * characters.length)];
+        console.log(`No avatar provided, randomly selected character: ${character} for bot ${name}`);
       }
       if (!identity) {
         identity = identityMap[personalityUpper] || identityMap['WORKER'];
@@ -113,6 +123,9 @@ router.post('/bots/register', async (req, res) => {
         initialZone = zoneMap[personalityUpper] || 'suburb';
       }
     }
+    
+    // Log what we're sending to Convex
+    console.log(`Registering bot ${name} with character=${character}, avatar=${avatar}`);
     
     // Create bot agent using Convex mutation directly
     const client = convexService.convexClient;
@@ -333,15 +346,35 @@ router.post('/bots/sync-stats', async (req, res) => {
 // Lootbox sync endpoint
 router.post('/lootbox/sync', async (req, res) => {
   try {
-    const { lootboxId, botId, rewards } = req.body;
+    const { lootboxId } = req.body;
     
-    // TODO: Implement lootbox sync logic
-    res.json({ 
-      success: true, 
-      message: 'Lootbox synchronized',
-      lootboxId,
-      botId 
-    });
+    if (!lootboxId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Missing lootboxId' 
+      });
+    }
+    
+    // Import inventory sync service
+    const { inventorySyncService } = await import('../services/inventorySync');
+    
+    // Sync the lootbox to metaverse
+    const result = await inventorySyncService.syncLootboxToMetaverse(lootboxId);
+    
+    if (result.success) {
+      logger.info(`✅ Lootbox ${lootboxId} synced to metaverse`);
+      res.json({ 
+        success: true, 
+        message: result.message || 'Lootbox synchronized successfully',
+        lootboxId
+      });
+    } else {
+      logger.error(`⚠️ Failed to sync lootbox ${lootboxId}: ${result.message}`);
+      res.status(400).json({ 
+        success: false, 
+        error: result.message || 'Failed to sync lootbox' 
+      });
+    }
   } catch (error) {
     console.error('Lootbox sync error:', error);
     res.status(500).json({ 

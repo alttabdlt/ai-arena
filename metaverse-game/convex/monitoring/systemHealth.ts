@@ -18,7 +18,6 @@ interface SystemMetrics {
     inputs: number;
     activityLogs: number;
     messages: number;
-    memories: number;
     total: number;
     percentOfLimit: number;
     status: HealthStatus;
@@ -96,7 +95,6 @@ async function calculateSystemHealth(ctx: any, worldId?: any): Promise<SystemMet
     inputs: inputs.length,
     activityLogs: await ctx.db.query('activityLogs').take(1).then((r: any) => r.length * 10000), // Estimate
     messages: await ctx.db.query('messages').take(1).then((r: any) => r.length * 5000), // Estimate
-    memories: await ctx.db.query('memories').take(1).then((r: any) => r.length * 1000), // Estimate
   };
   
   const totalDocs = Object.values(documentCounts).reduce((a, b) => a + b, 0);

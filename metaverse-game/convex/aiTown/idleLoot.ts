@@ -3,113 +3,85 @@ import { internalMutation, internalAction, mutation, MutationCtx } from '../_gen
 import { Id } from '../_generated/dataModel';
 import { playerId } from './ids';
 import { internal } from '../_generated/api';
+import { 
+  getRandomItemForZone, 
+  rollRarity, 
+  calculateItemValue,
+  GameItem 
+} from '../../data/items';
 
 // Helper function to check if a bot is valid (not a ghost bot)
 function isValidBot(agent: any): boolean {
-  // A valid bot has an aiArenaBotId (from AI Arena)
-  // Ghost bots are those without aiArenaBotId or with null/undefined values
-  return !!(agent.aiArenaBotId && agent.aiArenaBotId.trim() !== '');
-}
-
-// Loot rarity tiers and their chances
-const LOOT_RARITY_CHANCES = {
-  COMMON: 0.60,     // 60% chance
-  UNCOMMON: 0.25,   // 25% chance
-  RARE: 0.10,       // 10% chance
-  EPIC: 0.04,       // 4% chance
-  LEGENDARY: 0.01,  // 1% chance
-};
-
-// Gold value ranges by rarity
-const GOLD_VALUES = {
-  COMMON: { min: 1, max: 5 },
-  UNCOMMON: { min: 5, max: 20 },
-  RARE: { min: 20, max: 100 },
-  EPIC: { min: 100, max: 500 },
-  LEGENDARY: { min: 500, max: 2000 },
-};
-
-// Item types by zone preference
-const ZONE_LOOT_PREFERENCES = {
-  casino: {
-    types: ['ACCESSORY', 'TOOL'],
-    goldMultiplier: 1.5,
-    itemNames: ['Lucky Dice', 'Gold Coin', 'Casino Chip', 'Card Deck', 'Lucky Charm'],
-  },
-  darkAlley: {
-    types: ['WEAPON', 'TOOL'],
-    goldMultiplier: 1.0,
-    itemNames: ['Rusty Knife', 'Brass Knuckles', 'Lockpick', 'Crowbar', 'Smoke Bomb'],
-  },
-  suburb: {
-    types: ['ARMOR', 'ACCESSORY'],
-    goldMultiplier: 0.8,
-    itemNames: ['Garden Tool', 'Security Camera', 'Fence Panel', 'Lawn Ornament', 'Mailbox'],
-  },
-  downtown: {
-    types: ['ACCESSORY', 'TOOL'],
-    goldMultiplier: 1.0,
-    itemNames: ['Smartphone', 'Briefcase', 'Watch', 'Sunglasses', 'Coffee Cup'],
-  },
-  underground: {
-    types: ['WEAPON', 'ARMOR'],
-    goldMultiplier: 0.7,
-    itemNames: ['Training Gloves', 'Bandages', 'Energy Drink', 'Fight Tape', 'Mouthguard'],
-  },
-};
-
-function rollLootRarity(): string {
-  const roll = Math.random();
-  let cumulative = 0;
-  
-  for (const [rarity, chance] of Object.entries(LOOT_RARITY_CHANCES)) {
-    cumulative += chance;
-    if (roll <= cumulative) {
-      return rarity;
-    }
+  // A valid bot has a non-empty aiArenaBotId (from AI Arena)
+  // Ghost bots are those without aiArenaBotId or with null/undefined/empty values
+  if (!agent.aiArenaBotId || agent.aiArenaBotId.trim() === '') {
+    return false;
   }
   
-  return 'COMMON'; // Fallback
+  // All non-empty IDs are valid (including Prisma-generated IDs)
+  return true;
 }
 
-function generateLootItem(zone: string, rarity: string) {
-  const zonePrefs = ZONE_LOOT_PREFERENCES[zone as keyof typeof ZONE_LOOT_PREFERENCES] 
-    || ZONE_LOOT_PREFERENCES.downtown;
+// Zone drop multipliers for item rarity adjustment
+const ZONE_DROP_MULTIPLIERS = {
+  casino: { rarityBoost: 0.05, valueMultiplier: 1.5 },    // +5% rarity, +50% value
+  darkAlley: { rarityBoost: 0.02, valueMultiplier: 1.0 }, // +2% rarity, normal value
+  suburb: { rarityBoost: 0, valueMultiplier: 0.8 },       // Normal rarity, -20% value
+  downtown: { rarityBoost: 0.01, valueMultiplier: 1.0 },  // +1% rarity, normal value
+  underground: { rarityBoost: 0.03, valueMultiplier: 0.9 }, // +3% rarity, -10% value
+};
+
+// Convert our new item to loot format
+function itemToLootFormat(item: GameItem | undefined, zone: string) {
+  if (!item) {
+    // Fallback to basic item if generation fails
+    return {
+      itemId: `loot_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      name: 'Mystery Item',
+      type: 'TOOL',
+      rarity: 'COMMON',
+      powerBonus: 1,
+      defenseBonus: 1,
+      value: 5,
+    };
+  }
   
-  // Pick a random item type from zone preferences
-  const itemType = zonePrefs.types[Math.floor(Math.random() * zonePrefs.types.length)];
+  const zoneMultiplier = ZONE_DROP_MULTIPLIERS[zone as keyof typeof ZONE_DROP_MULTIPLIERS]?.valueMultiplier || 1.0;
+  const baseValue = calculateItemValue(item);
   
-  // Pick a random item name from zone
-  const itemName = zonePrefs.itemNames[Math.floor(Math.random() * zonePrefs.itemNames.length)];
+  // Extract relevant bonuses based on item type
+  let powerBonus = 0;
+  let defenseBonus = 0;
+  let speedBonus = 0;
+  let agilityBonus = 0;
+  let rangeBonus = 0;
+  let healingPower = 0;
+  let duration = 0;
   
-  // Calculate item stats based on rarity
-  const rarityMultipliers = {
-    COMMON: 1,
-    UNCOMMON: 2,
-    RARE: 5,
-    EPIC: 10,
-    LEGENDARY: 25,
-  };
-  
-  const multiplier = rarityMultipliers[rarity as keyof typeof rarityMultipliers] || 1;
-  
-  // Generate random base stats
-  const basePower = Math.floor(Math.random() * 5) + 1;
-  const baseDefense = Math.floor(Math.random() * 5) + 1;
+  // Map item stats to our system
+  if ('powerBonus' in item) powerBonus = item.powerBonus || 0;
+  if ('defenseBonus' in item) defenseBonus = item.defenseBonus || 0;
+  if ('speedBonus' in item) speedBonus = item.speedBonus || 0;
+  if ('agilityBonus' in item) agilityBonus = item.agilityBonus || 0;
+  if ('rangeBonus' in item) rangeBonus = item.rangeBonus || 0;
+  if ('healingPower' in item) healingPower = item.healingPower || 0;
+  if ('duration' in item) duration = item.duration || 0;
   
   return {
-    itemId: `loot_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-    name: `${rarity} ${itemName}`,
-    type: itemType,
-    rarity: rarity,
-    powerBonus: basePower * multiplier,
-    defenseBonus: baseDefense * multiplier,
-    value: Math.floor(
-      (GOLD_VALUES[rarity as keyof typeof GOLD_VALUES].min + 
-       Math.random() * (GOLD_VALUES[rarity as keyof typeof GOLD_VALUES].max - 
-                       GOLD_VALUES[rarity as keyof typeof GOLD_VALUES].min)) *
-      zonePrefs.goldMultiplier
-    ),
+    itemId: item.id,
+    name: item.name,
+    type: item.type,
+    rarity: item.rarity,
+    powerBonus,
+    defenseBonus,
+    speedBonus,
+    agilityBonus,
+    rangeBonus,
+    healingPower,
+    duration,
+    value: Math.floor(baseValue * zoneMultiplier),
+    description: item.description,
+    spritePosition: item.spritePosition,
   };
 }
 
@@ -124,11 +96,11 @@ export const generateLootDrop = internalAction({
     }),
   },
   handler: async (ctx, args) => {
-    // Roll for loot rarity
-    const rarity = rollLootRarity();
+    // Get random item for the zone using our new system
+    const item = getRandomItemForZone(args.zone);
     
-    // Generate the loot item
-    const loot = generateLootItem(args.zone, rarity);
+    // Convert to loot format
+    const loot = itemToLootFormat(item, args.zone);
     
     // Get player's inventory - use any to avoid deep type instantiation issue
     // @ts-ignore - Type instantiation depth issue with Convex types
@@ -155,10 +127,26 @@ export const generateLootDrop = internalAction({
     const quantity = 1;
     const currentZone = args.zone;
     const description = `Found ${itemName} worth ${loot.value} gold!`;
-    const emoji = rarity === 'LEGENDARY' ? '💎' : 
-                  rarity === 'EPIC' ? '🏆' : 
-                  rarity === 'RARE' ? '⭐' : 
-                  rarity === 'UNCOMMON' ? '💰' : '🪙';
+    
+    // Enhanced emoji selection based on item type and rarity
+    let emoji = '🪙'; // Default
+    if (loot.rarity === 'GOD_TIER') {
+      emoji = '🌟'; // God tier special
+    } else if (loot.rarity === 'LEGENDARY') {
+      emoji = '💎';
+    } else if (loot.rarity === 'EPIC') {
+      emoji = '🏆';
+    } else if (loot.rarity === 'RARE') {
+      emoji = '⭐';
+    } else if (loot.rarity === 'UNCOMMON') {
+      emoji = '💰';
+    }
+    
+    // Override with type-specific emojis for certain items
+    if (loot.type === 'SWORD') emoji = '⚔️';
+    else if (loot.type === 'GUN') emoji = '🔫';
+    else if (loot.type === 'POTION') emoji = '🧪';
+    else if (loot.type === 'ARMOR' && loot.rarity === 'LEGENDARY') emoji = '🛡️';
     
     await ctx.runMutation(internal.aiTown.idleGains.trackIdleProgress, {
       worldId: args.worldId,
@@ -187,7 +175,17 @@ export const addLootToInventory = internalMutation({
       rarity: v.string(),
       powerBonus: v.number(),
       defenseBonus: v.number(),
+      speedBonus: v.optional(v.number()),
+      agilityBonus: v.optional(v.number()),
+      rangeBonus: v.optional(v.number()),
+      healingPower: v.optional(v.number()),
+      duration: v.optional(v.number()),
       value: v.number(),
+      description: v.optional(v.string()),
+      spritePosition: v.optional(v.object({
+        row: v.number(),
+        col: v.number(),
+      })),
     }),
   },
   handler: async (ctx, args) => {
@@ -213,7 +211,7 @@ export const addLootToInventory = internalMutation({
       inventory = await ctx.db.get(inventoryId);
     }
     
-    // Create the item
+    // Create the item with all new fields
     await ctx.db.insert('items', {
       worldId: args.worldId,
       ownerId: args.playerId,
@@ -223,12 +221,23 @@ export const addLootToInventory = internalMutation({
       rarity: args.loot.rarity as any,
       powerBonus: args.loot.powerBonus,
       defenseBonus: args.loot.defenseBonus,
+      // Add new stat fields
+      speedBonus: args.loot.speedBonus || 0,
+      agilityBonus: args.loot.agilityBonus || 0,
+      rangeBonus: args.loot.rangeBonus || 0,
+      healingPower: args.loot.healingPower || 0,
+      duration: args.loot.duration || 0,
+      // Handle consumables
+      consumable: args.loot.type === 'POTION',
+      quantity: args.loot.type === 'POTION' ? 1 : undefined,
+      uses: args.loot.type === 'POTION' ? 1 : undefined,
+      maxUses: args.loot.type === 'POTION' ? 1 : undefined,
       equipped: false,
       metadata: {
-        description: `A ${args.loot.rarity.toLowerCase()} item found while exploring`,
+        description: args.loot.description || `A ${args.loot.rarity.toLowerCase()} ${args.loot.type.toLowerCase()} found while exploring`,
         tradeable: true,
         condition: 100,
-        // goldValue is stored as item value
+        specialEffect: args.loot.type === 'POTION' ? 'Consumable on use' : undefined,
       },
       createdAt: Date.now(),
     });
@@ -241,6 +250,8 @@ export const addLootToInventory = internalMutation({
         lastUpdated: Date.now(),
       });
     }
+    
+    // No auto-equip - all equipment changes must be manual by user
     
     return { success: true };
   },

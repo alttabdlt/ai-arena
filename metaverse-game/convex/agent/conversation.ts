@@ -1,15 +1,86 @@
 import { v } from 'convex/values';
 import { Id } from '../_generated/dataModel';
 import { ActionCtx, internalQuery } from '../_generated/server';
-import { LLMMessage, chatCompletion } from '../util/llm';
-import * as memory from './memory';
 import { api, internal } from '../_generated/api';
-import * as embeddingsCache from './embeddingsCache';
 import { GameId, conversationId, playerId } from '../aiTown/ids';
-import { NUM_MEMORIES_TO_SEARCH } from '../constants';
 
 // @ts-ignore - Known Convex type depth issue
 const selfInternal = internal.agent.conversation;
+
+// Simple personality-based conversation starters
+const CRIMINAL_STARTERS = [
+  "Your loot. Now.",
+  "This is my turf!",
+  "You look like you've got something valuable...",
+  "Hand over your best gear.",
+  "Wrong neighborhood, pal."
+];
+
+const GAMBLER_STARTERS = [
+  "Wanna bet on something?",
+  "Feeling lucky today?",
+  "I'll trade you for that... if you're brave enough.",
+  "High risk, high reward - interested?",
+  "Let's make this interesting..."
+];
+
+const WORKER_STARTERS = [
+  "Just trying to make a living...",
+  "Please, I don't want any trouble.",
+  "Want to trade fairly?",
+  "I've got some items if you're interested.",
+  "Can we work something out?"
+];
+
+// Simple personality-based conversation responses
+const CRIMINAL_RESPONSES = [
+  "I said hand it over!",
+  "Don't make me repeat myself.",
+  "You're wasting my time.",
+  "Last chance before things get ugly.",
+  "This can go easy or hard - your choice."
+];
+
+const GAMBLER_RESPONSES = [
+  "Come on, live a little!",
+  "The odds are in your favor... maybe.",
+  "What've you got to lose?",
+  "Trust me, this is a good deal.",
+  "You miss 100% of the bets you don't take."
+];
+
+const WORKER_RESPONSES = [
+  "I really need to go...",
+  "Please, I have nothing valuable.",
+  "Can we just trade and move on?",
+  "I'm just trying to survive here.",
+  "Take what you want, just leave me alone."
+];
+
+// Simple personality-based conversation exits
+const CRIMINAL_EXITS = [
+  "We're done here.",
+  "Don't let me catch you again.",
+  "Get lost.",
+  "Remember this next time.",
+  "Stay out of my way."
+];
+
+const GAMBLER_EXITS = [
+  "Your loss!",
+  "Maybe next time you'll take the bet.",
+  "See you at the tables.",
+  "Lady Luck awaits!",
+  "The house always wins."
+];
+
+const WORKER_EXITS = [
+  "I need to go...",
+  "Thank you for letting me leave.",
+  "Goodbye.",
+  "I'll be on my way.",
+  "Please don't follow me."
+];
 
 // Internal wrapper to avoid deep type instantiation
 export const getConversationMessages = internalQuery({
@@ -43,7 +114,7 @@ export async function startConversationMessage(
   playerId: GameId<'players'>,
   otherPlayerId: GameId<'players'>,
 ): Promise<string> {
-  const { player, otherPlayer, agent, otherAgent, lastConversation } = await ctx.runQuery(
+  const { agent } = await ctx.runQuery(
     selfInternal.queryPromptData,
     {
       worldId,
@@ -52,57 +123,26 @@ export async function startConversationMessage(
       conversationId,
     },
   );
-  // DISABLED: Embeddings to fix Ollama error - using relationship system instead
-  // const embedding = await embeddingsCache.fetch(
-  //   ctx,
-  //   `${player.name} is talking to ${otherPlayer.name}`,
-  // );
-
-  // const memories = await memory.searchMemories(
-  //   ctx,
-  //   player.id as GameId<'players'>,
-  //   embedding,
-  //   Number(process.env.NUM_MEMORIES_TO_SEARCH) || NUM_MEMORIES_TO_SEARCH,
-  // );
   
-  // Use empty memories for now - will be replaced with relationship-based context
-  const memories: any[] = [];
-
-  const memoryWithOtherPlayer = memories.find(
-    (m: any) => m.data.type === 'conversation' && m.data.playerIds.includes(otherPlayerId),
-  );
-  const prompt = [
-    `You are ${player.name}, and you just started a conversation with ${otherPlayer.name}.`,
-  ];
-  prompt.push(...agentPrompts(otherPlayer, agent, otherAgent ?? null));
-  prompt.push(...previousConversationPrompt(otherPlayer, lastConversation));
-  prompt.push(...relatedMemoriesPrompt(memories));
-  if (memoryWithOtherPlayer) {
-    prompt.push(
-      `Be sure to include some detail or question about a previous conversation in your greeting.`,
-    );
+  // Get personality from agent
+  const personality = agent?.identity?.split('personality:')[1]?.split(' ')[0]?.toUpperCase() || 'WORKER';
+  
+  // Select random bark based on personality
+  let barks: string[];
+  switch(personality) {
+    case 'CRIMINAL':
+      barks = CRIMINAL_STARTERS;
+      break;
+    case 'GAMBLER':
+      barks = GAMBLER_STARTERS;
+      break;
+    case 'WORKER':
+    default:
+      barks = WORKER_STARTERS;
+      break;
   }
-  const lastPrompt = `${player.name} to ${otherPlayer.name}:`;
-  prompt.push(lastPrompt);
-
-  const { content } = await chatCompletion({
-    messages: [
-      {
-        role: 'system',
-        content: prompt.join('\n'),
-      },
-    ],
-    max_tokens: 300,
-    stop: stopWords(otherPlayer.name, player.name),
-  });
-  return trimContentPrefx(content, lastPrompt);
-}
-
-function trimContentPrefx(content: string, prompt: string) {
-  if (content.startsWith(prompt)) {
-    return content.slice(prompt.length).trim();
-  }
-  return content;
+  
+  return barks[Math.floor(Math.random() * barks.length)];
 }
 
 export async function continueConversationMessage(
@@ -112,7 +152,7 @@ export async function continueConversationMessage(
   playerId: GameId<'players'>,
   otherPlayerId: GameId<'players'>,
 ): Promise<string> {
-  const { player, otherPlayer, conversation, agent, otherAgent } = await ctx.runQuery(
+  const { agent } = await ctx.runQuery(
     selfInternal.queryPromptData,
     {
       worldId,
@@ -121,50 +161,26 @@ export async function continueConversationMessage(
       conversationId,
     },
   );
-  const now = Date.now();
-  const started = new Date(conversation.created);
-  // DISABLED: Embeddings to fix Ollama error - using relationship system instead
-  // const embedding = await embeddingsCache.fetch(
-  //   ctx,
-  //   `What do you think about ${otherPlayer.name}?`,
-  // );
-  // const memories = await memory.searchMemories(ctx, player.id as GameId<'players'>, embedding, 3);
   
-  // Use empty memories for now - will be replaced with relationship-based context
-  const memories: any[] = [];
-  const prompt = [
-    `You are ${player.name}, and you're currently in a conversation with ${otherPlayer.name}.`,
-    `The conversation started at ${started.toLocaleString()}. It's now ${now.toLocaleString()}.`,
-  ];
-  prompt.push(...agentPrompts(otherPlayer, agent, otherAgent ?? null));
-  prompt.push(...relatedMemoriesPrompt(memories));
-  prompt.push(
-    `Below is the current chat history between you and ${otherPlayer.name}.`,
-    `DO NOT greet them again. Do NOT use the word "Hey" too often. Your response should be brief and within 200 characters.`,
-  );
-
-  const llmMessages: LLMMessage[] = [
-    {
-      role: 'system',
-      content: prompt.join('\n'),
-    },
-    ...(await previousMessages(
-      ctx,
-      worldId,
-      player,
-      otherPlayer,
-      conversation.id as GameId<'conversations'>,
-    )),
-  ];
-  const lastPrompt = `${player.name} to ${otherPlayer.name}:`;
-  llmMessages.push({ role: 'user', content: lastPrompt });
-
-  const { content } = await chatCompletion({
-    messages: llmMessages,
-    max_tokens: 300,
-    stop: stopWords(otherPlayer.name, player.name),
-  });
-  return trimContentPrefx(content, lastPrompt);
+  // Get personality from agent
+  const personality = agent?.identity?.split('personality:')[1]?.split(' ')[0]?.toUpperCase() || 'WORKER';
+  
+  // Select random response based on personality
+  let responses: string[];
+  switch(personality) {
+    case 'CRIMINAL':
+      responses = CRIMINAL_RESPONSES;
+      break;
+    case 'GAMBLER':
+      responses = GAMBLER_RESPONSES;
+      break;
+    case 'WORKER':
+    default:
+      responses = WORKER_RESPONSES;
+      break;
+  }
+  
+  return responses[Math.floor(Math.random() * responses.length)];
 }
 
 export async function leaveConversationMessage(
@@ -174,7 +190,7 @@ export async function leaveConversationMessage(
   playerId: GameId<'players'>,
   otherPlayerId: GameId<'players'>,
 ): Promise<string> {
-  const { player, otherPlayer, conversation, agent, otherAgent } = await ctx.runQuery(
+  const { agent } = await ctx.runQuery(
     selfInternal.queryPromptData,
     {
       worldId,
@@ -183,102 +199,26 @@ export async function leaveConversationMessage(
       conversationId,
     },
   );
-  const prompt = [
-    `You are ${player.name}, and you're currently in a conversation with ${otherPlayer.name}.`,
-    `You've decided to leave the question and would like to politely tell them you're leaving the conversation.`,
-  ];
-  prompt.push(...agentPrompts(otherPlayer, agent, otherAgent ?? null));
-  prompt.push(
-    `Below is the current chat history between you and ${otherPlayer.name}.`,
-    `How would you like to tell them that you're leaving? Your response should be brief and within 200 characters.`,
-  );
-  const llmMessages: LLMMessage[] = [
-    {
-      role: 'system',
-      content: prompt.join('\n'),
-    },
-    ...(await previousMessages(
-      ctx,
-      worldId,
-      player,
-      otherPlayer,
-      conversation.id as GameId<'conversations'>,
-    )),
-  ];
-  const lastPrompt = `${player.name} to ${otherPlayer.name}:`;
-  llmMessages.push({ role: 'user', content: lastPrompt });
-
-  const { content } = await chatCompletion({
-    messages: llmMessages,
-    max_tokens: 300,
-    stop: stopWords(otherPlayer.name, player.name),
-  });
-  return trimContentPrefx(content, lastPrompt);
-}
-
-function agentPrompts(
-  otherPlayer: { name: string },
-  agent: { identity: string; plan: string } | null,
-  otherAgent: { identity: string; plan: string } | null,
-): string[] {
-  const prompt = [];
-  if (agent) {
-    prompt.push(`About you: ${agent.identity}`);
-    prompt.push(`Your goals for the conversation: ${agent.plan}`);
+  
+  // Get personality from agent
+  const personality = agent?.identity?.split('personality:')[1]?.split(' ')[0]?.toUpperCase() || 'WORKER';
+  
+  // Select random exit based on personality
+  let exits: string[];
+  switch(personality) {
+    case 'CRIMINAL':
+      exits = CRIMINAL_EXITS;
+      break;
+    case 'GAMBLER':
+      exits = GAMBLER_EXITS;
+      break;
+    case 'WORKER':
+    default:
+      exits = WORKER_EXITS;
+      break;
   }
-  if (otherAgent) {
-    prompt.push(`About ${otherPlayer.name}: ${otherAgent.identity}`);
-  }
-  return prompt;
-}
-
-function previousConversationPrompt(
-  otherPlayer: { name: string },
-  conversation: { created: number } | null,
-): string[] {
-  const prompt = [];
-  if (conversation) {
-    const prev = new Date(conversation.created);
-    const now = new Date();
-    prompt.push(
-      `Last time you chatted with ${
-        otherPlayer.name
-      } it was ${prev.toLocaleString()}. It's now ${now.toLocaleString()}.`,
-    );
-  }
-  return prompt;
-}
-
-function relatedMemoriesPrompt(memories: memory.Memory[]): string[] {
-  const prompt = [];
-  if (memories.length > 0) {
-    prompt.push(`Here are some related memories in decreasing relevance order:`);
-    for (const memory of memories) {
-      prompt.push(' - ' + memory.description);
-    }
-  }
-  return prompt;
-}
-
-async function previousMessages(
-  ctx: ActionCtx,
-  worldId: Id<'worlds'>,
-  player: { id: string; name: string },
-  otherPlayer: { id: string; name: string },
-  conversationId: GameId<'conversations'>,
-) {
-  const llmMessages: LLMMessage[] = [];
-  // Use internal wrapper to avoid deep type instantiation
-  const prevMessages = await ctx.runQuery(selfInternal.getConversationMessages, { worldId, conversationId });
-  for (const message of prevMessages) {
-    const author = message.author === player.id ? player : otherPlayer;
-    const recipient = message.author === player.id ? otherPlayer : player;
-    llmMessages.push({
-      role: 'user',
-      content: `${author.name} to ${recipient.name}: ${message.text}`,
-    });
-  }
-  return llmMessages;
+  
+  return exits[Math.floor(Math.random() * exits.length)];
 }
 
 export const queryPromptData = internalQuery({
@@ -436,9 +376,3 @@ export const queryPromptData = internalQuery({
     };
   },
 });
-
-function stopWords(otherPlayer: string, player: string) {
-  // These are the words we ask the LLM to stop on. OpenAI only supports 4.
-  const variants = [`${otherPlayer} to ${player}`];
-  return variants.flatMap((stop) => [stop + ':', stop.toLowerCase() + ':']);
-}

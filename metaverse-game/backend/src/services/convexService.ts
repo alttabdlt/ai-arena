@@ -60,6 +60,43 @@ export class ConvexService {
     }
   }
 
+  // Helper method to poll a registration
+  private async pollRegistration(registrationId: string): Promise<{ agentId: string; playerId: string }> {
+    const maxAttempts = 30;
+    let pollInterval = 1000;
+    
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+      
+      try {
+        const status = await this.client.query('aiTown/botHttp:getRegistrationStatus' as any, {
+          registrationId
+        });
+        
+        if (status.status === 'completed' && status.result) {
+          return {
+            agentId: status.result.agentId,
+            playerId: status.result.playerId
+          };
+        } else if (status.status === 'failed') {
+          throw new Error(`Registration failed: ${status.error || 'Unknown error'}`);
+        }
+        
+        // Log progress
+        if (attempt % 5 === 0) {
+          console.log(`⏳ Waiting for registration ${registrationId}... (${attempt}/${maxAttempts})`);
+        }
+      } catch (error) {
+        console.warn(`⚠️ Error polling registration:`, error);
+      }
+      
+      // Exponential backoff
+      pollInterval = Math.min(pollInterval * 1.2, 3000);
+    }
+    
+    throw new Error(`Registration polling timed out after ${maxAttempts} attempts`);
+  }
+
   // Create a bot agent in the metaverse
   async createBotAgent(args: {
     worldId: string;
@@ -223,9 +260,38 @@ export class ConvexService {
         throw new Error(`Agent creation timed out after ${maxAttempts * 3} seconds. The world engine might be experiencing issues. Try manually resuming the world.`);
       }
       
+      // Check for different response types
+      if (result.status === 'failed') {
+        console.log('❌ Registration failed, will retry with forceNew flag');
+        // Retry with forceNew to delete the failed registration
+        const retryResult = await this.client.mutation('aiTown/botHttp:createBotAgent' as any, {
+          ...args,
+          forceNew: true
+        });
+        
+        // If retry returns a registration ID, poll it
+        if (retryResult.registrationId) {
+          return this.pollRegistration(retryResult.registrationId);
+        }
+        
+        // Otherwise expect agent data
+        if (!retryResult.agentId || !retryResult.playerId) {
+          throw new Error('Failed to create bot agent after retry');
+        }
+        
+        return { agentId: retryResult.agentId, playerId: retryResult.playerId };
+      }
+      
+      // Handle other non-pending statuses
+      if (result.status && result.status !== 'completed') {
+        console.log(`⚠️ Registration status: ${result.status}, message: ${result.message}`);
+        throw new Error(`Registration in unexpected state: ${result.status}`);
+      }
+      
       // Otherwise we should have the agent data
       if (!result.agentId || !result.playerId) {
-        throw new Error('Invalid response from bot registration');
+        console.error('❌ Invalid response structure:', JSON.stringify(result));
+        throw new Error('Invalid response from bot registration - missing agentId or playerId');
       }
       
       return { agentId: result.agentId, playerId: result.playerId };

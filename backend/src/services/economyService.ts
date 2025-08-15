@@ -283,7 +283,7 @@ export class EconomyService {
     const currencyReward = currencyRewardMap[lootboxRarity];
     
     // Create lootbox reward in database
-    return await prisma.lootboxReward.create({
+    const lootbox = await prisma.lootboxReward.create({
       data: {
         matchId,
         botId,
@@ -293,6 +293,43 @@ export class EconomyService {
         currencyReward
       }
     });
+
+    // Auto-sync lootbox to metaverse after tournament
+    try {
+      // Get bot's metaverse data
+      const bot = await prisma.bot.findUnique({
+        where: { id: botId },
+        include: { botSync: true }
+      });
+
+      if (bot?.botSync?.convexWorldId && bot?.botSync?.convexPlayerId) {
+        // Call metaverse backend to sync lootbox
+        const metaverseBackendUrl = process.env.METAVERSE_BACKEND_URL || 'http://localhost:5000';
+        const response = await fetch(`${metaverseBackendUrl}/api/metaverse/lootbox/sync`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lootboxId: lootbox.id })
+        });
+
+        if (response.ok) {
+          const result = await response.json() as { success: boolean; message?: string };
+          if (result.success) {
+            console.log(`✅ Lootbox auto-synced to metaverse for bot ${botId}`);
+          } else {
+            console.error(`⚠️ Failed to auto-sync lootbox: ${result.message}`);
+          }
+        } else {
+          console.error(`⚠️ Metaverse backend returned ${response.status}`);
+        }
+      } else {
+        console.log(`ℹ️ Bot ${botId} not registered in metaverse yet, lootbox will sync when bot is deployed`);
+      }
+    } catch (error) {
+      console.error('Error auto-syncing lootbox to metaverse:', error);
+      // Don't fail the lootbox generation if sync fails - it can be retried later
+    }
+
+    return lootbox;
   }
 
   // Open a lootbox and grant rewards

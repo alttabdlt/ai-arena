@@ -193,7 +193,6 @@ export const getQuickStats = query({
     try {
       // Sample small amounts from each table
       const inputsSample = await ctx.db.query('inputs').take(10);
-      const memoriesSample = await ctx.db.query('memories').take(10);
       const registrationsSample = await ctx.db.query('pendingBotRegistrations').take(10);
       const activityLogsSample = await ctx.db.query('activityLogs').take(10);
       
@@ -204,7 +203,6 @@ export const getQuickStats = query({
       return {
         samples: {
           inputs: inputsSample.length,
-          memories: memoriesSample.length,
           registrations: registrationsSample.length,
           activityLogs: activityLogsSample.length,
         },

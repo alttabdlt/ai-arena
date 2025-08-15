@@ -245,7 +245,6 @@ export class BotSyncService {
               convexAgentId: null,
               convexPlayerId: null,
               statsSynced: false,
-              retryCount: 0,
             }
           });
           
@@ -371,7 +370,6 @@ export class BotSyncService {
                   convexAgentId: null,
                   convexPlayerId: null,
                   statsSynced: false,
-                  retryCount: 0,
                 }
               });
               
@@ -620,13 +618,14 @@ export class BotSyncService {
           }
         });
 
-        // Map personality to agent description (use existing character if set)
+        // Map personality to agent description (use existing character if set, pass avatar for exact sprite mapping)
         const { mapPersonalityToAgent, getInitialZone } = require('../utils/personalityMapping');
         const agentDescription = mapPersonalityToAgent(
           bot.name,
           bot.personality,
           bot.prompt,
-          bot.metaverseCharacter || undefined
+          bot.metaverseCharacter || undefined,
+          bot.avatar || undefined  // Pass avatar data for exact sprite position mapping
         );
         
         // Determine initial zone

@@ -49,13 +49,14 @@ export const Player = ({
     // For AI Arena bots, try to determine from agent descriptions
     const agent = [...(game.world.agents.values() || [])].find(a => a.playerId === player.id);
     if (agent) {
-      // Map personality to default characters
+      // Map personality to f1-f8 characters from 32x32folk.png
       const personalityDefaults: Record<string, string> = {
-        'CRIMINAL': 'criminal1',
-        'GAMBLER': 'gambler1', 
-        'WORKER': 'worker1'
+        'CRIMINAL': 'f1',  // Use f1-f4 for criminals
+        'GAMBLER': 'f5',   // Use f5-f6 for gamblers
+        'WORKER': 'f7'     // Use f7-f8 for workers
       };
       playerCharacter = personalityDefaults[agent.personality || ''] || 'f1';
+      console.log(`Player ${player.id} fallback: personality=${agent.personality} -> character=${playerCharacter}`);
     } else {
       // Use f1 as default for human players, f8 for others
       playerCharacter = player.human ? 'f1' : 'f8';

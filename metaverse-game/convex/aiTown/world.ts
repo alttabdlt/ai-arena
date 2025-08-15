@@ -1,9 +1,95 @@
 import { ObjectType, v } from 'convex/values';
-import { Conversation, serializedConversation } from './conversation';
 import { Player, serializedPlayer } from './player';
 import { Agent, serializedAgent } from './agent';
-import { GameId, parseGameId, playerId } from './ids';
+import { GameId, parseGameId, playerId, conversationId } from './ids';
 import { parseMap } from '../util/object';
+
+// Conversation type defined inline since conversation module was simplified
+export const serializedConversation = {
+  id: conversationId,
+  creator: playerId,
+  created: v.number(),
+  participants: v.array(playerId),
+  lastMessage: v.optional(v.object({
+    author: playerId,
+    text: v.string(),
+  })),
+  numMessages: v.number(),
+};
+
+export class Conversation {
+  id: GameId<'conversations'>;
+  creator: GameId<'players'>;
+  created: number;
+  participants: Set<GameId<'players'>>;
+  lastMessage?: {
+    author: GameId<'players'>;
+    text: string;
+  };
+  numMessages: number;
+  isTyping: Set<GameId<'players'>>;
+  finished: boolean;
+
+  constructor(serialized: ObjectType<typeof serializedConversation>) {
+    const { id, creator, created, participants, lastMessage, numMessages } = serialized;
+    this.id = parseGameId('conversations', id);
+    this.creator = parseGameId('players', creator);
+    this.created = created;
+    this.participants = new Set(participants.map(p => parseGameId('players', p)));
+    if (lastMessage) {
+      this.lastMessage = {
+        author: parseGameId('players', lastMessage.author),
+        text: lastMessage.text,
+      };
+    }
+    this.numMessages = numMessages;
+    this.isTyping = new Set();
+    this.finished = false;
+  }
+
+  tick() {}
+
+  acceptInvite(playerId: GameId<'players'>) {
+    this.participants.add(playerId);
+  }
+
+  rejectInvite(playerId: GameId<'players'>) {
+    // Player rejects invitation - don't add them to participants
+    // Could log this rejection if needed
+  }
+
+  leave(playerId: GameId<'players'>) {
+    this.participants.delete(playerId);
+    this.isTyping.delete(playerId);
+    if (this.participants.size === 0) {
+      this.finished = true;
+    }
+  }
+
+  stop() {
+    this.finished = true;
+    this.isTyping.clear();
+  }
+
+  setIsTyping(playerId: GameId<'players'>, isTyping: boolean) {
+    if (isTyping) {
+      this.isTyping.add(playerId);
+    } else {
+      this.isTyping.delete(playerId);
+    }
+  }
+
+  serialize(): ObjectType<typeof serializedConversation> {
+    return {
+      id: this.id,
+      creator: this.creator,
+      created: this.created,
+      participants: [...this.participants],
+      lastMessage: this.lastMessage,
+      numMessages: this.numMessages,
+    };
+  }
+}
 
 export const historicalLocations = v.array(
   v.object({

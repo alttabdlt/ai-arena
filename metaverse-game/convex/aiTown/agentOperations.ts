@@ -6,7 +6,7 @@ import {
     leaveConversationMessage,
     startConversationMessage,
 } from '../agent/conversation';
-import { rememberConversation } from '../agent/memory';
+// import { rememberConversation } from '../agent/memory';
 import {
     ACTIVITY_COOLDOWN,
     COMBAT_COOLDOWN,
@@ -32,18 +32,19 @@ export const agentRememberConversation = internalAction({
     operationId: v.string(),
   },
   handler: async (ctx, args) => {
-    try {
-      await rememberConversation(
-        ctx,
-        args.worldId,
-        args.agentId as GameId<'agents'>,
-        args.playerId as GameId<'players'>,
-        args.conversationId as GameId<'conversations'>,
-      );
-    } catch (error) {
-      console.error(`Failed to remember conversation for agent ${args.agentId}:`, error);
-      // Continue anyway - we don't want to block the agent
-    }
+    // Memory system disabled - conversations not stored
+    // try {
+    //   await rememberConversation(
+    //     ctx,
+    //     args.worldId,
+    //     args.agentId as GameId<'agents'>,
+    //     args.playerId as GameId<'players'>,
+    //     args.conversationId as GameId<'conversations'>,
+    //   );
+    // } catch (error) {
+    //   console.error(`Failed to remember conversation for agent ${args.agentId}:`, error);
+    //   // Continue anyway - we don't want to block the agent
+    // }
     
     // Increased delay to reduce OCC errors
     await sleep(Math.random() * 5000 + 1000); // 1-6 seconds
@@ -96,9 +97,9 @@ export const agentGenerateMessage = internalAction({
 
       await ctx.runMutation(internal.aiTown.agent.agentSendMessage, {
         worldId: args.worldId,
-        conversationId: args.conversationId,
-        agentId: args.agentId,
-        playerId: args.playerId,
+        conversationId: args.conversationId as any,
+        agentId: args.agentId as any,
+        playerId: args.playerId as any,
         text,
         messageUuid: args.messageUuid,
         leaveConversation: args.type === 'leave',
@@ -113,9 +114,9 @@ export const agentGenerateMessage = internalAction({
       
       await ctx.runMutation(internal.aiTown.agent.agentSendMessage, {
         worldId: args.worldId,
-        conversationId: args.conversationId,
-        agentId: args.agentId,
-        playerId: args.playerId,
+        conversationId: args.conversationId as any,
+        agentId: args.agentId as any,
+        playerId: args.playerId as any,
         text: fallbackText,
         messageUuid: args.messageUuid,
         leaveConversation: args.type === 'leave',
@@ -127,13 +128,14 @@ export const agentGenerateMessage = internalAction({
 
 // Helper to validate if a bot is not a ghost
 function isValidBot(aiArenaBotId?: string): boolean {
-  if (!aiArenaBotId) return false;
+  // A valid bot has a non-empty aiArenaBotId
+  // Ghost bots are those without aiArenaBotId or with null/undefined/empty values
+  if (!aiArenaBotId || aiArenaBotId.trim() === '') {
+    return false;
+  }
   
-  // Check for ghost bot pattern (starts with 'cme' and length > 20)
-  const isGhostPattern = aiArenaBotId.startsWith('cme') && aiArenaBotId.length > 20;
-  
-  // If it matches ghost pattern, it's invalid
-  return !isGhostPattern;
+  // All non-empty IDs are valid (including Prisma-generated IDs starting with 'cme')
+  return true;
 }
 
 export const agentDoSomething = internalAction({
@@ -149,6 +151,10 @@ export const agentDoSomething = internalAction({
     const { player, agent } = args;
     const map = new WorldMap(args.map);
     const now = Date.now();
+    
+    // Add timeout mechanism - if this function takes more than 10 seconds, just wander
+    const startTime = Date.now();
+    const MAX_DECISION_TIME = 10000; // 10 seconds max
     
     // Double-check that this agent itself isn't a ghost
     if (!isValidBot(agent.aiArenaBotId)) {
@@ -236,10 +242,9 @@ export const agentDoSomething = internalAction({
     // First check for nearby players and evaluate relationships for interactions
     // Filter out any ghost bots that might have slipped through
     const nearbyPlayersForInteraction = args.otherFreePlayers.filter((p: any) => {
-      // Skip if no AI Arena bot ID (could be a ghost)
-      if (!p.aiArenaBotId || !isValidBot(p.aiArenaBotId)) {
-        return false;
-      }
+      // Players don't have aiArenaBotId, but we can check if they have a valid ID
+      // Ghost players would have been filtered out already by the agent system
+      // So we can just check distance here
       
       const distance = Math.sqrt(
         Math.pow(p.position.x - player.position.x, 2) + 
@@ -689,21 +694,66 @@ export const agentDoSomething = internalAction({
       });
       return;
     }
-    const invitee =
-      justLeftConversation || recentlyAttemptedInvite
-        ? undefined
-        : await ctx.runQuery(internal.aiTown.agent.findConversationCandidate, {
-            now,
-            worldId: args.worldId,
-            player: args.player,
-            otherFreePlayers: args.otherFreePlayers,
-          });
+    
+    // Timeout check - if we've taken too long, just wander
+    if (Date.now() - startTime > MAX_DECISION_TIME) {
+      console.log(`Agent ${agent.id} decision timeout, defaulting to wander`);
+      const destination = wanderDestination(map);
+      await sleep(Math.random() * 2000 + 500); // 0.5-2.5 seconds
+      await ctx.runMutation(api.aiTown.main.sendInput, {
+        worldId: args.worldId,
+        name: 'finishDoSomething',
+        args: {
+          operationId: args.operationId,
+          agentId: agent.id,
+          destination: destination,
+        },
+      });
+      return;
+    }
+    
+    // Try to find conversation candidate but with timeout
+    let invitee = undefined;
+    if (!justLeftConversation && !recentlyAttemptedInvite) {
+      try {
+        // Add a timeout to the query
+        const findCandidatePromise = ctx.runQuery(internal.aiTown.agent.findConversationCandidate, {
+          now,
+          worldId: args.worldId,
+          player: args.player,
+          otherFreePlayers: args.otherFreePlayers,
+        });
+        
+        const timeoutPromise = new Promise((resolve) => 
+          setTimeout(() => resolve(undefined), 3000) // 3 second timeout for finding candidate
+        );
+        
+        invitee = await Promise.race([findCandidatePromise, timeoutPromise]);
+      } catch (error) {
+        console.log(`Error finding conversation candidate for ${agent.id}:`, error);
+        invitee = undefined;
+      }
+    }
 
-    // TODO: We hit a lot of OCC errors on sending inputs in this file. It's
-    // easy for them to get scheduled at the same time and line up in time.
-    // Increase random delay to better distribute operations
+    // If still no action decided, just wander
+    if (!invitee) {
+      const destination = wanderDestination(map);
+      await sleep(Math.random() * 2000 + 500); // 0.5-2.5 seconds
+      await ctx.runMutation(api.aiTown.main.sendInput, {
+        worldId: args.worldId,
+        name: 'finishDoSomething',
+        args: {
+          operationId: args.operationId,
+          agentId: agent.id,
+          destination: destination,
+        },
+      });
+      return;
+    }
+
+    // Send input with invitee
     const conversationOffset = parseInt(agent.id.split(':')[1]) % 2000;
-    await sleep(Math.random() * 5000 + 1000 + conversationOffset); // 1-8 seconds with offset
+    await sleep(Math.random() * 3000 + 500 + conversationOffset); // 0.5-3.5 seconds with offset
     await ctx.runMutation(api.aiTown.main.sendInput, {
       worldId: args.worldId,
       name: 'finishDoSomething',

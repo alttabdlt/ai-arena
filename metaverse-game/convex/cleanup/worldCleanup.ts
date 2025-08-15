@@ -249,16 +249,6 @@ async function cleanupPlayerData(ctx: MutationCtx, worldId: Id<'worlds'>, player
   for (const record of [...participated1, ...participated2]) {
     await ctx.db.delete(record._id);
   }
-  
-  // Delete memories (limited)
-  const memories = await ctx.db
-    .query('memories')
-    .withIndex('playerId', (q) => q.eq('playerId', playerId))
-    .take(20); // Limited
-  
-  for (const memory of memories) {
-    await ctx.db.delete(memory._id);
-  }
 }
 
 /**

@@ -217,30 +217,59 @@ export const updateRegistrationStatuses = internalMutation({
         if (input.returnValue) {
           const returnValue = input.returnValue as any;
           
-          if (returnValue.kind === 'ok' && returnValue.value) {
-            // Success - update registration with results
-            await ctx.db.patch(reg._id, {
-              status: 'completed',
-              completedAt: Date.now(),
-              result: {
-                agentId: returnValue.value.agentId,
-                playerId: returnValue.value.playerId,
-                inputId: reg.result.inputId,
-              },
-            });
-            
-            // Initialize bot experience at level 1
-            if (reg.aiArenaBotId && returnValue.value.playerId) {
-              // @ts-ignore - TypeScript depth issue
-              await ctx.runMutation(internal.aiTown.idleGains.initializeBotExperience, {
-                worldId: reg.worldId,
-                playerId: returnValue.value.playerId,
-                aiArenaBotId: reg.aiArenaBotId,
+          // Handle various return value structures
+          if (returnValue.kind === 'ok') {
+            if (returnValue.value && returnValue.value.agentId && returnValue.value.playerId) {
+              // Success - update registration with results
+              await ctx.db.patch(reg._id, {
+                status: 'completed',
+                completedAt: Date.now(),
+                result: {
+                  agentId: returnValue.value.agentId,
+                  playerId: returnValue.value.playerId,
+                  inputId: reg.result.inputId,
+                },
               });
+              
+              // Initialize bot experience at level 1
+              if (reg.aiArenaBotId && returnValue.value.playerId) {
+                // @ts-ignore - TypeScript depth issue
+                await ctx.runMutation(internal.aiTown.idleGains.initializeBotExperience, {
+                  worldId: reg.worldId,
+                  playerId: returnValue.value.playerId,
+                  aiArenaBotId: reg.aiArenaBotId,
+                });
+              }
+              
+              updatedCount++;
+              console.log(`✅ Registration ${reg._id} completed: agent=${returnValue.value.agentId}, player=${returnValue.value.playerId}`);
+            } else if (returnValue.value === null) {
+              // Old handler returned null - mark as stuck and needs cleanup
+              console.error(`⚠️ Registration ${reg._id} has null return value - handler needs update`);
+              
+              // Mark as failed so it can be retried
+              await ctx.db.patch(reg._id, {
+                status: 'failed',
+                completedAt: Date.now(),
+                error: 'Handler returned null - needs update',
+                retryCount: (reg.retryCount || 0) + 1,
+              });
+              updatedCount++;
+              
+              // Delete the processed input so it doesn't block retries
+              await ctx.db.delete(input._id);
+              console.log(`🗑️ Deleted stuck input ${input._id} with null return value`);
+            } else {
+              // Unexpected return structure
+              console.error(`⚠️ Registration ${reg._id} has unexpected return value structure:`, returnValue.value);
+              await ctx.db.patch(reg._id, {
+                status: 'failed',
+                completedAt: Date.now(),
+                error: 'Unexpected return value structure',
+                retryCount: (reg.retryCount || 0) + 1,
+              });
+              updatedCount++;
             }
-            
-            updatedCount++;
-            console.log(`✅ Registration ${reg._id} completed: agent=${returnValue.value.agentId}, player=${returnValue.value.playerId}`);
           } else if (returnValue.kind === 'error') {
             // Error - mark as failed
             await ctx.db.patch(reg._id, {
@@ -466,5 +495,30 @@ export const clearStuckRegistrations = mutation({
     }
     
     return { cleared: clearedCount };
+  },
+});
+
+// Clear failed registrations for a specific bot
+export const clearBotRegistration = mutation({
+  args: {
+    aiArenaBotId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const registrations = await ctx.db
+      .query('pendingBotRegistrations')
+      .withIndex('aiArenaBotId', (q) => q.eq('aiArenaBotId', args.aiArenaBotId))
+      .collect();
+    
+    let clearedCount = 0;
+    for (const reg of registrations) {
+      // Clear failed or stuck registrations
+      if (reg.status === 'failed' || reg.status === 'processing') {
+        await ctx.db.delete(reg._id);
+        clearedCount++;
+        console.log(`Cleared ${reg.status} registration ${reg._id} for bot: ${args.aiArenaBotId}`);
+      }
+    }
+    
+    return { cleared: clearedCount, total: registrations.length };
   },
 });

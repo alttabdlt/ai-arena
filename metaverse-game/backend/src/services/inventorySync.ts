@@ -39,28 +39,43 @@ export class InventorySyncService {
         return { success: false, syncedItems: 0, errors: ['Bot not registered in metaverse'] };
       }
 
-      // Prepare equipment data for sync
-      const equipmentData = bot.equipment.map(item => ({
-        itemId: item.id,
-        name: item.name,
-        type: item.equipmentType,
-        rarity: item.rarity,
-        stats: {
-          powerBonus: item.powerBonus,
-          defenseBonus: item.defenseBonus,
-          speedBonus: item.speedBonus || 0,
-          agilityBonus: item.agilityBonus || 0,
-          rangeBonus: item.rangeBonus || 0,
-          healingPower: item.healingPower || 0,
-          scoreBonus: 0, // Equipment doesn't have scoreBonus, that's for furniture
-        },
-        consumable: item.consumable,
-        quantity: item.quantity,
-        uses: item.uses,
-        maxUses: item.maxUses,
-        duration: item.duration,
-        equipped: item.equipped,
-      }));
+      // Prepare equipment data for sync with proper type mapping
+      const equipmentData = bot.equipment.map(item => {
+        // Equipment types are already mapped correctly in the database
+        // SWORD, GUN, ARMOR, BOOTS, POTION, TOOL, ACCESSORY
+        let mappedType = item.equipmentType;
+        
+        // Only remap ACCESSORY to BOOTS if it's footwear
+        if (item.equipmentType === 'ACCESSORY' && 
+            (item.name?.toLowerCase().includes('boot') || 
+             item.name?.toLowerCase().includes('shoe') ||
+             item.speedBonus || item.agilityBonus)) {
+          mappedType = 'BOOTS';
+        }
+        // All other types stay as-is (SWORD, GUN, ARMOR, POTION, TOOL)
+        
+        return {
+          itemId: item.id,
+          name: item.name,
+          type: mappedType,
+          rarity: item.rarity,
+          stats: {
+            powerBonus: item.powerBonus,
+            defenseBonus: item.defenseBonus,
+            speedBonus: item.speedBonus || 0,
+            agilityBonus: item.agilityBonus || 0,
+            rangeBonus: item.rangeBonus || 0,
+            healingPower: item.healingPower || 0,
+            scoreBonus: 0, // Equipment doesn't have scoreBonus, that's for furniture
+          },
+          consumable: mappedType === 'POTION' || item.consumable,
+          quantity: item.quantity || (mappedType === 'POTION' ? 1 : undefined),
+          uses: item.uses,
+          maxUses: item.maxUses,
+          duration: item.duration,
+          equipped: item.equipped,
+        };
+      });
 
       // Sync to metaverse via HTTP endpoint
       const syncResult = await this.syncItemsToMetaverse(
@@ -122,13 +137,26 @@ export class InventorySyncService {
       // Prepare rewards data
       const rewards: any[] = [];
       
-      // Process equipment rewards
+      // Process equipment rewards with proper type mapping
       const equipmentRewards = lootbox.equipmentRewards as any[];
       for (const equipment of equipmentRewards) {
+        // Equipment types from lootbox rewards should already be correct
+        // SWORD, GUN, ARMOR, BOOTS, POTION, TOOL, ACCESSORY
+        let mappedType = equipment.equipmentType;
+        
+        // Only remap ACCESSORY to BOOTS if it's footwear
+        if (equipment.equipmentType === 'ACCESSORY' && 
+            (equipment.name?.toLowerCase().includes('boot') || 
+             equipment.name?.toLowerCase().includes('shoe') ||
+             equipment.speedBonus > 0 || equipment.agilityBonus > 0)) {
+          mappedType = 'BOOTS';
+        }
+        // All other types stay as-is
+        
         rewards.push({
           itemId: `loot-${lootboxId}-eq-${rewards.length}`,
           name: equipment.name,
-          type: equipment.equipmentType,
+          type: mappedType,
           rarity: equipment.rarity,
           stats: {
             powerBonus: equipment.powerBonus || 0,
@@ -139,8 +167,8 @@ export class InventorySyncService {
             healingPower: equipment.healingPower || 0,
             scoreBonus: 0,
           },
-          consumable: equipment.consumable || false,
-          quantity: equipment.quantity || 1,
+          consumable: mappedType === 'POTION' || equipment.consumable || false,
+          quantity: equipment.quantity || (mappedType === 'POTION' ? 1 : 1),
           duration: equipment.duration || null,
         });
       }

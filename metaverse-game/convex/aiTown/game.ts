@@ -11,7 +11,7 @@ import { World, serializedWorld } from './world';
 import { WorldMap, serializedWorldMap } from './worldMap';
 import { PlayerDescription, serializedPlayerDescription } from './playerDescription';
 import { Location, locationFields, playerLocation } from './location';
-import { runAgentOperation } from './agent';
+import { Agent, runAgentOperation } from './agent';
 import { GameId, IdTypes, allocGameId } from './ids';
 import { InputArgs, InputNames, inputs } from './inputs';
 import {
@@ -66,6 +66,9 @@ export class Game extends AbstractGame {
   // Relationship cache for performance
   relationshipCache: Map<string, any> = new Map();
   reputationCache: Map<GameId<'players'>, any> = new Map();
+  
+  // Agent lookup by playerId for efficient access
+  agentsByPlayerId: Map<GameId<'players'>, Agent> = new Map();
 
   constructor(
     engine: Doc<'engines'>,
@@ -89,6 +92,11 @@ export class Game extends AbstractGame {
     this.historicalLocations = new Map();
 
     this.numPathfinds = 0;
+    
+    // Populate agentsByPlayerId Map for efficient lookup
+    for (const agent of this.world.agents.values()) {
+      this.agentsByPlayerId.set(agent.playerId, agent);
+    }
   }
 
   static async load(
@@ -212,7 +220,7 @@ export class Game extends AbstractGame {
   handleInput<Name extends InputNames>(now: number, name: Name, args: InputArgs<Name>) {
     const handler = inputs[name]?.handler;
     if (!handler) {
-      throw new Error(`Invalid input: ${name}`);
+      throw new Error(`Invalid input: ${String(name)}`);
     }
     
     // Handle activity logging for specific input types
@@ -296,7 +304,7 @@ export class Game extends AbstractGame {
       
       if (isValid) {
         // Conversation is valid, tick it
-        conversation.tick(this, now);
+        conversation.tick();
       } else {
         // Mark for removal after iteration
         conversationsToRemove.push(conversation.id);
@@ -386,7 +394,7 @@ export class Game extends AbstractGame {
     }
     for (const conversation of existingWorld.conversations) {
       if (!newWorld.conversations.some((c) => c.id === conversation.id)) {
-        const participants = conversation.participants.map((p) => p.playerId);
+        const participants = conversation.participants.map((p: any) => p.playerId || p);
         const archivedConversation = {
           worldId,
           id: conversation.id,

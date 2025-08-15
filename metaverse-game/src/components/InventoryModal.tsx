@@ -39,6 +39,8 @@ export default function InventoryModal({ isOpen, onClose, worldId, playerId, aiA
   // Mutations
   const processLootbox = useMutation(api.aiTown.inventory.processLootboxFromQueue);
   const equipItem = useMutation(api.aiTown.inventory.equipItem);
+  const consumePotion = useMutation(api.aiTown.potions.consumeEnergyPotion);
+  const consumeBuff = useMutation(api.aiTown.potions.consumeBuffPotion);
   // Removed test lootbox creation - use real lootbox system instead
 
   const handleOpenLootbox = async (lootboxId: Id<'lootboxQueue'>) => {
@@ -60,6 +62,34 @@ export default function InventoryModal({ isOpen, onClose, worldId, playerId, aiA
       await equipItem({ worldId, playerId, itemId });
     } catch (error) {
       console.error('Failed to equip item:', error);
+    }
+  };
+
+  const handleConsumePotion = async (item: any) => {
+    try {
+      // Check if it's an energy potion or buff potion
+      const isEnergyPotion = (item.healingPower && item.healingPower > 0) || 
+                              item.name.toLowerCase().includes('energy');
+      const isBuffPotion = item.speedBonus || item.powerBonus || 
+                          item.defenseBonus || item.agilityBonus;
+      
+      let result;
+      if (isEnergyPotion) {
+        result = await consumePotion({ worldId, playerId, itemId: item._id });
+      } else if (isBuffPotion) {
+        result = await consumeBuff({ worldId, playerId, itemId: item._id });
+      } else {
+        console.error('Unknown potion type');
+        return;
+      }
+      
+      if (result.success) {
+        console.log(`✅ ${result.message}`);
+      } else {
+        console.error(`❌ Failed to consume potion: ${result.message}`);
+      }
+    } catch (error) {
+      console.error('Failed to consume potion:', error);
     }
   };
 
@@ -262,7 +292,7 @@ export default function InventoryModal({ isOpen, onClose, worldId, playerId, aiA
                         <ItemCard 
                           key={item._id} 
                           item={item}
-                          onAction={() => {/* TODO: Use consumable */}}
+                          onAction={() => handleConsumePotion(item)}
                           actionLabel={item.quantity && item.quantity > 1 ? `Use (${item.quantity})` : "Use"}
                         />
                       ))
@@ -374,7 +404,7 @@ export default function InventoryModal({ isOpen, onClose, worldId, playerId, aiA
                           key={item._id} 
                           item={item}
                           onAction={item.type === 'POTION' ? 
-                            () => {/* TODO: Use consumable */} : 
+                            () => handleConsumePotion(item) : 
                             () => handleEquipItem(item._id)
                           }
                           actionLabel={

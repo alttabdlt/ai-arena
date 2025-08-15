@@ -70,15 +70,6 @@ export const cleanupGhostBots = mutation({
           await ctx.db.delete(experience._id);
         }
 
-        // Clean up memories
-        const memories = await ctx.db
-          .query('memories')
-          .withIndex('playerId', q => q.eq('playerId', ghostBot.playerId))
-          .collect();
-        for (const memory of memories) {
-          await ctx.db.delete(memory._id);
-        }
-
         // Clean up relationships
         const relationships = await ctx.db
           .query('relationships')

@@ -5,6 +5,8 @@ export { formatTimestamp } from './date-formatter';
 export {
   type BotPersonalityType,
   extractSpritePosition,
+  encodeSpriteWithPosition,
+  decodeSpriteData,
   mapSpritePositionToCharacter,
   getMetaverseCharacter,
   isValidMetaverseCharacter

@@ -6,6 +6,7 @@ import { Button } from '@ui/button';
 import { Progress } from '@ui/progress';
 import { Bot, Trophy, Zap, Shield, Coins, Activity, Eye, Play, Package, Trash2, MoreVertical, Pause } from 'lucide-react';
 import { StardewSpriteSelector, BotPersonality } from '@/services/stardewSpriteSelector';
+import { getCharacterSpriteExtractor } from '@/services/characterSpriteExtractor';
 import { BotInventoryModal } from './BotInventoryModal';
 import { cn } from '@/lib/utils';
 import {
@@ -57,30 +58,55 @@ interface BotCardProps {
 export function BotCard({ bot, onQueue, onManage, onDelete }: BotCardProps) {
   const navigate = useNavigate();
   const [spriteData, setSpriteData] = useState<{ 
-    imageData: string; 
+    imageData?: string;
+    characterId?: string;
   }>({
     imageData: ''
   });
   const [spriteSelector] = useState(() => new StardewSpriteSelector());
+  const [spriteExtractor] = useState(() => getCharacterSpriteExtractor());
 
   useEffect(() => {
-    // Use existing avatar if available
-    if (bot.avatar && bot.avatar.startsWith('data:image')) {
-      setSpriteData({ imageData: bot.avatar });
-    } else {
-      // Select sprite based on personality
-      spriteSelector.selectSprite(
-        bot.personality as BotPersonality,
-        bot.id // Use bot ID as seed for consistent sprites
-      ).then(sprite => {
-        setSpriteData({ 
-          imageData: sprite.imageData 
-        });
-      }).catch(error => {
-        console.error('Failed to generate sprite', error);
-      });
-    }
-  }, [bot.avatar, bot.personality, bot.id, spriteSelector]);
+    // Check if avatar is a character ID (new system)
+    const validCharacters = ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8'];
+    
+    const loadSprite = async () => {
+      if (bot.avatar && validCharacters.includes(bot.avatar)) {
+        // New system: avatar is a character ID - extract the sprite
+        try {
+          const sprite = await spriteExtractor.extractCharacterSprite(bot.avatar);
+          setSpriteData({ 
+            characterId: bot.avatar,
+            imageData: sprite.imageData 
+          });
+        } catch (error) {
+          console.error('Failed to extract sprite:', error);
+          setSpriteData({ characterId: bot.avatar });
+        }
+      } else if (bot.avatar && bot.avatar.startsWith('data:image')) {
+        // Legacy system: avatar is a data URL
+        setSpriteData({ imageData: bot.avatar });
+      } else {
+        // No avatar: select based on personality
+        try {
+          const sprite = await spriteSelector.selectSprite(
+            bot.personality as BotPersonality,
+            bot.id // Use bot ID as seed for consistent sprites
+          );
+          // Extract the sprite for the selected character
+          const extracted = await spriteExtractor.extractCharacterSprite(sprite.characterId);
+          setSpriteData({ 
+            characterId: sprite.characterId,
+            imageData: extracted.imageData
+          });
+        } catch (error) {
+          console.error('Failed to generate sprite', error);
+        }
+      }
+    };
+    
+    loadSprite();
+  }, [bot.avatar, bot.personality, bot.id, spriteSelector, spriteExtractor]);
 
   const formatEarnings = (earnings: string) => {
     const num = parseFloat(earnings);
@@ -205,21 +231,29 @@ export function BotCard({ bot, onQueue, onManage, onDelete }: BotCardProps) {
       <CardContent className="space-y-4">
         {/* Sprite Display */}
         <div className="flex justify-center">
-          {spriteData.imageData && (
+          {(spriteData.characterId || spriteData.imageData) && (
             <div 
               className="w-24 h-24 bg-muted rounded-lg flex items-center justify-center"
               style={{
                 imageRendering: 'pixelated'
               }}
             >
-              <img 
-                src={spriteData.imageData}
-                alt={bot.name}
-                className="w-full h-full object-contain"
-                style={{
-                  imageRendering: 'pixelated'
-                }}
-              />
+              {spriteData.imageData ? (
+                // Display the sprite image
+                <img 
+                  src={spriteData.imageData}
+                  alt={bot.name}
+                  className="w-full h-full object-contain"
+                  style={{
+                    imageRendering: 'pixelated'
+                  }}
+                />
+              ) : spriteData.characterId ? (
+                // Fallback: Display character ID if image failed to load
+                <div className="text-xl font-bold text-muted-foreground">
+                  {spriteData.characterId.toUpperCase()}
+                </div>
+              ) : null}
             </div>
           )}
         </div>

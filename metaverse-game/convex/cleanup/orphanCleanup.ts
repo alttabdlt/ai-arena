@@ -158,7 +158,7 @@ async function cleanupArchivedConversations(ctx: MutationCtx, worldId: Id<'world
           deletedCount++;
         } else {
           // Multiple participants - just remove this player from the list
-          const updatedParticipants = convo.participants.filter(p => p !== playerId);
+          const updatedParticipants = convo.participants.filter((p: any) => p !== playerId);
           await ctx.db.patch(convo._id, { participants: updatedParticipants });
           updatedCount++;
         }

@@ -338,10 +338,10 @@ export class Player {
         }
       }
       
-      // Roll for loot drop (10% base chance)
+      // Roll for loot drop (2% base chance per tile)
       if (now - this.lastLootRoll > 1000) { // Max 1 loot roll per second
         this.lastLootRoll = now;
-        const lootChance = 0.1 * this.getZoneLootMultiplier(newZone);
+        const lootChance = 0.02 * this.getZoneLootMultiplier(newZone);
         
         if (Math.random() < lootChance) {
           // Schedule loot drop
@@ -463,6 +463,7 @@ export class Player {
         avatar,
       }),
     );
+    console.log(`Player.join: Created player ${playerId} with character=${character}, name=${name}, avatar=${avatar}`);
     game.descriptionsModified = true;
     return playerId;
   }
@@ -475,7 +476,7 @@ export class Player {
     
     for (const conversation of conversations) {
       console.log(`Player ${this.id} leaving: stopping conversation ${conversation.id}`);
-      conversation.stop(game, now);
+      conversation.stop();
     }
     
     // Schedule comprehensive cleanup for this player
@@ -544,6 +545,27 @@ export const playerInputs = {
       return null;
     },
   }),
+  updatePlayerEquipment: inputHandler({
+    args: {
+      playerId,
+      timestamp: v.number(),
+      powerBonus: v.number(),
+      defenseBonus: v.number(),
+    },
+    handler: (game, now, args) => {
+      const playerId = parseGameId('players', args.playerId);
+      const player = game.world.players.get(playerId);
+      if (!player) {
+        throw new Error(`Invalid player ID ${playerId}`);
+      }
+      // Update equipment stats on the player
+      player.equipment = {
+        powerBonus: args.powerBonus,
+        defenseBonus: args.defenseBonus,
+      };
+      return null;
+    },
+  }),
   moveTo: inputHandler({
     args: {
       playerId,
@@ -560,6 +582,117 @@ export const playerInputs = {
       } else {
         stopPlayer(player);
       }
+      return null;
+    },
+  }),
+  createAgent: inputHandler({
+    args: {
+      descriptionIndex: v.number(),
+    },
+    handler: (game, now, args) => {
+      // Simple agent creation - just return success
+      // The actual agent creation is handled by the game engine
+      return null;
+    },
+  }),
+  createAgentFromAIArena: inputHandler({
+    args: {
+      name: v.string(),
+      character: v.string(),
+      identity: v.string(),
+      plan: v.string(),
+      aiArenaBotId: v.string(),
+      initialZone: v.string(),
+    },
+    handler: (game, now, args) => {
+      // Create a player for this AI Arena bot
+      const playerId = game.allocId('players');
+      
+      // Find a spawn position in the requested zone
+      const position = { x: 10, y: 10 }; // Default position, should be zone-specific
+      const facing = { dx: 0, dy: 1 };
+      
+      // Create the player
+      game.world.players.set(
+        playerId,
+        new Player({
+          id: playerId,
+          human: undefined, // AI-controlled, not human
+          lastInput: now,
+          position,
+          facing,
+          speed: 0,
+          // Initialize idle game stats
+          stepsTaken: 0,
+          lastStepTime: now,
+          stepStreak: 0,
+          lastLootRoll: 0,
+          // Zone and energy
+          currentZone: args.initialZone as any,
+          currentEnergy: 30,
+          maxEnergy: 30,
+          lastEnergyRegen: now,
+        }),
+      );
+      
+      // Create player description
+      game.playerDescriptions.set(
+        playerId,
+        new PlayerDescription({
+          playerId,
+          character: args.character,
+          description: args.identity,
+          name: args.name,
+        }),
+      );
+      
+      // Create the agent
+      const agentId = game.allocId('agents');
+      const personality = args.identity.toLowerCase().includes('criminal') ? 'CRIMINAL' :
+                         args.identity.toLowerCase().includes('gambler') ? 'GAMBLER' : 'WORKER';
+      
+      // Use require to avoid circular dependency
+      const { Agent } = require('./agent');
+      game.world.agents.set(
+        agentId,
+        new Agent({
+          id: agentId,
+          playerId,
+          aiArenaBotId: args.aiArenaBotId,
+          personality: personality as any,
+        }),
+      );
+      
+      // Also create agent description - use require to avoid circular dependency
+      const { AgentDescription } = require('./agentDescription');
+      game.agentDescriptions.set(
+        agentId,
+        new AgentDescription({
+          agentId,
+          identity: args.identity,
+          plan: args.plan,
+        }),
+      );
+      
+      game.descriptionsModified = true;
+      
+      console.log(`Created AI Arena bot: agent=${agentId}, player=${playerId}, name=${args.name}`);
+      
+      // Return the IDs for the registration system
+      return {
+        agentId: agentId as string,
+        playerId: playerId as string,
+      };
+    },
+  }),
+  finishSendingMessage: inputHandler({
+    args: {
+      conversationId: v.id('conversations'),
+      timestamp: v.number(),
+    },
+    handler: (game, now, args) => {
+      // Simple message finish handler - just return success
+      // The actual message handling is done through conversation inputs
       return null;
     },
   }),

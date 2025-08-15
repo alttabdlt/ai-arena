@@ -6,9 +6,16 @@ import { serializedAgent } from './agent';
 import { serializedAgentDescription } from './agentDescription';
 import { serializedWorld } from './world';
 import { serializedWorldMap } from './worldMap';
-import { serializedConversation } from './conversation';
+// Conversation system simplified - no longer importing conversation module
 import { conversationId, playerId } from './ids';
-import { ZoneType, zonePortals, instanceConfig } from './zoneConfig';
+// Zone types defined inline since zone config has been removed
+const ZoneType = v.union(
+  v.literal('casino'),
+  v.literal('darkAlley'),
+  v.literal('suburb'),
+  v.literal('downtown'),
+  v.literal('underground')
+);
 
 export const aiTownTables = {
   // This table has a single document that stores all players, conversations, and agents. This
@@ -56,8 +63,12 @@ export const aiTownTables = {
     creator: playerId,
     created: v.number(),
     ended: v.number(),
-    lastMessage: serializedConversation.lastMessage,
-    numMessages: serializedConversation.numMessages,
+    lastMessage: v.optional(v.object({
+      author: playerId,
+      text: v.optional(v.string()),
+      timestamp: v.optional(v.number()),
+    })),
+    numMessages: v.number(),
     participants: v.array(playerId),
   }).index('worldId', ['worldId', 'id']),
   archivedAgents: defineTable({ worldId: v.id('worlds'), ...serializedAgent }).index('worldId', [
@@ -95,19 +106,19 @@ export const aiTownTables = {
     .index('zoneWorld', ['zoneType', 'worldId'])
     .index('status', ['status', 'zoneType']),
   
-  // Portal connections between zones
-  zonePortals: defineTable(zonePortals)
-    .index('fromZone', ['fromZone'])
-    .index('toZone', ['toZone']),
+  // Portal connections between zones - NOT IMPLEMENTED
+  // zonePortals: defineTable(zonePortals)
+  //   .index('fromZone', ['fromZone'])
+  //   .index('toZone', ['toZone']),
   
-  // Track player zone transitions
-  playerZoneHistory: defineTable({
-    playerId: playerId,
-    fromZone: v.optional(ZoneType),
-    toZone: ZoneType,
-    timestamp: v.number(),
-    worldInstanceId: v.id('worldInstances'),
-  }).index('player', ['playerId', 'timestamp']),
+  // Track player zone transitions - NOT NEEDED (using activityLogs instead)
+  // playerZoneHistory: defineTable({
+  //   playerId: playerId,
+  //   fromZone: v.optional(ZoneType),
+  //   toZone: ZoneType,
+  //   timestamp: v.number(),
+  //   worldInstanceId: v.id('worldInstances'),
+  // }).index('player', ['playerId', 'timestamp']),
   
   // Activity logs for bots
   activityLogs: defineTable({
@@ -309,57 +320,57 @@ export const aiTownTables = {
   .index('lastInteraction', ['worldId', 'lastInteraction'])
   .index('stage', ['worldId', 'stage']),
   
-  // Global reputation scores
-  reputations: defineTable({
-    worldId: v.id('worlds'),
-    playerId: playerId,
-    
-    // Global metrics affecting all relationships
-    globalRespect: v.number(),    // Overall respect in the world
-    dangerLevel: v.number(),      // How dangerous they are
-    reliability: v.number(),       // Trade/deal reliability
-    
-    // Crime statistics
-    robberyCount: v.number(),
-    combatWins: v.number(),
-    combatLosses: v.number(),
-    successfulTrades: v.number(),
-    
-    lastUpdated: v.number(),
-  })
-  .index('player', ['worldId', 'playerId'])
-  .index('respect', ['worldId', 'globalRespect']),
+  // Global reputation scores - NOT IMPLEMENTED
+  // reputations: defineTable({
+  //   worldId: v.id('worlds'),
+  //   playerId: playerId,
+  //   
+  //   // Global metrics affecting all relationships
+  //   globalRespect: v.number(),    // Overall respect in the world
+  //   dangerLevel: v.number(),      // How dangerous they are
+  //   reliability: v.number(),       // Trade/deal reliability
+  //   
+  //   // Crime statistics
+  //   robberyCount: v.number(),
+  //   combatWins: v.number(),
+  //   combatLosses: v.number(),
+  //   successfulTrades: v.number(),
+  //   
+  //   lastUpdated: v.number(),
+  // })
+  // .index('player', ['worldId', 'playerId'])
+  // .index('respect', ['worldId', 'globalRespect']),
   
   // NOTE: factions table removed - not implemented yet
   // Faction system will be added when alliance/betrayal mechanics are built
   
-  // Marriage registry for tracking married bot couples
-  marriages: defineTable({
-    worldId: v.id('worlds'),
-    partner1: playerId,
-    partner2: playerId,
-    marriedAt: v.number(),
-    
-    // Marriage bonuses and perks
-    combinedPowerBonus: v.number(), // Additional power when fighting together
-    combinedDefenseBonus: v.number(), // Additional defense when protecting each other
-    sharedInventory: v.boolean(), // Can share items
-    
-    // Marriage milestones
-    anniversaryCount: v.number(),
-    lastAnniversary: v.optional(v.number()),
-    
-    // Special rewards granted
-    godTierEquipmentGranted: v.boolean(),
-    
-    // Status
-    active: v.boolean(), // False if divorced/widowed
-    endedAt: v.optional(v.number()),
-    endReason: v.optional(v.union(v.literal('divorce'), v.literal('death'))),
-  })
-  .index('partners', ['worldId', 'partner1', 'partner2'])
-  .index('active', ['worldId', 'active'])
-  .index('marriedAt', ['worldId', 'marriedAt']),
+  // Marriage registry - REDUNDANT (relationships table handles marriage status)
+  // marriages: defineTable({
+  //   worldId: v.id('worlds'),
+  //   partner1: playerId,
+  //   partner2: playerId,
+  //   marriedAt: v.number(),
+  //   
+  //   // Marriage bonuses and perks
+  //   combinedPowerBonus: v.number(), // Additional power when fighting together
+  //   combinedDefenseBonus: v.number(), // Additional defense when protecting each other
+  //   sharedInventory: v.boolean(), // Can share items
+  //   
+  //   // Marriage milestones
+  //   anniversaryCount: v.number(),
+  //   lastAnniversary: v.optional(v.number()),
+  //   
+  //   // Special rewards granted
+  //   godTierEquipmentGranted: v.boolean(),
+  //   
+  //   // Status
+  //   active: v.boolean(), // False if divorced/widowed
+  //   endedAt: v.optional(v.number()),
+  //   endReason: v.optional(v.union(v.literal('divorce'), v.literal('death'))),
+  // })
+  // .index('partners', ['worldId', 'partner1', 'partner2'])
+  // .index('active', ['worldId', 'active'])
+  // .index('marriedAt', ['worldId', 'marriedAt']),
   
   // Pending bot registrations queue for batch processing
   pendingBotRegistrations: defineTable({

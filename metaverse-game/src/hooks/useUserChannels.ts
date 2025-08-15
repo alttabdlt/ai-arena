@@ -66,7 +66,7 @@ export function useUserChannels() {
             currentBots: 0,
             maxBots: 30,
             loadPercentage: 0,
-            worldId: 'default-world', // Ensure we have a worldId for the default channel
+            worldId: null, // Use null instead of invalid 'default-world'
             region: null,
             description: 'Default main channel'
           }]);

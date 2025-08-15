@@ -8,18 +8,18 @@ import { startEngine, kickEngine } from './main';
 function getCharacterForPersonality(personality: string): string {
   const personalityUpper = personality.toUpperCase();
   
-  // Map based on personality
+  // Map based on personality - using only f1-f8 characters from 32x32folk.png
   if (personalityUpper === 'CRIMINAL') {
-    // Use criminal sprites or f1-f3 for criminals
-    const criminalChars = ['criminal1', 'f1', 'f2', 'f3'];
+    // Use f1-f4 for criminals
+    const criminalChars = ['f1', 'f2', 'f3', 'f4'];
     return criminalChars[Math.floor(Math.random() * criminalChars.length)];
   } else if (personalityUpper === 'GAMBLER') {
-    // Use gambler sprites or f4-f6 for gamblers
-    const gamblerChars = ['gambler1', 'f4', 'f5', 'f6'];
+    // Use f5-f6 for gamblers
+    const gamblerChars = ['f5', 'f6'];
     return gamblerChars[Math.floor(Math.random() * gamblerChars.length)];
   } else {
-    // Use worker sprites or f7-f8 for workers
-    const workerChars = ['worker1', 'f7', 'f8'];
+    // Use f7-f8 for workers
+    const workerChars = ['f7', 'f8'];
     return workerChars[Math.floor(Math.random() * workerChars.length)];
   }
 }
@@ -344,27 +344,18 @@ export const registerBot = mutation({
         .first();
       
       if (existingRegistration) {
-        // Validate that the agent actually exists if registration is completed
+        // For completed registrations, just return them without validation
+        // The agentId format is "a:XXXXX" which is a game engine ID, not a Convex document ID
+        // We cannot validate existence this way
         if (existingRegistration.status === 'completed' && existingRegistration.result?.agentId) {
-          const agentIdParts = existingRegistration.result.agentId.split(':');
-          if (agentIdParts.length === 2) {
-            const agentDocId = agentIdParts[1];
-            const agent = await ctx.db.get(agentDocId as any);
-            
-            if (!agent) {
-              // Agent doesn't exist, delete this registration and continue with new one
-              console.log(`Found orphaned registration ${existingRegistration._id} - agent ${existingRegistration.result.agentId} doesn't exist, clearing...`);
-              await ctx.db.delete(existingRegistration._id);
-            } else {
-              // Agent exists, return the existing registration
-              console.log(`Found existing registration for bot ${aiArenaBotId}: ${existingRegistration._id}`);
-              return {
-                registrationId: existingRegistration._id,
-                status: existingRegistration.status,
-                message: 'Registration already exists'
-              };
-            }
-          }
+          console.log(`Found existing completed registration for bot ${aiArenaBotId}: ${existingRegistration._id}`);
+          return {
+            registrationId: existingRegistration._id,
+            status: existingRegistration.status,
+            message: 'Registration already exists',
+            agentId: existingRegistration.result.agentId,
+            playerId: existingRegistration.result.playerId
+          };
         } else {
           // Registration not completed yet, return it
           console.log(`Found pending registration for bot ${aiArenaBotId}: ${existingRegistration._id}`);
@@ -393,10 +384,12 @@ export const registerBot = mutation({
                        identity.toLowerCase().includes('gambler') ? 'GAMBLER' : 'WORKER';
     
     // Use the provided character if valid, otherwise map based on personality
-    const validCharacters = ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'criminal1', 'gambler1', 'worker1'];
+    const validCharacters = ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8'];
     const validCharacter = validCharacters.includes(character) 
       ? character 
       : getCharacterForPersonality(personality);
+    
+    console.log(`Bot ${name}: Using character=${validCharacter} (provided=${character}, fallback=${!validCharacters.includes(character)})`);
     
     // Queue the registration for batch processing with valid character
     const registrationId = await ctx.db.insert('pendingBotRegistrations', {
@@ -434,6 +427,7 @@ export const createBotAgent = internalMutation({
     aiArenaBotId: v.string(),
     initialZone: v.string(),
     avatar: v.optional(v.string()),
+    forceNew: v.optional(v.boolean()), // Force create new registration even if one exists
   },
   handler: async (ctx, args) => {
     const { worldId: worldIdStr, name, character, identity, plan, aiArenaBotId, initialZone, avatar } = args;
@@ -523,23 +517,50 @@ export const createBotAgent = internalMutation({
       .first();
     
     if (existingRegistration) {
-      console.log(`Registration already exists for bot ${aiArenaBotId}: ${existingRegistration._id}`);
+      console.log(`Registration already exists for bot ${aiArenaBotId}: ${existingRegistration._id} (status: ${existingRegistration.status})`);
       
-      // If it's completed, return the result
-      if (existingRegistration.status === 'completed' && existingRegistration.result) {
-        return {
-          agentId: existingRegistration.result.agentId,
-          playerId: existingRegistration.result.playerId,
-          message: 'Registration completed, returning result'
-        };
+      // If forceNew is set, delete the existing registration
+      if (args.forceNew) {
+        console.log(`Force new registration - deleting existing registration ${existingRegistration._id}`);
+        await ctx.db.delete(existingRegistration._id);
+        // Continue to create a new registration below
+      } else {
+        // If it's completed, return the result
+        if (existingRegistration.status === 'completed' && existingRegistration.result) {
+          return {
+            agentId: existingRegistration.result.agentId,
+            playerId: existingRegistration.result.playerId,
+            message: 'Registration completed, returning result'
+          };
+        }
+        
+        // If it's failed or stuck in processing for > 5 minutes, delete and recreate
+        const now = Date.now();
+        const isStuck = (existingRegistration.status === 'processing' && 
+                         existingRegistration.processedAt && 
+                         (now - existingRegistration.processedAt) > 5 * 60 * 1000) ||
+                        existingRegistration.status === 'failed';
+        
+        if (isStuck) {
+          console.log(`Registration ${existingRegistration._id} is stuck (${existingRegistration.status}), deleting and recreating...`);
+          await ctx.db.delete(existingRegistration._id);
+          // Continue to create a new registration below
+        } else if (existingRegistration.status === 'pending') {
+          // Return pending status for polling
+          return {
+            registrationId: existingRegistration._id,
+            status: 'pending',
+            message: 'Registration is pending'
+          };
+        } else {
+          // Processing but not stuck yet
+          return {
+            registrationId: existingRegistration._id,
+            status: existingRegistration.status,
+            message: `Registration is ${existingRegistration.status}`
+          };
+        }
       }
-      
-      // Otherwise return pending status
-      return {
-        registrationId: existingRegistration._id,
-        status: existingRegistration.status,
-        message: `Registration is ${existingRegistration.status}`
-      };
     }
     
     // Determine personality from identity and select appropriate character
@@ -552,10 +573,12 @@ export const createBotAgent = internalMutation({
     }
     
     // Use the provided character if valid, otherwise map based on personality
-    const validCharacters = ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8', 'criminal1', 'gambler1', 'worker1'];
+    const validCharacters = ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8'];
     const validCharacter = validCharacters.includes(character) 
       ? character 
       : getCharacterForPersonality(personality);
+    
+    console.log(`Bot ${name}: Using character=${validCharacter} (provided=${character}, fallback=${!validCharacters.includes(character)})`);
     
     // Queue the registration for batch processing with valid character
     const registrationId = await ctx.db.insert('pendingBotRegistrations', {
@@ -1121,41 +1144,13 @@ export const deleteBotFromWorlds = internalMutation({
           await ctx.db.delete(lastViewed._id);
         }
         
-        // Delete player zone history
-        const zoneHistory = await ctx.db
-          .query('playerZoneHistory')
-          .withIndex('player', (q: any) => q.eq('playerId', agent.playerId))
-          .collect();
-          
-        for (const history of zoneHistory) {
-          await ctx.db.delete(history._id);
-        }
+        // Player zone history table removed - no longer needed
         
-        // Delete marriages (as either partner)
-        const marriages = await ctx.db
-          .query('marriages')
-          .withIndex('partners', (q: any) => q.eq('worldId', world._id))
-          .collect();
-          
-        for (const marriage of marriages) {
-          if (marriage.partner1 === agent.playerId || marriage.partner2 === agent.playerId) {
-            await ctx.db.delete(marriage._id);
-          }
-        }
+        // Marriages table removed - relationships handle this now
         
         // Factions table removed - not implemented yet
         
-        // Delete reputation records
-        const reputation = await ctx.db
-          .query('reputations')
-          .withIndex('player', (q: any) => 
-            q.eq('worldId', world._id).eq('playerId', agent.playerId)
-          )
-          .first();
-          
-        if (reputation) {
-          await ctx.db.delete(reputation._id);
-        }
+        // Reputation records removed - handled by relationship scores
 
         // Delete relationship records (both directions)
         const relFrom = await ctx.db
@@ -1257,27 +1252,6 @@ export const deleteBotFromWorlds = internalMutation({
         cleanupStats.activityLogs += logsDeleted;
         console.log(`✅ Deleted ${logsDeleted} activity logs`);
 
-        // Delete memories and associated embeddings
-        const memories = await ctx.db
-          .query('memories')
-          .withIndex('playerId', (q: any) => q.eq('playerId', agent.playerId))
-          .collect();
-        for (const mem of memories) {
-          await ctx.db.delete(mem._id);
-          cleanupStats.memories++;
-          // Delete the referenced embedding by id
-          if (mem.embeddingId) {
-            const embeddingDoc = await ctx.db
-              .query('memoryEmbeddings')
-              .filter((q: any) => q.eq(q.field('_id'), mem.embeddingId))
-              .first();
-            if (embeddingDoc) {
-              await ctx.db.delete(embeddingDoc._id);
-              cleanupStats.memories++;
-            }
-          }
-        }
-        
         // CRITICAL: Delete all inputs created by this agent/player to prevent accumulation
         // This is especially important as inputs were causing the 32k document limit issue
         const inputBatchSize = 100;
@@ -1378,7 +1352,6 @@ export const deleteBotFromWorlds = internalMutation({
     console.log(`   - Players deleted: ${cleanupStats.players}`);
     console.log(`   - Inputs cleaned: ${cleanupStats.inputs}`);
     console.log(`   - Messages deleted: ${cleanupStats.messages}`);
-    console.log(`   - Memories deleted: ${cleanupStats.memories}`);
     console.log(`   - Items deleted: ${cleanupStats.items}`);
     console.log(`   - Activity logs: ${cleanupStats.activityLogs}`);
     console.log(`   - Relationships: ${cleanupStats.relationships}`);

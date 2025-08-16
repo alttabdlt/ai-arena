@@ -8,7 +8,7 @@ export interface SimpleModelInfo {
   description: string;
   contextWindow: string;
   tier: 'budget' | 'standard' | 'premium' | 'elite';
-  deploymentFee: string; // in HYPE
+  deploymentFee: string; // in SOL
   energyPerMatch: number;
 }
 
@@ -23,7 +23,7 @@ export const SIMPLE_AI_MODELS: SimpleModelInfo[] = [
     description: 'Most capable GPT-4 model with vision capabilities',
     contextWindow: '128K',
     tier: 'premium',
-    deploymentFee: '0.03',
+    deploymentFee: '0.08',
     energyPerMatch: 3,
   },
   {
@@ -35,7 +35,7 @@ export const SIMPLE_AI_MODELS: SimpleModelInfo[] = [
     description: 'Smaller, faster, and cheaper GPT-4 model',
     contextWindow: '128K',
     tier: 'standard',
-    deploymentFee: '0.02',
+    deploymentFee: '0.06',
     energyPerMatch: 2,
   },
   {
@@ -47,7 +47,7 @@ export const SIMPLE_AI_MODELS: SimpleModelInfo[] = [
     description: 'Optimized GPT-4 for chat and completions',
     contextWindow: '128K',
     tier: 'premium',
-    deploymentFee: '0.03',
+    deploymentFee: '0.08',
     energyPerMatch: 3,
   },
   {
@@ -59,7 +59,7 @@ export const SIMPLE_AI_MODELS: SimpleModelInfo[] = [
     description: 'Fast and cost-effective model for simpler tasks',
     contextWindow: '16K',
     tier: 'budget',
-    deploymentFee: '0.01',
+    deploymentFee: '0.04',
     energyPerMatch: 1,
   },
 
@@ -73,7 +73,7 @@ export const SIMPLE_AI_MODELS: SimpleModelInfo[] = [
     description: 'Most capable Claude model for complex reasoning',
     contextWindow: '200K',
     tier: 'elite',
-    deploymentFee: '0.05',
+    deploymentFee: '0.1',
     energyPerMatch: 5,
   },
   {
@@ -85,7 +85,7 @@ export const SIMPLE_AI_MODELS: SimpleModelInfo[] = [
     description: 'Balanced performance and speed',
     contextWindow: '200K',
     tier: 'premium',
-    deploymentFee: '0.03',
+    deploymentFee: '0.08',
     energyPerMatch: 3,
   },
   {
@@ -97,7 +97,7 @@ export const SIMPLE_AI_MODELS: SimpleModelInfo[] = [
     description: 'Fast and lightweight Claude model',
     contextWindow: '200K',
     tier: 'standard',
-    deploymentFee: '0.02',
+    deploymentFee: '0.06',
     energyPerMatch: 2,
   },
 
@@ -111,7 +111,7 @@ export const SIMPLE_AI_MODELS: SimpleModelInfo[] = [
     description: 'DeepSeek V3 general chat model',
     contextWindow: '64K',
     tier: 'budget',
-    deploymentFee: '0.01',
+    deploymentFee: '0.04',
     energyPerMatch: 1,
   },
   {
@@ -123,7 +123,7 @@ export const SIMPLE_AI_MODELS: SimpleModelInfo[] = [
     description: 'Specialized for code generation and analysis',
     contextWindow: '128K',
     tier: 'budget',
-    deploymentFee: '0.01',
+    deploymentFee: '0.04',
     energyPerMatch: 1,
   },
 ];

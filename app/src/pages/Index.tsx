@@ -16,7 +16,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Bot, Clock, Gamepad2, Globe, Loader2, Trophy, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAccount } from 'wagmi';
+import { useWallet } from '@solana/wallet-adapter-react';
 // import { METAVERSE_STATS_SUBSCRIPTION } from '@/graphql/subscriptions/metaverse';
 import { LootboxAnimation } from '@shared/components/animations/LootboxAnimation';
 import { DebugLogViewer } from '@shared/components/DebugLogViewer';
@@ -28,7 +28,7 @@ import { debugLogger } from '@shared/services/debugLogger';
 const Index = () => {
   const navigate = useNavigate();
   const { user, isAuthenticated, isLoggingIn, isAuthReady, login } = useAuth();
-  const { isConnected } = useAccount();
+  const { connected: isConnected } = useWallet();
   const { toast } = useToast();
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [showGameSelection, setShowGameSelection] = useState(false);

@@ -17,7 +17,7 @@ import Redis from 'ioredis';
 import { initializeGameManagerService, getGameManagerService } from './services/gameManagerService';
 import { logWalletConfig } from './config/wallets';
 import { PubSub } from 'graphql-subscriptions';
-import { initializeServices, getQueueService, getTransactionService } from './services';
+import { initializeServices, getQueueService } from './services';
 import { fileLoggerService } from './services/fileLoggerService';
 import { energyScheduler } from './services/energyScheduler';
 
@@ -250,9 +250,8 @@ async function startServer() {
     await getQueueService().ensureDemoBots();
     console.log('🤖 Demo bots queue status checked');
     
-    // Start transaction monitoring
-    getTransactionService().startMonitoring();
-    console.log('💰 Transaction monitoring service started');
+    // Transaction service is ready (Solana transaction validation)
+    console.log('💰 Transaction service ready for Solana validation');
     
     // Game manager service is initialized as a singleton
     console.log('🎮 Game manager service ready');

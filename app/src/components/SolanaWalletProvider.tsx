@@ -1,22 +1,21 @@
 import React, { useMemo } from 'react';
-import { ConnectionProvider, WalletProvider as SolanaWalletProvider } from '@solana/wallet-adapter-react';
+import { ConnectionProvider, WalletProvider } from '@solana/wallet-adapter-react';
 import { WalletAdapterNetwork } from '@solana/wallet-adapter-base';
 import {
   PhantomWalletAdapter,
 } from '@solana/wallet-adapter-wallets';
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
 import { clusterApiUrl } from '@solana/web3.js';
-import { endpoint } from './solana';
-import { ReactNode } from 'react';
+import { endpoint } from '../config/solana';
 
 // Import wallet adapter CSS
 import '@solana/wallet-adapter-react-ui/styles.css';
 
-interface WalletProviderProps {
-  children: ReactNode;
+interface SolanaWalletProviderProps {
+  children: React.ReactNode;
 }
 
-export function WalletProvider({ children }: WalletProviderProps) {
+export const SolanaWalletProvider: React.FC<SolanaWalletProviderProps> = ({ children }) => {
   // The network can be set to 'devnet', 'testnet', or 'mainnet-beta'
   const network = WalletAdapterNetwork.Devnet;
   
@@ -33,11 +32,11 @@ export function WalletProvider({ children }: WalletProviderProps) {
 
   return (
     <ConnectionProvider endpoint={rpcEndpoint}>
-      <SolanaWalletProvider wallets={wallets} autoConnect>
+      <WalletProvider wallets={wallets} autoConnect>
         <WalletModalProvider>
           {children}
         </WalletModalProvider>
-      </SolanaWalletProvider>
+      </WalletProvider>
     </ConnectionProvider>
   );
-}
+};

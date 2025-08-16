@@ -4,10 +4,10 @@ import { Button } from '@ui/button';
 import { WalletNetworkButton } from '@ui/wallet-network-button';
 import { Bot, LayoutDashboard, Rocket, Trophy } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { useAccount } from 'wagmi';
+import { useWallet } from '@solana/wallet-adapter-react';
 
 export function Header() {
-  const { isConnected } = useAccount();
+  const { connected: isConnected } = useWallet();
 
   return (
     <header className="border-b bg-background sticky top-0 z-50">

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@apollo/client';
-import { useAccount } from 'wagmi';
+import { useWallet } from '@solana/wallet-adapter-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@ui/tabs';
 import { Badge } from '@ui/badge';
@@ -32,7 +32,8 @@ import { useToast } from '@shared/hooks/use-toast';
 export default function Dashboard() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { address } = useAccount();
+  const { publicKey } = useWallet();
+  const address = publicKey?.toString();
   const { toast } = useToast();
   const defaultTab = searchParams.get('tab') || 'overview';
   const [activeTab, setActiveTab] = useState(defaultTab);

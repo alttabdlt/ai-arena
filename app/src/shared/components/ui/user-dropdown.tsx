@@ -1,4 +1,4 @@
-import { useAccount, useDisconnect } from 'wagmi';
+import { useWallet } from '@solana/wallet-adapter-react';
 import { useNavigate } from 'react-router-dom';
 import {
   DropdownMenu,
@@ -20,11 +20,11 @@ import {
 } from 'lucide-react';
 
 export function UserDropdown() {
-  const { address, isConnected } = useAccount();
-  const { disconnect } = useDisconnect();
+  const { publicKey, connected: isConnected, disconnect } = useWallet();
+  const address = publicKey?.toString();
   const navigate = useNavigate();
 
-  if (!isConnected || !address) {
+  if (!isConnected || !publicKey) {
     return null;
   }
 

@@ -1,7 +1,9 @@
 import { sign, verify, SignOptions } from 'jsonwebtoken';
-import { ethers } from 'ethers';
+import { PublicKey } from '@solana/web3.js';
+import nacl from 'tweetnacl';
 import { PrismaClient, User } from '@prisma/client';
 import { Redis } from 'ioredis';
+import bs58 from 'bs58';
 
 interface AuthTokenPayload {
   userId: string;
@@ -32,8 +34,28 @@ export class AuthService {
 
   async verifyWalletSignature(address: string, message: string, signature: string): Promise<boolean> {
     try {
-      const recoveredAddress = ethers.verifyMessage(message, signature);
-      return recoveredAddress.toLowerCase() === address.toLowerCase();
+      // Convert base58 address to PublicKey
+      const publicKey = new PublicKey(address);
+      
+      // Convert message to bytes
+      const messageBytes = new TextEncoder().encode(message);
+      
+      // Try to decode signature - support both base58 (Solana standard) and base64
+      let signatureBytes: Uint8Array;
+      try {
+        // Try base58 first (Solana standard)
+        signatureBytes = bs58.decode(signature);
+      } catch {
+        // Fallback to base64 for compatibility
+        signatureBytes = Buffer.from(signature, 'base64');
+      }
+      
+      // Verify the signature using nacl (tweetnacl)
+      return nacl.sign.detached.verify(
+        messageBytes,
+        signatureBytes,
+        publicKey.toBytes()
+      );
     } catch (error) {
       console.error('Signature verification failed:', error);
       return false;

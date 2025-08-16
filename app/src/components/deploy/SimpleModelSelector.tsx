@@ -108,7 +108,7 @@ export function SimpleModelSelector({ selectedModel, onModelSelect }: SimpleMode
             <div className="mt-2 p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-900 rounded">
               <div className="flex justify-between items-center text-xs">
                 <span className="text-blue-800 dark:text-blue-200">Deployment Fee</span>
-                <span className="font-medium text-blue-900 dark:text-blue-100">{selectedModelInfo.deploymentFee} HYPE</span>
+                <span className="font-medium text-blue-900 dark:text-blue-100">{selectedModelInfo.deploymentFee} SOL</span>
               </div>
             </div>
           </div>

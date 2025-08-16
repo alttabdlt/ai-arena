@@ -1,8 +1,5 @@
-import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@ui/card';
 import { Badge } from '@ui/badge';
-import { Button } from '@ui/button';
-import { Progress } from '@ui/progress';
 import { 
   Loader2, 
   CheckCircle2, 
@@ -13,7 +10,6 @@ import {
   Upload,
   AlertCircle
 } from 'lucide-react';
-import { useChainId } from 'wagmi';
 
 export type DeploymentState = 
   | 'idle'
@@ -28,216 +24,146 @@ export type DeploymentState =
 
 interface DeploymentStatusProps {
   state: DeploymentState;
-  txHash?: string;
   error?: string;
-  confirmations?: number;
-  requiredConfirmations?: number;
-  onClose?: () => void;
-  onRetry?: () => void;
-  estimatedTime?: number; // in seconds
+  txHash?: string;
+  botId?: string;
 }
 
-export function DeploymentStatus({ 
-  state, 
-  txHash, 
-  error, 
-  confirmations = 0,
-  requiredConfirmations = 3,
-  onClose,
-  onRetry,
-  estimatedTime = 30 
-}: DeploymentStatusProps) {
-  const chainId = useChainId();
-  const [progress, setProgress] = useState(0);
-  
-  // Progress bar animation
-  useEffect(() => {
-    if (state === 'transaction-confirming') {
-      // Calculate progress based on confirmations
-      const confirmationProgress = (confirmations / requiredConfirmations) * 100;
-      setProgress(confirmationProgress);
-    } else if (state === 'success') {
-      setProgress(100);
-    } else if (state === 'idle' || state === 'error') {
-      setProgress(0);
-    }
-  }, [state, confirmations, requiredConfirmations]);
-
-  const getExplorerUrl = (hash: string) => {
-    const baseUrl = chainId === 999 
-      ? 'https://explorer.hyperliquid.xyz/tx/'
-      : 'https://explorer.hyperliquid-testnet.xyz/tx/';
-    return `${baseUrl}${hash}`;
-  };
-
-  const getStateConfig = () => {
+export function DeploymentStatus({ state, error, txHash, botId }: DeploymentStatusProps) {
+  const getStatusColor = () => {
     switch (state) {
-      case 'wallet-signature':
-        return {
-          icon: Wallet,
-          title: 'Confirm in Wallet',
-          description: 'Please confirm the transaction in your wallet',
-          color: 'text-blue-500',
-          showProgress: false,
-        };
-      
-      case 'transaction-pending':
-        return {
-          icon: Upload,
-          title: 'Sending Transaction',
-          description: 'Transaction is being sent to the network',
-          color: 'text-orange-500',
-          showProgress: false,
-        };
-      
-      case 'transaction-confirming':
-        return {
-          icon: Clock,
-          title: 'Confirming Transaction',
-          description: `Waiting for blockchain confirmations (${confirmations}/${requiredConfirmations})`,
-          color: 'text-yellow-500',
-          showProgress: true,
-        };
-      
-      case 'generating-avatar':
-        return {
-          icon: Loader2,
-          title: 'Generating Avatar',
-          description: 'Creating unique pixel art for your bot',
-          color: 'text-cyan-500',
-          showProgress: false,
-        };
-      
-      case 'deploying-bot':
-        return {
-          icon: Loader2,
-          title: 'Deploying Bot',
-          description: 'Creating your bot on the platform',
-          color: 'text-purple-500',
-          showProgress: false,
-        };
-      
-      case 'registering-metaverse':
-        return {
-          icon: Loader2,
-          title: 'Registering in Metaverse',
-          description: 'Adding your bot to the AI Arena crime world',
-          color: 'text-indigo-500',
-          showProgress: false,
-        };
-      
       case 'success':
-        return {
-          icon: CheckCircle2,
-          title: 'Bot Deployed Successfully!',
-          description: 'Your bot has been deployed and is ready to compete',
-          color: 'text-green-500',
-          showProgress: false,
-        };
-      
+        return 'bg-green-500';
       case 'error':
-        return {
-          icon: XCircle,
-          title: 'Deployment Failed',
-          description: error || 'An error occurred during deployment',
-          color: 'text-red-500',
-          showProgress: false,
-        };
-      
+        return 'bg-red-500';
+      case 'idle':
+        return 'bg-gray-400';
       default:
-        return null;
+        return 'bg-blue-500 animate-pulse';
     }
   };
 
-  const config = getStateConfig();
-  
-  if (!config || state === 'idle') return null;
-  
-  const Icon = config.icon;
+  const getStatusIcon = () => {
+    switch (state) {
+      case 'success':
+        return <CheckCircle2 className="h-4 w-4" />;
+      case 'error':
+        return <XCircle className="h-4 w-4" />;
+      case 'idle':
+        return <Clock className="h-4 w-4" />;
+      case 'wallet-signature':
+        return <Wallet className="h-4 w-4" />;
+      case 'generating-avatar':
+      case 'deploying-bot':
+      case 'registering-metaverse':
+        return <Upload className="h-4 w-4" />;
+      default:
+        return <Loader2 className="h-4 w-4 animate-spin" />;
+    }
+  };
+
+  const getStatusText = () => {
+    switch (state) {
+      case 'idle':
+        return 'Ready to deploy';
+      case 'wallet-signature':
+        return 'Awaiting wallet signature...';
+      case 'transaction-pending':
+        return 'Sending transaction...';
+      case 'transaction-confirming':
+        return 'Confirming transaction...';
+      case 'generating-avatar':
+        return 'Generating avatar...';
+      case 'deploying-bot':
+        return 'Deploying bot...';
+      case 'registering-metaverse':
+        return 'Registering in metaverse...';
+      case 'success':
+        return 'Deployment complete!';
+      case 'error':
+        return error || 'Deployment failed';
+      default:
+        return 'Processing...';
+    }
+  };
+
+  const getProgress = () => {
+    switch (state) {
+      case 'idle':
+        return 0;
+      case 'wallet-signature':
+        return 10;
+      case 'transaction-pending':
+        return 25;
+      case 'transaction-confirming':
+        return 40;
+      case 'generating-avatar':
+        return 55;
+      case 'deploying-bot':
+        return 70;
+      case 'registering-metaverse':
+        return 85;
+      case 'success':
+        return 100;
+      default:
+        return 0;
+    }
+  };
 
   return (
-    <Card className="mt-4">
+    <Card>
       <CardHeader>
-        <CardTitle className="flex items-center justify-between">
-          <span>Deployment Status</span>
-          <Badge variant={state === 'success' ? 'default' : state === 'error' ? 'destructive' : 'secondary'}>
-            {state.replace('-', ' ').toUpperCase()}
-          </Badge>
-        </CardTitle>
+        <CardTitle className="text-lg">Deployment Status</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex items-center space-x-4">
-          <div className={`${config.color} animate-pulse`}>
-            <Icon className={`h-8 w-8 ${state === 'generating-avatar' || state === 'deploying-bot' || state === 'registering-metaverse' || state === 'transaction-confirming' ? 'animate-spin' : ''}`} />
-          </div>
-          <div className="flex-1">
-            <h4 className="font-semibold">{config.title}</h4>
-            <p className="text-sm text-muted-foreground">{config.description}</p>
-          </div>
-        </div>
-        
-        {config.showProgress && (
-          <div className="space-y-2">
-            <Progress value={progress} className="h-2" />
-            {state === 'transaction-confirming' && (
-              <div className="flex items-center justify-between text-sm text-muted-foreground">
-                <span>Confirmations received</span>
-                <span className="font-medium">{confirmations} / {requiredConfirmations}</span>
-              </div>
-            )}
-          </div>
-        )}
-        
-        {txHash && (
-          <div className="flex items-center justify-between p-3 bg-muted rounded-lg">
-            <div className="text-sm">
-              <p className="text-muted-foreground">Transaction Hash</p>
-              <p className="font-mono text-xs">{txHash.slice(0, 10)}...{txHash.slice(-8)}</p>
+      <CardContent>
+        <div className="space-y-4">
+          <div className="flex items-center gap-3">
+            <div className={`h-3 w-3 rounded-full ${getStatusColor()}`} />
+            <div className="flex items-center gap-2">
+              {getStatusIcon()}
+              <span className="text-sm font-medium">{getStatusText()}</span>
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              asChild
-            >
-              <a href={getExplorerUrl(txHash)} target="_blank" rel="noopener noreferrer">
-                <ExternalLink className="h-4 w-4 mr-1" />
-                View
+          </div>
+
+          <div className="w-full bg-gray-200 rounded-full h-2">
+            <div 
+              className="bg-primary h-2 rounded-full transition-all duration-500"
+              style={{ width: `${getProgress()}%` }}
+            />
+          </div>
+
+          {txHash && (
+            <div className="p-3 bg-muted rounded-lg">
+              <p className="text-xs text-muted-foreground mb-1">Transaction Hash</p>
+              <p className="text-xs font-mono break-all">{txHash}</p>
+              <a
+                href={`https://explorer.solana.com/tx/${txHash}?cluster=devnet`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-primary hover:underline mt-2"
+              >
+                View on Explorer
+                <ExternalLink className="h-3 w-3" />
               </a>
-            </Button>
-          </div>
-        )}
-        
-        {state === 'error' && (
-          <div className="flex items-start space-x-2 p-3 bg-destructive/10 rounded-lg">
-            <AlertCircle className="h-5 w-5 text-destructive mt-0.5" />
-            <div className="text-sm text-destructive">
-              {error || 'Transaction failed. Please try again.'}
             </div>
-          </div>
-        )}
-        
-        {(state === 'success' || state === 'error') && (onClose || onRetry) && (
-          <div className="flex gap-2">
-            {onRetry && state === 'error' && (
-              <Button 
-                onClick={onRetry} 
-                variant="default"
-                className="flex-1"
-              >
-                Retry Deployment
-              </Button>
-            )}
-            {onClose && (
-              <Button 
-                onClick={onClose} 
-                variant={state === 'success' ? 'default' : 'outline'}
-                className={onRetry && state === 'error' ? 'flex-1' : 'w-full'}
-              >
-                {state === 'success' ? 'View Your Bot' : 'Close'}
-              </Button>
-            )}
-          </div>
-        )}
+          )}
+
+          {botId && state === 'success' && (
+            <Badge variant="outline" className="w-fit">
+              Bot ID: {botId}
+            </Badge>
+          )}
+
+          {error && state === 'error' && (
+            <div className="p-3 bg-destructive/10 text-destructive rounded-lg">
+              <div className="flex items-center gap-2 mb-1">
+                <AlertCircle className="h-4 w-4" />
+                <span className="text-sm font-medium">Error</span>
+              </div>
+              <p className="text-sm">{error}</p>
+            </div>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

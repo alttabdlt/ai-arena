@@ -1,277 +1,339 @@
-import { ethers } from 'ethers';
+import { Connection, PublicKey, LAMPORTS_PER_SOL } from '@solana/web3.js';
 import { PrismaClient } from '@prisma/client';
+import { 
+  connection, 
+  PLATFORM_WALLETS,
+  SOL_FEE_CONFIG,
+  solToLamports
+} from '../config/solana';
 
 export class TransactionService {
-  private provider: ethers.JsonRpcProvider;
-  private prisma: PrismaClient;
-  private DEPLOYMENT_FEE = ethers.parseEther('0.01'); // 0.01 HYPE
-  private DEPLOYMENT_WALLET: string;
-  private TREASURY_WALLET: string;
+  private connection: Connection;
+  private DEPLOYMENT_FEE = SOL_FEE_CONFIG.botDeploymentFee; // 0.1 SOL
+  private DEPLOYMENT_WALLET: PublicKey;
+  private TREASURY_WALLET: PublicKey;
   private TOURNAMENT_FEE_PERCENTAGE: number;
 
-  constructor(prisma: PrismaClient) {
-    this.prisma = prisma;
+  constructor(_prisma: PrismaClient) {
+    this.connection = connection;
     
-    const rpcUrl = process.env.RPC_URL || 'https://rpc.hyperliquid.xyz/evm';
-    this.provider = new ethers.JsonRpcProvider(rpcUrl);
-    
-    this.DEPLOYMENT_WALLET = process.env.DEPLOYMENT_WALLET_ADDRESS || '0x0000000000000000000000000000000000000000';
-    this.TREASURY_WALLET = process.env.TREASURY_WALLET_ADDRESS || '0x0000000000000000000000000000000000000000';
-    this.TOURNAMENT_FEE_PERCENTAGE = parseInt(process.env.TOURNAMENT_FEE_PERCENTAGE || '5');
+    this.DEPLOYMENT_WALLET = PLATFORM_WALLETS.deploymentFeeWallet;
+    this.TREASURY_WALLET = PLATFORM_WALLETS.treasury;
+    this.TOURNAMENT_FEE_PERCENTAGE = SOL_FEE_CONFIG.platformFeePercentage;
   }
 
-  async validateDeploymentTransaction(txHash: string, senderAddress: string): Promise<{
+  /**
+   * Validate SOL payment for bot deployment
+   */
+  async validateDeploymentTransaction(txSignature: string, senderAddress: string): Promise<{
     isValid: boolean;
     error?: string;
   }> {
     try {
-      // Check if this is a testnet mock transaction (starts with timestamp pattern)
-      const isTestnetMock = /^0x[0-9a-f]{12}/.test(txHash) && txHash.endsWith('00000000');
+      // Check if this is a testnet mock transaction
+      const isTestnetMock = txSignature.startsWith('test_') || txSignature.startsWith('mock_');
       
       if (isTestnetMock) {
-        console.log('Testnet mock transaction detected - skipping on-chain validation');
-        // For testnet, just check if the transaction hasn't been used before
-        const existingTx = await this.prisma.deploymentTransaction.findUnique({
-          where: { txHash },
-        });
-        
-        if (existingTx) {
-          return { isValid: false, error: 'Transaction already used' };
-        }
-        
-        // Accept testnet mock transactions
+        console.log(`Testnet mock transaction detected: ${txSignature}`);
         return { isValid: true };
       }
-      
-      const existingTx = await this.prisma.deploymentTransaction.findUnique({
-        where: { txHash },
+
+      // Fetch transaction from Solana
+      const tx = await this.connection.getParsedTransaction(txSignature, {
+        maxSupportedTransactionVersion: 0
       });
-      
-      if (existingTx) {
-        return { isValid: false, error: 'Transaction already used' };
-      }
 
-      // Retry logic for fetching transaction
-      let tx = null;
-      let attempts = 0;
-      const maxAttempts = 5;
-      const baseDelay = 1000; // 1 second
-
-      while (!tx && attempts < maxAttempts) {
-        try {
-          tx = await this.provider.getTransaction(txHash);
-          if (tx) break;
-        } catch (err) {
-          console.log(`Attempt ${attempts + 1}/${maxAttempts} to fetch transaction failed`);
-        }
-
-        attempts++;
-        if (attempts < maxAttempts) {
-          // Exponential backoff: 1s, 2s, 4s, 8s
-          const delay = baseDelay * Math.pow(2, attempts - 1);
-          console.log(`Waiting ${delay}ms before retry...`);
-          await new Promise(resolve => setTimeout(resolve, delay));
-        }
-      }
-      
       if (!tx) {
-        return { isValid: false, error: 'Transaction not found after multiple attempts' };
+        return { 
+          isValid: false, 
+          error: 'Transaction not found on Solana blockchain' 
+        };
       }
 
-      // Wait a bit for receipt if transaction was just found
-      let receipt = await this.provider.getTransactionReceipt(txHash);
-      
-      if (!receipt) {
-        // Try once more after a delay
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        receipt = await this.provider.getTransactionReceipt(txHash);
-      }
-      
-      if (!receipt || receipt.status !== 1) {
-        return { isValid: false, error: 'Transaction failed or not confirmed' };
+      // Verify sender
+      const senderPubkey = new PublicKey(senderAddress);
+      const accountKeys = tx.transaction.message.accountKeys;
+      const senderFound = accountKeys.some(key => 
+        key.pubkey.equals(senderPubkey)
+      );
+
+      if (!senderFound) {
+        return { 
+          isValid: false, 
+          error: 'Sender address not found in transaction' 
+        };
       }
 
-      if (tx.from.toLowerCase() !== senderAddress.toLowerCase()) {
-        return { isValid: false, error: 'Transaction sender mismatch' };
+      // Check SOL transfer amount (native SOL, not SPL token)
+      const requiredLamports = solToLamports(this.DEPLOYMENT_FEE);
+      let validTransfer = false;
+
+      // Look for SOL transfers in the transaction
+      if (tx.meta && tx.meta.postBalances && tx.meta.preBalances) {
+        const deploymentWalletIndex = accountKeys.findIndex(
+          key => key.pubkey.equals(this.DEPLOYMENT_WALLET)
+        );
+
+        if (deploymentWalletIndex !== -1) {
+          const preBalance = tx.meta.preBalances[deploymentWalletIndex];
+          const postBalance = tx.meta.postBalances[deploymentWalletIndex];
+          const received = postBalance - preBalance;
+
+          if (received >= requiredLamports) {
+            validTransfer = true;
+          }
+        }
       }
 
-      if (tx.to?.toLowerCase() !== this.DEPLOYMENT_WALLET.toLowerCase()) {
-        return { isValid: false, error: 'Invalid recipient address' };
+      if (!validTransfer) {
+        return { 
+          isValid: false, 
+          error: `Insufficient payment. Required: ${this.DEPLOYMENT_FEE} SOL` 
+        };
       }
 
-      if (tx.value < this.DEPLOYMENT_FEE) {
-        return { isValid: false, error: 'Insufficient deployment fee (0.01 HYPE required)' };
+      // Check if transaction is confirmed
+      const confirmation = await this.connection.getSignatureStatus(txSignature);
+      if (!confirmation.value?.confirmationStatus || 
+          confirmation.value.confirmationStatus !== 'confirmed' && 
+          confirmation.value.confirmationStatus !== 'finalized') {
+        return { 
+          isValid: false, 
+          error: 'Transaction not yet confirmed' 
+        };
       }
 
-      const blockNumber = await this.provider.getBlockNumber();
-      const confirmations = blockNumber - receipt.blockNumber;
-      
-      if (confirmations < 3) {
-        return { isValid: false, error: 'Insufficient confirmations (need 3+)' };
-      }
+      console.log(`✅ Valid deployment transaction: ${txSignature}`);
+      console.log(`   From: ${senderAddress}`);
+      console.log(`   Amount: ${this.DEPLOYMENT_FEE} SOL`);
+      console.log(`   To: ${this.DEPLOYMENT_WALLET.toString()}`);
 
       return { isValid: true };
+
     } catch (error) {
-      console.error('Error validating transaction:', error);
-      return { isValid: false, error: 'Failed to validate transaction' };
-    }
-  }
-
-  async getTransactionDetails(txHash: string) {
-    try {
-      const [tx, receipt] = await Promise.all([
-        this.provider.getTransaction(txHash),
-        this.provider.getTransactionReceipt(txHash),
-      ]);
-
-      if (!tx || !receipt) {
-        return null;
-      }
-
-      const block = await this.provider.getBlock(receipt.blockNumber);
-
-      return {
-        hash: tx.hash,
-        from: tx.from,
-        to: tx.to,
-        value: ethers.formatEther(tx.value) + ' HYPE',
-        gasUsed: receipt.gasUsed.toString(),
-        status: receipt.status === 1 ? 'success' : 'failed',
-        blockNumber: receipt.blockNumber,
-        timestamp: block ? block.timestamp : 0,
+      console.error('Error validating deployment transaction:', error);
+      return { 
+        isValid: false, 
+        error: `Validation error: ${error instanceof Error ? error.message : 'Unknown error'}` 
       };
-    } catch (error) {
-      console.error('Error getting transaction details:', error);
-      return null;
     }
   }
 
-  async updateTransactionStatus(txHash: string, status: 'CONFIRMED' | 'FAILED' | 'REFUNDED') {
-    return this.prisma.deploymentTransaction.update({
-      where: { txHash },
-      data: { status },
-    });
-  }
-
-  async monitorPendingTransactions() {
-    const pendingTxs = await this.prisma.deploymentTransaction.findMany({
-      where: { status: 'PENDING' },
-      include: { bot: true },
-    });
-
-    for (const tx of pendingTxs) {
-      try {
-        const receipt = await this.provider.getTransactionReceipt(tx.txHash);
-        
-        if (receipt) {
-          if (receipt.status === 1) {
-            await this.updateTransactionStatus(tx.txHash, 'CONFIRMED');
-          } else {
-            await this.updateTransactionStatus(tx.txHash, 'FAILED');
-            
-            await this.prisma.bot.update({
-              where: { id: tx.botId },
-              data: { isActive: false },
-            });
-          }
-        } else {
-          const timeSinceCreation = Date.now() - tx.createdAt.getTime();
-          if (timeSinceCreation > 30 * 60 * 1000) {
-            await this.updateTransactionStatus(tx.txHash, 'FAILED');
-            
-            await this.prisma.bot.update({
-              where: { id: tx.botId },
-              data: { isActive: false },
-            });
-          }
-        }
-      } catch (error) {
-        console.error(`Error monitoring transaction ${tx.txHash}:`, error);
-      }
-    }
-  }
-
-  async validateTournamentFeeTransaction(txHash: string, senderAddress: string, expectedAmount: string): Promise<{
+  /**
+   * Validate SOL payment for tournament entry
+   */
+  async validateTournamentEntryTransaction(
+    txSignature: string, 
+    senderAddress: string,
+    entryFee: number // in SOL
+  ): Promise<{
     isValid: boolean;
     error?: string;
   }> {
     try {
-      // Retry logic for fetching transaction
-      let tx = null;
-      let attempts = 0;
-      const maxAttempts = 5;
-      const baseDelay = 1000; // 1 second
-
-      while (!tx && attempts < maxAttempts) {
-        try {
-          tx = await this.provider.getTransaction(txHash);
-          if (tx) break;
-        } catch (err) {
-          console.log(`Attempt ${attempts + 1}/${maxAttempts} to fetch tournament transaction failed`);
-        }
-
-        attempts++;
-        if (attempts < maxAttempts) {
-          // Exponential backoff: 1s, 2s, 4s, 8s
-          const delay = baseDelay * Math.pow(2, attempts - 1);
-          console.log(`Waiting ${delay}ms before retry...`);
-          await new Promise(resolve => setTimeout(resolve, delay));
-        }
-      }
+      // Check if this is a testnet mock transaction
+      const isTestnetMock = txSignature.startsWith('test_') || txSignature.startsWith('mock_');
       
+      if (isTestnetMock) {
+        console.log(`Testnet mock tournament entry: ${txSignature}`);
+        return { isValid: true };
+      }
+
+      // Fetch transaction
+      const tx = await this.connection.getParsedTransaction(txSignature, {
+        maxSupportedTransactionVersion: 0
+      });
+
       if (!tx) {
-        return { isValid: false, error: 'Transaction not found after multiple attempts' };
+        return { 
+          isValid: false, 
+          error: 'Transaction not found' 
+        };
       }
 
-      // Wait a bit for receipt if transaction was just found
-      let receipt = await this.provider.getTransactionReceipt(txHash);
+      // Verify payment amount to prize pool escrow
+      const requiredLamports = solToLamports(entryFee);
+      const prizePoolWallet = PLATFORM_WALLETS.prizePoolEscrow;
+      const accountKeys = tx.transaction.message.accountKeys;
       
-      if (!receipt) {
-        // Try once more after a delay
-        await new Promise(resolve => setTimeout(resolve, 3000));
-        receipt = await this.provider.getTransactionReceipt(txHash);
-      }
-      
-      if (!receipt || receipt.status !== 1) {
-        return { isValid: false, error: 'Transaction failed or not confirmed' };
+      const prizePoolIndex = accountKeys.findIndex(
+        key => key.pubkey.equals(prizePoolWallet)
+      );
+
+      if (prizePoolIndex === -1) {
+        return { 
+          isValid: false, 
+          error: 'Prize pool wallet not found in transaction' 
+        };
       }
 
-      if (tx.from.toLowerCase() !== senderAddress.toLowerCase()) {
-        return { isValid: false, error: 'Transaction sender mismatch' };
-      }
+      if (tx.meta) {
+        const preBalance = tx.meta.preBalances[prizePoolIndex];
+        const postBalance = tx.meta.postBalances[prizePoolIndex];
+        const received = postBalance - preBalance;
 
-      if (tx.to?.toLowerCase() !== this.TREASURY_WALLET.toLowerCase()) {
-        return { isValid: false, error: 'Invalid recipient address (must be treasury)' };
-      }
-
-      const expectedAmountWei = ethers.parseEther(expectedAmount);
-      if (tx.value < expectedAmountWei) {
-        return { isValid: false, error: `Insufficient tournament fee (expected ${expectedAmount} HYPE)` };
+        if (received < requiredLamports) {
+          return { 
+            isValid: false, 
+            error: `Insufficient entry fee. Required: ${entryFee} SOL` 
+          };
+        }
       }
 
       return { isValid: true };
+
     } catch (error) {
-      console.error('Error validating tournament fee transaction:', error);
-      return { isValid: false, error: 'Failed to validate transaction' };
+      console.error('Error validating tournament entry:', error);
+      return { 
+        isValid: false, 
+        error: `Validation error: ${error instanceof Error ? error.message : 'Unknown error'}` 
+      };
     }
   }
 
-  calculatePlatformFee(entryFee: string): string {
-    const feeWei = ethers.parseEther(entryFee);
-    const platformFeeWei = (feeWei * BigInt(this.TOURNAMENT_FEE_PERCENTAGE)) / BigInt(100);
-    return ethers.formatEther(platformFeeWei);
+  /**
+   * Validate SOL payment for energy pack purchase
+   */
+  async validateEnergyPurchaseTransaction(
+    txSignature: string,
+    senderAddress: string,
+    packType: keyof typeof SOL_FEE_CONFIG.energyPacks
+  ): Promise<{
+    isValid: boolean;
+    error?: string;
+  }> {
+    try {
+      const pack = SOL_FEE_CONFIG.energyPacks[packType];
+      if (!pack) {
+        return { 
+          isValid: false, 
+          error: 'Invalid energy pack type' 
+        };
+      }
+
+      // Check if this is a testnet mock transaction
+      const isTestnetMock = txSignature.startsWith('test_') || txSignature.startsWith('mock_');
+      
+      if (isTestnetMock) {
+        console.log(`Testnet mock energy purchase: ${txSignature}`);
+        return { isValid: true };
+      }
+
+      // Validate SOL payment to treasury
+      const tx = await this.connection.getParsedTransaction(txSignature, {
+        maxSupportedTransactionVersion: 0
+      });
+
+      if (!tx) {
+        return { 
+          isValid: false, 
+          error: 'Transaction not found' 
+        };
+      }
+
+      const requiredLamports = solToLamports(pack.cost);
+      const accountKeys = tx.transaction.message.accountKeys;
+      const treasuryIndex = accountKeys.findIndex(
+        key => key.pubkey.equals(this.TREASURY_WALLET)
+      );
+
+      if (treasuryIndex === -1 || !tx.meta) {
+        return { 
+          isValid: false, 
+          error: 'Treasury wallet not found in transaction' 
+        };
+      }
+
+      const received = tx.meta.postBalances[treasuryIndex] - tx.meta.preBalances[treasuryIndex];
+      
+      if (received < requiredLamports) {
+        return { 
+          isValid: false, 
+          error: `Insufficient payment. Required: ${pack.cost} SOL` 
+        };
+      }
+
+      return { isValid: true };
+
+    } catch (error) {
+      console.error('Error validating energy purchase:', error);
+      return { 
+        isValid: false, 
+        error: `Validation error: ${error instanceof Error ? error.message : 'Unknown error'}` 
+      };
+    }
   }
 
-  calculatePrizePool(entryFee: string, participants: number): string {
-    const totalFeesWei = ethers.parseEther(entryFee) * BigInt(participants);
-    const platformFeeWei = (totalFeesWei * BigInt(this.TOURNAMENT_FEE_PERCENTAGE)) / BigInt(100);
-    const prizePoolWei = totalFeesWei - platformFeeWei;
-    return ethers.formatEther(prizePoolWei);
+  /**
+   * Get transaction status
+   */
+  async getTransactionStatus(txSignature: string): Promise<{
+    confirmed: boolean;
+    finalised: boolean;
+    error?: string;
+  }> {
+    try {
+      const status = await this.connection.getSignatureStatus(txSignature);
+      
+      if (!status.value) {
+        return { 
+          confirmed: false, 
+          finalised: false, 
+          error: 'Transaction not found' 
+        };
+      }
+
+      return {
+        confirmed: status.value.confirmationStatus === 'confirmed' || 
+                  status.value.confirmationStatus === 'finalized',
+        finalised: status.value.confirmationStatus === 'finalized',
+        error: status.value.err ? JSON.stringify(status.value.err) : undefined
+      };
+
+    } catch (error) {
+      console.error('Error getting transaction status:', error);
+      return { 
+        confirmed: false, 
+        finalised: false, 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      };
+    }
   }
 
-  async startMonitoring() {
-    setInterval(() => {
-      this.monitorPendingTransactions().catch(console.error);
-    }, 60000);
+  /**
+   * Calculate tournament prize distribution
+   */
+  calculatePrizeDistribution(totalPot: number, winners: number): {
+    platformFee: number;
+    perWinnerPrize: number;
+    totalDistributed: number;
+  } {
+    const platformFee = totalPot * (this.TOURNAMENT_FEE_PERCENTAGE / 100);
+    const prizePool = totalPot - platformFee;
+    const perWinnerPrize = prizePool / winners;
+
+    return {
+      platformFee,
+      perWinnerPrize,
+      totalDistributed: prizePool
+    };
+  }
+
+  /**
+   * Log transaction for audit
+   */
+  async logTransaction(data: {
+    signature: string;
+    type: 'deployment' | 'tournament' | 'energy' | 'lootbox';
+    amount: number; // in SOL
+    from: string;
+    to: string;
+    metadata?: any;
+  }): Promise<void> {
+    console.log('💰 Transaction logged:', {
+      ...data,
+      timestamp: new Date().toISOString()
+    });
+    // In production, save to database
   }
 }

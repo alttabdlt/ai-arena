@@ -1,6 +1,5 @@
 import { Prisma, QueueType } from '@prisma/client';
 import axios from 'axios';
-import { isHexString } from 'ethers';
 import { DateTimeResolver } from 'graphql-scalars';
 import { PubSub } from 'graphql-subscriptions';
 import GraphQLJSON from 'graphql-type-json';
@@ -34,7 +33,7 @@ interface TypedPubSub extends PubSub {
 }
 
 // Use the singleton aiService instance
-const DEPLOYMENT_FEE = '0.01'; // 0.01 HYPE
+const DEPLOYMENT_FEE = '10000'; // 10,000 $IDLE tokens
 const METAVERSE_BACKEND_URL = process.env.METAVERSE_BACKEND_URL || 'http://localhost:5001';
 
 export const resolvers = {
@@ -501,8 +500,9 @@ export const resolvers = {
         throw new Error(`Invalid prompt: ${promptValidation.errors.join(', ')}`);
       }
       
-      if (!input.txHash || !isHexString(input.txHash, 32)) {
-        throw new Error('Invalid transaction hash');
+      // Validate Solana transaction signature (base58 encoded, typically 87-88 characters)
+      if (!input.txHash || !/^[1-9A-HJ-NP-Za-km-z]{87,88}$/.test(input.txHash)) {
+        throw new Error('Invalid Solana transaction signature');
       }
       
       // Validate transaction on-chain

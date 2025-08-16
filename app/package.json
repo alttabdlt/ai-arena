@@ -49,10 +49,16 @@
     "@radix-ui/react-toggle": "^1.1.0",
     "@radix-ui/react-toggle-group": "^1.1.0",
     "@radix-ui/react-tooltip": "^1.1.4",
-    "@rainbow-me/rainbowkit": "^2.2.8",
     "@react-three/drei": "^10.6.0",
     "@react-three/fiber": "^9.2.0",
+    "@solana/spl-token": "^0.4.13",
+    "@solana/wallet-adapter-base": "^0.9.27",
+    "@solana/wallet-adapter-react": "^0.15.39",
+    "@solana/wallet-adapter-react-ui": "^0.9.39",
+    "@solana/wallet-adapter-wallets": "^0.19.37",
+    "@solana/web3.js": "^1.98.4",
     "@tanstack/react-query": "^5.56.2",
+    "bs58": "^6.0.0",
     "canvas-confetti": "^1.9.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -80,8 +86,6 @@
     "three": "^0.178.0",
     "uuid": "^11.1.0",
     "vaul": "^0.9.3",
-    "viem": "^2.33.0",
-    "wagmi": "^2.16.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
@@ -94,6 +98,7 @@
     "@types/uuid": "^10.0.0",
     "@vitejs/plugin-react-swc": "^3.5.0",
     "autoprefixer": "^10.4.20",
+    "chalk": "^4.1.2",
     "eslint": "^9.9.0",
     "eslint-plugin-react-hooks": "^5.1.0-rc.0",
     "eslint-plugin-react-refresh": "^0.4.9",
@@ -102,10 +107,10 @@
     "lovable-tagger": "^1.1.7",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.11",
+    "ts-node": "^10.9.2",
     "typescript": "^5.5.3",
     "typescript-eslint": "^8.0.1",
     "vite": "^5.4.1",
-    "ts-node": "^10.9.2",
-    "chalk": "^4.1.2"
+    "vite-plugin-node-polyfills": "^0.24.0"
   }
 }

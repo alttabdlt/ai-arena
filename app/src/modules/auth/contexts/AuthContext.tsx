@@ -1,10 +1,11 @@
-import * as React from 'react';
+import * as React from 'react'; // Updated for Solana auth fix
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { useAccount, useWalletClient } from 'wagmi';
+import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { useMutation } from '@apollo/client';
 import { REQUEST_NONCE, CONNECT_WALLET, REFRESH_TOKEN, LOGOUT } from '@/graphql/mutations/auth';
 import { useToast } from '@shared/hooks/use-toast';
 import { apolloClient } from '@/lib/apollo-client';
+import bs58 from 'bs58';
 
 interface User {
   id: string;
@@ -38,8 +39,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [lastLoginAttempt, setLastLoginAttempt] = useState<number>(0);
   
-  const { address, isConnected } = useAccount();
-  const { data: walletClient } = useWalletClient();
+  const { publicKey, signMessage, connected, disconnect } = useWallet();
+  const { connection } = useConnection();
   const { toast } = useToast();
   
   const [requestNonce] = useMutation(REQUEST_NONCE);
@@ -58,7 +59,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(parsedUser);
         setIsAuthReady(true);
         
-        // Auth headers are automatically set by authLink in apollo-client.ts
+        // Validate token is still valid by checking address
+        if (publicKey && parsedUser.address !== publicKey.toString()) {
+          // Address mismatch, clear auth
+          handleLogout();
+        }
       } catch (error) {
         console.error('Failed to parse stored user:', error);
         localStorage.removeItem(USER_KEY);
@@ -67,209 +72,167 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     
     setIsLoading(false);
-  }, []);
+  }, [publicKey]);
 
-  const login = useCallback(async () => {
-    if (!isConnected || !address) {
-      toast({
-        title: 'Wallet not connected',
-        description: 'Please connect your wallet first',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    if (!walletClient) {
-      toast({
-        title: 'Wallet client not available',
-        description: 'Please try reconnecting your wallet',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    // Prevent concurrent login attempts
-    if (isLoggingIn) {
-      console.log('Login already in progress, skipping...');
-      return;
-    }
-
-    // Debounce: prevent rapid successive login attempts
-    const now = Date.now();
-    if (now - lastLoginAttempt < 2000) { // 2 second minimum between attempts
-      console.log('Login attempt too soon after previous attempt, skipping...');
-      return;
-    }
-
-    setIsLoggingIn(true);
-    setLastLoginAttempt(now);
-
+  const handleLogout = useCallback(async () => {
     try {
-      // Request nonce
-      console.log('Requesting nonce for address:', address);
-      const { data: nonceData } = await requestNonce({
-        variables: { address: address.toLowerCase() },
-      });
-
-      const { nonce, message } = nonceData.requestNonce;
-      console.log('Received nonce:', nonce);
-
-      // Sign message
-      const signature = await walletClient.signMessage({
-        account: address as `0x${string}`,
-        message,
-      });
-
-      // Connect wallet
-      console.log('Connecting wallet with:', { address: address.toLowerCase(), nonce, signature });
-      const { data: authData } = await connectWallet({
-        variables: {
-          input: {
-            address: address.toLowerCase(),
-            signature,
-            nonce,
-          },
-        },
-      });
-
-      const { user: authUser, accessToken, refreshToken: newRefreshToken } = authData.connectWallet;
-
-      // Store auth data
-      localStorage.setItem(TOKEN_KEY, accessToken);
-      localStorage.setItem(REFRESH_TOKEN_KEY, newRefreshToken);
-      localStorage.setItem(USER_KEY, JSON.stringify(authUser));
-      
-      setUser(authUser);
-
-      // Refetch active queries without clearing auth context
-      await apolloClient.refetchQueries({
-        include: 'active',
-      });
-      
-      // Increased delay to ensure auth headers are fully propagated
-      await new Promise(resolve => setTimeout(resolve, 300));
-
-      // Mark auth as ready
-      setIsAuthReady(true);
-
-      toast({
-        title: 'Authentication successful',
-        description: 'You are now logged in',
-      });
-      
-      setIsLoggingIn(false);
-    } catch (error: any) {
-      console.error('Login error:', error);
-      toast({
-        title: 'Authentication failed',
-        description: error.message || 'Failed to authenticate',
-        variant: 'destructive',
-      });
-      
-      setIsLoggingIn(false);
-    }
-  }, [isConnected, address, walletClient, requestNonce, connectWallet, toast, isLoggingIn, lastLoginAttempt]);
-
-  const logout = useCallback(async () => {
-    try {
-      await logoutMutation();
+      const refreshTokenValue = localStorage.getItem(REFRESH_TOKEN_KEY);
+      if (refreshTokenValue) {
+        await logoutMutation({
+          variables: { refreshToken: refreshTokenValue }
+        });
+      }
     } catch (error) {
-      console.error('Logout error:', error);
+      console.error('Logout mutation failed:', error);
     }
-
-    // Clear stored data
+    
+    // Clear local storage
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(REFRESH_TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
     
+    // Clear Apollo cache
+    await apolloClient.clearStore();
+    
+    // Reset state
     setUser(null);
     setIsAuthReady(false);
-
-    // Auth headers are automatically cleared by authLink when token is removed from localStorage
-
-    toast({
-      title: 'Logged out',
-      description: 'You have been logged out successfully',
-    });
-  }, [logoutMutation, toast]);
-
-  const refreshAuth = useCallback(async () => {
-    const storedRefreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
     
-    if (!storedRefreshToken) {
+    // Disconnect wallet
+    if (connected) {
+      await disconnect();
+    }
+  }, [connected, disconnect, logoutMutation]);
+
+  const login = useCallback(async () => {
+    // Prevent rapid login attempts
+    const now = Date.now();
+    if (now - lastLoginAttempt < 3000) {
       return;
     }
-
-    try {
-      const { data } = await refreshToken({
-        variables: { refreshToken: storedRefreshToken },
+    setLastLoginAttempt(now);
+    
+    if (!connected || !publicKey || !signMessage) {
+      toast({
+        title: 'No wallet connected',
+        description: 'Please connect your Solana wallet first',
+        variant: 'destructive',
       });
-
-      const { user: authUser, accessToken, refreshToken: newRefreshToken } = data.refreshToken;
-
-      // Update stored data
+      return;
+    }
+    
+    setIsLoggingIn(true);
+    
+    try {
+      const address = publicKey.toString();
+      
+      // 1. Request nonce from server
+      const { data: nonceData } = await requestNonce({
+        variables: { address }
+      });
+      
+      if (!nonceData?.requestNonce) {
+        throw new Error('Failed to get nonce from server');
+      }
+      
+      const nonce = nonceData.requestNonce.nonce;
+      const message = `Welcome to AI Arena!\n\nClick to sign in and accept the Terms of Service.\n\nThis request will not trigger a blockchain transaction or cost any gas fees.\n\nNonce: ${nonce}`;
+      
+      // 2. Sign message with Solana wallet
+      const encodedMessage = new TextEncoder().encode(message);
+      const signature = await signMessage(encodedMessage);
+      const signatureBase58 = bs58.encode(signature);
+      
+      // 3. Send signature to server with input wrapper
+      console.log('Sending auth request with:', { address, nonce, signature: signatureBase58 });
+      const { data: authData } = await connectWallet({
+        variables: {
+          input: {
+            address,
+            signature: signatureBase58,
+            nonce,
+          }
+        }
+      });
+      
+      if (!authData?.connectWallet) {
+        throw new Error('Authentication failed');
+      }
+      
+      const { accessToken, refreshToken: refreshTokenValue, user: authUser } = authData.connectWallet;
+      
+      // Store auth data
       localStorage.setItem(TOKEN_KEY, accessToken);
-      localStorage.setItem(REFRESH_TOKEN_KEY, newRefreshToken);
+      localStorage.setItem(REFRESH_TOKEN_KEY, refreshTokenValue);
       localStorage.setItem(USER_KEY, JSON.stringify(authUser));
       
       setUser(authUser);
-
-      // Auth headers are automatically set by authLink in apollo-client.ts
-    } catch (error) {
-      console.error('Token refresh error:', error);
-      // If refresh fails, logout
-      await logout();
-    }
-  }, [refreshToken, logout]);
-
-  // Auto refresh token before expiry
-  useEffect(() => {
-    if (!user) return;
-
-    // Refresh token 5 minutes before expiry (15min - 5min = 10min)
-    const refreshInterval = setInterval(() => {
-      refreshAuth();
-    }, 10 * 60 * 1000); // 10 minutes
-
-    return () => clearInterval(refreshInterval);
-  }, [user, refreshAuth]);
-
-  // Auto logout when wallet disconnects
-  useEffect(() => {
-    if (!isConnected && user) {
-      logout();
-    }
-  }, [isConnected, user, logout]);
-
-  // Auto login when wallet connects
-  useEffect(() => {
-    if (isConnected && address && !user && !isLoggingIn && walletClient) {
-      // Reduced delay for faster auto-login
-      const loginTimer = setTimeout(() => {
-        // Double-check conditions before login
-        if (isConnected && !user && !isLoggingIn) {
-          console.log('Auto-login triggered for address:', address);
-          login();
-        }
-      }, 100); // Minimal delay to ensure wallet is ready
+      setIsAuthReady(true);
       
-      return () => clearTimeout(loginTimer);
+      toast({
+        title: 'Connected successfully',
+        description: `Welcome ${authUser.username || authUser.address.slice(0, 6)}...${authUser.address.slice(-4)}`,
+      });
+      
+    } catch (error) {
+      console.error('Login error:', error);
+      toast({
+        title: 'Connection failed',
+        description: error instanceof Error ? error.message : 'Failed to authenticate with wallet',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsLoggingIn(false);
     }
-  }, [isConnected, address, user, isLoggingIn, walletClient, login]);
+  }, [connected, publicKey, signMessage, requestNonce, connectWallet, toast, lastLoginAttempt]);
+
+  const refreshAuth = useCallback(async () => {
+    const refreshTokenValue = localStorage.getItem(REFRESH_TOKEN_KEY);
+    
+    if (!refreshTokenValue) {
+      return;
+    }
+    
+    try {
+      const { data } = await refreshToken({
+        variables: { refreshToken: refreshTokenValue }
+      });
+      
+      if (!data?.refreshToken) {
+        throw new Error('Failed to refresh token');
+      }
+      
+      const { accessToken, refreshToken: newRefreshToken } = data.refreshToken;
+      
+      localStorage.setItem(TOKEN_KEY, accessToken);
+      localStorage.setItem(REFRESH_TOKEN_KEY, newRefreshToken);
+      
+    } catch (error) {
+      console.error('Token refresh failed:', error);
+      await handleLogout();
+    }
+  }, [refreshToken, handleLogout]);
+
+  // Auto-logout when wallet disconnects
+  useEffect(() => {
+    if (!connected && user) {
+      handleLogout();
+    }
+  }, [connected, user, handleLogout]);
+
+  const value = {
+    user,
+    isAuthenticated: !!user,
+    isLoading,
+    isLoggingIn,
+    isAuthReady,
+    login,
+    logout: handleLogout,
+    refreshAuth,
+  };
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        isAuthenticated: !!user,
-        isLoading,
-        isLoggingIn,
-        isAuthReady,
-        login,
-        logout,
-        refreshAuth,
-      }}
-    >
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );
@@ -277,10 +240,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 export function useAuth() {
   const context = useContext(AuthContext);
-  
   if (context === undefined) {
     throw new Error('useAuth must be used within an AuthProvider');
   }
-  
   return context;
 }

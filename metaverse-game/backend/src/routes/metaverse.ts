@@ -300,6 +300,57 @@ router.get('/bots/registration-status/:registrationId', async (req, res) => {
   }
 });
 
+// Bot deletion endpoint
+router.delete('/bots/:botId', async (req, res) => {
+  try {
+    const { botId } = req.params;
+    
+    if (!botId) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Bot ID is required' 
+      });
+    }
+    
+    logger.info(`Deleting bot ${botId} from metaverse`);
+    
+    // Get services
+    const convexService = ConvexService.getInstance();
+    const { botSyncService } = await import('../services/botSyncService');
+    
+    // Use botSyncService.cleanupDeletedBot which handles both Convex deletion
+    // and marks the sync record as DISABLED to prevent recreation
+    try {
+      await botSyncService.cleanupDeletedBot(botId);
+      
+      logger.info(`Bot ${botId} fully cleaned up from metaverse`);
+      
+      return res.json({
+        success: true,
+        message: 'Bot deleted successfully from metaverse',
+        deletedBotId: botId
+      });
+    } catch (cleanupError: any) {
+      logger.error(`Failed to cleanup bot ${botId}:`, cleanupError);
+      
+      // Even if cleanup fails, we should return success
+      // to allow Arena backend to proceed with its deletion
+      return res.json({
+        success: true,
+        message: 'Bot deletion initiated (may already be deleted)',
+        deletedBotId: botId,
+        warning: cleanupError.message
+      });
+    }
+  } catch (error: any) {
+    logger.error('Bot deletion error:', error);
+    return res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Failed to delete bot from metaverse' 
+    });
+  }
+});
+
 // Bot position update endpoint
 router.post('/bots/update-position', async (req, res) => {
   try {
@@ -401,6 +452,33 @@ router.post('/world/heartbeat', async (req, res) => {
     res.status(500).json({ 
       success: false, 
       error: error instanceof Error ? error.message : 'Unknown error' 
+    });
+  }
+});
+
+// Bot deletion event endpoint
+router.post('/events/bot-deleted', async (req, res) => {
+  try {
+    const { botId, metaverseAgentId, deletedBy, timestamp } = req.body;
+    
+    logger.info(`Received bot deletion event for ${botId}`, {
+      metaverseAgentId,
+      deletedBy,
+      timestamp
+    });
+    
+    // The actual deletion is handled by the DELETE endpoint
+    // This is just for event tracking/logging
+    
+    return res.json({
+      success: true,
+      message: 'Bot deletion event received'
+    });
+  } catch (error: any) {
+    logger.error('Bot deletion event error:', error);
+    return res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Failed to process bot deletion event' 
     });
   }
 });

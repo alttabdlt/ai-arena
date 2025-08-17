@@ -129,7 +129,7 @@ export class BotSyncService {
     }
 
     // Check for undeployed bots in this channel
-    // Only deploy bots that don't have a SYNCED status
+    // Only deploy bots that don't have a SYNCED status and haven't been marked as disabled (deleted)
     const undeployedBots = await prisma.bot.findMany({
       where: {
         channel: channelName,
@@ -137,11 +137,19 @@ export class BotSyncService {
           { metaverseAgentId: null },
           { metaverseAgentId: '' }
         ],
-        NOT: {
-          botSync: {
-            syncStatus: SyncStatus.SYNCED
+        NOT: [
+          {
+            botSync: {
+              syncStatus: SyncStatus.SYNCED
+            }
+          },
+          {
+            // Skip bots that have been marked as disabled (deleted bots)
+            botSync: {
+              syncStatus: SyncStatus.DISABLED
+            }
           }
-        }
+        ]
       },
       include: {
         creator: true,
@@ -966,12 +974,10 @@ export class BotSyncService {
         where: { botId }
       });
       
-      if (botSync && botSync.convexWorldId && botSync.convexAgentId) {
+      if (botSync && botSync.convexAgentId) {
         try {
-          // Delete the agent from metaverse
+          // Delete the agent from metaverse using the dedicated endpoint
           await convexService.deleteBotAgent({
-            worldId: botSync.convexWorldId,
-            agentId: botSync.convexAgentId,
             aiArenaBotId: botId
           });
           
@@ -986,10 +992,32 @@ export class BotSyncService {
         }
       }
       
-      // Delete the sync record
-      await prisma.botSync.deleteMany({
-        where: { botId }
-      });
+      // Mark the sync record as DISABLED instead of deleting it
+      // This prevents the bot from being recreated on next sync
+      if (botSync) {
+        await prisma.botSync.update({
+          where: { id: botSync.id },
+          data: {
+            syncStatus: SyncStatus.DISABLED,
+            syncErrors: ['Bot deleted from Arena'],
+            convexAgentId: null,
+            convexPlayerId: null,
+            lastSyncedAt: new Date()
+          }
+        });
+        console.log(`✅ Marked bot ${botId} sync as DISABLED to prevent recreation`);
+      } else {
+        // Create a DISABLED sync record if none exists to prevent future deployment
+        await prisma.botSync.create({
+          data: {
+            botId,
+            syncStatus: SyncStatus.DISABLED,
+            syncErrors: ['Bot deleted from Arena'],
+            channel: 'main'
+          }
+        });
+        console.log(`✅ Created DISABLED sync record for bot ${botId} to prevent deployment`);
+      }
       
     } catch (error) {
       console.error('Error cleaning up deleted bot from metaverse:', error);

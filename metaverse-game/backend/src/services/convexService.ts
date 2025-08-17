@@ -1,4 +1,5 @@
 import { ConvexHttpClient } from 'convex/browser';
+import { logger } from '@ai-arena/shared-logger';
 
 export class ConvexService {
   private client: ConvexHttpClient;
@@ -578,28 +579,33 @@ export class ConvexService {
 
   // Delete a bot agent from the metaverse
   async deleteBotAgent(args: {
-    worldId: string;
-    agentId: string;
     aiArenaBotId: string;
-  }): Promise<void> {
+  }): Promise<any> {
     try {
+      // Note: deleteBotFromWorlds is an internal mutation, need to call it via HTTP
       const response = await fetch(`${this.httpUrl}/api/bots/delete`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(args),
+        body: JSON.stringify({ aiArenaBotId: args.aiArenaBotId }),
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({})) as any;
+        // Don't throw error if bot not found (already deleted)
+        if (errorData.error?.includes('not found')) {
+          logger.info(`Bot ${args.aiArenaBotId} already deleted or not found`);
+          return { success: true, message: 'Bot already deleted' };
+        }
         throw new Error(errorData.error || `Failed to delete bot agent: ${response.statusText}`);
       }
 
       const result = await response.json();
-      console.log(`✅ Bot agent deleted from metaverse:`, result);
+      logger.info(`✅ Bot ${args.aiArenaBotId} deleted from metaverse:`, result);
+      return result;
     } catch (error) {
-      console.error('Error deleting bot agent from metaverse:', error);
+      logger.error('Error deleting bot agent from metaverse:', error);
       throw error;
     }
   }

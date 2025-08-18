@@ -294,40 +294,7 @@ export class EconomyService {
       }
     });
 
-    // Auto-sync lootbox to metaverse after tournament
-    try {
-      // Get bot's metaverse data
-      const bot = await prisma.bot.findUnique({
-        where: { id: botId },
-        include: { botSync: true }
-      });
-
-      if (bot?.botSync?.convexWorldId && bot?.botSync?.convexPlayerId) {
-        // Call metaverse backend to sync lootbox
-        const metaverseBackendUrl = process.env.METAVERSE_BACKEND_URL || 'http://localhost:5000';
-        const response = await fetch(`${metaverseBackendUrl}/api/metaverse/lootbox/sync`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lootboxId: lootbox.id })
-        });
-
-        if (response.ok) {
-          const result = await response.json() as { success: boolean; message?: string };
-          if (result.success) {
-            console.log(`✅ Lootbox auto-synced to metaverse for bot ${botId}`);
-          } else {
-            console.error(`⚠️ Failed to auto-sync lootbox: ${result.message}`);
-          }
-        } else {
-          console.error(`⚠️ Metaverse backend returned ${response.status}`);
-        }
-      } else {
-        console.log(`ℹ️ Bot ${botId} not registered in metaverse yet, lootbox will sync when bot is deployed`);
-      }
-    } catch (error) {
-      console.error('Error auto-syncing lootbox to metaverse:', error);
-      // Don't fail the lootbox generation if sync fails - it can be retried later
-    }
+    // Metaverse sync removed - no longer needed
 
     return lootbox;
   }
@@ -487,24 +454,23 @@ export class EconomyService {
       }
       
       // Update activity scores
-      await this.updateActivityScore(robberId, { successfulRobberies: 1 });
+      await this.updateActivityScore(robberId, { activitiesCompleted: 1 });
     } else {
       // Failed robbery - update defender's score
-      await this.updateActivityScore(victimId, { defenseSuccesses: 1 });
+      // defenseSuccesses field removed
+      await this.updateActivityScore(victimId, { activitiesCompleted: 1 });
     }
     
-    // Log the robbery attempt
-    const log = await prisma.robberyLog.create({
-      data: {
-        robberBotId: robberId,
-        victimBotId: victimId,
-        success,
-        powerUsed: robberPower,
-        defenseFaced: victimDefense,
-        lootValue,
-        itemsStolen
-      }
-    });
+    // RobberyLog model removed - skip logging
+    const log = {
+      robberBotId: robberId,
+      victimBotId: victimId,
+      success,
+      powerUsed: robberPower,
+      defenseFaced: victimDefense,
+      lootValue,
+      itemsStolen
+    };
     
     return {
       ...log,
@@ -518,10 +484,7 @@ export class EconomyService {
   async updateActivityScore(botId: string, updates: Partial<{
     matchesPlayed: number;
     lootboxesOpened: number;
-    socialInteractions: number;
-    successfulRobberies: number;
-    defenseSuccesses: number;
-    tradesCompleted: number;
+    activitiesCompleted: number;
   }>) {
     const existing = await prisma.botActivityScore.findUnique({
       where: { botId }
@@ -638,10 +601,7 @@ export class EconomyService {
     }) || {
       matchesPlayed: 0,
       lootboxesOpened: 0,
-      socialInteractions: 0,
-      successfulRobberies: 0,
-      defenseSuccesses: 0,
-      tradesCompleted: 0
+      activitiesCompleted: 0
     };
     
     // Calculate furniture value
@@ -650,11 +610,9 @@ export class EconomyService {
     // Calculate new score
     const factors = {
       furnitureValue: furnitureValue * 2,
-      activityScore: (activity.socialInteractions || 0) * 1.5,
+      activitiesCompleted: (activity.activitiesCompleted || 0) * 2,
       matchParticipation: (activity.matchesPlayed || 0) * 10,
-      lootboxesOpened: (activity.lootboxesOpened || 0) * 5,
-      socialInteractions: (activity.socialInteractions || 0) * 3,
-      defenseSuccesses: (activity.defenseSuccesses || 0) * 15
+      lootboxesOpened: (activity.lootboxesOpened || 0) * 5
     };
     
     const newScore = Object.values(factors).reduce((sum, value) => sum + value, 100);

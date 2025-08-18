@@ -50,8 +50,26 @@ export class TransactionService {
         };
       }
 
+      // Validate sender address format
+      if (!senderAddress || typeof senderAddress !== 'string') {
+        return {
+          isValid: false,
+          error: 'Invalid sender address provided'
+        };
+      }
+      
       // Verify sender
-      const senderPubkey = new PublicKey(senderAddress);
+      let senderPubkey: PublicKey;
+      try {
+        senderPubkey = new PublicKey(senderAddress);
+      } catch (error) {
+        console.error('Invalid public key format:', senderAddress);
+        return {
+          isValid: false,
+          error: 'Invalid wallet address format'
+        };
+      }
+      
       const accountKeys = tx.transaction.message.accountKeys;
       const senderFound = accountKeys.some(key => 
         key.pubkey.equals(senderPubkey)
@@ -70,8 +88,18 @@ export class TransactionService {
 
       // Look for SOL transfers in the transaction
       if (tx.meta && tx.meta.postBalances && tx.meta.preBalances) {
+        console.log('🔍 Validating transaction:', txSignature);
+        console.log('Expected deployment wallet:', this.DEPLOYMENT_WALLET.toString());
+        console.log('Account keys in transaction:', accountKeys.map(k => k.pubkey.toString()));
+        
+        // Check deployment wallet first
         const deploymentWalletIndex = accountKeys.findIndex(
           key => key.pubkey.equals(this.DEPLOYMENT_WALLET)
+        );
+
+        // Also check treasury wallet as fallback
+        const treasuryWalletIndex = accountKeys.findIndex(
+          key => key.pubkey.equals(this.TREASURY_WALLET)
         );
 
         if (deploymentWalletIndex !== -1) {
@@ -79,16 +107,40 @@ export class TransactionService {
           const postBalance = tx.meta.postBalances[deploymentWalletIndex];
           const received = postBalance - preBalance;
 
+          console.log(`✅ Deployment wallet found at index ${deploymentWalletIndex}`);
+          console.log(`   Balance change: ${received / LAMPORTS_PER_SOL} SOL`);
+          console.log(`   Required: ${this.DEPLOYMENT_FEE} SOL (${requiredLamports} lamports)`);
+
           if (received >= requiredLamports) {
             validTransfer = true;
+          } else {
+            console.error(`❌ Insufficient amount received: ${received / LAMPORTS_PER_SOL} SOL < ${this.DEPLOYMENT_FEE} SOL`);
           }
+        } else if (treasuryWalletIndex !== -1) {
+          // Fallback: check if payment went to treasury wallet
+          const preBalance = tx.meta.preBalances[treasuryWalletIndex];
+          const postBalance = tx.meta.postBalances[treasuryWalletIndex];
+          const received = postBalance - preBalance;
+
+          console.log(`⚠️ Payment went to treasury wallet instead of deployment wallet`);
+          console.log(`   Treasury balance change: ${received / LAMPORTS_PER_SOL} SOL`);
+          console.log(`   Required: ${this.DEPLOYMENT_FEE} SOL`);
+
+          if (received >= requiredLamports) {
+            validTransfer = true;
+            console.log('✅ Accepting payment to treasury wallet');
+          }
+        } else {
+          console.error('❌ Neither deployment wallet nor treasury wallet found in transaction');
+          console.error('   Expected deployment wallet:', this.DEPLOYMENT_WALLET.toString());
+          console.error('   Expected treasury wallet:', this.TREASURY_WALLET.toString());
         }
       }
 
       if (!validTransfer) {
         return { 
           isValid: false, 
-          error: `Insufficient payment. Required: ${this.DEPLOYMENT_FEE} SOL` 
+          error: `Insufficient payment. Required: ${this.DEPLOYMENT_FEE} SOL. Check server logs for details.` 
         };
       }
 
@@ -124,7 +176,7 @@ export class TransactionService {
    */
   async validateTournamentEntryTransaction(
     txSignature: string, 
-    senderAddress: string,
+    _senderAddress: string,
     entryFee: number // in SOL
   ): Promise<{
     isValid: boolean;
@@ -196,7 +248,7 @@ export class TransactionService {
    */
   async validateEnergyPurchaseTransaction(
     txSignature: string,
-    senderAddress: string,
+    _senderAddress: string,
     packType: keyof typeof SOL_FEE_CONFIG.energyPacks
   ): Promise<{
     isValid: boolean;

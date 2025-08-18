@@ -62,9 +62,11 @@ export async function createContext({ req, prisma, redis, connection, pubsub: ex
     console.log('🔑 WebSocket auth header found:', authHeader.substring(0, 20) + '...');
     
     // Create a fake request object with the auth header for extractUserFromRequest
+    // Also pass the wallet address if available
     const fakeReq = {
       headers: {
-        authorization: authHeader
+        authorization: authHeader,
+        'x-wallet-address': connection.connectionParams['x-wallet-address'] || ''
       }
     } as any;
     

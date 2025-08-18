@@ -87,10 +87,7 @@ export class LevelUpHandler {
         botId,
         matchesPlayed: 0,
         lootboxesOpened: 0,
-        socialInteractions: 0,
-        successfulRobberies: 0,
-        defenseSuccesses: 0,
-        tradesCompleted: 0,
+        activitiesCompleted: 0,
       },
     });
 

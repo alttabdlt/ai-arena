@@ -22,14 +22,29 @@ const wsClient = createClient({
     return `${protocol}//${host}/graphql`;
   })(),
   connectionParams: () => {
-    // Get auth token if needed
+    // Get auth token and wallet address
     const token = localStorage.getItem('ai-arena-access-token');
+    const user = localStorage.getItem('ai-arena-user');
+    let walletAddress = '';
+    
+    if (user) {
+      try {
+        const parsedUser = JSON.parse(user);
+        walletAddress = parsedUser.originalAddress || parsedUser.address || '';
+      } catch (e) {
+        console.error('Failed to parse user data for WebSocket');
+      }
+    }
+    
     console.log('🔌 WebSocket connectionParams:', {
       hasToken: !!token,
-      tokenPreview: token ? token.substring(0, 20) + '...' : 'none'
+      tokenPreview: token ? token.substring(0, 20) + '...' : 'none',
+      walletAddress: walletAddress ? walletAddress.substring(0, 10) + '...' : 'none'
     });
+    
     return {
       authorization: token ? `Bearer ${token}` : '',
+      'x-wallet-address': walletAddress
     };
   },
   retryAttempts: 5,
@@ -202,7 +217,8 @@ const authLink = setContext((operation, { headers }) => {
   if (user) {
     try {
       const parsedUser = JSON.parse(user);
-      walletAddress = parsedUser.address || '';
+      // Use originalAddress if available (case-sensitive), otherwise fall back to address
+      walletAddress = parsedUser.originalAddress || parsedUser.address || '';
     } catch (e) {
       console.error('Failed to parse user data');
     }

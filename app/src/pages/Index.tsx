@@ -1,7 +1,7 @@
 import { START_DEBUG_LOGGING } from '@/graphql/mutations/debug';
 import { ENTER_QUEUE, LEAVE_QUEUE } from '@/graphql/mutations/queue';
 import { SET_TEST_GAME_TYPE } from '@/graphql/mutations/test';
-import { GET_METAVERSE_BOTS } from '@/graphql/queries/bot';
+// Metaverse query removed - using idle game now
 import { GET_QUEUE_STATUS, QUEUE_UPDATE_SUBSCRIPTION } from '@/graphql/queries/queue';
 import { GET_USER_BOTS } from '@/graphql/queries/user';
 import { useMutation, useQuery, useSubscription } from '@apollo/client';
@@ -61,10 +61,8 @@ const Index = () => {
     pollInterval: 5000,
   });
 
-  const { data: metaverseBotsData } = useQuery(GET_METAVERSE_BOTS, {
-    variables: { limit: 500 },
-    pollInterval: 10000, // Poll every 10 seconds
-  });
+  // Metaverse query removed - using idle game now
+  const metaverseBotsData = null;
 
   // GraphQL Mutations
   const [setTestGameType] = useMutation(SET_TEST_GAME_TYPE);

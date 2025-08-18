@@ -178,7 +178,7 @@ async function startServer() {
   app.use(
     '/graphql',
     cors<cors.CorsRequest>({
-      origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'http://localhost:8080', 'http://localhost:8081'],
+      origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'http://localhost:5176', 'http://localhost:8080', 'http://localhost:8081'],
       credentials: true,
       allowedHeaders: ['Content-Type', 'Authorization', 'x-wallet-address', 'x-bot-prompt'],
       exposedHeaders: ['Authorization'],

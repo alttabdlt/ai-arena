@@ -36,6 +36,7 @@ import Queue from "@queue/pages/Queue";
 import NotFound from "./pages/NotFound";
 import HouseEditor from "./pages/HouseEditor";
 import { DeploymentStatus } from "@/modules/admin/DeploymentStatus";
+import Metaverse from "./pages/Metaverse";
 
 const App = () => {
   // Start interaction logging
@@ -98,6 +99,9 @@ const App = () => {
             <Route path="/bot/:id" element={<BotDetail />} />
             <Route path="/bot/:botId/house" element={<HouseEditor />} />
             <Route path="/deploy" element={<Deploy />} />
+            
+            {/* Metaverse */}
+            <Route path="/metaverse" element={<Metaverse />} />
             
             {/* Platform Features */}
             <Route path="/settings" element={<Settings />} />

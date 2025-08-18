@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Grid, List, Search, Filter, Zap, Trophy, Activity, Loader2, Bot, ChevronRight } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { GET_BOTS } from '@/graphql/queries/bot';
+import { getCharacterSpriteExtractor } from '@/services/characterSpriteExtractor';
 
 interface Bot {
   id: string;
@@ -17,7 +18,6 @@ interface Bot {
   personality: string;
   isActive: boolean;
   isDemo?: boolean;
-  channel?: string;
   createdAt: string;
   creator: {
     id: string;
@@ -44,6 +44,52 @@ interface Bot {
     startedAt: string;
   };
 }
+
+// Component for bot sprite with extraction logic
+const BotSprite = ({ bot }: { bot: Bot }) => {
+  const [spriteData, setSpriteData] = useState<string | null>(null);
+  const [spriteExtractor] = useState(() => getCharacterSpriteExtractor());
+
+  useEffect(() => {
+    const validCharacters = ['f1', 'f2', 'f3', 'f4', 'f5', 'f6', 'f7', 'f8'];
+    
+    const loadSprite = async () => {
+      if (bot.avatar && validCharacters.includes(bot.avatar)) {
+        // Avatar is a character ID - extract the sprite
+        try {
+          const sprite = await spriteExtractor.extractCharacterSprite(bot.avatar);
+          setSpriteData(sprite.imageData);
+        } catch (error) {
+          console.error('Failed to extract sprite:', error);
+          setSpriteData('/default-bot-avatar.png');
+        }
+      } else if (bot.avatar && bot.avatar.startsWith('data:image')) {
+        // Legacy: avatar is a data URL
+        setSpriteData(bot.avatar);
+      } else if (bot.avatar && bot.avatar.startsWith('/')) {
+        // Avatar is a path (legacy placeholder)
+        setSpriteData('/default-bot-avatar.png');
+      } else {
+        // No avatar or unrecognized format
+        setSpriteData('/default-bot-avatar.png');
+      }
+    };
+    
+    loadSprite();
+  }, [bot.avatar, bot.id, spriteExtractor]);
+
+  return (
+    <img 
+      src={spriteData || '/default-bot-avatar.png'} 
+      alt={bot.name}
+      className="w-10 h-10 rounded-full"
+      style={{ imageRendering: 'pixelated' }}
+      onError={(e) => {
+        (e.target as HTMLImageElement).src = '/default-bot-avatar.png';
+      }}
+    />
+  );
+};
 
 const BotsPage = () => {
   const navigate = useNavigate();
@@ -351,23 +397,11 @@ const BotsPage = () => {
                   {/* Bot Header */}
                   <div className="flex items-start justify-between">
                     <div className="flex items-center space-x-3">
-                      <img 
-                        src={bot.avatar || '/default-bot-avatar.png'} 
-                        alt={bot.name}
-                        className="w-10 h-10 rounded-full"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).src = '/default-bot-avatar.png';
-                        }}
-                      />
+                      <BotSprite bot={bot} />
                       <div>
                         <h3 className="font-medium">{bot.name}</h3>
                         <div className="text-xs text-muted-foreground">
                           by {bot.creator.username || `${bot.creator.address.slice(0, 6)}...${bot.creator.address.slice(-4)}`}
-                          {bot.channel && (
-                            <span className="ml-2">
-                              📺 {bot.channel}
-                            </span>
-                          )}
                         </div>
                       </div>
                     </div>

@@ -1,7 +1,7 @@
 import { gql } from 'graphql-tag';
 import { economyTypeDefs } from './economy';
-import { metaverseSyncTypeDefs } from './metaverseSync';
 import { energyTypeDefs } from './energy';
+import { idleGameTypeDefs } from './idleGame';
 
 const baseTypeDefs = gql`
   scalar DateTime
@@ -46,13 +46,7 @@ const baseTypeDefs = gql`
     createdAt: DateTime!
     updatedAt: DateTime!
     
-    # Metaverse fields
-    channel: String!
-    metaverseAgentId: String
-    currentZone: String
-    lastZoneChange: DateTime
-    metaversePosition: MetaversePosition
-    botSync: BotSync
+    # Metaverse fields removed - now using idle game
     
     # Economy fields
     equipment: [BotEquipment!]!
@@ -66,11 +60,6 @@ const baseTypeDefs = gql`
     defenseLevel: Int!
   }
   
-  type MetaversePosition {
-    x: Float!
-    y: Float!
-    worldInstanceId: String!
-  }
   
   type BotStats {
     wins: Int!
@@ -399,7 +388,6 @@ const baseTypeDefs = gql`
     modelType: AIModelType!
     txHash: String!
     spriteId: String
-    channel: String
   }
 
   # Auth types
@@ -1237,4 +1225,4 @@ const baseTypeDefs = gql`
 `;
 
 // Export merged type definitions
-export const typeDefs = [baseTypeDefs, economyTypeDefs, metaverseSyncTypeDefs, energyTypeDefs];
+export const typeDefs = [baseTypeDefs, economyTypeDefs, energyTypeDefs, idleGameTypeDefs];

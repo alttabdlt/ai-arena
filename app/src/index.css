@@ -217,6 +217,288 @@
     @apply relative;
   }
 
+  /* Enhanced Idle Game Styles */
+  .idle-game-container {
+    @apply w-full max-w-6xl mx-auto h-screen flex flex-col p-4 md:p-6;
+  }
+
+  /* Enhanced Header */
+  .game-header-enhanced {
+    @apply backdrop-blur-md border rounded-2xl mb-6 shadow-2xl overflow-hidden;
+    background: linear-gradient(90deg, hsl(var(--card)), hsl(var(--card) / 0.95), hsl(var(--card)));
+    border-color: hsl(var(--border) / 0.5);
+    position: relative;
+  }
+
+  .game-header-enhanced::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, hsl(var(--primary)), transparent);
+    animation: shimmer 3s infinite;
+  }
+
+  @keyframes shimmer {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 1; }
+  }
+
+  .header-content {
+    @apply px-6 py-5 flex justify-between items-center gap-4 flex-wrap md:flex-nowrap;
+  }
+
+  .header-title-section {
+    @apply flex flex-col gap-1;
+  }
+
+  .game-title {
+    @apply flex items-center gap-2 text-2xl md:text-3xl font-bold m-0;
+  }
+
+  .title-accent {
+    @apply bg-gradient-to-r from-primary to-primary-glow bg-clip-text text-transparent;
+  }
+
+  .title-separator {
+    @apply text-muted-foreground opacity-50;
+  }
+
+  .title-subtitle {
+    @apply text-foreground;
+  }
+
+  .game-tagline {
+    @apply text-sm text-muted-foreground m-0;
+  }
+
+  .bot-selector {
+    @apply flex items-center gap-3;
+  }
+
+  .bot-selector select {
+    @apply px-4 py-2.5 rounded-xl border backdrop-blur-sm text-foreground text-sm font-medium cursor-pointer transition-all hover:border-primary hover:bg-background focus:outline-none focus:border-primary focus:ring-2;
+    background: hsl(var(--background) / 0.8);
+    border-color: hsl(var(--border) / 0.6);
+    min-width: 180px;
+  }
+  
+  .bot-selector select:focus {
+    --tw-ring-color: hsl(var(--primary) / 0.2);
+  }
+
+  /* Enhanced Content Grid */
+  .game-content-enhanced {
+    @apply flex-1 grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-6 min-h-0;
+  }
+
+  /* Enhanced Sprite Container */
+  .sprite-container-enhanced {
+    @apply backdrop-blur-md border rounded-2xl shadow-2xl overflow-hidden relative;
+    background: linear-gradient(135deg, hsl(var(--card)), hsl(var(--card) / 0.98), hsl(var(--card) / 0.95));
+    border-color: hsl(var(--border) / 0.5);
+    background-image: 
+      radial-gradient(circle at 20% 50%, hsl(var(--primary) / 0.03) 0%, transparent 50%),
+      radial-gradient(circle at 80% 80%, hsl(var(--accent) / 0.03) 0%, transparent 50%);
+  }
+
+  /* Sprite Display Area */
+  .sprite-display-area {
+    @apply relative w-full h-full flex flex-col items-center justify-center p-8;
+    min-height: 400px;
+  }
+
+  .sprite-background-effect {
+    @apply absolute inset-0 opacity-10;
+    background: radial-gradient(circle at center, currentColor 0%, transparent 70%);
+    animation: pulse 4s ease-in-out infinite;
+  }
+
+  .personality-criminal .sprite-background-effect {
+    color: hsl(0 70% 55%);
+  }
+
+  .personality-gambler .sprite-background-effect {
+    color: hsl(45 100% 60%);
+  }
+
+  .personality-worker .sprite-background-effect {
+    color: hsl(120 60% 50%);
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 0.05; transform: scale(0.9); }
+    50% { opacity: 0.15; transform: scale(1.1); }
+  }
+
+  .sprite-wrapper {
+    @apply relative flex items-center justify-center;
+    width: 128px;
+    height: 128px;
+  }
+
+  .sprite-character {
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    image-rendering: crisp-edges;
+  }
+
+  /* Bot Name Display */
+  .bot-name-display {
+    @apply flex items-center gap-3 mt-6;
+  }
+
+  .bot-name {
+    @apply text-2xl font-bold m-0 bg-gradient-to-r from-foreground to-foreground/80 bg-clip-text text-transparent;
+  }
+
+  .personality-badge {
+    @apply px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider;
+  }
+
+  .personality-badge.personality-criminal {
+    @apply bg-red-500/20 text-red-400 border border-red-500/30;
+  }
+
+  .personality-badge.personality-gambler {
+    @apply bg-yellow-500/20 text-yellow-400 border border-yellow-500/30;
+  }
+
+  .personality-badge.personality-worker {
+    @apply bg-green-500/20 text-green-400 border border-green-500/30;
+  }
+
+  /* Activity Display */
+  .activity-display {
+    @apply absolute bottom-8 left-1/2 transform -translate-x-1/2 flex items-center gap-2 bg-black/90 backdrop-blur-sm px-4 py-2 rounded-full border border-border/50;
+    animation: slideIn 0.3s ease;
+  }
+
+  .activity-emoji {
+    @apply text-xl;
+  }
+
+  .activity-text {
+    @apply text-sm text-foreground/90 font-medium;
+  }
+
+  /* Empty State */
+  .no-bot-message {
+    @apply flex flex-col items-center justify-center gap-4 text-center p-8;
+  }
+
+  .empty-state-icon {
+    @apply text-6xl opacity-20;
+  }
+
+  .empty-state-text {
+    @apply text-muted-foreground text-lg;
+  }
+
+  /* Enhanced Stats Panel */
+  .stats-panel-wrapper {
+    @apply h-full;
+  }
+
+  .stats-panel {
+    @apply backdrop-blur-md border rounded-2xl p-6 text-foreground shadow-2xl h-full flex flex-col;
+    background: linear-gradient(135deg, hsl(var(--card)), hsl(var(--card) / 0.98), hsl(var(--card) / 0.95));
+    border-color: hsl(var(--border) / 0.5);
+    background-image: 
+      radial-gradient(circle at 10% 20%, hsl(var(--primary) / 0.02) 0%, transparent 50%),
+      radial-gradient(circle at 90% 90%, hsl(var(--accent) / 0.02) 0%, transparent 50%);
+  }
+
+  .stats-section {
+    @apply mb-6 pb-6 border-b last:border-0;
+    border-color: hsl(var(--border) / 0.3);
+  }
+
+  .stats-section h3 {
+    @apply m-0 mb-4 text-xs font-bold opacity-60 uppercase tracking-widest flex items-center gap-2;
+  }
+
+  .stats-section h3::before {
+    content: '';
+    @apply w-2 h-2 bg-primary rounded-full;
+  }
+
+  .xp-bar {
+    @apply w-full h-6 border rounded-full overflow-hidden mt-3 relative;
+    background: hsl(var(--background) / 0.5);
+    border-color: hsl(var(--border) / 0.5);
+  }
+
+  .xp-bar::before {
+    content: '';
+    @apply absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent;
+    animation: xp-shimmer 2s infinite;
+  }
+
+  @keyframes xp-shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+  }
+
+  .xp-fill {
+    @apply h-full bg-gradient-to-r from-success via-success/90 to-success/80 transition-all duration-500 shadow-[inset_0_2px_4px_rgba(0,0,0,0.1),0_0_20px_hsl(var(--success)/0.4)];
+    position: relative;
+  }
+
+  .activity-feed {
+    @apply flex-1 overflow-y-auto pr-2 space-y-2;
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+
+  .activity-feed::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .activity-feed::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .activity-feed::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 3px;
+  }
+
+  .activity-item {
+    @apply p-3 backdrop-blur-sm border rounded-xl text-sm transition-all hover:translate-x-1;
+    background: hsl(var(--background) / 0.5);
+    border-color: hsl(var(--border) / 0.4);
+    animation: slideIn 0.3s ease;
+  }
+  
+  .activity-item:hover {
+    background: hsl(var(--background) / 0.7);
+    border-color: hsl(var(--primary) / 0.5);
+  }
+
+  @keyframes slideIn {
+    from {
+      opacity: 0;
+      transform: translateY(-10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .level-badge {
+    @apply inline-flex items-center px-3 py-1.5 bg-gradient-to-r from-primary via-primary-glow to-accent rounded-full font-bold text-xs ml-2 shadow-[0_0_20px_hsl(var(--primary)/0.4)] border border-white/10;
+    animation: level-glow 2s ease-in-out infinite;
+  }
+
+  @keyframes level-glow {
+    0%, 100% { filter: brightness(1); }
+    50% { filter: brightness(1.2); }
+  }
+
   .live-indicator::before {
     content: '';
     @apply absolute -inset-1 bg-gradient-to-r from-destructive to-warning rounded-full blur-sm opacity-75 animate-pulse;
@@ -233,6 +515,565 @@
 
   .status-completed {
     @apply bg-success text-success-foreground;
+  }
+
+  /* ===== REDESIGNED IDLE GAME STYLES ===== */
+  
+  /* Main Container - Modern Gaming Layout */
+  .idle-game-redesigned {
+    @apply w-full h-screen flex flex-col bg-gradient-to-br from-background via-background to-background/95;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .idle-game-redesigned::before {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: radial-gradient(circle, hsl(var(--primary) / 0.03) 0%, transparent 70%);
+    animation: float 20s ease-in-out infinite;
+  }
+
+  @keyframes float {
+    0%, 100% { transform: translate(0, 0) rotate(0deg); }
+    33% { transform: translate(30px, -30px) rotate(120deg); }
+    66% { transform: translate(-20px, 20px) rotate(240deg); }
+  }
+
+  /* Compact Header with Inline Elements */
+  .game-header-compact {
+    @apply relative z-10 px-6 py-4 flex items-center justify-between gap-4 border-b;
+    background: hsl(var(--card) / 0.95);
+    backdrop-filter: blur(10px);
+    border-color: hsl(var(--border) / 0.3);
+  }
+
+  .header-left {
+    @apply flex items-center gap-3;
+  }
+
+  .header-title {
+    @apply flex items-center gap-2 text-xl md:text-2xl font-bold m-0;
+  }
+
+  .gradient-text {
+    @apply bg-gradient-to-r from-primary via-primary-glow to-accent bg-clip-text text-transparent;
+    filter: drop-shadow(0 2px 4px hsl(var(--primary) / 0.2));
+  }
+
+  .header-divider {
+    @apply text-muted-foreground opacity-40;
+  }
+
+  .header-subtitle {
+    @apply text-foreground/90;
+  }
+
+  .header-center {
+    @apply hidden md:flex flex-1 justify-center;
+  }
+
+  .quick-stats {
+    @apply flex items-center gap-6;
+  }
+
+  .quick-stat {
+    @apply flex flex-col items-center;
+  }
+
+  .stat-label {
+    @apply text-xs text-muted-foreground uppercase tracking-wider;
+  }
+
+  .stat-value {
+    @apply text-lg font-bold text-foreground;
+  }
+
+  .header-right {
+    @apply flex items-center;
+  }
+
+  /* Main Content Grid */
+  .game-main-content {
+    @apply flex-1 grid grid-cols-1 lg:grid-cols-[1fr_2fr] gap-6 p-6 relative z-10;
+    max-height: calc(100vh - 80px);
+  }
+
+  /* Sprite Section */
+  .sprite-section {
+    @apply flex flex-col gap-4;
+  }
+
+  .sprite-card {
+    @apply backdrop-blur-md border rounded-2xl p-6 shadow-xl relative overflow-hidden;
+    background: linear-gradient(135deg, hsl(var(--card) / 0.95), hsl(var(--card) / 0.9));
+    border-color: hsl(var(--border) / 0.4);
+  }
+
+  .sprite-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 50% 50%, hsl(var(--primary) / 0.05) 0%, transparent 50%);
+    pointer-events: none;
+  }
+
+  .info-cards-row {
+    @apply grid grid-cols-3 gap-3;
+  }
+
+  .info-card {
+    @apply flex flex-col items-center gap-2 p-3 rounded-xl border backdrop-blur-sm;
+    background: hsl(var(--background) / 0.5);
+    border-color: hsl(var(--border) / 0.3);
+    transition: all 0.3s ease;
+  }
+
+  .info-card:hover {
+    transform: translateY(-2px);
+    border-color: hsl(var(--primary) / 0.5);
+    box-shadow: 0 4px 12px hsl(var(--primary) / 0.1);
+  }
+
+  .card-icon {
+    @apply text-2xl;
+  }
+
+  .card-value {
+    @apply text-sm font-bold text-foreground;
+  }
+
+  .personality-card.info-card {
+    background: linear-gradient(135deg, hsl(var(--accent) / 0.1), hsl(var(--accent) / 0.05));
+  }
+
+  .level-card.info-card {
+    background: linear-gradient(135deg, hsl(var(--primary) / 0.1), hsl(var(--primary) / 0.05));
+  }
+
+  .xp-rate-card.info-card {
+    background: linear-gradient(135deg, hsl(var(--success) / 0.1), hsl(var(--success) / 0.05));
+  }
+
+  /* Empty State */
+  .empty-state {
+    @apply flex flex-col items-center justify-center gap-4 py-16;
+  }
+
+  .empty-icon {
+    @apply text-6xl opacity-20;
+  }
+
+  .empty-text {
+    @apply text-muted-foreground text-lg;
+  }
+
+  /* Stats Section */
+  .stats-section {
+    @apply h-full;
+  }
+
+  .stats-placeholder {
+    @apply h-full flex items-center justify-center text-muted-foreground;
+  }
+
+  /* ===== BOT SPRITE STYLES ===== */
+  
+  /* Compact Sprite Container */
+  .sprite-compact-container {
+    @apply relative flex flex-col items-center justify-center gap-4 p-8;
+    min-height: 300px;
+  }
+
+  /* Background Pattern with Personality Colors */
+  .sprite-bg-pattern {
+    @apply absolute inset-0 opacity-5 pointer-events-none;
+    overflow: hidden;
+  }
+
+  .sprite-bg-pattern::before {
+    content: '';
+    position: absolute;
+    inset: -50%;
+    background: radial-gradient(circle at center, currentColor 0%, transparent 60%);
+    animation: pulse-subtle 4s ease-in-out infinite;
+  }
+
+  .pattern-grid {
+    @apply absolute inset-0;
+    background-image: 
+      linear-gradient(0deg, currentColor 1px, transparent 1px),
+      linear-gradient(90deg, currentColor 1px, transparent 1px);
+    background-size: 20px 20px;
+    opacity: 0.3;
+  }
+
+  .sprite-bg-pattern.personality-criminal {
+    color: hsl(0 70% 55%);
+  }
+
+  .sprite-bg-pattern.personality-gambler {
+    color: hsl(45 100% 60%);
+  }
+
+  .sprite-bg-pattern.personality-worker {
+    color: hsl(120 60% 50%);
+  }
+
+  @keyframes pulse-subtle {
+    0%, 100% { 
+      opacity: 0.03; 
+      transform: scale(0.95);
+    }
+    50% { 
+      opacity: 0.08; 
+      transform: scale(1.05);
+    }
+  }
+
+  /* Sprite Display */
+  .sprite-display {
+    @apply relative z-10 flex items-center justify-center;
+    filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.3));
+    transition: transform 0.3s ease;
+  }
+
+  .sprite-display:hover {
+    transform: scale(1.05);
+  }
+
+  .sprite-character-compact {
+    image-rendering: pixelated;
+    image-rendering: -moz-crisp-edges;
+    image-rendering: crisp-edges;
+    animation: bob 3s ease-in-out infinite;
+  }
+
+  @keyframes bob {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-4px); }
+  }
+
+  /* Bot Name */
+  .sprite-bot-name {
+    @apply text-xl font-bold text-foreground z-10 m-0;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  }
+
+  /* Activity Bubble */
+  .activity-bubble {
+    @apply absolute bottom-4 left-1/2 transform -translate-x-1/2 flex items-center gap-2;
+    @apply px-4 py-2 rounded-full backdrop-blur-md border;
+    background: hsl(var(--background) / 0.9);
+    border-color: hsl(var(--border) / 0.4);
+    animation: bubble-in 0.3s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  }
+
+  @keyframes bubble-in {
+    from {
+      opacity: 0;
+      transform: translateX(-50%) translateY(10px) scale(0.9);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0) scale(1);
+    }
+  }
+
+  .bubble-emoji {
+    @apply text-lg;
+    animation: emoji-bounce 2s ease-in-out infinite;
+  }
+
+  @keyframes emoji-bounce {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+  }
+
+  .bubble-text {
+    @apply text-sm font-medium text-foreground/90;
+  }
+
+  /* ===== STATS PANEL STYLES ===== */
+  
+  /* Redesigned Stats Panel Container */
+  .stats-panel-redesigned {
+    @apply h-full flex flex-col gap-4 backdrop-blur-md border rounded-2xl p-6;
+    background: linear-gradient(135deg, hsl(var(--card) / 0.95), hsl(var(--card) / 0.9));
+    border-color: hsl(var(--border) / 0.4);
+    overflow-y: auto;
+  }
+
+  /* Top Grid for Key Stats */
+  .stats-grid-top {
+    @apply grid grid-cols-1 md:grid-cols-2 gap-4;
+  }
+
+  /* Stat Cards */
+  .stat-card {
+    @apply backdrop-blur-sm border rounded-xl p-4 transition-all duration-300;
+    background: hsl(var(--background) / 0.5);
+    border-color: hsl(var(--border) / 0.3);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+  }
+
+  .stat-card:hover::before {
+    opacity: 1;
+  }
+
+  .stat-card:hover {
+    transform: translateY(-2px);
+    border-color: hsl(var(--primary) / 0.5);
+    box-shadow: 0 8px 16px hsl(var(--primary) / 0.1);
+  }
+
+  .card-header {
+    @apply flex items-center gap-2 mb-3;
+  }
+
+  .card-icon {
+    @apply text-xl;
+  }
+
+  .card-title {
+    @apply text-xs font-bold uppercase tracking-wider text-muted-foreground m-0;
+  }
+
+  .card-content {
+    @apply space-y-3;
+  }
+
+  /* XP Card Specific */
+  .xp-card::before {
+    background: radial-gradient(circle at top right, hsl(var(--success) / 0.1) 0%, transparent 50%);
+  }
+
+  .xp-info {
+    @apply flex items-baseline gap-1 text-2xl font-bold;
+  }
+
+  .xp-current {
+    @apply text-foreground;
+  }
+
+  .xp-separator {
+    @apply text-muted-foreground opacity-40 text-lg;
+  }
+
+  .xp-max {
+    @apply text-muted-foreground text-lg;
+  }
+
+  .xp-bar-compact {
+    @apply w-full h-2 bg-background/50 rounded-full overflow-hidden;
+    position: relative;
+  }
+
+  .xp-fill-compact {
+    @apply h-full bg-gradient-to-r from-success to-success/80 transition-all duration-500;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
+  }
+
+  .xp-meta {
+    @apply flex justify-between text-xs text-muted-foreground;
+  }
+
+  /* Earnings Card Specific */
+  .earnings-card::before {
+    background: radial-gradient(circle at top left, hsl(var(--accent) / 0.1) 0%, transparent 50%);
+  }
+
+  .earnings-row {
+    @apply grid grid-cols-2 gap-4;
+  }
+
+  .earning-item {
+    @apply flex flex-col;
+  }
+
+  .earning-label {
+    @apply text-xs text-muted-foreground uppercase tracking-wider mb-1;
+  }
+
+  .earning-value {
+    @apply text-lg font-bold;
+  }
+
+  .xp-value {
+    @apply text-success;
+  }
+
+  .idle-value {
+    @apply text-accent;
+  }
+
+  .bonus-indicator {
+    @apply px-3 py-1.5 rounded-lg border text-xs font-medium text-center;
+    animation: glow-pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes glow-pulse {
+    0%, 100% { opacity: 0.8; }
+    50% { opacity: 1; }
+  }
+
+  .bonus-text {
+    @apply text-foreground/90;
+  }
+
+  /* Current Activity Bar */
+  .current-activity-bar {
+    @apply flex items-center gap-3 px-4 py-3 backdrop-blur-sm border rounded-xl;
+    background: linear-gradient(90deg, hsl(var(--primary) / 0.05), hsl(var(--primary) / 0.02));
+    border-color: hsl(var(--primary) / 0.2);
+    animation: activity-pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes activity-pulse {
+    0%, 100% { border-color: hsl(var(--primary) / 0.2); }
+    50% { border-color: hsl(var(--primary) / 0.4); }
+  }
+
+  .activity-indicator {
+    @apply flex items-center gap-2;
+  }
+
+  .activity-dot {
+    @apply w-2 h-2 bg-success rounded-full;
+    animation: dot-pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes dot-pulse {
+    0%, 100% { 
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% { 
+      opacity: 0.5;
+      transform: scale(1.2);
+    }
+  }
+
+  .activity-label {
+    @apply text-xs text-muted-foreground font-medium;
+  }
+
+  .activity-emoji-inline {
+    @apply text-lg;
+  }
+
+  .activity-text-inline {
+    @apply flex-1 text-sm font-medium text-foreground;
+  }
+
+  .activity-xp {
+    @apply text-xs font-bold text-success;
+  }
+
+  /* Activity Timeline */
+  .activity-timeline {
+    @apply flex-1 flex flex-col min-h-0;
+  }
+
+  .timeline-title {
+    @apply text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3 m-0;
+  }
+
+  .timeline-container {
+    @apply flex-1 overflow-y-auto pr-2;
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border) / 0.3) transparent;
+  }
+
+  .timeline-container::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  .timeline-container::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .timeline-container::-webkit-scrollbar-thumb {
+    background: hsl(var(--border) / 0.3);
+    border-radius: 2px;
+  }
+
+  .timeline-empty {
+    @apply flex items-center justify-center py-8 text-muted-foreground text-sm;
+  }
+
+  .timeline-items {
+    @apply space-y-2;
+  }
+
+  .timeline-item {
+    @apply flex items-start gap-3 p-3 rounded-lg transition-all duration-200;
+    background: hsl(var(--background) / 0.3);
+    border-left: 2px solid hsl(var(--border) / 0.3);
+    animation: timeline-slide-in 0.3s ease;
+  }
+
+  @keyframes timeline-slide-in {
+    from {
+      opacity: 0;
+      transform: translateX(-10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  .timeline-item:hover {
+    background: hsl(var(--background) / 0.5);
+    border-left-color: hsl(var(--primary) / 0.5);
+    transform: translateX(2px);
+  }
+
+  .timeline-dot {
+    @apply w-2 h-2 bg-primary rounded-full mt-1.5 flex-shrink-0;
+  }
+
+  .timeline-content {
+    @apply flex-1 min-w-0;
+  }
+
+  .timeline-header {
+    @apply flex items-center gap-2 mb-1;
+  }
+
+  .timeline-emoji {
+    @apply text-base;
+  }
+
+  .timeline-activity {
+    @apply text-sm font-medium text-foreground truncate;
+  }
+
+  .timeline-meta {
+    @apply flex items-center gap-3 text-xs;
+  }
+
+  .timeline-time {
+    @apply text-muted-foreground;
+  }
+
+  .timeline-xp {
+    @apply font-bold text-success;
   }
 
   /* Poker Table Styles */

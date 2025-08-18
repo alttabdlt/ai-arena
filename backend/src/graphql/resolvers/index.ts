@@ -7,7 +7,7 @@ import { Context } from '../../config/context';
 import { getQueueService } from '../../services';
 import { aiService } from '../../services/aiService';
 import { AuthService } from '../../services/authService';
-import { BotDeploymentService } from '../../services/botDeploymentService';
+// BotDeploymentService removed - metaverse deployment no longer needed
 // botSyncService moved to metaverse backend
 import { energyService } from '../../services/energyService';
 import { getGameManagerService } from '../../services/gameManagerService';
@@ -21,7 +21,7 @@ import { logger } from '@ai-arena/shared-logger';
 import { economyResolvers } from './economy';
 import { energyResolvers } from './energy';
 import { gameManagerResolvers } from './gameManager';
-import { metaverseSyncResolvers } from './metaverseSync';
+import { idleGameResolvers } from './idleGame';
 
 interface PubSubAsyncIterator<T> extends AsyncIterator<T> {
   return(): Promise<IteratorResult<T>>;
@@ -72,14 +72,7 @@ export const resolvers = {
       if (filter) {
         if (filter.modelType) where.modelType = filter.modelType;
         if (filter.isActive !== undefined) where.isActive = filter.isActive;
-        if (filter.hasMetaverseAgent !== undefined) {
-          // Filter by presence of metaverseAgentId
-          if (filter.hasMetaverseAgent) {
-            where.metaverseAgentId = { not: null };
-          } else {
-            where.metaverseAgentId = null;
-          }
-        }
+        // hasMetaverseAgent filter removed - metaverse fields no longer exist
         if (filter.creatorAddress) {
           // Need to find user by address first
           const user = await ctx.prisma.user.findUnique({
@@ -360,9 +353,6 @@ export const resolvers = {
     // Economy queries
     ...economyResolvers.Query,
     
-    // Metaverse sync queries
-    ...metaverseSyncResolvers.Query,
-    
     // Deployment queries - moved to metaverse backend
     // ...deploymentResolvers.Query,
     
@@ -371,6 +361,9 @@ export const resolvers = {
     
     // Energy queries
     ...energyResolvers.Query,
+    
+    // Idle game queries
+    ...idleGameResolvers.Query,
     
     // Channel queries (proxy to metaverse backend)
     channels: async (_: any, args: { type?: string; status?: string }) => {
@@ -437,50 +430,16 @@ export const resolvers = {
       
       try {
         // Get user's bots
-        const bots = await ctx.prisma.bot.findMany({
-          where: { creatorId: ctx.user.id },
-          select: { channel: true },
-          distinct: ['channel']
-        });
-        
-        const channelNames = [...new Set(bots.map(b => b.channel))];
-        
-        // Fetch channel details from metaverse backend
-        const channels = await Promise.all(
-          channelNames.map(async (name) => {
-            try {
-              const response = await axios.post(`${METAVERSE_BACKEND_URL}/graphql`, {
-                query: `
-                  query GetChannel($name: String!) {
-                    channelByName(name: $name) {
-                      id
-                      name
-                      type
-                      status
-                      currentBots
-                      maxBots
-                      loadPercentage
-                      worldId
-                      region
-                      description
-                    }
-                  }
-                `,
-                variables: { name }
-              });
-              return response.data.data.channelByName;
-            } catch {
-              return null;
-            }
-          })
-        );
-        
-        return channels.filter(c => c !== null);
+        // Since channel field was removed, just return empty array
+        return [];
       } catch (error: any) {
         console.error('Failed to fetch user channels:', error.message);
         return [];
       }
     },
+    
+    // Idle game queries
+    ...idleGameResolvers.Query,
   },
 
   Mutation: {
@@ -505,11 +464,23 @@ export const resolvers = {
         throw new Error('Invalid Solana transaction signature');
       }
       
+      // Ensure user has an address
+      if (!ctx.user.address) {
+        throw new Error('User wallet address not found. Please reconnect your wallet.');
+      }
+      
+      // Use the original case-sensitive address for Solana validation
+      const walletAddress = ctx.user.originalAddress || ctx.user.address;
+      console.log('🚀 Starting deployment validation');
+      console.log('   Transaction signature:', input.txHash);
+      console.log('   User wallet address:', walletAddress);
+      console.log('   Bot name:', input.name);
+      
       // Validate transaction on-chain
       const txService = new TransactionService(ctx.prisma);
       const validation = await txService.validateDeploymentTransaction(
         input.txHash,
-        ctx.user.address
+        walletAddress
       );
       
       if (!validation.isValid) {
@@ -538,27 +509,7 @@ export const resolvers = {
           ? getMetaverseCharacter(input.spriteId, input.personality || 'WORKER')
           : getMetaverseCharacter(null, input.personality || 'WORKER', input.name);
         
-        // Validate channel if provided
-        let targetChannel = 'main'; // Default channel
-        if (input.channel) {
-          const channelMeta = await prisma.channelMetadata.findFirst({
-            where: { channel: input.channel }
-          });
-          
-          if (!channelMeta) {
-            throw new Error(`Channel ${input.channel} does not exist`);
-          }
-          
-          if (channelMeta.status !== 'ACTIVE') {
-            throw new Error(`Channel ${input.channel} is not active`);
-          }
-          
-          if (channelMeta.currentBots >= channelMeta.maxBots) {
-            throw new Error(`Channel ${input.channel} is full`);
-          }
-          
-          targetChannel = input.channel;
-        }
+        // Channel system removed - no longer needed
         
         // Create the bot
         const newBot = await prisma.bot.create({
@@ -569,8 +520,7 @@ export const resolvers = {
             prompt: promptValidation.sanitized,
             modelType: input.modelType,
             personality: input.personality || 'WORKER', // Default to WORKER if not provided
-            metaverseCharacter, // Set the metaverse character for sprite consistency
-            channel: targetChannel, // Set the channel for multi-world support
+            character: metaverseCharacter, // Set the character for sprite consistency
             creatorId: ctx.user!.id,
             isActive: true,
             stats: {
@@ -600,13 +550,7 @@ export const resolvers = {
         // Initialize bot energy using the transaction
         await energyService.initializeBotEnergy(newBot.id, prisma);
         
-        // Update channel bot count if not main (main is updated by sync service)
-        if (targetChannel !== 'main') {
-          await ctx.prisma.channelMetadata.updateMany({
-            where: { channel: targetChannel },
-            data: { currentBots: { increment: 1 } }
-          });
-        }
+        // Channel system removed - no longer updating channel bot counts
         
         // Note: Removed automatic queuing - bots must be manually queued by users
         // This allows users to manage their bots before entering tournaments
@@ -614,43 +558,12 @@ export const resolvers = {
         return newBot;
       });
       
-      // Automatically deploy bot to metaverse with retry
-      const botDeploymentService = BotDeploymentService.getInstance(ctx.prisma);
-      let deploymentSuccess = false;
-      let retryCount = 0;
-      const maxRetries = 3;
-      let finalBot = bot;
-      
-      while (!deploymentSuccess && retryCount < maxRetries) {
-        try {
-          await botDeploymentService.deployBotToMetaverse(finalBot.id);
-          logger.info(`✅ Bot ${finalBot.name} automatically deployed to metaverse`);
-          deploymentSuccess = true;
-          
-          // Refresh bot data to get metaverse IDs
-          const refreshedBot = await ctx.prisma.bot.findUnique({
-            where: { id: finalBot.id },
-            include: { creator: true }
-          });
-          if (refreshedBot) {
-            finalBot = refreshedBot;
-          }
-        } catch (metaverseError: any) {
-          retryCount++;
-          if (retryCount < maxRetries) {
-            logger.warn(`Deployment attempt ${retryCount} failed for bot ${finalBot.name}, retrying...`);
-            await new Promise(resolve => setTimeout(resolve, 2000 * retryCount)); // Exponential backoff
-          } else {
-            // Log error but don't fail the bot creation
-            logger.error(`Failed to auto-deploy bot ${finalBot.name} to metaverse after ${maxRetries} attempts:`, metaverseError.message);
-            // The bot is still created successfully, metaverse deployment can be retried later
-          }
-        }
-      }
+      // Metaverse deployment removed - bot is ready to use immediately
+      logger.info(`✅ Bot ${bot.name} successfully created`);
       
       // TODO: Emit bot deployed event for subscriptions
       
-      return finalBot;
+      return bot;
     },
     
     toggleBotActive: async (_: any, { botId }: { botId: string }, ctx: Context) => {
@@ -677,58 +590,7 @@ export const resolvers = {
       });
     },
 
-    updateBotExperience: async (_: any, args: {
-      botId: string;
-      level: number;
-      currentXP: number;
-      totalXP: number;
-      xpToNextLevel: number;
-      combatXP?: number;
-      socialXP?: number;
-      criminalXP?: number;
-      gamblingXP?: number;
-      tradingXP?: number;
-    }, ctx: Context) => {
-      // Find existing experience record
-      const existing = await ctx.prisma.botExperience.findUnique({
-        where: { botId: args.botId }
-      });
-      
-      // Update or create the experience record
-      const experience = await ctx.prisma.botExperience.upsert({
-        where: { botId: args.botId },
-        update: {
-          level: args.level,
-          currentXP: args.currentXP,
-          totalXP: args.totalXP,
-          xpToNextLevel: args.xpToNextLevel,
-          combatXP: args.combatXP ?? existing?.combatXP ?? 0,
-          socialXP: args.socialXP ?? existing?.socialXP ?? 0,
-          criminalXP: args.criminalXP ?? existing?.criminalXP ?? 0,
-          gamblingXP: args.gamblingXP ?? existing?.gamblingXP ?? 0,
-          tradingXP: args.tradingXP ?? existing?.tradingXP ?? 0,
-          lastXPGain: new Date()
-        },
-        create: {
-          botId: args.botId,
-          level: args.level,
-          currentXP: args.currentXP,
-          totalXP: args.totalXP,
-          xpToNextLevel: args.xpToNextLevel,
-          combatXP: args.combatXP ?? 0,
-          socialXP: args.socialXP ?? 0,
-          criminalXP: args.criminalXP ?? 0,
-          gamblingXP: args.gamblingXP ?? 0,
-          tradingXP: args.tradingXP ?? 0,
-          prestigeLevel: 0,
-          prestigeTokens: 0,
-          skillPoints: (args.level - 1) * 3, // 3 skill points per level
-          lastXPGain: new Date()
-        }
-      });
-      
-      return experience;
-    },
+    // updateBotExperience moved to idleGameResolvers.Mutation
     deleteBot: async (_: any, { botId }: { botId: string }, ctx: Context) => {
       if (!ctx.user) {
         throw new Error('Not authenticated');
@@ -738,7 +600,6 @@ export const resolvers = {
       const bot = await ctx.prisma.bot.findUnique({
         where: { id: botId },
         include: {
-          botSync: true,
           queueEntries: true, // Get ALL queue entries, not just WAITING
         },
       });
@@ -766,19 +627,7 @@ export const resolvers = {
       let metaverseDeleted = false;
 
       try {
-        // Clean up from metaverse using the sync service
-        if (bot.metaverseAgentId || bot.botSync) {
-          try {
-            // TODO: Call metaverse backend API to handle cleanup
-            // await axios.delete(`${METAVERSE_BACKEND_URL}/api/metaverse/bots/${botId}`);
-            console.log('Bot cleanup in metaverse skipped - service moved to metaverse backend');
-            metaverseDeleted = false;
-          } catch (metaverseError: any) {
-            console.error('Failed to delete bot from metaverse:', metaverseError);
-            // Continue with deletion even if metaverse deletion fails
-            // We'll mark it in the response
-          }
-        }
+        // Metaverse system removed - skip metaverse cleanup
 
         // Manually delete related records that don't have cascade delete
         // Count records for logging
@@ -809,28 +658,6 @@ export const resolvers = {
         await ctx.prisma.bot.delete({
           where: { id: botId },
         });
-        
-        // Update channel bot count if not main (main is updated by sync service)
-        if (bot.channel && bot.channel !== 'main') {
-          await ctx.prisma.channelMetadata.updateMany({
-            where: { channel: bot.channel },
-            data: { currentBots: { decrement: 1 } }
-          });
-        }
-
-        // Publish deletion event
-        try {
-          // TODO: Publish event via metaverse backend API
-          // await axios.post(`${METAVERSE_BACKEND_URL}/api/metaverse/events/bot-deleted`, {
-          //   botId,
-          //   metaverseAgentId: bot.metaverseAgentId,
-          //   deletedBy: ctx.user.id,
-          //   timestamp: new Date().toISOString(),
-          // });
-          console.log('Bot deletion event skipped - service moved to metaverse backend');
-        } catch (eventError) {
-          console.error('Failed to publish bot deletion event:', eventError);
-        }
 
         return {
           success: true,
@@ -1588,9 +1415,6 @@ export const resolvers = {
     // Economy mutations
     ...economyResolvers.Mutation,
     
-    // Metaverse sync mutations
-    ...metaverseSyncResolvers.Mutation,
-    
     // Deployment mutations - moved to metaverse backend
     // ...deploymentResolvers.Mutation,
     
@@ -1599,6 +1423,9 @@ export const resolvers = {
     
     // Energy mutations
     ...energyResolvers.Mutation,
+    
+    // Idle game mutations
+    ...idleGameResolvers.Mutation,
     
     // Channel mutations (proxy to metaverse backend)
     switchChannel: async (_: any, { botId, channelName }: { botId: string; channelName: string }, ctx: Context) => {
@@ -1637,10 +1464,9 @@ export const resolvers = {
           throw new Error(response.data.errors[0].message);
         }
         
-        // Update bot channel in local database
-        const updatedBot = await ctx.prisma.bot.update({
+        // Channel field removed from Bot model - just return the original bot
+        const updatedBot = await ctx.prisma.bot.findUnique({
           where: { id: botId },
-          data: { channel: channelName },
           include: { creator: true },
         });
         
@@ -1699,22 +1525,6 @@ export const resolvers = {
   },
 
   Bot: {
-    channel: (parent: any) => {
-      // The channel field is already on the bot from Prisma
-      return parent.channel || 'main';
-    },
-    metaverseAgentId: (parent: any) => {
-      // Return the metaverseAgentId field from the bot
-      return parent.metaverseAgentId || null;
-    },
-    currentZone: (parent: any) => {
-      // Return the currentZone field from the bot
-      return parent.currentZone || null;
-    },
-    lastZoneChange: (parent: any) => {
-      // Return the lastZoneChange field from the bot
-      return parent.lastZoneChange || null;
-    },
     socialStats: async (_bot: any) => {
       return {
         likes: 0,
@@ -1783,6 +1593,12 @@ export const resolvers = {
       });
     },
     experience: async (bot: any, _: any, ctx: Context) => {
+      // Use idleGameResolvers.Bot.experience if available
+      if (idleGameResolvers.Bot?.experience) {
+        return idleGameResolvers.Bot.experience(bot);
+      }
+      
+      // Fallback to existing logic
       // Try to get existing experience record
       let experience = await ctx.prisma.botExperience.findUnique({
         where: { botId: bot.id }
@@ -1826,40 +1642,8 @@ export const resolvers = {
       const { economyService } = await import('../../services/economyService');
       return economyService.calculateDefenseLevel(bot.id);
     },
-    // Metaverse integration
-    metaversePosition: (bot: any) => {
-      // Handle null or empty position
-      if (!bot.metaversePosition) {
-        return null;
-      }
-      
-      // Parse JSON string if needed
-      let position = bot.metaversePosition;
-      if (typeof position === 'string') {
-        try {
-          position = JSON.parse(position);
-        } catch {
-          return null;
-        }
-      }
-      
-      // Ensure all required fields exist with defaults
-      if (position && typeof position === 'object') {
-        return {
-          x: position.x || 0,
-          y: position.y || 0,
-          worldInstanceId: position.worldInstanceId || 'default'
-        };
-      }
-      
-      return null;
-    },
-    botSync: async (bot: any, _: any, ctx: Context) => {
-      if (bot.botSync) return bot.botSync;
-      return ctx.prisma.botSync.findUnique({
-        where: { botId: bot.id },
-      });
-    },
+    // Metaverse fields removed - using idle game instead
+    // BotSync removed - no longer needed
     queuePosition: async (bot: any, _: any, ctx: Context) => {
       const entry = await ctx.prisma.queueEntry.findFirst({
         where: {
@@ -1942,6 +1726,33 @@ export const resolvers = {
         },
       });
       return entries || [];
+    },
+    // Idle game fields
+    activityLogs: async (bot: any, _: any, ctx: Context) => {
+      if (idleGameResolvers.Bot?.activityLogs) {
+        return idleGameResolvers.Bot.activityLogs(bot);
+      }
+      // Fallback
+      if (bot.activityLogs) return bot.activityLogs;
+      return ctx.prisma.botActivityLog.findMany({
+        where: { botId: bot.id },
+        orderBy: { timestamp: 'desc' },
+        take: 10,
+      });
+    },
+    idleProgress: async (bot: any, _: any, ctx: Context) => {
+      if (idleGameResolvers.Bot?.idleProgress) {
+        return idleGameResolvers.Bot.idleProgress(bot);
+      }
+      // Fallback
+      if (bot.idleProgress) return bot.idleProgress;
+      return ctx.prisma.idleProgress.findUnique({
+        where: { botId: bot.id },
+      });
+    },
+    character: (bot: any) => {
+      // Return the character field from the bot
+      return bot.character || null;
     },
   },
   

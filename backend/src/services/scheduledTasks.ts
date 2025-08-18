@@ -1,22 +1,19 @@
-import { PrismaClient, SyncStatus, QueueStatus, MatchStatus } from '@prisma/client';
+import { PrismaClient, QueueStatus, MatchStatus } from '@prisma/client';
 import { logger } from '@ai-arena/shared-logger';
-import { BotDeploymentService } from './botDeploymentService';
 
 export class ScheduledTasksService {
   private static instance: ScheduledTasksService;
   private intervals: Map<string, NodeJS.Timeout> = new Map();
-  private botDeploymentService: BotDeploymentService;
 
   constructor(
-    private prisma: PrismaClient,
-    metaverseBackendUrl?: string
+    private prisma: PrismaClient
   ) {
-    this.botDeploymentService = BotDeploymentService.getInstance(prisma, metaverseBackendUrl);
+    // Bot deployment service removed - no longer needed
   }
 
-  static getInstance(prisma: PrismaClient, metaverseBackendUrl?: string): ScheduledTasksService {
+  static getInstance(prisma: PrismaClient): ScheduledTasksService {
     if (!ScheduledTasksService.instance) {
-      ScheduledTasksService.instance = new ScheduledTasksService(prisma, metaverseBackendUrl);
+      ScheduledTasksService.instance = new ScheduledTasksService(prisma);
     }
     return ScheduledTasksService.instance;
   }
@@ -92,41 +89,19 @@ export class ScheduledTasksService {
   }
 
   /**
-   * Auto-deploy undeployed bots
+   * Auto-deploy undeployed bots - REMOVED: No longer needed
    */
   private async autoDeployBots(): Promise<void> {
-    try {
-      logger.debug('Running auto-deploy task...');
-      await this.botDeploymentService.deployAllUndeployedBots();
-    } catch (error: any) {
-      logger.error('Auto-deploy failed:', error.message);
-    }
+    // Metaverse deployment removed - this task is no longer needed
+    logger.debug('Auto-deploy task skipped - metaverse deployment removed');
   }
 
   /**
-   * Sync all bot stats to metaverse
+   * Sync all bot stats to metaverse - REMOVED: No longer needed
    */
   private async syncAllBotStats(): Promise<void> {
-    try {
-      const deployedBots = await this.prisma.bot.findMany({
-        where: {
-          metaverseAgentId: { not: null }
-        },
-        select: { id: true, name: true }
-      });
-
-      logger.debug(`Syncing stats for ${deployedBots.length} deployed bots`);
-
-      for (const bot of deployedBots) {
-        try {
-          await this.botDeploymentService.syncBotStats(bot.id);
-        } catch (error: any) {
-          logger.error(`Failed to sync stats for bot ${bot.name}:`, error.message);
-        }
-      }
-    } catch (error: any) {
-      logger.error('Stats sync failed:', error.message);
-    }
+    // Metaverse sync removed - this task is no longer needed
+    logger.debug('Stats sync task skipped - metaverse sync removed');
   }
 
   /**
@@ -202,7 +177,8 @@ export class ScheduledTasksService {
       if (!response.ok) {
         logger.warn('⚠️ Metaverse backend health check failed');
         
-        // Mark all bot syncs as potentially out of sync
+        // BotSync model removed - skip this update
+        /*
         await this.prisma.botSync.updateMany({
           where: { 
             bot: {
@@ -211,6 +187,7 @@ export class ScheduledTasksService {
           },
           data: { syncStatus: SyncStatus.PENDING }
         });
+        */
       }
     } catch (error: any) {
       logger.error('Health check failed:', error.message);

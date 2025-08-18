@@ -20,14 +20,18 @@ import { useToast } from '@shared/hooks/use-toast';
 import { SimpleModelSelector } from '@/components/deploy/SimpleModelSelector';
 import { StardewSpriteSelector, BotPersonality } from '@/services/stardewSpriteSelector';
 import { formatModelForBackend } from '@/config/simpleModels';
-import { Bot, Zap, Coins, Loader2, AlertCircle, CheckCircle, Users, Dices, Wrench } from 'lucide-react';
+import { Bot, Zap, Coins, Loader2, AlertCircle, CheckCircle, Users, Dices, Wrench, LogIn } from 'lucide-react';
 import { Alert, AlertDescription } from '@ui/alert';
 import { Progress } from '@ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@ui/tabs';
 import { Badge } from '@ui/badge';
+import { useAuth } from '@/modules/auth/contexts/AuthContext';
 
 const DEPLOYMENT_FEE_SOL = 0.1; // 0.1 SOL deployment fee
-const PLATFORM_WALLET = new PublicKey('11111111111111111111111111111111'); // Replace with actual platform wallet
+// Get deployment wallet from environment variable (for bot deployment fees)
+const DEPLOYMENT_WALLET_ADDRESS = import.meta.env.VITE_DEPLOYMENT_WALLET_ADDRESS || 
+  'GTqrmffQ8zZv6CfDUGecYyNVgPAptru43dS13V3S5za6';
+const PLATFORM_WALLET = new PublicKey(DEPLOYMENT_WALLET_ADDRESS);
 
 interface DeploymentStep {
   id: string;
@@ -40,6 +44,7 @@ export default function Deploy() {
   const { toast } = useToast();
   const { publicKey, sendTransaction, connected } = useWallet();
   const { connection } = useConnection();
+  const { user, isAuthenticated, login, isLoggingIn } = useAuth();
   
   // Form state
   const [botName, setBotName] = useState('');
@@ -53,6 +58,7 @@ export default function Deploy() {
   const [isDeploying, setIsDeploying] = useState(false);
   const [deploymentSteps, setDeploymentSteps] = useState<DeploymentStep[]>([
     { id: 'wallet', label: 'Connect Wallet', status: 'pending' },
+    { id: 'auth', label: 'Authenticate', status: 'pending' },
     { id: 'transaction', label: 'Send Payment', status: 'pending' },
     { id: 'confirm', label: 'Confirm Transaction', status: 'pending' },
     { id: 'deploy', label: 'Deploy Bot', status: 'pending' },
@@ -63,14 +69,19 @@ export default function Deploy() {
   const [deployBot, { loading: deployLoading }] = useMutation(DEPLOY_BOT);
   const spriteSelector = new StardewSpriteSelector();
 
-  // Update wallet connection status
+  // Update wallet and auth status
   useEffect(() => {
     if (connected) {
       setDeploymentSteps(steps => 
         steps.map(s => s.id === 'wallet' ? { ...s, status: 'completed' } : s)
       );
     }
-  }, [connected]);
+    if (isAuthenticated) {
+      setDeploymentSteps(steps => 
+        steps.map(s => s.id === 'auth' ? { ...s, status: 'completed' } : s)
+      );
+    }
+  }, [connected, isAuthenticated]);
 
   // Generate character options based on personality
   useEffect(() => {
@@ -125,7 +136,38 @@ export default function Deploy() {
       // Step 1: Wallet already connected
       updateStep('wallet', 'completed');
       
-      // Step 2: Create and send Solana transaction
+      // Step 2: Authenticate if not already authenticated
+      if (!isAuthenticated) {
+        updateStep('auth', 'active');
+        
+        try {
+          await login();
+          // Wait a moment for auth state to update
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        } catch (authError) {
+          console.error('Authentication failed:', authError);
+          throw new Error('Failed to authenticate. Please try again.');
+        }
+        
+        updateStep('auth', 'completed');
+      } else {
+        // Already authenticated
+        updateStep('auth', 'completed');
+      }
+      
+      // Check wallet balance
+      const balance = await connection.getBalance(publicKey);
+      console.log('Wallet balance:', balance / LAMPORTS_PER_SOL, 'SOL');
+      console.log('Required fee:', DEPLOYMENT_FEE_SOL, 'SOL');
+      console.log('Deployment wallet:', PLATFORM_WALLET.toBase58());
+      console.log('User authenticated:', user?.address);
+      console.log('Environment deployment wallet:', import.meta.env.VITE_DEPLOYMENT_WALLET_ADDRESS);
+      
+      if (balance < DEPLOYMENT_FEE_SOL * LAMPORTS_PER_SOL) {
+        throw new Error(`Insufficient balance. You need at least ${DEPLOYMENT_FEE_SOL} SOL to deploy a bot.`);
+      }
+      
+      // Step 3: Create and send Solana transaction
       updateStep('transaction', 'active');
       
       // Create a simple transfer instruction to the platform wallet
@@ -143,18 +185,44 @@ export default function Deploy() {
       transaction.recentBlockhash = blockhash;
       transaction.feePayer = publicKey;
 
-      // Send transaction
-      const signature = await sendTransaction(transaction, connection);
-      setTxSignature(signature);
+      // Send transaction with proper error handling
+      let signature: string;
+      try {
+        console.log('Sending transaction to wallet...');
+        signature = await sendTransaction(transaction, connection);
+        console.log('Transaction signature:', signature);
+        setTxSignature(signature);
+      } catch (txError: any) {
+        console.error('Transaction error details:', txError);
+        console.error('Error name:', txError.name);
+        console.error('Error code:', txError.code);
+        
+        // Handle specific wallet errors
+        if (txError.name === 'WalletSendTransactionError' || txError.message?.includes('Unexpected error')) {
+          // This often means the wallet popup was closed or the transaction was rejected
+          throw new Error('Transaction was rejected or cancelled. Please approve the transaction in your wallet.');
+        } else if (txError.message?.includes('insufficient')) {
+          throw new Error('Insufficient SOL balance for deployment fee');
+        } else if (txError.message?.includes('rejected')) {
+          throw new Error('Transaction rejected by wallet');
+        } else if (txError.code === 4001) {
+          throw new Error('User rejected the transaction');
+        } else {
+          throw new Error(`Transaction failed: ${txError.message || 'Unknown error'}`);
+        }
+      }
       
       toast({
         title: "Transaction sent",
         description: `Transaction signature: ${signature.slice(0, 8)}...`,
       });
       
+      console.log('Transaction sent with signature:', signature);
+      console.log('Sent to wallet:', PLATFORM_WALLET.toBase58());
+      
       updateStep('transaction', 'completed');
       
-      // Step 3: Wait for confirmation
+      // Step 4: Wait for confirmation
       updateStep('confirm', 'active');
       
       const confirmation = await connection.confirmTransaction({
@@ -167,23 +235,32 @@ export default function Deploy() {
         throw new Error('Transaction failed');
       }
       
+      console.log('Transaction confirmed:', signature);
+      
+      // Add a small delay to ensure transaction is fully processed
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
       updateStep('confirm', 'completed');
       
-      // Step 4: Deploy bot to backend
+      // Step 5: Deploy bot to backend
       updateStep('deploy', 'active');
       
       const finalPrompt = autoGeneratePrompt ? generatePrompt(personality) : customPrompt;
       const modelType = formatModelForBackend(selectedModel);
       
+      // Store the character ID in the avatar field for sprite extraction
+      // BotCard component will extract the actual sprite from the character ID
+      
       const { data } = await deployBot({
         variables: {
           input: {
             name: botName,
-            personality,
+            avatar: selectedCharacter, // Store character ID (f1-f8) for sprite extraction
             prompt: finalPrompt,
+            personality,
             modelType,
-            characterId: selectedCharacter,
-            transactionSignature: signature,
+            txHash: signature,
+            spriteId: selectedCharacter,
           }
         }
       });
@@ -194,7 +271,7 @@ export default function Deploy() {
       
       updateStep('deploy', 'completed');
       
-      // Step 5: Activate bot
+      // Step 6: Activate bot
       updateStep('activate', 'active');
       
       // Simulate activation delay

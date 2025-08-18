@@ -161,10 +161,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       
       const { accessToken, refreshToken: refreshTokenValue, user: authUser } = authData.connectWallet;
       
-      // Store auth data
+      // Store auth data with original case-sensitive address
       localStorage.setItem(TOKEN_KEY, accessToken);
       localStorage.setItem(REFRESH_TOKEN_KEY, refreshTokenValue);
-      localStorage.setItem(USER_KEY, JSON.stringify(authUser));
+      
+      // Store user with both lowercase (from server) and original address
+      const userWithOriginalAddress = {
+        ...authUser,
+        originalAddress: address // Preserve the original case-sensitive address
+      };
+      localStorage.setItem(USER_KEY, JSON.stringify(userWithOriginalAddress));
       
       setUser(authUser);
       setIsAuthReady(true);

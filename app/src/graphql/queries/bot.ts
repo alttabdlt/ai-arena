@@ -60,10 +60,6 @@ export const GET_BOT_DETAIL = gql`
           }
         }
       }
-      metaverseAgentId
-      currentZone
-      metaversePosition
-      lastZoneChange
     }
   }
 `;
@@ -104,7 +100,6 @@ export const GET_BOTS = gql`
       personality
       isActive
       isDemo
-      channel
       createdAt
       creator {
         id
@@ -249,34 +244,7 @@ export const GET_MATCH = gql`
   }
 `;
 
-export const GET_METAVERSE_BOTS = gql`
-  query GetMetaverseBots($limit: Int) {
-    bots(limit: $limit) {
-      id
-      name
-      avatar
-      personality
-      isActive
-      stats {
-        wins
-        losses
-      }
-      metaverseAgentId
-      currentZone
-      metaversePosition {
-        x
-        y
-        worldInstanceId
-      }
-      lastZoneChange
-      botSync {
-        syncStatus
-        lastSyncedAt
-        convexWorldId
-      }
-    }
-  }
-`;
+// GET_METAVERSE_BOTS removed - no longer using metaverse sync
 
 export const GET_BOT_WITH_HOUSE = gql`
   query GetBotWithHouse($id: String!) {

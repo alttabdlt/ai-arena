@@ -6,6 +6,7 @@ import { Redis } from 'ioredis';
 export interface AuthenticatedUser {
   id: string;
   address: string;
+  originalAddress?: string; // Original case-sensitive address
   role: string;
 }
 
@@ -42,9 +43,13 @@ export async function extractUserFromRequest(
       return null;
     }
 
+    // Get the original case-sensitive address from headers if available
+    const originalAddress = req.headers['x-wallet-address'] as string | undefined;
+
     return {
       id: user.id,
       address: user.address,
+      originalAddress: originalAddress || user.address, // Use header address if available
       role: user.role,
     };
   } catch (error) {

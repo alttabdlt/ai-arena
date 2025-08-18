@@ -20,15 +20,15 @@ interface TransactionLog {
 }
 
 export class SolanaService {
-  private prisma: PrismaClient;
+  // private prisma: PrismaClient; // Unused
   private redis: Redis;
   private pubsub: PubSub;
   private subscriptionId: number | null = null;
-  private lastSignature: string | null = null;
+  // private lastSignature: string | null = null; // Unused
   private isMonitoring: boolean = false;
 
-  constructor(prisma: PrismaClient, redis: Redis, pubsub: PubSub) {
-    this.prisma = prisma;
+  constructor(_prisma: PrismaClient, redis: Redis, pubsub: PubSub) {
+    // this.prisma = prisma; // Unused
     this.redis = redis;
     this.pubsub = pubsub;
   }

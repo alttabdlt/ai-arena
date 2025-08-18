@@ -56,45 +56,21 @@ export const economyResolvers = {
       });
     },
 
-    // Get robbery logs
-    getRobberyLogs: async (_: any, { botId, role }: { botId: string; role?: string }) => {
-      const where: any = {};
-      
-      if (role === 'robber') {
-        where.robberBotId = botId;
-      } else if (role === 'victim') {
-        where.victimBotId = botId;
-      } else {
-        where.OR = [
-          { robberBotId: botId },
-          { victimBotId: botId }
-        ];
-      }
-      
-      return await prisma.robberyLog.findMany({
-        where,
-        include: { 
-          robberBot: true,
-          victimBot: true 
-        },
-        orderBy: { timestamp: 'desc' },
-        take: 50
-      });
+    // Get robbery logs - REMOVED: RobberyLog model no longer exists
+    getRobberyLogs: async (_: any, { botId: _botId }: { botId: string; role?: string }) => {
+      // RobberyLog model removed from schema
+      return [];
     },
 
-    // Get trades
-    getBotTrades: async (_: any, { botId, status }: { botId: string; status?: string }) => {
-      const where: any = {
-        OR: [
-          { initiatorBotId: botId },
-          { receiverBotId: botId }
-        ]
-      };
-      
-      if (status) {
-        where.status = status;
-      }
-      
+    // Get trades - REMOVED: Trade model no longer exists
+    getBotTrades: async (_: any, { botId: _botId }: { botId: string; status?: string }) => {
+      // Trade model removed from schema
+      return [];
+    },
+    
+    // Rest of trade query removed - commented out
+    /*
+    getBotTradesOld: async () => {
       return await prisma.trade.findMany({
         where,
         include: { 
@@ -105,6 +81,7 @@ export const economyResolvers = {
         take: 50
       });
     },
+    */
 
     // Calculate robbing power
     calculateRobbingPower: async (_: any, { botId }: { botId: string }) => {
@@ -132,12 +109,8 @@ export const economyResolvers = {
       });
     },
 
-    // Get inventory sync status
+    // Get inventory sync status - REMOVED: BotSync model no longer exists
     getInventorySyncStatus: async (_: any, { botId }: { botId: string }) => {
-      const botSync = await prisma.botSync.findUnique({
-        where: { botId },
-      });
-
       const pendingLootboxes = await prisma.lootboxReward.count({
         where: { botId, opened: false }
       });
@@ -148,11 +121,11 @@ export const economyResolvers = {
 
       return {
         botId,
-        lastSyncedAt: botSync?.lastSyncedAt || null,
-        syncStatus: botSync?.syncStatus || 'NOT_SYNCED',
+        lastSyncedAt: null,
+        syncStatus: 'NOT_SYNCED',
         pendingLootboxes,
         totalItems,
-        errors: botSync?.syncErrors || [],
+        errors: [],
       };
     }
   },
@@ -227,83 +200,31 @@ export const economyResolvers = {
       return furniture;
     },
 
-    // Attempt robbery
-    attemptRobbery: async (_: any, { robberId, victimId }: { robberId: string; victimId: string }) => {
-      const result = await economyService.attemptRobbery(robberId, victimId);
-      
-      // Create robbery log for subscription
-      const log = await prisma.robberyLog.findFirst({
-        where: { 
-          robberBotId: robberId,
-          victimBotId: victimId
-        },
-        orderBy: { timestamp: 'desc' },
-        include: {
-          robberBot: true,
-          victimBot: true
-        }
-      });
-      
-      // Publish robbery attempt to victim
-      if (log) {
-        pubsub.publish(`ROBBERY_ATTEMPTED_${victimId}`, {
-          robberyAttempted: log
-        });
-      }
-      
-      return result;
+    // Attempt robbery - REMOVED: Robbery functionality removed
+    attemptRobbery: async (_: any, _args: { robberId: string; victimId: string }) => {
+      // Robbery functionality removed from schema
+      return {
+        success: false,
+        message: 'Robbery functionality has been removed',
+        amountStolen: 0
+      };
     },
 
-    // Create trade
-    createTrade: async (_: any, args: {
+    // Create trade - REMOVED: Trade model no longer exists
+    createTrade: async (_: any, _args: {
       initiatorBotId: string;
       receiverBotId: string;
       offeredItems: any;
       requestedItems: any;
     }) => {
-      const trade = await prisma.trade.create({
-        data: {
-          initiatorBotId: args.initiatorBotId,
-          receiverBotId: args.receiverBotId,
-          offeredItems: args.offeredItems,
-          requestedItems: args.requestedItems
-        },
-        include: {
-          initiatorBot: true,
-          receiverBot: true
-        }
-      });
-      
-      // Publish trade to receiver
-      pubsub.publish(`TRADE_RECEIVED_${args.receiverBotId}`, {
-        tradeReceived: trade
-      });
-      
-      return trade;
+      // Trade model removed from schema
+      return null;
     },
 
-    // Respond to trade
-    respondToTrade: async (_: any, { tradeId, accept }: { tradeId: string; accept: boolean }) => {
-      const status = accept ? 'accepted' : 'rejected';
-      const completedAt = accept ? new Date() : null;
-      
-      const trade = await prisma.trade.update({
-        where: { id: tradeId },
-        data: { 
-          status,
-          completedAt
-        }
-      });
-      
-      if (accept) {
-        // Update activity scores for both bots
-        await economyService.updateActivityScore(trade.initiatorBotId, { tradesCompleted: 1 });
-        await economyService.updateActivityScore(trade.receiverBotId, { tradesCompleted: 1 });
-        
-        // TODO: Actually transfer the items between bots
-      }
-      
-      return trade;
+    // Respond to trade - REMOVED: Trade model no longer exists
+    respondToTrade: async (_: any, _args: { tradeId: string; accept: boolean }) => {
+      // Trade model removed from schema
+      return null;
     },
 
     // Update house score

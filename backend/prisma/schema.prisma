@@ -57,17 +57,8 @@ model Bot {
   isActive        Boolean          @default(true)
   stats           Json             @default("{}") // wins, losses, earnings
   
-  // Metaverse integration
-  channel         String           @default("main") // Channel assignment for world distribution
-  metaverseAgentId String?         // AI Town agent ID
-  metaverseCharacter String?        // Character sprite ID (f1-f8, criminal1, etc.)
-  currentZone     String?          // Current zone (casino, darkAlley, suburb)
-  metaversePosition Json?          @default("{}") // {x: number, y: number, worldInstanceId: string}
-  lastZoneChange  DateTime?        // Track zone transitions
-  
-  // Relationship tracking
-  marriagePartner String?          // Bot ID of marriage partner
-  relationshipStage Json?          @default("{}") // Track relationship stages with other bots
+  // Visual customization
+  character       String?          // Character sprite ID (f1-f8, criminal1, etc.)
   
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
@@ -84,29 +75,23 @@ model Bot {
   house           BotHouse?
   activityScore   BotActivityScore?
   lootboxRewards  LootboxReward[]
-  initiatedTrades Trade[]          @relation("initiator")
-  receivedTrades  Trade[]          @relation("receiver")
-  robberyAttempts RobberyLog[]     @relation("robber")
-  robberyDefenses RobberyLog[]     @relation("victim")
   
   // Energy system
   energy          BotEnergy?
   energyPurchases EnergyPurchase[]
   
-  // Metaverse sync
-  botSync         BotSync?
-  
   // Experience system
   experience      BotExperience?
   
-  // Movement tracking for idle game
-  movement        BotMovement?
+  // Activity logs for idle game
+  activityLogs    BotActivityLog[]
+  
+  // Idle progress tracking
+  idleProgress    IdleProgress?
   
   @@index([creatorId])
   @@index([createdAt])
   @@index([isActive])
-  @@index([channel])
-  @@index([metaverseAgentId])
   @@index([tokenId])
 }
 
@@ -436,28 +421,6 @@ enum BotPersonality {
   WORKER
 }
 
-enum SyncStatus {
-  PENDING
-  SYNCING
-  SYNCED
-  FAILED
-  DISABLED
-}
-
-enum ChannelType {
-  MAIN
-  REGIONAL
-  VIP
-  TEST
-}
-
-enum ChannelStatus {
-  ACTIVE
-  FULL
-  DRAINING
-  MAINTENANCE
-}
-
 // Economy System Models
 model BotEquipment {
   id              String           @id @default(cuid())
@@ -525,34 +488,13 @@ model Furniture {
   @@index([houseId])
 }
 
-model RobberyLog {
-  id              String           @id @default(cuid())
-  robberBotId     String
-  robberBot       Bot              @relation("robber", fields: [robberBotId], references: [id], onDelete: Cascade)
-  victimBotId     String
-  victimBot       Bot              @relation("victim", fields: [victimBotId], references: [id], onDelete: Cascade)
-  success         Boolean
-  powerUsed       Int
-  defenseFaced    Int
-  lootValue       Int              @default(0)
-  itemsStolen     Json             @default("[]")
-  timestamp       DateTime         @default(now())
-  
-  @@index([robberBotId])
-  @@index([victimBotId])
-  @@index([timestamp])
-}
-
 model BotActivityScore {
   id                  String           @id @default(cuid())
   botId               String           @unique
   bot                 Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
   matchesPlayed       Int              @default(0)
   lootboxesOpened     Int              @default(0)
-  socialInteractions  Int              @default(0)
-  successfulRobberies Int              @default(0)
-  defenseSuccesses    Int              @default(0)
-  tradesCompleted     Int              @default(0)
+  activitiesCompleted Int              @default(0)  // Simplified activity tracking
   lastActive          DateTime         @default(now())
   createdAt           DateTime         @default(now())
   updatedAt           DateTime         @updatedAt
@@ -614,73 +556,6 @@ model LootboxReward {
   @@index([matchId])
 }
 
-model Trade {
-  id                String           @id @default(cuid())
-  initiatorBotId    String
-  initiatorBot      Bot              @relation("initiator", fields: [initiatorBotId], references: [id], onDelete: Cascade)
-  receiverBotId     String
-  receiverBot       Bot              @relation("receiver", fields: [receiverBotId], references: [id], onDelete: Cascade)
-  offeredItems      Json             @default("[]")
-  requestedItems    Json             @default("[]")
-  status            String           @default("pending")
-  completedAt       DateTime?
-  createdAt         DateTime         @default(now())
-  
-  @@index([initiatorBotId])
-  @@index([receiverBotId])
-}
-
-// Bot synchronization tracking between AI Arena and AI Town
-model BotSync {
-  id                String           @id @default(cuid())
-  botId             String           @unique
-  bot               Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
-  
-  // Channel assignment
-  channel           String           @default("main") // Channel for world distribution
-  
-  // Sync status
-  syncStatus        SyncStatus       @default(PENDING)
-  lastSyncedAt      DateTime?
-  syncErrors        Json             @default("[]") // Array of error messages
-  
-  // AI Town references
-  convexWorldId     String?          // Convex world ID
-  convexAgentId     String?          // Convex agent ID (e.g., "a:1")
-  convexPlayerId    String?          // Convex player ID (e.g., "p:1")
-  
-  // Sync metadata
-  personalityMapped Boolean          @default(false) // Whether personality was translated
-  positionSynced    Boolean          @default(false) // Whether position is synced
-  statsSynced       Boolean          @default(false) // Whether stats are synced
-  
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
-  
-  @@index([channel])
-  @@index([syncStatus])
-  @@index([lastSyncedAt])
-}
-
-// Channel metadata for world management and distribution
-model ChannelMetadata {
-  id              String           @id @default(cuid())
-  channel         String           @unique // Unique channel identifier (e.g., "main", "tournament-123")
-  channelType     ChannelType      // MAIN, TOURNAMENT, REGIONAL, VIP, TEST
-  worldId         String?          // Current Convex world ID for this channel
-  status          ChannelStatus    @default(ACTIVE) // ACTIVE, FULL, DRAINING, MAINTENANCE
-  maxBots         Int              @default(100) // Maximum bots allowed in this channel
-  currentBots     Int              @default(0) // Current number of bots in this channel
-  region          String?          // Geographic region (e.g., "us-west", "eu-central")
-  metadata        Json             @default("{}") // Additional metadata (tournamentId, description, etc.)
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  
-  @@index([channelType])
-  @@index([status])
-  @@index([worldId])
-}
-
 // Energy system for bot operations
 model BotEnergy {
   id              String           @id @default(cuid())
@@ -726,55 +601,37 @@ model EnergyPurchase {
   @@index([purchasedAt])
 }
 
-// Track bot movement for idle game mechanics
-model BotMovement {
+// Activity log for idle game
+model BotActivityLog {
+  id          String           @id @default(cuid())
+  botId       String
+  bot         Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
+  
+  activity    String           // "🔪 Planning a heist"
+  emoji       String           // "🔪"
+  personality BotPersonality   // For filtering
+  xpGained    Int              @default(0)
+  timestamp   DateTime         @default(now())
+  
+  @@index([botId, timestamp])
+  @@index([personality])
+}
+
+// Idle progress tracking for offline rewards
+model IdleProgress {
   id              String           @id @default(cuid())
   botId           String           @unique
   bot             Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
   
-  // Movement tracking
-  totalSteps      Int              @default(0)    // Total steps taken
-  dailySteps      Int              @default(0)    // Steps taken today
-  totalDistance   Float            @default(0)    // Total distance traveled
-  lastStepTime    DateTime         @default(now()) // Last movement timestamp
-  
-  // Step rewards
-  stepStreak      Int              @default(0)    // Current 5-step streak
-  totalLootDrops  Int              @default(0)    // Total loot found from movement
-  totalMovementXP Int              @default(0)    // Total XP earned from movement
-  
-  // Daily reset
-  lastResetDate   DateTime         @default(now()) // Last daily reset
+  lastActiveAt    DateTime         @default(now())
+  lastXPClaim     DateTime         @default(now())
+  idleMultiplier  Float            @default(1.0) // Based on personality
+  totalIdleTime   Int              @default(0)   // Total seconds spent idle
+  totalIdleXP     Int              @default(0)   // Total XP earned while idle
   
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   
   @@index([botId])
-}
-
-// Random loot drops in the world
-model LootDrop {
-  id              String           @id @default(cuid())
-  
-  // Loot configuration
-  itemType        EquipmentType    // Type of item
-  rarity          ItemRarity       // Rarity tier
-  minValue        Int              // Minimum gold value
-  maxValue        Int              // Maximum gold value
-  dropChance      Float            // Base drop chance (0.0 to 1.0)
-  
-  // Zone modifiers
-  zoneType        String?          // Specific zone (null = all zones)
-  zoneMultiplier  Float            @default(1.0) // Zone-specific drop rate multiplier
-  
-  // Item properties
-  basePower       Int              @default(0)
-  baseDefense     Int              @default(0)
-  baseScore       Int              @default(0)
-  
-  createdAt       DateTime         @default(now())
-  
-  @@index([itemType])
-  @@index([rarity])
-  @@index([zoneType])
+  @@index([lastActiveAt])
 }

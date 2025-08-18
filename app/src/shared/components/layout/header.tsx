@@ -2,7 +2,7 @@ import { QueueStatusBar } from '@shared/components/layout/queue-status-bar';
 import { MobileNav } from '@shared/components/mobile/mobile-nav';
 import { Button } from '@ui/button';
 import { WalletNetworkButton } from '@ui/wallet-network-button';
-import { Bot, LayoutDashboard, Rocket, Trophy } from 'lucide-react';
+import { Bot, LayoutDashboard, Rocket, Trophy, Globe } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 
@@ -53,6 +53,12 @@ export function Header() {
               <Link to="/bots">
                 <Bot className="mr-1.5 h-3.5 w-3.5" />
                 Bots
+              </Link>
+            </Button>
+            <Button variant="ghost" size="sm" className="text-sm pixel-btn" asChild>
+              <Link to="/metaverse">
+                <Globe className="mr-1.5 h-3.5 w-3.5" />
+                Metaverse
               </Link>
             </Button>
           </nav>

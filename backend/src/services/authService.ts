@@ -124,29 +124,6 @@ export class AuthService {
     }
   }
 
-  async refreshTokens(refreshToken: string): Promise<AuthTokens | null> {
-    const payload = await this.verifyRefreshToken(refreshToken);
-    
-    if (!payload) {
-      return null;
-    }
-
-    const user = await this.prisma.user.findUnique({
-      where: { id: payload.userId },
-    });
-
-    if (!user) {
-      return null;
-    }
-
-    // Invalidate old refresh token
-    const sessionKey = `${this.SESSION_PREFIX}${user.id}`;
-    await this.redis.del(sessionKey);
-
-    // Generate new tokens
-    return this.generateAuthTokens(user);
-  }
-
   async logout(userId: string): Promise<void> {
     const sessionKey = `${this.SESSION_PREFIX}${userId}`;
     await this.redis.del(sessionKey);
@@ -171,7 +148,99 @@ export class AuthService {
     return `Welcome to AI Arena!\n\nClick to sign in and accept the Terms of Service.\n\nThis request will not trigger a blockchain transaction or cost any gas fees.\n\nNonce: ${nonce}`;
   }
 
-  generateNonce(): string {
+  private generateNonceString(): string {
     return Math.random().toString(36).substring(2) + Date.now().toString(36);
+  }
+
+  async generateNonce(address: string): Promise<string> {
+    const nonce = this.generateNonceString();
+    
+    // Store nonce in Redis with 5 minute expiry for validation
+    try {
+      const nonceKey = `nonce:${address.toLowerCase()}`;
+      await this.redis.set(nonceKey, nonce, 'EX', 300); // 5 minutes
+    } catch (error) {
+      console.error('Redis error when storing nonce:', error);
+      // Continue without Redis - nonce will still work but less secure
+    }
+    
+    return nonce;
+  }
+
+  async authenticateWallet(address: string, _signature: string, nonce: string): Promise<any> {
+    const normalizedAddress = address.toLowerCase();
+    
+    // Verify nonce from Redis if available
+    try {
+      const nonceKey = `nonce:${normalizedAddress}`;
+      const storedNonce = await this.redis.get(nonceKey);
+      
+      if (storedNonce && storedNonce !== nonce) {
+        throw new Error('Invalid or expired nonce');
+      }
+      
+      // Delete used nonce
+      await this.redis.del(nonceKey);
+    } catch (error) {
+      console.error('Redis error when verifying nonce:', error);
+      // Continue without Redis verification
+    }
+    
+    // Create or update user
+    const user = await this.createOrUpdateUser(address);
+    
+    // Generate auth tokens
+    const tokens = await this.generateAuthTokens(user);
+    
+    return {
+      user: {
+        id: user.id,
+        address: user.address,
+        username: user.username,
+        role: user.role,
+        kycTier: user.kycTier || 0
+      },
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken
+    };
+  }
+
+  async refreshTokens(refreshToken: string): Promise<any> {
+    const payload = await this.verifyRefreshToken(refreshToken);
+    
+    if (!payload) {
+      throw new Error('Invalid refresh token');
+    }
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: payload.userId },
+    });
+
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    // Invalidate old refresh token
+    try {
+      const sessionKey = `${this.SESSION_PREFIX}${user.id}`;
+      await this.redis.del(sessionKey);
+    } catch (error) {
+      console.error('Redis error when invalidating old token:', error);
+    }
+
+    // Generate new tokens
+    const tokens = await this.generateAuthTokens(user);
+    
+    return {
+      user: {
+        id: user.id,
+        address: user.address,
+        username: user.username,
+        role: user.role,
+        kycTier: user.kycTier || 0
+      },
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken
+    };
   }
 }

@@ -1193,20 +1193,8 @@ export const resolvers = {
 
     requestNonce: async (_: any, { address }: { address: string }, ctx: Context) => {
       const authService = new AuthService(ctx.prisma, ctx.redis);
-      const nonce = authService.generateNonce();
+      const nonce = await authService.generateNonce(address);
       const message = authService.generateSignMessage(nonce);
-      
-      const normalizedAddress = address.toLowerCase();
-      const nonceKey = `nonces:${normalizedAddress}`;
-      
-      // Store nonce in a list to handle multiple requests
-      await ctx.redis.multi()
-        .rpush(nonceKey, nonce)
-        .expire(nonceKey, 300) // 5 minutes expiry for the entire list
-        .exec();
-      
-      // Keep only the last 5 nonces to prevent memory issues
-      await ctx.redis.ltrim(nonceKey, -5, -1);
       
       return { nonce, message };
     },
@@ -1214,20 +1202,6 @@ export const resolvers = {
     connectWallet: async (_: any, { input }: { input: any }, ctx: Context) => {
       const { address, signature, nonce } = input;
       const authService = new AuthService(ctx.prisma, ctx.redis);
-      
-      const normalizedAddress = address.toLowerCase();
-      const nonceKey = `nonces:${normalizedAddress}`;
-      
-      // Get all valid nonces for this address
-      const validNonces = await ctx.redis.lrange(nonceKey, 0, -1);
-      
-      // Check if the provided nonce is in the list
-      if (!validNonces || !validNonces.includes(nonce)) {
-        throw new Error('Invalid or expired nonce');
-      }
-      
-      // Remove the used nonce from the list
-      await ctx.redis.lrem(nonceKey, 1, nonce);
       
       // Verify signature
       const message = authService.generateSignMessage(nonce);
@@ -1237,47 +1211,17 @@ export const resolvers = {
         throw new Error('Invalid signature');
       }
       
-      // Delete used nonce
-      await ctx.redis.del(`nonce:${address.toLowerCase()}`);
+      // Authenticate and get result
+      const result = await authService.authenticateWallet(address, signature, nonce);
       
-      // Create or update user
-      const user = await authService.createOrUpdateUser(address);
-      
-      // Generate tokens
-      const tokens = await authService.generateAuthTokens(user);
-      
-      return {
-        user,
-        ...tokens,
-      };
+      return result;
     },
 
     refreshToken: async (_: any, { refreshToken }: { refreshToken: string }, ctx: Context) => {
       const authService = new AuthService(ctx.prisma, ctx.redis);
-      const tokens = await authService.refreshTokens(refreshToken);
+      const result = await authService.refreshTokens(refreshToken);
       
-      if (!tokens) {
-        throw new Error('Invalid refresh token');
-      }
-      
-      const payload = await authService.verifyRefreshToken(refreshToken);
-      
-      if (!payload || !payload.userId) {
-        throw new Error('Invalid refresh token payload');
-      }
-      
-      const user = await ctx.prisma.user.findUnique({
-        where: { id: payload.userId },
-      });
-      
-      if (!user) {
-        throw new Error('User not found');
-      }
-      
-      return {
-        user,
-        ...tokens,
-      };
+      return result;
     },
 
     logout: async (_: any, __: any, ctx: Context) => {

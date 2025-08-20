@@ -138,7 +138,7 @@ const ClaimXPModal: React.FC<ClaimXPModalProps> = ({
         </div>
       </div>
       
-      <style jsx>{`
+      <style>{`
         .claim-xp-modal-overlay {
           position: fixed;
           top: 0;

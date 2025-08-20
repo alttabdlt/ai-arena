@@ -139,7 +139,7 @@ const Index = () => {
           navigate('/deploy');
         } else if (activeBots.length === 1) {
           setSelectedBotId(activeBots[0].id);
-          handleEnterQueue(activeBots[0].id);
+          navigate('/metaverse');
         } else {
           setShowGameSelection(true);
         }
@@ -207,7 +207,7 @@ const Index = () => {
     // If user has only one bot, auto-select it
     if (activeBots.length === 1) {
       setSelectedBotId(activeBots[0].id);
-      handleEnterQueue(activeBots[0].id);
+      navigate('/metaverse');
     } else {
       // Show bot selection
       setShowGameSelection(true);

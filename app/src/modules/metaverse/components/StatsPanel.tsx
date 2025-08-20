@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { useQuery } from '@apollo/client';
+import { GET_BOT_ACTIVITIES } from '@/modules/metaverse/queries';
 
 interface Bot {
   id: string;
@@ -36,6 +38,26 @@ const StatsPanel: React.FC<StatsPanelProps> = ({
   xpPerSecond = 0
 }) => {
   const [activities, setActivities] = useState<Array<Activity & { timestamp: Date }>>([]);
+  
+  // Fetch historical activities from backend
+  const { data: historicalData } = useQuery(GET_BOT_ACTIVITIES, {
+    variables: { botId: bot?.id, limit: 20 },
+    skip: !bot?.id,
+    fetchPolicy: 'cache-and-network'
+  });
+
+  // Load historical activities on mount
+  useEffect(() => {
+    if (historicalData?.getBotActivities) {
+      const historical = historicalData.getBotActivities.map((activity: any) => ({
+        emoji: activity.emoji,
+        activity: activity.activity,
+        xpGained: activity.xpGained,
+        timestamp: new Date(activity.timestamp)
+      }));
+      setActivities(historical);
+    }
+  }, [historicalData]);
 
   // Add new activities to the feed - Fixed dependency array
   useEffect(() => {

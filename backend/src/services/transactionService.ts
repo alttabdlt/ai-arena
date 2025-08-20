@@ -29,6 +29,20 @@ export class TransactionService {
     isValid: boolean;
     error?: string;
   }> {
+    // Use default deployment fee
+    return this.validateDeploymentTransactionWithAmount(txSignature, senderAddress, this.DEPLOYMENT_FEE * LAMPORTS_PER_SOL);
+  }
+  
+  /**
+   * Validate payment with specific amount (for progressive pricing)
+   * @param txSignature - Solana transaction signature
+   * @param senderAddress - Sender wallet address
+   * @param requiredAmount - Required amount in $IDLE tokens (or lamports for SOL)
+   */
+  async validateDeploymentTransactionWithAmount(txSignature: string, senderAddress: string, requiredAmount: number): Promise<{
+    isValid: boolean;
+    error?: string;
+  }> {
     try {
       // Check if this is a testnet mock transaction
       const isTestnetMock = txSignature.startsWith('test_') || txSignature.startsWith('mock_');
@@ -83,7 +97,11 @@ export class TransactionService {
       }
 
       // Check SOL transfer amount (native SOL, not SPL token)
-      const requiredLamports = solToLamports(this.DEPLOYMENT_FEE);
+      // TODO: In production, this should validate $IDLE SPL token transfers
+      // For now, we're using SOL as a placeholder
+      // Convert IDLE amount to SOL equivalent (1000 IDLE = 0.01 SOL for testing)
+      const solEquivalent = requiredAmount / 100000; // 1 SOL = 100k IDLE for testing
+      const requiredLamports = solToLamports(solEquivalent);
       let validTransfer = false;
 
       // Look for SOL transfers in the transaction

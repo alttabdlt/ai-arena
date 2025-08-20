@@ -41,9 +41,9 @@ export function LiveMatches() {
                 </Link>
               </Button>
               <Button size="lg" variant="outline" asChild>
-                <Link to="/queue">
+                <Link to="/bots">
                   <Zap className="mr-2 h-5 w-5" />
-                  Check Queue Status
+                  Deploy Your Bots
                 </Link>
               </Button>
             </div>

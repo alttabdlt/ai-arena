@@ -14,18 +14,17 @@ import {
   Activity,
   LayoutDashboard,
   HelpCircle,
-  Code2
+  Code2,
+  Gamepad2,
+  Bot
 } from 'lucide-react';
 
 const navItems = [
   { to: '/', icon: Home, label: 'Home' },
-  { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+  // { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' }, // Commented out - redundant
   { to: '/tournaments', icon: Trophy, label: 'Tournaments' },
-  { to: '/bots', icon: Activity, label: 'Bots' },
-  { to: '/deploy', icon: Rocket, label: 'Deploy Bot' },
-  { to: '/docs', icon: Code2, label: 'Developer Docs' },
-  { to: '/learn', icon: BookOpen, label: 'Learn' },
-  { to: '/legal', icon: Scale, label: 'Legal' }
+  { to: '/metaverse', icon: Bot, label: 'Bots' },
+  { to: '/settings', icon: Settings, label: 'Settings' }
 ];
 
 export function MobileNav() {

@@ -1,33 +1,37 @@
 import { PrismaClient } from '@prisma/client';
 import Redis from 'ioredis';
 import { PubSub } from 'graphql-subscriptions';
-import { QueueService } from './queueService';
 import { TransactionService } from './transactionService';
 import { SolanaService } from './solanaService';
 
-let queueService: QueueService;
 let transactionService: TransactionService;
-let solanaService: SolanaService;
+let solanaService: SolanaService | null = null;
 
-export function initializeServices(prisma: PrismaClient, redis: Redis, pubsub?: PubSub) {
-  queueService = new QueueService(prisma, redis, pubsub);
+interface ServiceOptions {
+  enableSolana?: boolean;
+}
+
+export function initializeServices(
+  prisma: PrismaClient, 
+  redis: Redis, 
+  pubsub?: PubSub,
+  options: ServiceOptions = {}
+) {
+  const { enableSolana = true } = options;
+  
   transactionService = new TransactionService(prisma);
   
-  // Initialize Solana service if pubsub is provided
-  if (pubsub) {
+  // Initialize Solana service if enabled and pubsub is provided
+  if (pubsub && enableSolana) {
     solanaService = new SolanaService(prisma, redis, pubsub);
     // Start monitoring Solana transactions
     solanaService.start().catch(error => {
       console.error('Failed to start Solana service:', error);
     });
+    console.log('💰 Solana service initialized for blockchain monitoring');
+  } else if (!enableSolana) {
+    console.log('⏭️  Solana service disabled for faster startup');
   }
-}
-
-export function getQueueService(): QueueService {
-  if (!queueService) {
-    throw new Error('QueueService not initialized. Call initializeServices first.');
-  }
-  return queueService;
 }
 
 export function getTransactionService(): TransactionService {
@@ -37,9 +41,10 @@ export function getTransactionService(): TransactionService {
   return transactionService;
 }
 
-export function getSolanaService(): SolanaService {
+export function getSolanaService(): SolanaService | null {
   if (!solanaService) {
-    throw new Error('SolanaService not initialized. Call initializeServices first.');
+    // Return null instead of throwing - service might be disabled
+    return null;
   }
   return solanaService;
 }

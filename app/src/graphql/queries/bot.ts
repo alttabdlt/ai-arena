@@ -8,7 +8,6 @@ export const GET_BOT_DETAIL = gql`
       name
       avatar
       prompt
-      modelType
       personality
       isActive
       isDemo
@@ -38,14 +37,6 @@ export const GET_BOT_DETAIL = gql`
         consumptionRate
         regenerationRate
         netConsumption
-      }
-      queuePosition
-      queueEntries {
-        id
-        queueType
-        status
-        enteredAt
-        expiresAt
       }
       currentMatch {
         id
@@ -96,7 +87,6 @@ export const GET_BOTS = gql`
       id
       name
       avatar
-      modelType
       personality
       isActive
       isDemo
@@ -118,7 +108,6 @@ export const GET_BOTS = gql`
         comments
         followers
       }
-      queuePosition
       currentMatch {
         id
         type
@@ -136,7 +125,6 @@ export const GET_TOP_BOTS = gql`
       tokenId
       name
       avatar
-      modelType
       personality
       isActive
       isDemo
@@ -166,7 +154,6 @@ export const GET_TOP_BOTS = gql`
         regenerationRate
         netConsumption
       }
-      queuePosition
     }
   }
 `;
@@ -177,7 +164,6 @@ export const GET_RECENT_BOTS = gql`
       id
       name
       avatar
-      modelType
       isActive
       isDemo
       createdAt
@@ -198,7 +184,6 @@ export const GET_RECENT_BOTS = gql`
         comments
         followers
       }
-      queuePosition
     }
   }
 `;
@@ -226,7 +211,6 @@ export const GET_MATCH = gql`
           id
           name
           avatar
-          modelType
           prompt
           creator {
             id

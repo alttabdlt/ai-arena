@@ -2,14 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { useWalletModal } from '@solana/wallet-adapter-react-ui';
 import { Connection, PublicKey } from '@solana/web3.js';
-import { Button } from './ui/button';
+import { Button } from '../shared/components/ui/button';
 import { 
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from './ui/dropdown-menu';
+} from '../shared/components/ui/dropdown-menu';
 import { ChevronDown, Wallet, LogOut, Copy, ExternalLink, Coins } from 'lucide-react';
 import { formatIdleAmount, fetchIdlePriceData, getExplorerLink } from '../config/solana';
 import { endpoint, IDLE_TOKEN } from '../config/solana';

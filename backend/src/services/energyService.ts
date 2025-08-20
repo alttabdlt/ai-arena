@@ -324,7 +324,8 @@ export class EnergyService {
   /**
    * Get energy consumption rate for a model
    */
-  private getEnergyRate(modelType: string): number {
+  private getEnergyRate(modelType: string | null): number {
+    if (!modelType) return 1; // Default rate for companions without AI models
     return ENERGY_RATES[modelType] || 1;
   }
 

@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -11,84 +8,72 @@ datasource db {
 }
 
 model User {
-  id              String           @id @default(cuid())
-  address         String           @unique
-  username        String?          @unique
-  role            UserRole         @default(USER)
-  kycTier         Int              @default(0)
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  
-  bots            Bot[]
-  deployments     DeploymentTransaction[]
-  comments        Comment[]
-  likes           Like[]
-  followers       Follow[]         @relation("follower")
-  following       Follow[]         @relation("following")
-  achievements    UserAchievement[]
-  sessions        Session[]
-  
+  id           String                  @id @default(cuid())
+  address      String                  @unique
+  username     String?                 @unique
+  role         UserRole                @default(USER)
+  kycTier      Int                     @default(0)
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @updatedAt
+  bots         Bot[]
+  comments     Comment[]
+  deployments  DeploymentTransaction[]
+  followers    Follow[]                @relation("follower")
+  following    Follow[]                @relation("following")
+  likes        Like[]
+  sessions     Session[]
+  achievements UserAchievement[]
+  stakedIDLE   StakedIDLE[]
+  xpBalance    XPBalance?
+
   @@index([address])
 }
 
 model Session {
-  id              String           @id @default(cuid())
-  userId          String
-  user            User             @relation(fields: [userId], references: [id])
-  token           String           @unique
-  expiresAt       DateTime
-  createdAt       DateTime         @default(now())
-  
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+
   @@index([userId])
   @@index([token])
 }
 
 model Bot {
-  id              String           @id @default(cuid())
-  tokenId         Int              @unique // Unique NFT-like token ID
+  id              String                  @id @default(cuid())
+  tokenId         Int                     @unique
   name            String
-  avatar          String           // preset avatar identifier
-  prompt          String           @db.VarChar(1000) // 1000 char strategy
-  personality     BotPersonality   @default(WORKER) // Crime metaverse personality
-  isDemo          Boolean          @default(false) // System demo bots
-  modelType       AIModel          // gpt-4o, claude-3-5-sonnet, etc.
+  avatar          String
+  prompt          String                  @db.VarChar(1000)
+  personality     BotPersonality          @default(WORKER)
+  isDemo          Boolean                 @default(false)
+  modelType       AIModel?
   creatorId       String
-  creator         User             @relation(fields: [creatorId], references: [id])
-  isActive        Boolean          @default(true)
-  stats           Json             @default("{}") // wins, losses, earnings
-  
-  // Visual customization
-  character       String?          // Character sprite ID (f1-f8, criminal1, etc.)
-  
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  
+  isActive        Boolean                 @default(true)
+  stats           Json                    @default("{}")
+  character       String?
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+  creator         User                    @relation(fields: [creatorId], references: [id])
+  activityLogs    BotActivityLog[]
+  activityScore   BotActivityScore?
+  energy          BotEnergy?
+  equipment       BotEquipment[]
+  experience      BotExperience?
+  house           BotHouse?
+  comments        Comment[]
   deploymentTx    DeploymentTransaction?
+  energyPurchases EnergyPurchase[]
+  idleProgress    IdleProgress?
+  likes           Like[]
+  lootboxRewards  LootboxReward[]
+  matches         MatchParticipant[]
   queueEntries    QueueEntry[]
   tournaments     TournamentParticipant[]
-  matches         MatchParticipant[]
-  comments        Comment[]
-  likes           Like[]
-  
-  // Economy relations
-  equipment       BotEquipment[]
-  house           BotHouse?
-  activityScore   BotActivityScore?
-  lootboxRewards  LootboxReward[]
-  
-  // Energy system
-  energy          BotEnergy?
-  energyPurchases EnergyPurchase[]
-  
-  // Experience system
-  experience      BotExperience?
-  
-  // Activity logs for idle game
-  activityLogs    BotActivityLog[]
-  
-  // Idle progress tracking
-  idleProgress    IdleProgress?
-  
+  bets            BettingEntry[]
+
   @@index([creatorId])
   @@index([createdAt])
   @@index([isActive])
@@ -96,34 +81,34 @@ model Bot {
 }
 
 model DeploymentTransaction {
-  id              String           @id @default(cuid())
-  botId           String           @unique
-  bot             Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
-  userId          String
-  user            User             @relation(fields: [userId], references: [id])
-  txHash          String           @unique
-  amount          Decimal          @db.Decimal(78, 18) // deployment fee in ETH
-  status          TxStatus         @default(PENDING)
-  createdAt       DateTime         @default(now())
-  
+  id        String   @id @default(cuid())
+  botId     String   @unique
+  userId    String
+  txHash    String   @unique
+  amount    Decimal  @db.Decimal(78, 18)
+  status    TxStatus @default(PENDING)
+  createdAt DateTime @default(now())
+  bot       Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id])
+
   @@index([userId])
   @@index([txHash])
   @@index([status])
 }
 
 model QueueEntry {
-  id              String           @id @default(cuid())
-  botId           String
-  bot             Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
-  queueType       QueueType        @default(STANDARD)
-  priority        Int              @default(0) // higher = faster matching
-  status          QueueStatus      @default(WAITING)
-  enteredAt       DateTime         @default(now())
-  expiresAt       DateTime         // 24 hours from entry
-  matchedAt       DateTime?
-  tournamentId    String?          // Track which tournament this entry is matched to
-  tournament      Tournament?      @relation(fields: [tournamentId], references: [id], onDelete: SetNull)
-  
+  id           String      @id @default(cuid())
+  botId        String
+  queueType    QueueType   @default(STANDARD)
+  priority     Int         @default(0)
+  status       QueueStatus @default(WAITING)
+  enteredAt    DateTime    @default(now())
+  expiresAt    DateTime
+  matchedAt    DateTime?
+  tournamentId String?
+  bot          Bot         @relation(fields: [botId], references: [id], onDelete: Cascade)
+  tournament   Tournament? @relation(fields: [tournamentId], references: [id])
+
   @@index([botId])
   @@index([status])
   @@index([queueType])
@@ -132,154 +117,373 @@ model QueueEntry {
 }
 
 model Match {
-  id              String           @id @default(cuid())
-  type            MatchType        @default(TOURNAMENT)
-  status          MatchStatus      @default(SCHEDULED)
-  gameHistory     Json             // complete poker game state
-  decisions       Json             // all AI decisions made
-  result          Json?            // final rankings and points
-  replayUrl       String?          // S3/R2 URL for replay file
-  createdAt       DateTime         @default(now())
-  startedAt       DateTime?
-  completedAt     DateTime?
-  
-  participants    MatchParticipant[]
-  aiDecisions     AIDecision[]
-  tournament      Tournament?      @relation(fields: [tournamentId], references: [id])
-  tournamentId    String?
-  lootboxRewards  LootboxReward[]
-  
+  id             String             @id @default(cuid())
+  type           MatchType          @default(TOURNAMENT)
+  status         MatchStatus        @default(SCHEDULED)
+  gameHistory    Json
+  decisions      Json
+  result         Json?
+  replayUrl      String?
+  createdAt      DateTime           @default(now())
+  startedAt      DateTime?
+  completedAt    DateTime?
+  tournamentId   String?
+  aiDecisions    AIDecision[]
+  lootboxRewards LootboxReward[]
+  tournament     Tournament?        @relation(fields: [tournamentId], references: [id])
+  participants   MatchParticipant[]
+
   @@index([status])
   @@index([type])
   @@index([createdAt])
 }
 
 model MatchParticipant {
-  id              String           @id @default(cuid())
-  matchId         String
-  match           Match            @relation(fields: [matchId], references: [id])
-  botId           String
-  bot             Bot              @relation(fields: [botId], references: [id])
-  position        Int              // seat position
-  finalRank       Int?             // 1st, 2nd, etc.
-  points          Int              @default(0)
-  
+  id        String @id @default(cuid())
+  matchId   String
+  botId     String
+  position  Int
+  finalRank Int?
+  points    Int    @default(0)
+  bot       Bot    @relation(fields: [botId], references: [id])
+  match     Match  @relation(fields: [matchId], references: [id])
+
   @@unique([matchId, botId])
   @@index([matchId])
   @@index([botId])
 }
 
 model AIDecision {
-  id              String           @id @default(cuid())
-  matchId         String
-  match           Match            @relation(fields: [matchId], references: [id])
-  botId           String
-  handNumber      Int
-  decision        Json             // action, reasoning, timing
-  gameState       Json             // game state at decision time
-  timestamp       DateTime         @default(now())
-  
+  id         String   @id @default(cuid())
+  matchId    String
+  botId      String
+  handNumber Int
+  decision   Json
+  gameState  Json
+  timestamp  DateTime @default(now())
+  match      Match    @relation(fields: [matchId], references: [id])
+
   @@index([matchId])
   @@index([botId])
 }
 
 model Tournament {
-  id              String           @id @default(cuid())
-  name            String
-  type            TournamentType
-  status          TournamentStatus @default(UPCOMING)
-  entryFee        Decimal          @db.Decimal(78, 18)
-  prizePool       Decimal          @db.Decimal(78, 18)
-  startTime       DateTime
-  endTime         DateTime
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  
-  participants    TournamentParticipant[]
-  matches         Match[]
-  queueEntries    QueueEntry[]    // Track queue entries for this tournament
-  
+  id           String                  @id @default(cuid())
+  name         String
+  type         TournamentType
+  status       TournamentStatus        @default(UPCOMING)
+  entryFee     Decimal                 @db.Decimal(78, 18)
+  prizePool    Decimal                 @db.Decimal(78, 18)
+  startTime    DateTime
+  endTime      DateTime
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @updatedAt
+  matches      Match[]
+  queueEntries QueueEntry[]
+  participants TournamentParticipant[]
+
   @@index([type])
   @@index([status])
   @@index([startTime])
 }
 
 model TournamentParticipant {
-  id              String           @id @default(cuid())
-  tournamentId    String
-  tournament      Tournament       @relation(fields: [tournamentId], references: [id])
-  botId           String
-  bot             Bot              @relation(fields: [botId], references: [id])
-  score           Float            @default(0)
-  rank            Int?
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  
+  id           String     @id @default(cuid())
+  tournamentId String
+  botId        String
+  score        Float      @default(0)
+  rank         Int?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  bot          Bot        @relation(fields: [botId], references: [id])
+  tournament   Tournament @relation(fields: [tournamentId], references: [id])
+
   @@unique([tournamentId, botId])
   @@index([tournamentId])
   @@index([botId])
 }
 
 model Comment {
-  id              String           @id @default(cuid())
-  content         String
-  userId          String
-  user            User             @relation(fields: [userId], references: [id])
-  botId           String
-  bot             Bot              @relation(fields: [botId], references: [id])
-  createdAt       DateTime         @default(now())
-  
+  id        String   @id @default(cuid())
+  content   String
+  userId    String
+  botId     String
+  createdAt DateTime @default(now())
+  bot       Bot      @relation(fields: [botId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+
   @@index([botId])
   @@index([userId])
 }
 
 model Like {
-  id              String           @id @default(cuid())
-  userId          String
-  user            User             @relation(fields: [userId], references: [id])
-  botId           String
-  bot             Bot              @relation(fields: [botId], references: [id])
-  createdAt       DateTime         @default(now())
-  
+  id        String   @id @default(cuid())
+  userId    String
+  botId     String
+  createdAt DateTime @default(now())
+  bot       Bot      @relation(fields: [botId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+
   @@unique([userId, botId])
   @@index([botId])
   @@index([userId])
 }
 
 model Follow {
-  id              String           @id @default(cuid())
-  followerAddress String
-  follower        User             @relation("follower", fields: [followerAddress], references: [address])
+  id               String   @id @default(cuid())
+  followerAddress  String
   followingAddress String
-  following       User             @relation("following", fields: [followingAddress], references: [address])
-  createdAt       DateTime         @default(now())
-  
+  createdAt        DateTime @default(now())
+  follower         User     @relation("follower", fields: [followerAddress], references: [address])
+  following        User     @relation("following", fields: [followingAddress], references: [address])
+
   @@unique([followerAddress, followingAddress])
   @@index([followerAddress])
   @@index([followingAddress])
 }
 
 model Achievement {
-  id              String           @id @default(cuid())
-  name            String           @unique
-  description     String
-  imageUrl        String?
-  rarity          AchievementRarity
-  createdAt       DateTime         @default(now())
-  
-  users           UserAchievement[]
+  id          String            @id @default(cuid())
+  name        String            @unique
+  description String
+  imageUrl    String?
+  rarity      AchievementRarity
+  createdAt   DateTime          @default(now())
+  users       UserAchievement[]
 }
 
 model UserAchievement {
-  id              String           @id @default(cuid())
-  userId          String
-  user            User             @relation(fields: [userId], references: [id])
-  achievementId   String
-  achievement     Achievement      @relation(fields: [achievementId], references: [id])
-  unlockedAt      DateTime         @default(now())
-  
+  id            String      @id @default(cuid())
+  userId        String
+  achievementId String
+  unlockedAt    DateTime    @default(now())
+  achievement   Achievement @relation(fields: [achievementId], references: [id])
+  user          User        @relation(fields: [userId], references: [id])
+
   @@unique([userId, achievementId])
   @@index([userId])
+}
+
+model BotEquipment {
+  id            String        @id @default(cuid())
+  botId         String
+  name          String
+  equipmentType EquipmentType
+  rarity        ItemRarity
+  powerBonus    Int           @default(0)
+  defenseBonus  Int           @default(0)
+  equipped      Boolean       @default(false)
+  consumable    Boolean       @default(false)
+  quantity      Int           @default(1)
+  uses          Int?
+  maxUses       Int?
+  speedBonus    Int           @default(0)
+  agilityBonus  Int           @default(0)
+  rangeBonus    Int           @default(0)
+  healingPower  Int           @default(0)
+  duration      Int?
+  metadata      Json          @default("{}")
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  bot           Bot           @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@index([botId])
+  @@index([equipped])
+  @@index([consumable])
+}
+
+model BotHouse {
+  id              String      @id @default(cuid())
+  botId           String      @unique
+  houseScore      Int         @default(100)
+  defenseLevel    Int         @default(1)
+  lastRobbed      DateTime?
+  robberyCooldown DateTime?
+  worldPosition   Json        @default("{\"x\": 0, \"y\": 0}")
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  bot             Bot         @relation(fields: [botId], references: [id], onDelete: Cascade)
+  furniture       Furniture[]
+
+  @@index([botId])
+}
+
+model Furniture {
+  id            String        @id @default(cuid())
+  houseId       String
+  name          String
+  furnitureType FurnitureType
+  rarity        ItemRarity
+  scoreBonus    Int           @default(0)
+  defenseBonus  Int           @default(0)
+  position      Json          @default("{\"x\": 0, \"y\": 0, \"rotation\": 0}")
+  metadata      Json          @default("{}")
+  createdAt     DateTime      @default(now())
+  house         BotHouse      @relation(fields: [houseId], references: [id], onDelete: Cascade)
+
+  @@index([houseId])
+}
+
+model BotActivityScore {
+  id                  String   @id @default(cuid())
+  botId               String   @unique
+  matchesPlayed       Int      @default(0)
+  lootboxesOpened     Int      @default(0)
+  activitiesCompleted Int      @default(0)
+  lastActive          DateTime @default(now())
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  bot                 Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@index([botId])
+}
+
+model BotExperience {
+  id              String   @id @default(cuid())
+  botId           String   @unique
+  level           Int      @default(1)
+  currentXP       Int      @default(0)
+  totalXP         Int      @default(0)
+  xpToNextLevel   Int      @default(100)
+  combatXP        Int      @default(0)
+  socialXP        Int      @default(0)
+  criminalXP      Int      @default(0)
+  gamblingXP      Int      @default(0)
+  tradingXP       Int      @default(0)
+  prestigeLevel   Int      @default(0)
+  prestigeTokens  Int      @default(0)
+  skillPoints     Int      @default(0)
+  allocatedSkills Json     @default("{}")
+  bettingWins     Int      @default(0)
+  bettingLosses   Int      @default(0)
+  winStreak       Int      @default(0)
+  bestWinStreak   Int      @default(0)
+  totalBetXP      Int      @default(0)
+  totalWonXP      Int      @default(0)
+  lastXPGain      DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  bot             Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@index([botId])
+  @@index([level])
+  @@index([totalXP])
+}
+
+model LootboxReward {
+  id               String     @id @default(cuid())
+  matchId          String
+  botId            String
+  lootboxRarity    ItemRarity
+  equipmentRewards Json       @default("[]")
+  furnitureRewards Json       @default("[]")
+  currencyReward   Int        @default(0)
+  opened           Boolean    @default(false)
+  openedAt         DateTime?
+  createdAt        DateTime   @default(now())
+  bot              Bot        @relation(fields: [botId], references: [id], onDelete: Cascade)
+  match            Match      @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@index([botId])
+  @@index([matchId])
+}
+
+model BotEnergy {
+  id            String   @id @default(cuid())
+  botId         String   @unique
+  currentEnergy Int      @default(100)
+  maxEnergy     Int      @default(100)
+  lastRegenTime DateTime @default(now())
+  regenRate     Int      @default(1)
+  walkCost      Int      @default(1)
+  combatCost    Int      @default(10)
+  robberyCost   Int      @default(5)
+  activityCost  Int      @default(3)
+  isPaused      Boolean  @default(false)
+  autoResumeAt  Int?
+  totalConsumed Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  bot           Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@index([botId])
+}
+
+model EnergyPurchase {
+  id           String   @id @default(cuid())
+  botId        String
+  energyAmount Int
+  hypeSpent    Float
+  packType     String
+  txHash       String?
+  purchasedAt  DateTime @default(now())
+  bot          Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@index([botId])
+  @@index([purchasedAt])
+}
+
+model BotActivityLog {
+  id          String         @id @default(cuid())
+  botId       String
+  activity    String
+  emoji       String
+  personality BotPersonality
+  xpGained    Int            @default(0)
+  timestamp   DateTime       @default(now())
+  bot         Bot            @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@index([botId, timestamp])
+  @@index([personality])
+}
+
+model IdleProgress {
+  id             String   @id @default(cuid())
+  botId          String   @unique
+  lastActiveAt   DateTime @default(now())
+  lastXPClaim    DateTime @default(now())
+  idleMultiplier Float    @default(1.0)
+  totalIdleTime  Int      @default(0)
+  totalIdleXP    Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  bot            Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@index([botId])
+  @@index([lastActiveAt])
+}
+
+model GlobalJackpot {
+  id               String           @id @default(cuid())
+  currentAmount    Int              @default(0)
+  contributions    Int              @default(0)
+  lastContribution DateTime         @default(now())
+  contributionRate Float            @default(0.01)
+  winChance        Float            @default(0.001)
+  minAmount        Int              @default(1000)
+  totalWon         Int              @default(0)
+  totalWinners     Int              @default(0)
+  biggestWin       Int              @default(0)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  history          JackpotHistory[]
+}
+
+model JackpotHistory {
+  id            String         @id @default(cuid())
+  botId         String
+  botName       String
+  personality   BotPersonality
+  amount        Int
+  winChance     Float
+  contributions Int
+  jackpotId     String
+  wonAt         DateTime       @default(now())
+  jackpot       GlobalJackpot  @relation(fields: [jackpotId], references: [id])
+
+  @@index([botId])
+  @@index([wonAt])
+  @@index([amount])
 }
 
 enum UserRole {
@@ -289,50 +493,33 @@ enum UserRole {
 }
 
 enum AIModel {
-  // OpenAI Models
   GPT_4O
   GPT_4O_MINI
   GPT_3_5_TURBO
   O3
   O3_MINI
   O3_PRO
-  
-  // Anthropic Claude Models
   CLAUDE_3_5_SONNET
   CLAUDE_3_5_HAIKU
   CLAUDE_3_HAIKU
   CLAUDE_3_OPUS
   CLAUDE_4_OPUS
   CLAUDE_4_SONNET
-  
-  // DeepSeek Models
   DEEPSEEK_CHAT
   DEEPSEEK_CODER
   DEEPSEEK_R1
   DEEPSEEK_V3
-  
-  // Alibaba Qwen Models
   QWEN_2_5_72B
   QWQ_32B
   QVQ_72B_PREVIEW
   QWEN_2_5_MAX
-  
-  // xAI Models
   GROK_3
-  
-  // Kimi Models
   KIMI_K2
-  
-  // Google Gemini Models
   GEMINI_2_5_PRO
   GEMINI_2_5_PRO_DEEP_THINK
-  
-  // Meta Llama Models
   LLAMA_3_1_405B
   LLAMA_3_1_70B
   LLAMA_3_2_90B
-  
-  // Mistral Models
   MIXTRAL_8X22B
 }
 
@@ -388,15 +575,14 @@ enum AchievementRarity {
   LEGENDARY
 }
 
-// Economy System Enums
 enum EquipmentType {
-  SWORD      // Melee weapons (renamed from WEAPON)
-  ARMOR      // Defensive gear
-  TOOL       // Utility items
-  ACCESSORY  // Accessories
-  POTION     // Consumable items (energy refills, buffs)
-  BOOTS      // Footwear with speed/agility bonuses
-  GUN        // Ranged weapons
+  SWORD
+  ARMOR
+  TOOL
+  ACCESSORY
+  POTION
+  BOOTS
+  GUN
 }
 
 enum ItemRarity {
@@ -405,7 +591,7 @@ enum ItemRarity {
   RARE
   EPIC
   LEGENDARY
-  GOD_TIER  // Special tier for marriage milestone rewards
+  GOD_TIER
 }
 
 enum FurnitureType {
@@ -421,217 +607,138 @@ enum BotPersonality {
   WORKER
 }
 
-// Economy System Models
-model BotEquipment {
-  id              String           @id @default(cuid())
-  botId           String
-  bot             Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
-  name            String
-  equipmentType   EquipmentType
-  rarity          ItemRarity
-  powerBonus      Int              @default(0)
-  defenseBonus    Int              @default(0)
-  equipped        Boolean          @default(false)
+// ============================================
+// Betting Tournament System (15-minute cycles)
+// ============================================
+
+model BettingTournament {
+  id                  String              @id @default(cuid())
+  startTime           DateTime
+  gameType            BettingGameType
+  status              BettingTournamentStatus @default(SCHEDULED)
+  bettingDeadline     DateTime
+  totalBettingPool    Int                 @default(0)
+  housePoolContribution Int               @default(0)
+  winnerId            String?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
   
-  // Consumable item fields
-  consumable      Boolean          @default(false)  // Whether item can be consumed
-  quantity        Int              @default(1)       // Stack count for consumables
-  uses            Int?             // Current uses remaining (for limited-use items)
-  maxUses         Int?             // Maximum uses (null = single use when consumed)
+  participants        BettingParticipant[]
+  bets                BettingEntry[]
   
-  // Additional bonuses for new equipment types
-  speedBonus      Int              @default(0)       // Movement speed bonus (boots)
-  agilityBonus    Int              @default(0)       // Dodge/accuracy bonus (boots, accessories)
-  rangeBonus      Int              @default(0)       // Attack range bonus (guns)
-  healingPower    Int              @default(0)       // Healing amount (potions)
-  duration        Int?             // Effect duration in seconds (buff potions)
+  @@index([startTime])
+  @@index([status])
+}
+
+model BettingParticipant {
+  id                String          @id @default(cuid())
+  tournamentId      String
+  aiModel           String
+  name              String
+  initialOdds       Float
+  currentOdds       Float
+  totalBetsPlaced   Int             @default(0)
+  placement         Int?
+  score             Int?
   
-  metadata        Json             @default("{}")
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+  tournament        BettingTournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  bets              BettingEntry[]
+  
+  @@unique([tournamentId, aiModel])
+  @@index([tournamentId])
+}
+
+model BettingEntry {
+  id                String                  @id @default(cuid())
+  botId             String                  // Bot that placed the bet
+  tournamentId      String
+  participantId     String
+  amount            Int                     // XP amount bet
+  potentialPayout   Float
+  actualPayout      Int?                    // Null until tournament completes
+  status            BetStatus               @default(PENDING)
+  timestamp         DateTime                @default(now())
+  
+  bot               Bot                     @relation(fields: [botId], references: [id])
+  tournament        BettingTournament       @relation(fields: [tournamentId], references: [id])
+  participant       BettingParticipant      @relation(fields: [participantId], references: [id])
   
   @@index([botId])
-  @@index([equipped])
-  @@index([consumable])
+  @@index([tournamentId])
+  @@index([status])
 }
 
-model BotHouse {
-  id              String           @id @default(cuid())
-  botId           String           @unique
-  bot             Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
-  houseScore      Int              @default(100)
-  defenseLevel    Int              @default(1)
-  lastRobbed      DateTime?
-  robberyCooldown DateTime?
-  worldPosition   Json             @default("{\"x\": 0, \"y\": 0}")
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+model BettingPool {
+  id                String          @id @default(cuid())
+  tournamentId      String          @unique
+  totalPool         Int             @default(0)
+  houseCut          Int             @default(0)    // 5% house edge
+  payoutPool        Int             @default(0)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
   
-  furniture       Furniture[]
-  
-  @@index([botId])
+  @@index([tournamentId])
 }
 
-model Furniture {
-  id              String           @id @default(cuid())
-  houseId         String
-  house           BotHouse         @relation(fields: [houseId], references: [id], onDelete: Cascade)
-  name            String
-  furnitureType   FurnitureType
-  rarity          ItemRarity
-  scoreBonus      Int              @default(0)
-  defenseBonus    Int              @default(0)
-  position        Json             @default("{\"x\": 0, \"y\": 0, \"rotation\": 0}")
-  metadata        Json             @default("{}")
-  createdAt       DateTime         @default(now())
+model StakedIDLE {
+  id                String          @id @default(cuid())
+  userId            String
+  amount            Int             // Amount of $IDLE staked
+  xpGenerationRate  Int             // XP per hour
+  stakingTier       StakingTier
+  lockedUntil       DateTime        // 7-day minimum lock
+  totalXPGenerated  Int             @default(0)
+  lastClaimTime     DateTime        @default(now())
+  isActive          Boolean         @default(true)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
   
-  @@index([houseId])
+  user              User            @relation(fields: [userId], references: [id])
+  
+  @@index([userId])
+  @@index([isActive])
 }
 
-model BotActivityScore {
-  id                  String           @id @default(cuid())
-  botId               String           @unique
-  bot                 Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
-  matchesPlayed       Int              @default(0)
-  lootboxesOpened     Int              @default(0)
-  activitiesCompleted Int              @default(0)  // Simplified activity tracking
-  lastActive          DateTime         @default(now())
-  createdAt           DateTime         @default(now())
-  updatedAt           DateTime         @updatedAt
+model XPBalance {
+  id                String          @id @default(cuid())
+  userId            String          @unique
+  currentXP         Int             @default(0)
+  totalEarnedXP     Int             @default(0)
+  totalSpentXP      Int             @default(0)
+  monthlyDecay      Int             @default(0)    // 10% monthly decay
+  lastDecayDate     DateTime        @default(now())
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
   
-  @@index([botId])
+  user              User            @relation(fields: [userId], references: [id])
 }
 
-model BotExperience {
-  id              String           @id @default(cuid())
-  botId           String           @unique
-  bot             Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
-  
-  // Core XP/Level
-  level           Int              @default(1)
-  currentXP       Int              @default(0)
-  totalXP         Int              @default(0)
-  xpToNextLevel   Int              @default(100)
-  
-  // Category XP (for specialized progression)
-  combatXP        Int              @default(0)
-  socialXP        Int              @default(0)
-  criminalXP      Int              @default(0)
-  gamblingXP      Int              @default(0)
-  tradingXP       Int              @default(0)
-  
-  // Prestige system (for level 50+ bots)
-  prestigeLevel   Int              @default(0)
-  prestigeTokens  Int              @default(0)
-  
-  // Skill points
-  skillPoints     Int              @default(0)
-  allocatedSkills Json             @default("{}")
-  
-  // Tracking
-  lastXPGain      DateTime         @default(now())
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  
-  @@index([botId])
-  @@index([level])
-  @@index([totalXP])
+enum BettingGameType {
+  POKER
+  CONNECT4
+  REVERSE_HANGMAN
 }
 
-model LootboxReward {
-  id                String           @id @default(cuid())
-  matchId           String
-  match             Match            @relation(fields: [matchId], references: [id], onDelete: Cascade)
-  botId             String
-  bot               Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
-  lootboxRarity     ItemRarity
-  equipmentRewards  Json             @default("[]")
-  furnitureRewards  Json             @default("[]")
-  currencyReward    Int              @default(0)
-  opened            Boolean          @default(false)
-  openedAt          DateTime?
-  createdAt         DateTime         @default(now())
-  
-  @@index([botId])
-  @@index([matchId])
+enum BettingTournamentStatus {
+  SCHEDULED
+  BETTING_OPEN
+  BETTING_CLOSED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
 }
 
-// Energy system for bot operations
-model BotEnergy {
-  id              String           @id @default(cuid())
-  botId           String           @unique
-  bot             Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
-  
-  currentEnergy   Int              @default(100)  // Current energy amount
-  maxEnergy       Int              @default(100)  // Maximum energy capacity
-  lastRegenTime   DateTime         @default(now()) // Last regeneration timestamp
-  regenRate       Int              @default(1)    // Energy per minute
-  
-  // Energy consumption rates
-  walkCost        Int              @default(1)    // Energy per step
-  combatCost      Int              @default(10)   // Energy per combat
-  robberyCost     Int              @default(5)    // Energy per robbery
-  activityCost    Int              @default(3)    // Energy per zone activity
-  
-  // Energy state
-  isPaused        Boolean          @default(false) // Whether bot is paused to save energy
-  autoResumeAt    Int?            // Resume when energy reaches this amount
-  totalConsumed   Int              @default(0)    // Total energy consumed lifetime
-  
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  
-  @@index([botId])
+enum BetStatus {
+  PENDING
+  WON
+  LOST
+  REFUNDED
 }
 
-// Track energy purchases for revenue and analytics
-model EnergyPurchase {
-  id              String           @id @default(cuid())
-  botId           String
-  bot             Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
-  
-  energyAmount    Int              // Amount of energy purchased
-  hypeSpent       Float            // HYPE tokens spent
-  packType        String           // small, medium, large, mega
-  txHash          String?          // Blockchain transaction hash
-  
-  purchasedAt     DateTime         @default(now())
-  
-  @@index([botId])
-  @@index([purchasedAt])
-}
-
-// Activity log for idle game
-model BotActivityLog {
-  id          String           @id @default(cuid())
-  botId       String
-  bot         Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
-  
-  activity    String           // "🔪 Planning a heist"
-  emoji       String           // "🔪"
-  personality BotPersonality   // For filtering
-  xpGained    Int              @default(0)
-  timestamp   DateTime         @default(now())
-  
-  @@index([botId, timestamp])
-  @@index([personality])
-}
-
-// Idle progress tracking for offline rewards
-model IdleProgress {
-  id              String           @id @default(cuid())
-  botId           String           @unique
-  bot             Bot              @relation(fields: [botId], references: [id], onDelete: Cascade)
-  
-  lastActiveAt    DateTime         @default(now())
-  lastXPClaim     DateTime         @default(now())
-  idleMultiplier  Float            @default(1.0) // Based on personality
-  totalIdleTime   Int              @default(0)   // Total seconds spent idle
-  totalIdleXP     Int              @default(0)   // Total XP earned while idle
-  
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  
-  @@index([botId])
-  @@index([lastActiveAt])
+enum StakingTier {
+  BRONZE      // 10k XP/hour
+  SILVER      // 15k XP/hour
+  GOLD        // 20k XP/hour
+  PLATINUM    // 25k XP/hour
+  DIAMOND     // 30k XP/hour
 }

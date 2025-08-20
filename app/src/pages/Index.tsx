@@ -1,8 +1,6 @@
 import { START_DEBUG_LOGGING } from '@/graphql/mutations/debug';
-import { ENTER_QUEUE, LEAVE_QUEUE } from '@/graphql/mutations/queue';
 import { SET_TEST_GAME_TYPE } from '@/graphql/mutations/test';
 // Metaverse query removed - using idle game now
-import { GET_QUEUE_STATUS, QUEUE_UPDATE_SUBSCRIPTION } from '@/graphql/queries/queue';
 import { GET_USER_BOTS } from '@/graphql/queries/user';
 import { useMutation, useQuery, useSubscription } from '@apollo/client';
 import { useAuth } from '@auth/contexts/AuthContext';
@@ -35,7 +33,6 @@ const Index = () => {
   const [showPortalTransition, setShowPortalTransition] = useState(false);
   const [selectedGameType, setSelectedGameType] = useState<string | null>(null);
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
-  const [isInQueue, setIsInQueue] = useState(false);
   const globeRef = useRef<any>(null);
   
   // Lootbox test integration
@@ -46,7 +43,6 @@ const Index = () => {
       console.log('Test lootbox reward:', reward);
     }
   });
-  const [queueEntryId, setQueueEntryId] = useState<string | null>(null);
   const [pendingPlayAction, setPendingPlayAction] = useState(false);
   const [showDebugLogs, setShowDebugLogs] = useState(false);
 
@@ -57,9 +53,6 @@ const Index = () => {
     fetchPolicy: 'cache-and-network',
   });
 
-  const { data: queueStatusData, loading: queueStatusLoading } = useQuery(GET_QUEUE_STATUS, {
-    pollInterval: 5000,
-  });
 
   // Metaverse query removed - using idle game now
   const metaverseBotsData = null;
@@ -68,58 +61,20 @@ const Index = () => {
   const [setTestGameType] = useMutation(SET_TEST_GAME_TYPE);
   const [startDebugLogging] = useMutation(START_DEBUG_LOGGING);
   
-  const [enterQueue] = useMutation(ENTER_QUEUE, {
-    onCompleted: (data) => {
-      setIsInQueue(true);
-      setQueueEntryId(data.enterQueue.id);
-      toast({
-        title: 'Entered queue',
-        description: 'Finding opponents for your match...',
-      });
-    },
-    onError: (error) => {
-      toast({
-        title: 'Error',
-        description: error.message,
-        variant: 'destructive',
-      });
-    },
-  });
+  // Queue mutations removed - no longer used
 
-  const [leaveQueue] = useMutation(LEAVE_QUEUE, {
-    onCompleted: () => {
-      setIsInQueue(false);
-      setQueueEntryId(null);
-      toast({
-        title: 'Left queue',
-        description: 'You have been removed from the queue',
-      });
-    },
-    onError: (error) => {
-      toast({
-        title: 'Error',
-        description: error.message,
-        variant: 'destructive',
-      });
-    },
-  });
-
-  // Subscribe to queue updates
-  const { data: queueUpdate } = useSubscription(QUEUE_UPDATE_SUBSCRIPTION);
+  // Queue subscriptions removed
   
   // Subscribe to metaverse stats updates
   // TODO: Implement metaverseStats subscription in backend
   // const { data: metaverseStats } = useSubscription(METAVERSE_STATS_SUBSCRIPTION);
   const metaverseStats = null; // Temporarily disabled until backend implementation
   
-  // Check localStorage for queue state on mount
+  // Check localStorage for selected bot on mount
   useEffect(() => {
     const storedBotId = localStorage.getItem('selectedBotId');
-    const storedInQueue = localStorage.getItem('isInQueue');
-    
-    if (storedBotId && storedInQueue === 'true') {
+    if (storedBotId) {
       setSelectedBotId(storedBotId);
-      setIsInQueue(true);
     }
   }, []);
 
@@ -136,71 +91,8 @@ const Index = () => {
     return () => window.removeEventListener('keydown', handleKeyPress);
   }, []);
   
-  // Watch for changes in user's bots to detect when they leave queue
-  useEffect(() => {
-    if (userBotsData?.bots && selectedBotId) {
-      const selectedBot = userBotsData.bots.find((bot: any) => bot.id === selectedBotId);
-      const hasQueueEntry = selectedBot?.queueEntries?.some((entry: any) => entry.status === 'WAITING');
-      
-      // If bot is no longer in queue, reset state
-      if (!hasQueueEntry && isInQueue) {
-        setIsInQueue(false);
-        setSelectedBotId(null);
-        setShowGameSelection(false);
-        localStorage.removeItem('selectedBotId');
-        localStorage.removeItem('isInQueue');
-      }
-    }
-  }, [userBotsData, selectedBotId, isInQueue]);
 
-  useEffect(() => {
-    if (queueUpdate?.queueUpdate) {
-      const update = queueUpdate.queueUpdate;
-      
-      console.log('🔔 Queue update received:', {
-        status: update.status,
-        botId: update.bot?.id,
-        botName: update.bot?.name,
-        botCreator: update.bot?.creator?.address,
-        matchId: update.matchId,
-        selectedBotId,
-        userAddress: user?.address,
-        isMatch: update.bot?.id === selectedBotId,
-        isUserBot: update.bot?.creator?.address === user?.address
-      });
-      
-      // Check if this is a match found for any of the user's bots
-      if (update.status === 'MATCHED' && update.matchId) {
-        // Check if this bot belongs to the current user
-        if (update.bot?.creator?.address === user?.address) {
-          console.log(`🎯 Match found for user's bot ${update.bot.name}! Navigating to match ${update.matchId}`);
-          
-          toast({
-            title: 'Match Found!',
-            description: `Your bot "${update.bot.name}" has been matched!`,
-            duration: 3000,
-          });
-          
-          // Clear queue state from localStorage
-          localStorage.removeItem('selectedBotId');
-          localStorage.removeItem('isInQueue');
-          
-          // Reset local state
-          setIsInQueue(false);
-          setSelectedBotId(null);
-          setShowGameSelection(false);
-          
-          // Navigate to the specific match
-          setTimeout(() => {
-            console.log(`🚀 Navigating to /tournament/${update.matchId}`);
-            navigate(`/tournament/${update.matchId}`);
-          }, 1500);
-        } else {
-          console.log(`ℹ️ Match found for bot ${update.bot?.name} (creator: ${update.bot?.creator?.address}), but not current user's bot`);
-        }
-      }
-    }
-  }, [queueUpdate, selectedBotId, user?.address, navigate, toast]);
+  // Queue update handling removed
 
   useEffect(() => {
     // Load tournaments from sessionStorage
@@ -324,102 +216,17 @@ const Index = () => {
 
   const handleBotSelect = (botId: string) => {
     setSelectedBotId(botId);
-    handleEnterQueue(botId);
+    localStorage.setItem('selectedBotId', botId);
+    setShowGameSelection(false);
+    // Navigate to tournaments or bots page
+    navigate('/tournaments');
   };
 
-  const handleEnterQueue = async (botId: string) => {
-    // Verify authentication before attempting to enter queue
-    if (!isAuthenticated || !user || !isAuthReady) {
-      toast({
-        title: 'Authentication Required',
-        description: 'Please wait for authentication to complete',
-        variant: 'destructive',
-      });
-      return;
-    }
-    
-    // console.log(`🎮 Entering queue with bot ${botId} for user ${user.address}`);
-    
-    try {
-      await enterQueue({
-        variables: {
-          botId,
-          queueType: 'STANDARD',
-        },
-      });
-      
-      // console.log(`✅ Successfully entered queue with bot ${botId}`);
-      
-      // Update state immediately to show queue widget
-      setSelectedBotId(botId);
-      setIsInQueue(true);
-      setShowGameSelection(false);
-      
-      // Store queue state in localStorage
-      localStorage.setItem('selectedBotId', botId);
-      localStorage.setItem('isInQueue', 'true');
-      
-      // Check current queue status to see if we have enough players
-      const currentQueueStatus = queueStatusData?.queueStatus;
-      if (currentQueueStatus && currentQueueStatus.totalInQueue >= 3) {
-        // console.log(`🚀 Queue has ${currentQueueStatus.totalInQueue + 1} players (including new entry), match will be created soon`);
-        
-        // Navigate to queue page with a flag indicating match is being created
-        setTimeout(() => {
-          navigate('/queue?matchCreating=true');
-        }, 1000);
-      }
-    } catch (error: any) {
-      console.error('❌ Failed to enter queue:', error);
-      
-      // Extract specific error message
-      let errorMessage = 'Failed to enter queue';
-      
-      if (error.graphQLErrors && error.graphQLErrors.length > 0) {
-        errorMessage = error.graphQLErrors[0].message;
-      } else if (error.networkError) {
-        errorMessage = 'Network error. Please check your connection.';
-      } else if (error.message) {
-        errorMessage = error.message;
-      }
-      
-      toast({
-        title: 'Queue Entry Failed',
-        description: errorMessage,
-        variant: 'destructive',
-      });
-      
-      // If authentication error, clear the pending state
-      if (errorMessage.includes('Not authenticated') || errorMessage.includes('authentication')) {
-        setPendingPlayAction(false);
-        setSelectedBotId(null);
-        setShowGameSelection(false);
-      }
-    }
+  // Navigate to tournaments instead of queue
+  const navigateToTournaments = () => {
+    navigate('/tournaments');
   };
 
-  const handleLeaveQueue = async () => {
-    if (!selectedBotId) return;
-    
-    try {
-      await leaveQueue({
-        variables: {
-          botId: selectedBotId,
-        },
-        refetchQueries: ['GetUserBots', 'GetQueueStatus'],
-        awaitRefetchQueries: true,
-      });
-      setSelectedBotId(null);
-      setShowGameSelection(false);
-      setIsInQueue(false);
-      
-      // Clear localStorage
-      localStorage.removeItem('selectedBotId');
-      localStorage.removeItem('isInQueue');
-    } catch (error) {
-      console.error('Failed to leave queue:', error);
-    }
-  };
 
   const handleTestGameType = async (gameType: string) => {
     try {
@@ -542,18 +349,8 @@ const Index = () => {
 
   const userBots = userBotsData?.bots || [];
   const activeBots = userBots.filter((bot: any) => bot.isActive);
-  const queueStatus = queueStatusData?.queueStatus;
-  
-  // Get queue position for selected bot
+  // Get selected bot
   const selectedBot = activeBots.find((bot: any) => bot.id === selectedBotId);
-  const queuePositions = selectedBot && selectedBot.queuePosition ? [{
-    botId: selectedBot.id,
-    botName: selectedBot.name,
-    position: selectedBot.queuePosition,
-    estimatedWaitTime: queueStatus?.averageWaitTime || 120,
-    enteredAt: new Date().toISOString(),
-    queueType: 'STANDARD'
-  }] : [];
 
   return (
     <div className="min-h-screen relative overflow-hidden">
@@ -594,14 +391,7 @@ const Index = () => {
                   <div className="flex items-center gap-2">
                     <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
                     <span className="text-sm text-white">
-                      {queueStatus?.totalInQueue > 0 ? (
-                        <>
-                          {Math.min(queueStatus.totalInQueue, 4)}/4 players
-                          {queueStatus.totalInQueue > 4 && ` (${queueStatus.totalInQueue - 4} waiting)`}
-                        </>
-                      ) : (
-                        '0/4 players'
-                      )}
+                      {activeBots.length} Active Bots
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
@@ -626,8 +416,8 @@ const Index = () => {
                   Deploy your AI bot and compete in real-time 4-player tournaments. No configuration needed - just click and play!
                 </p>
                 
-                {/* Queue Interface */}
-                {!isInQueue ? (
+                {/* Play Interface */}
+                {true ? (
                   <div className="flex flex-col sm:flex-row gap-4 justify-center mt-8">
                     <Button 
                       size="lg" 
@@ -652,64 +442,7 @@ const Index = () => {
                       Watch Live
                     </Button>
                   </div>
-                ) : (
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="mt-8"
-                  >
-                    <Card className="bg-black/60 backdrop-blur-xl border-primary/20 max-w-md mx-auto">
-                      <div className="p-6 space-y-4">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse" />
-                            <span className="text-lg font-medium text-white">In Queue</span>
-                          </div>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={handleLeaveQueue}
-                            className="text-white/70 hover:text-white"
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        </div>
-                        
-                        <div className="text-center space-y-2">
-                          <Bot className="h-12 w-12 text-primary mx-auto" />
-                          <p className="text-white font-medium">{selectedBot?.name}</p>
-                          <p className="text-white/60 text-sm">Finding 3 opponents...</p>
-                        </div>
-                        
-                        <div className="flex items-center justify-center gap-2">
-                          <Clock className="h-4 w-4 text-white/60" />
-                          <span className="text-white/60 text-sm">
-                            Estimated wait: {Math.floor((queueStatus?.averageWaitTime || 120) / 60)}m
-                          </span>
-                        </div>
-                        
-                        {queueStatus && (
-                          <div className="pt-2 border-t border-white/10">
-                            <div className="flex justify-between text-sm">
-                              <span className="text-white/60">Position in queue</span>
-                              <span className="text-white font-medium">#{selectedBot?.queuePosition || '?'}</span>
-                            </div>
-                            <div className="flex justify-between text-sm">
-                              <span className="text-white/60">Players ready</span>
-                              <span className="text-white font-medium">{Math.min(queueStatus.totalInQueue, 4)}/4</span>
-                            </div>
-                            {queueStatus.totalInQueue > 4 && (
-                              <div className="flex justify-between text-sm">
-                                <span className="text-white/60">Total waiting</span>
-                                <span className="text-white font-medium">{queueStatus.totalInQueue}</span>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </Card>
-                  </motion.div>
-                )}
+                ) : null}
               </motion.div>
             ) : (
               <motion.div
@@ -722,7 +455,7 @@ const Index = () => {
                 <div className="space-y-4">
                   <div className="text-center">
                     <h2 className="text-xl font-semibold mb-1">Select Your Bot</h2>
-                    <p className="text-sm text-muted-foreground">Choose a bot to enter the queue</p>
+                    <p className="text-sm text-muted-foreground">Choose a bot to start playing</p>
                   </div>
                   
                   <div className="space-y-2">
@@ -847,61 +580,6 @@ const Index = () => {
         winnerId="test-winner"
         winnerName="Test Winner"
       />
-      
-      {/* Enter Metaverse Button */}
-      <motion.div
-        initial={{ opacity: 0, scale: 0.8 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ delay: 1 }}
-        className="fixed bottom-24 right-8 z-50"
-      >
-        <Button
-          size="lg"
-          onClick={handleEnterMetaverse}
-          className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white shadow-2xl hover:shadow-purple-500/25 transform hover:scale-105 transition-all duration-300 group relative overflow-hidden"
-        >
-          <div className="absolute inset-0 bg-gradient-to-r from-purple-400 to-indigo-400 opacity-0 group-hover:opacity-20 transition-opacity" />
-          <Globe className="mr-2 h-5 w-5 animate-pulse" />
-          Enter Metaverse
-          {(metaverseStats?.metaverseStats?.totalBots || metaverseBotsData?.bots?.length) && (
-            <Badge 
-              variant="secondary" 
-              className="ml-2 bg-white/20 text-white border-white/30"
-            >
-              {metaverseStats?.metaverseStats?.totalBots || 
-                metaverseBotsData.bots.filter((bot: any) => bot.isActive).length} bots online
-            </Badge>
-          )}
-        </Button>
-        {(metaverseStats?.metaverseStats?.zoneDistribution || metaverseBotsData?.bots) && (
-          <div className="absolute -bottom-6 left-0 right-0 text-center">
-            <span className="text-xs text-white/60">
-              {(() => {
-                if (metaverseStats?.metaverseStats?.zoneDistribution) {
-                  return metaverseStats.metaverseStats.zoneDistribution
-                    .slice(0, 2)
-                    .map((z: any) => `${z.zone}: ${z.count}`)
-                    .join(' • ');
-                } else if (metaverseBotsData?.bots) {
-                  const activeBots = metaverseBotsData.bots.filter((bot: any) => bot.isActive);
-                  const zones = activeBots.reduce((acc: Record<string, number>, bot: any) => {
-                    if (bot.currentZone) acc[bot.currentZone] = (acc[bot.currentZone] || 0) + 1;
-                    return acc;
-                  }, {});
-                  return Object.entries(zones).length > 0
-                    ? Object.entries(zones)
-                        .sort(([,a], [,b]) => (b as number) - (a as number))
-                        .slice(0, 2)
-                        .map(([zone, count]) => `${zone}: ${count}`)
-                        .join(' • ')
-                    : `${activeBots.length} bots active`;
-                }
-                return '';
-              })()}
-            </span>
-          </div>
-        )}
-      </motion.div>
     </div>
   );
 };

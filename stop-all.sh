@@ -30,14 +30,12 @@ kill_port() {
 echo -e "${YELLOW}Stopping all AI Arena Node processes...${NC}"
 pkill -f "node.*ai-arena" 2>/dev/null
 pkill -f "ts-node.*ai-arena" 2>/dev/null
-pkill -f "convex dev" 2>/dev/null
 
 # Kill specific ports
 kill_port 4000 "Arena Backend"
 kill_port 4001 "WebSocket Server"
-kill_port 5000 "Metaverse Backend"
-kill_port 5173 "Arena Frontend"
-kill_port 5174 "Metaverse Frontend"
+kill_port 8080 "Arena Frontend"
+kill_port 8081 "Arena Frontend (alt)"
 
 # Optional: Stop Redis (comment out if you want to keep Redis running)
 read -p "Stop Redis server? (y/n) " -n 1 -r

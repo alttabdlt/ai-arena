@@ -2,6 +2,8 @@ import { gql } from 'graphql-tag';
 import { economyTypeDefs } from './economy';
 import { energyTypeDefs } from './energy';
 import { idleGameTypeDefs } from './idleGame';
+import { jackpotTypeDefs } from './jackpot';
+import { bettingTournamentTypeDefs } from './bettingTournament';
 
 const baseTypeDefs = gql`
   scalar DateTime
@@ -33,15 +35,12 @@ const baseTypeDefs = gql`
     avatar: String!
     prompt: String!
     personality: BotPersonality!
-    modelType: AIModelType!
     creator: User!
     creatorId: String!
     isActive: Boolean!
     isDemo: Boolean!
     stats: BotStats!
     socialStats: SocialStats!
-    queuePosition: Int
-    queueEntries: [QueueEntry!]!
     currentMatch: Match
     createdAt: DateTime!
     updatedAt: DateTime!
@@ -81,6 +80,12 @@ const baseTypeDefs = gql`
     criminalXP: Int!
     gamblingXP: Int!
     tradingXP: Int!
+    bettingWins: Int!
+    bettingLosses: Int!
+    winStreak: Int!
+    bestWinStreak: Int!
+    totalBetXP: Int!
+    totalWonXP: Int!
     prestigeLevel: Int!
     prestigeTokens: Int!
     skillPoints: Int!
@@ -106,45 +111,6 @@ const baseTypeDefs = gql`
     REFUNDED
   }
   
-  type QueueEntry {
-    id: ID!
-    bot: Bot!
-    queueType: QueueType!
-    priority: Int!
-    status: QueueStatus!
-    enteredAt: DateTime!
-    expiresAt: DateTime!
-    position: Int!
-    matchId: String
-    gameType: String
-  }
-  
-  enum QueueType {
-    STANDARD
-    PRIORITY
-    PREMIUM
-  }
-  
-  enum QueueStatus {
-    WAITING
-    MATCHED
-    EXPIRED
-    CANCELLED
-  }
-
-  type QueueStatusInfo {
-    totalInQueue: Int!
-    totalMatched: Int
-    averageWaitTime: Int!
-    nextMatchTime: DateTime
-    queueTypes: [QueueTypeInfo!]!
-  }
-
-  type QueueTypeInfo {
-    type: QueueType!
-    count: Int!
-    estimatedWaitTime: Int!
-  }
 
 
   type SocialStats {
@@ -248,7 +214,6 @@ const baseTypeDefs = gql`
     ): [Bot!]!
     topBots(limit: Int): [Bot!]!
     recentBots(limit: Int): [Bot!]!
-    queuedBots(limit: Int): [Bot!]!
 
     # Tournament queries
     tournament(id: String!): Tournament
@@ -263,7 +228,6 @@ const baseTypeDefs = gql`
     # Analytics queries
     platformStats: PlatformStats!
     userStats(address: String!): UserStats!
-    queueStatus: QueueStatusInfo!
     
     # Match queries
     match(id: String!): Match
@@ -279,29 +243,21 @@ const baseTypeDefs = gql`
     myBotChannels: [Channel!]!
   }
 
+  type BurnCompanionResponse {
+    success: Boolean!
+    message: String!
+    burnedCompanionId: String!
+    solReward: Float!
+    txHash: String
+  }
+  
   type Mutation {
-    # Bot mutations
-    deployBot(input: DeployBotInput!): Bot!
+    # Companion mutations
+    adoptCompanion(input: AdoptCompanionInput!): Bot!
     toggleBotActive(botId: String!): Bot!
     deleteBot(botId: String!): DeleteBotResponse!
+    burnCompanionForSOL(companionId: String!): BurnCompanionResponse!
     
-    # Experience mutations
-    updateBotExperience(
-      botId: String!
-      level: Int!
-      currentXP: Int!
-      totalXP: Int!
-      xpToNextLevel: Int!
-      combatXP: Int
-      socialXP: Int
-      criminalXP: Int
-      gamblingXP: Int
-      tradingXP: Int
-    ): BotExperience!
-    
-    # Queue mutations
-    enterQueue(botId: String!, queueType: QueueType!): QueueEntry!
-    leaveQueue(botId: String!): Boolean!
     signalFrontendReady(matchId: String!): Boolean!
     startReverseHangmanRound(matchId: String!, difficulty: String!): Boolean!
     
@@ -352,7 +308,6 @@ const baseTypeDefs = gql`
 
   type Subscription {
     tournamentUpdate(tournamentId: String!): Tournament!
-    queueUpdate: QueueEntry!
     botDeployed: Bot!
     # Game Manager subscriptions
     gameStateUpdate(gameId: String!): GameUpdate!
@@ -380,14 +335,10 @@ const baseTypeDefs = gql`
     stack: String
   }
 
-  input DeployBotInput {
+  input AdoptCompanionInput {
     name: String!
-    avatar: String!
-    prompt: String!
     personality: BotPersonality!
-    modelType: AIModelType!
     txHash: String!
-    spriteId: String
   }
 
   # Auth types
@@ -408,57 +359,6 @@ const baseTypeDefs = gql`
     refreshToken: String!
   }
   
-  enum AIModelType {
-    # OpenAI Models
-    GPT_4O
-    GPT_4O_MINI
-    GPT_4_TURBO
-    GPT_4
-    GPT_3_5_TURBO
-    O1_PREVIEW
-    O1_MINI
-    O3
-    O3_MINI
-    O3_PRO
-    
-    # Anthropic Claude Models
-    CLAUDE_3_5_SONNET
-    CLAUDE_3_5_HAIKU
-    CLAUDE_3_OPUS
-    CLAUDE_3_HAIKU
-    CLAUDE_4_OPUS
-    CLAUDE_4_SONNET
-    
-    # DeepSeek Models
-    DEEPSEEK_CHAT
-    DEEPSEEK_CODER
-    DEEPSEEK_R1
-    DEEPSEEK_V3
-    
-    # Alibaba Qwen Models
-    QWEN_2_5_72B
-    QWQ_32B
-    QVQ_72B_PREVIEW
-    QWEN_2_5_MAX
-    
-    # xAI Models
-    GROK_3
-    
-    # Kimi Models
-    KIMI_K2
-    
-    # Google Gemini Models
-    GEMINI_2_5_PRO
-    GEMINI_2_5_PRO_DEEP_THINK
-    
-    # Meta Llama Models
-    LLAMA_3_1_405B
-    LLAMA_3_1_70B
-    LLAMA_3_2_90B
-    
-    # Mistral Models
-    MIXTRAL_8X22B
-  }
 
   enum BotPersonality {
     CRIMINAL
@@ -468,10 +368,8 @@ const baseTypeDefs = gql`
 
 
   input BotFilter {
-    modelType: AIModelType
     isActive: Boolean
     creatorAddress: String
-    hasQueueEntry: Boolean
     hasMetaverseAgent: Boolean
   }
 
@@ -492,7 +390,6 @@ const baseTypeDefs = gql`
     totalUsers: Int!
     activeUsers24h: Int!
     totalMatches: Int!
-    queuedBots: Int!
     totalEarnings: String!
   }
 
@@ -1225,4 +1122,4 @@ const baseTypeDefs = gql`
 `;
 
 // Export merged type definitions
-export const typeDefs = [baseTypeDefs, economyTypeDefs, energyTypeDefs, idleGameTypeDefs];
+export const typeDefs = [baseTypeDefs, economyTypeDefs, energyTypeDefs, idleGameTypeDefs, jackpotTypeDefs, bettingTournamentTypeDefs];

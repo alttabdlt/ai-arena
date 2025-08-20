@@ -28,3 +28,15 @@ export const UPDATE_GAME_SPEED = gql`
     }
   }
 `;
+
+export const SIGNAL_FRONTEND_READY = gql`
+  mutation SignalFrontendReady($matchId: String!) {
+    signalFrontendReady(matchId: $matchId)
+  }
+`;
+
+export const START_REVERSE_HANGMAN_ROUND = gql`
+  mutation StartReverseHangmanRound($matchId: String!, $difficulty: String!) {
+    startReverseHangmanRound(matchId: $matchId, difficulty: $difficulty)
+  }
+`;

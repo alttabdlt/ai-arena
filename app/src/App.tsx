@@ -16,27 +16,13 @@ import { useInteractionLogger } from "@shared/hooks/useInteractionLogger";
 import { LoggingIndicator } from "@shared/components/LoggingIndicator";
 import { GameErrorBoundary } from "@shared/components/ErrorBoundary";
 import Index from "./pages/Index";
-import Dashboard from "./pages/Dashboard";
-import Bots from "@bot/pages/Bots";
-import BotDetail from "@bot/pages/BotDetail";
+// import Dashboard from "./pages/Dashboard"; // Commented out - redundant
 import Tournaments from "@tournament/pages/Tournaments";
-import CreateTournament from "@tournament/pages/CreateTournament";
-import WaitingRoom from "@tournament/pages/WaitingRoom";
-import TournamentView from "@tournament/pages/TournamentView";
-import PokerView from "@game/poker/pages/PokerView";
-import ReverseHangmanView from "@game/reverse-hangman/pages/ReverseHangmanView";
-import ReverseHangmanServerView from "@game/reverse-hangman/pages/ReverseHangmanServerView";
-import Connect4View from "@game/connect4/pages/Connect4View";
-import Settings from "./pages/Settings";
-import Deploy from "@bot/pages/Deploy";
-import Learn from "./pages/Learn";
-import Legal from "./pages/Legal";
-import DeveloperDocs from "./pages/DeveloperDocs";
-import Queue from "@queue/pages/Queue";
-import NotFound from "./pages/NotFound";
-import HouseEditor from "./pages/HouseEditor";
-import { DeploymentStatus } from "@/modules/admin/DeploymentStatus";
 import Metaverse from "./pages/Metaverse";
+import Deploy from "./pages/Deploy";
+import Settings from "./pages/Settings";
+import NotFound from "./pages/NotFound";
+import { DeploymentStatus } from "@/modules/admin/DeploymentStatus";
 
 const App = () => {
   // Start interaction logging
@@ -83,38 +69,25 @@ const App = () => {
             <Route path="/" element={<Index />} />
             
             {/* Core User Journey */}
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/queue" element={<Queue />} />
+            {/* <Route path="/dashboard" element={<Dashboard />} /> */} {/* Commented out - redundant */}
             <Route path="/tournaments" element={<Tournaments />} />
-            <Route path="/tournaments/create" element={<CreateTournament />} />
-            <Route path="/tournaments/:id/waiting" element={<WaitingRoom />} />
-            <Route path="/tournament/:id" element={<GameErrorBoundary><TournamentView /></GameErrorBoundary>} />
-            <Route path="/tournament/:id/poker" element={<GameErrorBoundary><PokerView /></GameErrorBoundary>} />
-            <Route path="/tournament/:id/hangman" element={<GameErrorBoundary><ReverseHangmanView /></GameErrorBoundary>} />
-            <Route path="/tournament/:id/hangman-server" element={<GameErrorBoundary><ReverseHangmanServerView /></GameErrorBoundary>} />
-            <Route path="/tournament/:id/connect4" element={<GameErrorBoundary><Connect4View /></GameErrorBoundary>} />
+            {/* Complex tournament views removed - simplified betting interface only */}
             
-            {/* Bot System */}
-            <Route path="/bots" element={<Bots />} />
-            <Route path="/bot/:id" element={<BotDetail />} />
-            <Route path="/bot/:botId/house" element={<HouseEditor />} />
-            <Route path="/deploy" element={<Deploy />} />
-            
-            {/* Metaverse */}
+            {/* Bots - Idle Game */}
             <Route path="/metaverse" element={<Metaverse />} />
+            <Route path="/deploy" element={<Deploy />} />
             
             {/* Platform Features */}
             <Route path="/settings" element={<Settings />} />
-            <Route path="/learn" element={<Learn />} />
-            <Route path="/docs" element={<DeveloperDocs />} />
-            <Route path="/legal" element={<Legal />} />
+            {/* Non-core features removed */}
             
             {/* Admin */}
             <Route path="/admin/deployment" element={<DeploymentStatus />} />
             
             {/* Redirects from old pages */}
-            <Route path="/analytics" element={<Navigate to="/dashboard?tab=performance" replace />} />
-            <Route path="/social" element={<Navigate to="/dashboard?tab=community" replace />} />
+            <Route path="/analytics" element={<Navigate to="/metaverse" replace />} />
+            <Route path="/social" element={<Navigate to="/metaverse" replace />} />
+            <Route path="/dashboard" element={<Navigate to="/metaverse" replace />} />
             
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />

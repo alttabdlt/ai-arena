@@ -72,7 +72,7 @@ export function BotCard({ bot, onQueue, onManage, onDelete }: BotCardProps) {
     
     const loadSprite = async () => {
       if (bot.avatar && validCharacters.includes(bot.avatar)) {
-        // New system: avatar is a character ID - extract the sprite
+        // Avatar is a character ID - use it directly (this is the randomly selected sprite from deployment)
         try {
           const sprite = await spriteExtractor.extractCharacterSprite(bot.avatar);
           setSpriteData({ 
@@ -87,7 +87,7 @@ export function BotCard({ bot, onQueue, onManage, onDelete }: BotCardProps) {
         // Legacy system: avatar is a data URL
         setSpriteData({ imageData: bot.avatar });
       } else {
-        // No avatar: select based on personality
+        // No avatar: this shouldn't happen for deployed bots, but use selector as fallback
         try {
           const sprite = await spriteSelector.selectSprite(
             bot.personality as BotPersonality,

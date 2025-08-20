@@ -1,10 +1,9 @@
-import { Prisma, QueueType } from '@prisma/client';
-import axios from 'axios';
+import { Prisma } from '@prisma/client';
+// import axios from 'axios'; // Not needed after removing metaverse proxies
 import { DateTimeResolver } from 'graphql-scalars';
 import { PubSub } from 'graphql-subscriptions';
 import GraphQLJSON from 'graphql-type-json';
 import { Context } from '../../config/context';
-import { getQueueService } from '../../services';
 import { aiService } from '../../services/aiService';
 import { AuthService } from '../../services/authService';
 // BotDeploymentService removed - metaverse deployment no longer needed
@@ -13,7 +12,6 @@ import { energyService } from '../../services/energyService';
 import { getGameManagerService } from '../../services/gameManagerService';
 // metaverseEventsService moved to metaverse backend
 import { TransactionService } from '../../services/transactionService';
-import { PromptValidator } from '../../utils/promptValidation';
 import { getMetaverseCharacter } from '@ai-arena/shared-utils';
 import { logger } from '@ai-arena/shared-logger';
 // channelResolvers moved to metaverse backend
@@ -22,6 +20,8 @@ import { economyResolvers } from './economy';
 import { energyResolvers } from './energy';
 import { gameManagerResolvers } from './gameManager';
 import { idleGameResolvers } from './idleGame';
+import { jackpotResolvers } from './jackpot';
+import { bettingTournamentResolvers } from './bettingTournament';
 
 interface PubSubAsyncIterator<T> extends AsyncIterator<T> {
   return(): Promise<IteratorResult<T>>;
@@ -34,7 +34,7 @@ interface TypedPubSub extends PubSub {
 
 // Use the singleton aiService instance
 const DEPLOYMENT_FEE = '10000'; // 10,000 $IDLE tokens
-const METAVERSE_BACKEND_URL = process.env.METAVERSE_BACKEND_URL || 'http://localhost:5001';
+// const METAVERSE_BACKEND_URL = process.env.METAVERSE_BACKEND_URL || 'http://localhost:5001'; // No longer needed
 
 export const resolvers = {
   DateTime: DateTimeResolver,
@@ -153,29 +153,11 @@ export const resolvers = {
       });
     },
 
-    queuedBots: async (_: any, { limit = 10 }: { limit?: number }, ctx: Context) => {
-      const entries = await ctx.prisma.queueEntry.findMany({
-        where: { status: 'WAITING' },
-        take: limit,
-        include: {
-          bot: {
-            include: {
-              creator: true,
-            },
-          },
-        },
-        orderBy: { enteredAt: 'asc' },
-      });
-      
-      return entries.map(entry => entry.bot);
-    },
-
     platformStats: async (_: any, __: any, ctx: Context) => {
-      const [totalBots, activeBots, totalUsers, queuedBots] = await Promise.all([
+      const [totalBots, activeBots, totalUsers] = await Promise.all([
         ctx.prisma.bot.count(),
         ctx.prisma.bot.count({ where: { isActive: true } }),
         ctx.prisma.user.count(),
-        ctx.prisma.queueEntry.count({ where: { status: 'WAITING' } }),
       ]);
 
       return {
@@ -184,7 +166,6 @@ export const resolvers = {
         totalUsers,
         activeUsers24h: 0, // TODO: Implement
         totalMatches: 0, // TODO: Implement
-        queuedBots,
         totalEarnings: '0', // TODO: Implement
       };
     },
@@ -238,46 +219,6 @@ export const resolvers = {
       };
     },
 
-    queueStatus: async (_: any, __: any, ctx: Context) => {
-      // Get both WAITING and MATCHED entries
-      const [waitingEntries, matchedEntries] = await Promise.all([
-        ctx.prisma.queueEntry.groupBy({
-          by: ['queueType'],
-          where: { status: 'WAITING' },
-          _count: true,
-        }),
-        ctx.prisma.queueEntry.groupBy({
-          by: ['queueType'],
-          where: { status: 'MATCHED' },
-          _count: true,
-        })
-      ]);
-
-      // Count WAITING entries (these are actually in queue)
-      const totalWaiting = waitingEntries.reduce((sum, entry) => sum + entry._count, 0);
-      
-      // Count MATCHED entries (these are in active matches)
-      const totalMatched = matchedEntries.reduce((sum, entry) => sum + entry._count, 0);
-      
-      // For the queue display, we want to show WAITING players
-      // but we can add matched count for debugging
-      console.log(`Queue status: ${totalWaiting} waiting, ${totalMatched} matched`);
-      
-      // Get next match time from queue service
-      const nextMatchTime = getQueueService().getNextMatchTime();
-      
-      return {
-        totalInQueue: totalWaiting, // Only count waiting players as "in queue"
-        totalMatched, // Add this for debugging
-        averageWaitTime: 120, // TODO: Calculate from historical data
-        nextMatchTime,
-        queueTypes: waitingEntries.map(entry => ({
-          type: entry.queueType,
-          count: entry._count,
-          estimatedWaitTime: 120, // TODO: Calculate per queue type
-        })),
-      };
-    },
     
     match: async (_: any, { id }: { id: string }, ctx: Context) => {
       console.log(`\n=== Match Query ===`);
@@ -365,63 +306,9 @@ export const resolvers = {
     // Idle game queries
     ...idleGameResolvers.Query,
     
-    // Channel queries (proxy to metaverse backend)
-    channels: async (_: any, args: { type?: string; status?: string }) => {
-      try {
-        const response = await axios.post(`${METAVERSE_BACKEND_URL}/graphql`, {
-          query: `
-            query GetChannels($type: String, $status: String) {
-              channels(type: $type, status: $status) {
-                id
-                name
-                type
-                status
-                currentBots
-                maxBots
-                loadPercentage
-                worldId
-                region
-                description
-              }
-            }
-          `,
-          variables: { type: args.type, status: args.status }
-        });
-        return response.data.data.channels;
-      } catch (error: any) {
-        console.error('Failed to fetch channels from metaverse backend:', error.message);
-        // Return empty array as fallback
-        return [];
-      }
-    },
-    
-    channel: async (_: any, { name }: { name: string }) => {
-      try {
-        const response = await axios.post(`${METAVERSE_BACKEND_URL}/graphql`, {
-          query: `
-            query GetChannel($name: String!) {
-              channelByName(name: $name) {
-                id
-                name
-                type
-                status
-                currentBots
-                maxBots
-                loadPercentage
-                worldId
-                region
-                description
-              }
-            }
-          `,
-          variables: { name }
-        });
-        return response.data.data.channelByName;
-      } catch (error: any) {
-        console.error('Failed to fetch channel from metaverse backend:', error.message);
-        return null;
-      }
-    },
+    // Channel queries removed - metaverse backend no longer exists
+    channels: async () => [],
+    channel: async () => null,
     
     myBotChannels: async (_: any, __: any, ctx: Context) => {
       if (!ctx.user) {
@@ -440,23 +327,28 @@ export const resolvers = {
     
     // Idle game queries
     ...idleGameResolvers.Query,
+    
+    // Jackpot queries
+    ...jackpotResolvers.Query,
+    
+    // Betting tournament queries
+    ...bettingTournamentResolvers.Query,
   },
 
   Mutation: {
-    deployBot: async (_: any, { input }: any, ctx: Context) => {
+    adoptCompanion: async (_: any, { input }: any, ctx: Context) => {
       if (!ctx.user) {
         throw new Error('Not authenticated');
       }
 
       // Validate input
       if (!input.name || input.name.length > 30) {
-        throw new Error('Bot name must be between 1 and 30 characters');
+        throw new Error('Companion name must be between 1 and 30 characters');
       }
       
-      // Validate and sanitize prompt
-      const promptValidation = PromptValidator.validate(input.prompt);
-      if (!promptValidation.isValid) {
-        throw new Error(`Invalid prompt: ${promptValidation.errors.join(', ')}`);
+      // Validate personality
+      if (!['CRIMINAL', 'GAMBLER', 'WORKER'].includes(input.personality)) {
+        throw new Error('Invalid personality type');
       }
       
       // Validate Solana transaction signature (base58 encoded, typically 87-88 characters)
@@ -469,18 +361,44 @@ export const resolvers = {
         throw new Error('User wallet address not found. Please reconnect your wallet.');
       }
       
+      // Count existing companions for progressive pricing
+      const companionCount = await ctx.prisma.bot.count({
+        where: { creatorId: ctx.user.id }
+      });
+      
+      // Calculate required $IDLE based on progressive pricing
+      // 1st: 1k, 2nd: 5k, 3rd: 10k, 4th+: 20k
+      let requiredIDLE: number;
+      if (companionCount === 0) {
+        requiredIDLE = 1000;
+      } else if (companionCount === 1) {
+        requiredIDLE = 5000;
+      } else if (companionCount === 2) {
+        requiredIDLE = 10000;
+      } else {
+        requiredIDLE = 20000;
+      }
+      
+      // Check companion limit (max 10)
+      if (companionCount >= 10) {
+        throw new Error('Maximum companion limit reached (10 companions)');
+      }
+      
       // Use the original case-sensitive address for Solana validation
       const walletAddress = ctx.user.originalAddress || ctx.user.address;
-      console.log('🚀 Starting deployment validation');
+      console.log('🐾 Starting companion adoption');
       console.log('   Transaction signature:', input.txHash);
       console.log('   User wallet address:', walletAddress);
-      console.log('   Bot name:', input.name);
+      console.log('   Companion name:', input.name);
+      console.log('   Existing companions:', companionCount);
+      console.log('   Required $IDLE:', requiredIDLE);
       
       // Validate transaction on-chain
       const txService = new TransactionService(ctx.prisma);
-      const validation = await txService.validateDeploymentTransaction(
+      const validation = await txService.validateDeploymentTransactionWithAmount(
         input.txHash,
-        walletAddress
+        walletAddress,
+        requiredIDLE
       );
       
       if (!validation.isValid) {
@@ -504,23 +422,29 @@ export const resolvers = {
           throw new Error('Token ID collision, please try again');
         }
         
-        // Determine metaverse character from sprite ID
-        const metaverseCharacter = input.spriteId 
-          ? getMetaverseCharacter(input.spriteId, input.personality || 'WORKER')
-          : getMetaverseCharacter(null, input.personality || 'WORKER', input.name);
+        // Generate avatar based on personality
+        const avatarMap: Record<string, string> = {
+          CRIMINAL: '/sprites/criminal.png',
+          GAMBLER: '/sprites/gambler.png',
+          WORKER: '/sprites/worker.png'
+        };
         
-        // Channel system removed - no longer needed
+        // Generate a simple companion prompt based on personality
+        const promptMap: Record<string, string> = {
+          CRIMINAL: 'A cunning companion who loves chaos and high-risk strategies',
+          GAMBLER: 'A lucky companion who thrives on streaks and calculated risks',
+          WORKER: 'A diligent companion who grinds steadily toward success'
+        };
         
-        // Create the bot
+        // Create the companion (bot)
         const newBot = await prisma.bot.create({
           data: {
             tokenId,
             name: input.name,
-            avatar: input.avatar,
-            prompt: promptValidation.sanitized,
-            modelType: input.modelType,
-            personality: input.personality || 'WORKER', // Default to WORKER if not provided
-            character: metaverseCharacter, // Set the character for sprite consistency
+            avatar: avatarMap[input.personality as string],
+            prompt: promptMap[input.personality as string],
+            personality: input.personality,
+            character: getMetaverseCharacter(null, input.personality, input.name), // For sprite consistency
             creatorId: ctx.user!.id,
             isActive: true,
             stats: {
@@ -558,10 +482,10 @@ export const resolvers = {
         return newBot;
       });
       
-      // Metaverse deployment removed - bot is ready to use immediately
-      logger.info(`✅ Bot ${bot.name} successfully created`);
+      // Companion is ready to generate XP immediately
+      logger.info(`✅ Companion ${bot.name} successfully adopted (Companion #${companionCount + 1})`);
       
-      // TODO: Emit bot deployed event for subscriptions
+      // TODO: Emit companion adopted event for subscriptions
       
       return bot;
     },
@@ -591,6 +515,73 @@ export const resolvers = {
     },
 
     // updateBotExperience moved to idleGameResolvers.Mutation
+    
+    burnCompanionForSOL: async (_: any, { companionId }: { companionId: string }, ctx: Context) => {
+      if (!ctx.user) {
+        throw new Error('Not authenticated');
+      }
+      
+      // Get companion with experience data
+      const companion = await ctx.prisma.bot.findUnique({
+        where: { id: companionId },
+        include: { 
+          experience: true,
+          creator: true
+        }
+      });
+      
+      if (!companion) {
+        throw new Error('Companion not found');
+      }
+      
+      if (companion.creatorId !== ctx.user.id) {
+        throw new Error('This companion does not belong to you');
+      }
+      
+      // Check if companion is at level 100
+      if (!companion.experience || companion.experience.level < 100) {
+        throw new Error(`Companion must be level 100 to burn. Current level: ${companion.experience?.level || 1}`);
+      }
+      
+      const SOL_REWARD = 0.5; // 0.5 SOL reward for burning level 100 companion
+      
+      try {
+        // In production, this would initiate a Solana transaction to send SOL to the user
+        // For now, we'll simulate it
+        console.log(`🔥 Burning companion ${companion.name} (Level ${companion.experience.level})`);
+        console.log(`   Rewarding ${SOL_REWARD} SOL to ${ctx.user.address}`);
+        
+        // TODO: Implement actual Solana transaction
+        // const txHash = await solanaService.sendSOL(ctx.user.address, SOL_REWARD);
+        const txHash = `burn_${Date.now()}_${companionId}`; // Mock transaction hash
+        
+        // Delete companion and all related data
+        await ctx.prisma.$transaction([
+          // Delete related records first
+          ctx.prisma.matchParticipant.deleteMany({ where: { botId: companionId } }),
+          ctx.prisma.tournamentParticipant.deleteMany({ where: { botId: companionId } }),
+          ctx.prisma.comment.deleteMany({ where: { botId: companionId } }),
+          ctx.prisma.like.deleteMany({ where: { botId: companionId } }),
+          ctx.prisma.bettingEntry.deleteMany({ where: { botId: companionId } }),
+          // Delete the companion (cascade will handle other relations)
+          ctx.prisma.bot.delete({ where: { id: companionId } })
+        ]);
+        
+        console.log(`✅ Successfully burned companion ${companion.name} for ${SOL_REWARD} SOL`);
+        
+        return {
+          success: true,
+          message: `Successfully burned ${companion.name} for ${SOL_REWARD} SOL!`,
+          burnedCompanionId: companionId,
+          solReward: SOL_REWARD,
+          txHash
+        };
+      } catch (error: any) {
+        console.error('Error burning companion:', error);
+        throw new Error(`Failed to burn companion: ${error.message}`);
+      }
+    },
+    
     deleteBot: async (_: any, { botId }: { botId: string }, ctx: Context) => {
       if (!ctx.user) {
         throw new Error('Not authenticated');
@@ -610,18 +601,6 @@ export const resolvers = {
 
       if (bot.creatorId !== ctx.user.id) {
         throw new Error('Not authorized to delete this bot');
-      }
-
-      // Proactively remove any queue entries for this bot to allow deletion.
-      // This handles stale WAITING/MATCHED entries that can block deletion even when the UI shows empty queue.
-      await ctx.prisma.queueEntry.deleteMany({ where: { botId } });
-
-      // (No-op) Kept for logging symmetry; entries already removed above
-      // If any remain due to race conditions, remove them again defensively
-      const remainingEntries = await ctx.prisma.queueEntry.count({ where: { botId } });
-      if (remainingEntries > 0) {
-        console.log(`Deleting ${remainingEntries} remaining queue entries for bot ${botId} (post-cleanup)`);
-        await ctx.prisma.queueEntry.deleteMany({ where: { botId } });
       }
 
       let metaverseDeleted = false;
@@ -671,92 +650,6 @@ export const resolvers = {
       }
     },
     
-    enterQueue: async (_: any, { botId, queueType }: { botId: string; queueType: string }, ctx: Context) => {
-      if (!ctx.user) {
-        throw new Error('Not authenticated');
-      }
-      
-      const bot = await ctx.prisma.bot.findUnique({
-        where: { id: botId },
-      });
-      
-      if (!bot) {
-        throw new Error('Bot not found');
-      }
-      
-      if (bot.creatorId !== ctx.user.id) {
-        throw new Error('Not authorized');
-      }
-      
-      if (!bot.isActive) {
-        throw new Error('Bot is not active');
-      }
-      
-      console.log(`User ${ctx.user.address} entering queue with bot ${bot.name} (${botId}), isDemo: ${bot.isDemo}`);
-      
-      // Check if already in queue
-      const existingEntry = await ctx.prisma.queueEntry.findFirst({
-        where: {
-          botId,
-          status: 'WAITING',
-        },
-      });
-      
-      if (existingEntry) {
-        throw new Error('Bot is already in queue');
-      }
-      
-      return ctx.prisma.queueEntry.create({
-        data: {
-          botId,
-          queueType: queueType as QueueType,
-          priority: queueType === 'PRIORITY' ? 1 : 0,
-          status: 'WAITING',
-          enteredAt: new Date(),
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-        },
-        include: {
-          bot: {
-            include: { creator: true },
-          },
-        },
-      });
-    },
-    
-    leaveQueue: async (_: any, { botId }: { botId: string }, ctx: Context) => {
-      if (!ctx.user) {
-        throw new Error('Not authenticated');
-      }
-      
-      const bot = await ctx.prisma.bot.findUnique({
-        where: { id: botId },
-      });
-      
-      if (!bot) {
-        throw new Error('Bot not found');
-      }
-      
-      if (bot.creatorId !== ctx.user.id) {
-        throw new Error('Not authorized');
-      }
-      
-      // Prevent demo bots from being removed from queue
-      if (bot.isDemo) {
-        throw new Error('Demo bots cannot be removed from queue');
-      }
-      
-      const result = await ctx.prisma.queueEntry.updateMany({
-        where: {
-          botId,
-          status: 'WAITING',
-        },
-        data: {
-          status: 'CANCELLED',
-        },
-      });
-      
-      return result.count > 0;
-    },
     
     signalFrontendReady: async (_: any, { matchId }: { matchId: string }, ctx: Context) => {
       if (!ctx.user) {
@@ -776,17 +669,6 @@ export const resolvers = {
       return gameManagerService.startReverseHangmanRound(matchId, difficulty);
     },
     
-    setTestGameType: async (_: any, { gameType }: { gameType: string | null }) => {
-      // Only allow in development mode
-      if (process.env.NODE_ENV === 'production') {
-        throw new Error('Test mode is not available in production');
-      }
-      
-      const queueService = getQueueService();
-      queueService.setTestGameTypeOverride(gameType);
-      
-      return true;
-    },
     
     leaveGame: async (_: any, { gameId }: { gameId: string }, ctx: Context) => {
       if (!ctx.user) {
@@ -1427,15 +1309,22 @@ export const resolvers = {
     // Idle game mutations
     ...idleGameResolvers.Mutation,
     
-    // Channel mutations (proxy to metaverse backend)
-    switchChannel: async (_: any, { botId, channelName }: { botId: string; channelName: string }, ctx: Context) => {
+    // Jackpot mutations
+    ...jackpotResolvers.Mutation,
+    
+    // Betting tournament mutations
+    ...bettingTournamentResolvers.Mutation,
+    
+    // Channel mutations removed - metaverse backend no longer exists
+    switchChannel: async (_: any, { botId }: { botId: string; channelName?: string }, ctx: Context) => {
+      // Metaverse system removed - just return the bot
       if (!ctx.user) {
         throw new Error('Not authenticated');
       }
       
-      // Verify bot ownership
       const bot = await ctx.prisma.bot.findUnique({
         where: { id: botId },
+        include: { creator: true },
       });
       
       if (!bot) {
@@ -1446,35 +1335,7 @@ export const resolvers = {
         throw new Error('Not authorized');
       }
       
-      try {
-        // Call metaverse backend to switch channel
-        const response = await axios.post(`${METAVERSE_BACKEND_URL}/graphql`, {
-          query: `
-            mutation SwitchChannel($botId: String!, $channelName: String!) {
-              switchChannel(botId: $botId, channelName: $channelName) {
-                id
-                channel
-              }
-            }
-          `,
-          variables: { botId, channelName }
-        });
-        
-        if (response.data.errors) {
-          throw new Error(response.data.errors[0].message);
-        }
-        
-        // Channel field removed from Bot model - just return the original bot
-        const updatedBot = await ctx.prisma.bot.findUnique({
-          where: { id: botId },
-          include: { creator: true },
-        });
-        
-        return updatedBot;
-      } catch (error: any) {
-        console.error('Failed to switch channel:', error.message);
-        throw new Error(`Failed to switch channel: ${error.message}`);
-      }
+      return bot;
     },
   },
 
@@ -1485,25 +1346,6 @@ export const resolvers = {
       },
     },
 
-    queueUpdate: {
-      subscribe: (_: any, __: any, ctx: Context) => {
-        console.log('🔔 Queue update subscription requested:', {
-          hasPubsub: !!ctx.pubsub,
-          hasAsyncIterator: typeof (ctx.pubsub as any)?.asyncIterator === 'function',
-          pubsubType: ctx.pubsub?.constructor?.name
-        });
-        
-        if (!ctx.pubsub) {
-          throw new Error('PubSub not initialized in context');
-        }
-        
-        if (typeof (ctx.pubsub as any).asyncIterator !== 'function') {
-          throw new Error('PubSub does not have asyncIterator method');
-        }
-        
-        return (ctx.pubsub as TypedPubSub).asyncIterator(['QUEUE_UPDATE']);
-      },
-    },
 
     botDeployed: {
       subscribe: (_: any, __: any, ctx: Context) => {
@@ -1522,6 +1364,12 @@ export const resolvers = {
     
     // Economy subscriptions
     ...economyResolvers.Subscription,
+    
+    // Jackpot subscriptions
+    ...jackpotResolvers.Subscription,
+    
+    // Betting tournament subscriptions
+    ...bettingTournamentResolvers.Subscription,
   },
 
   Bot: {
@@ -1644,29 +1492,7 @@ export const resolvers = {
     },
     // Metaverse fields removed - using idle game instead
     // BotSync removed - no longer needed
-    queuePosition: async (bot: any, _: any, ctx: Context) => {
-      const entry = await ctx.prisma.queueEntry.findFirst({
-        where: {
-          botId: bot.id,
-          status: 'WAITING',
-        },
-      });
-      
-      if (!entry) return null;
-      
-      // Calculate position in queue
-      const position = await ctx.prisma.queueEntry.count({
-        where: {
-          status: 'WAITING',
-          queueType: entry.queueType,
-          enteredAt: {
-            lt: entry.enteredAt,
-          },
-        },
-      });
-      
-      return position + 1;
-    },
+    // Queue system removed - no longer needed
     currentMatch: async (bot: any, _: any, ctx: Context) => {
       // Find active match where this bot is participating
       // Only return matches that are actually in progress and recent (within last hour)
@@ -1714,18 +1540,6 @@ export const resolvers = {
       }
       
       return currentMatch;
-    },
-    queueEntries: async (bot: any, _: any, ctx: Context) => {
-      // Return queue entries for this bot
-      const entries = await ctx.prisma.queueEntry.findMany({
-        where: {
-          botId: bot.id,
-        },
-        include: {
-          bot: true,
-        },
-      });
-      return entries || [];
     },
     // Idle game fields
     activityLogs: async (bot: any, _: any, ctx: Context) => {
@@ -1783,6 +1597,11 @@ export const resolvers = {
   BotActivityScore: economyResolvers.BotActivityScore,
   LootboxReward: economyResolvers.LootboxReward,
   Trade: economyResolvers.Trade,
+  
+  // Betting tournament type resolvers
+  BettingTournament: bettingTournamentResolvers.BettingTournament,
+  BettingParticipant: bettingTournamentResolvers.BettingParticipant,
+  StakedIDLE: bettingTournamentResolvers.StakedIDLE,
 };
 
 function getOrderBy(sort: string): any {

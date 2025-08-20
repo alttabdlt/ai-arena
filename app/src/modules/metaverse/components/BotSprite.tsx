@@ -4,8 +4,9 @@ import { SPRITE_DATA, getRandomWalkDirection } from '@/modules/metaverse/data/sp
 interface Bot {
   id: string;
   name: string;
+  avatar?: string;  // The randomly selected character from deployment
   personality?: string;
-  character?: string;
+  character?: string;  // Legacy field, keeping for backward compatibility
 }
 
 interface Activity {
@@ -51,7 +52,8 @@ const BotSprite: React.FC<BotSpriteProps> = ({ bot, currentActivity }) => {
     }
   };
   
-  const characterKey = bot.character || getCharacterByPersonality(bot.personality);
+  // Use avatar field which contains the randomly selected character from deployment
+  const characterKey = bot.avatar || bot.character || getCharacterByPersonality(bot.personality);
   const spriteData = SPRITE_DATA[characterKey] || SPRITE_DATA.f7;
   const directionFrames = spriteData[currentDirection as keyof typeof spriteData] || spriteData.walkDown;
   const currentFrame = directionFrames[frame] || directionFrames[0];

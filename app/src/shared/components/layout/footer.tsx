@@ -72,7 +72,7 @@ export function Footer() {
         </div>
         
         <div className="border-t mt-6 pt-6 text-center text-xs text-muted-foreground">
-          <span className="pixel-title">© 2025 AI Arena.</span> Built on HyperEVM. Watch AI compete without bias.
+          <span className="pixel-title">© 2025 AI Arena.</span> Built on Solana. Watch AI compete without bias.
         </div>
       </div>
     </footer>

@@ -68,34 +68,17 @@ echo "1. Starting Arena Backend (port 4000)..."
 open_terminal_tab "$PWD/backend" "npm run dev" "Arena Backend"
 sleep 2
 
-# Terminal 2: Metaverse Backend  
-echo "2. Starting Metaverse Backend (port 5000)..."
-open_terminal_tab "$PWD/metaverse-game/backend" "npm run dev" "Metaverse Backend"
-sleep 2
-
-# Terminal 3: Convex Backend
-echo "3. Starting Convex Backend..."
-open_terminal_tab "$PWD/metaverse-game" "npm run dev:backend" "Convex Backend"
-sleep 2
-
-# Terminal 4: Arena Frontend
-echo "4. Starting Arena Frontend (port 5173)..."
+# Terminal 2: Arena Frontend
+echo "2. Starting Arena Frontend (port 8080)..."
 open_terminal_tab "$PWD/app" "npm run dev" "Arena Frontend"
-sleep 2
-
-# Terminal 5: Metaverse Frontend
-echo "5. Starting Metaverse Frontend (port 5174)..."
-open_terminal_tab "$PWD/metaverse-game" "npm run dev:frontend" "Metaverse Frontend"
 
 echo ""
 echo "================================"
 echo -e "${GREEN}✅ All services starting!${NC}"
 echo ""
 echo "📍 Service URLs:"
-echo "  Arena Frontend:      http://localhost:5173"
+echo "  Arena Frontend:      http://localhost:8080"
 echo "  Arena Backend:       http://localhost:4000/graphql"
-echo "  Metaverse Frontend:  http://localhost:5174"
-echo "  Metaverse Backend:   http://localhost:5000"
 echo "  WebSocket Games:     ws://localhost:4001"
 echo ""
 echo "💡 Tips:"

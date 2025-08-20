@@ -18,8 +18,5 @@
   ],
   "app/**/*.{ts,tsx}": [
     "cd app && npx tsc --noEmit"
-  ],
-  "metaverse-game/**/*.{ts,tsx}": [
-    "cd metaverse-game && npx tsc --noEmit || true"
   ]
 }

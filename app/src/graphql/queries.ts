@@ -4,31 +4,39 @@ import { gql } from '@apollo/client';
 export const BOT_FRAGMENT = gql`
   fragment BotFields on Bot {
     id
-    address
+    tokenId
     name
-    description
-    imageUrl
-    tags
+    avatar
+    prompt
+    personality
+    isActive
+    isDemo
     createdAt
+    updatedAt
     creator {
       id
-      address
     }
-    bondingCurve {
-      id
-      currentSupply
-      currentPrice
-      marketCap
-      volume24h
-      holders
-      graduated
-      graduatedAt
+    stats {
+      power
+      defense
+      speed
+      intelligence
+      psyche
+      energy
     }
     socialStats {
       likes
       comments
       followers
     }
+    experience {
+      id
+      level
+      currentXP
+      totalXP
+      xpToNextLevel
+    }
+    character
   }
 `;
 

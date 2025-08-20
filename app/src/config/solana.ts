@@ -128,15 +128,41 @@ export async function fetchSolPriceData(): Promise<{
 // The $IDLE token will be launched after the application is complete
 // Configuration below is kept for reference but not used during testing
 
-/*
+// Temporarily export for development - will be replaced with real token
 export const IDLE_TOKEN = {
-  mint: new PublicKey('IDLE_TOKEN_MINT_ADDRESS'), // Will be set after token launch
+  mint: new PublicKey('11111111111111111111111111111111'), // Placeholder
   decimals: 9,
   symbol: 'IDLE',
   name: 'IDLE - AI Arena Token',
   pumpfunUrl: 'https://pump.fun/IDLE' // Will be set after launch
 };
 
+// Format IDLE amounts for display
+export function formatIdleAmount(amount: number): string {
+  if (amount === 0) return '0 $IDLE';
+  if (amount < 1) return `${amount.toFixed(4)} $IDLE`;
+  if (amount < 1000) return `${amount.toFixed(2)} $IDLE`;
+  if (amount < 1000000) return `${(amount / 1000).toFixed(1)}K $IDLE`;
+  return `${(amount / 1000000).toFixed(2)}M $IDLE`;
+}
+
+// Fetch IDLE price data (placeholder for now)
+export async function fetchIdlePriceData(): Promise<{
+  price: number;
+  marketCap: number;
+  volume24h: number;
+  priceChange24h: number;
+} | null> {
+  // Placeholder data until token launches
+  return {
+    price: 0.001,
+    marketCap: 1000000,
+    volume24h: 100000,
+    priceChange24h: 0
+  };
+}
+
+/*
 // Idle rewards configuration (FOR MAINNET)
 export const IDLE_REWARDS = {
   baseRate: 100, // 100 $IDLE per hour

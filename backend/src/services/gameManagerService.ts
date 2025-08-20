@@ -62,7 +62,6 @@ class GameManagerService {
     this.adapters.set('poker', GameEngineAdapterFactory.create('poker'));
     this.adapters.set('reverse-hangman', GameEngineAdapterFactory.create('reverse-hangman'));
     this.adapters.set('connect4', GameEngineAdapterFactory.create('connect4'));
-    this.adapters.set('battleship', GameEngineAdapterFactory.create('battleship'));
 
     // Start cleanup interval
     this.startCleanupProcess();
@@ -106,14 +105,20 @@ class GameManagerService {
     // Store in Redis for persistence
     await this.saveGameState(gameId, game);
 
-    // Update match status in database
-    await prisma.match.update({
-      where: { id: gameId },
-      data: {
-        status: 'IN_PROGRESS',
-        startedAt: new Date(),
-      },
-    });
+    // Update match status in database if it exists
+    // Note: For tournament games, the match might not exist yet
+    try {
+      await prisma.match.update({
+        where: { id: gameId },
+        data: {
+          status: 'IN_PROGRESS',
+          startedAt: new Date(),
+        },
+      });
+    } catch (error) {
+      // Match doesn't exist - this is fine for tournament games
+      console.log(`Match record not found for game ${gameId}, continuing without database update`);
+    }
 
     return game;
   }
@@ -213,9 +218,6 @@ class GameManagerService {
         break;
       case 'connect4':
         await this.processConnect4Turn(game);
-        break;
-      case 'battleship':
-        await this.processBattleshipTurn(game);
         break;
       case 'chess':
       case 'go':
@@ -625,103 +627,6 @@ class GameManagerService {
       if (game.type === 'poker' && game.state.handNumber) {
         decisionData.handNumber = game.state.handNumber;
       }
-      
-      this.publishUpdate({
-        gameId: game.id,
-        type: 'decision',
-        data: decisionData,
-        timestamp: new Date(),
-      });
-      
-      // Publish thinking complete event
-      this.publishUpdate({
-        gameId: game.id,
-        type: 'event',
-        data: { event: 'thinking_complete', playerId: currentTurn },
-        timestamp: new Date(),
-      });
-    } catch (error) {
-      console.error(`AI decision failed for player ${currentTurn}:`, error);
-      // Apply timeout action
-      game.state = adapter.processAction(game.state, { 
-        type: 'timeout', 
-        playerId: currentTurn,
-        timestamp: new Date().toISOString()
-      });
-    } finally {
-      // Always clear thinking state
-      game.aiThinking.delete(currentTurn);
-    }
-  }
-
-  private async processBattleshipTurn(game: GameInstance): Promise<void> {
-    const adapter = this.adapters.get('battleship');
-    if (!adapter) {
-      console.error('Battleship adapter not found');
-      return;
-    }
-
-    const currentTurn = adapter.getCurrentTurn(game.state);
-    
-    if (!currentTurn || adapter.isGameComplete(game.state)) {
-      // Check if game is complete
-      if (adapter.isGameComplete(game.state)) {
-        game.status = 'completed';
-        const winner = adapter.getWinner(game.state);
-        if (winner) {
-          console.log(`Game ${game.id} completed. Winner: ${winner}`);
-        }
-        // Handle game completion (including auto-requeue for demo bots)
-        await this.handleGameComplete(game);
-      }
-      return;
-    }
-
-    const currentPlayer = game.state.players.find((p: any) => p.id === currentTurn);
-    if (!currentPlayer || !currentPlayer.isAI) {
-      return;
-    }
-
-    // Check if this AI is already thinking
-    if (game.aiThinking.has(currentTurn)) {
-      console.log(`AI ${currentTurn} is already thinking, skipping turn processing`);
-      return;
-    }
-
-    // Get valid actions
-    const validActions = adapter.getValidActions(game.state, currentTurn);
-    
-    // Mark AI as thinking
-    game.aiThinking.add(currentTurn);
-    console.log(`🚢 [Battleship] AI ${currentPlayer.name} (${currentTurn}) marked as thinking. Currently thinking: ${game.aiThinking.size} players`);
-    
-    // Publish thinking start event
-    this.publishUpdate({
-      gameId: game.id,
-      type: 'event',
-      data: { event: 'thinking_start', playerId: currentTurn },
-      timestamp: new Date(),
-    });
-    
-    // Get AI decision
-    try {
-      const decision = await this.getAIDecision(game, currentTurn, validActions);
-      
-      // Log Battleship decision details
-      console.log('Battleship AI decision received:', {
-        playerId: currentTurn,
-        actionType: decision.type,
-        coordinate: decision.coordinate,
-        shipId: decision.shipId,
-        reasoning: decision.reasoning,
-        confidence: decision.confidence
-      });
-      
-      // Apply decision to game state using adapter
-      game.state = adapter.processAction(game.state, decision);
-
-      // Publish decision event
-      const decisionData: any = { playerId: currentTurn, decision };
       
       this.publishUpdate({
         gameId: game.id,
@@ -1550,32 +1455,42 @@ class GameManagerService {
       const adapter = this.adapters.get(game.type);
       const finalRankings = adapter?.getFinalRankings ? adapter.getFinalRankings(game.state) : [];
       
-      // Update match status in database
-      await prisma.match.update({
-        where: { id: game.id },
-        data: {
-          status: 'COMPLETED',
-          completedAt: new Date(),
-        },
-      });
+      // Update match status in database if it exists
+      try {
+        await prisma.match.update({
+          where: { id: game.id },
+          data: {
+            status: 'COMPLETED',
+            completedAt: new Date(),
+          },
+        });
+      } catch (error) {
+        // Match doesn't exist - this is fine for tournament games
+        console.log(`Match record not found for completed game ${game.id}, continuing without database update`);
+      }
       
-      // Update participant rankings
+      // Update participant rankings if match exists
       if (finalRankings.length > 0) {
-        for (const ranking of finalRankings) {
-          await prisma.matchParticipant.updateMany({
-            where: {
-              matchId: game.id,
-              botId: ranking.playerId,
-            },
-            data: {
-              finalRank: ranking.rank,
-              points: ranking.points || 0,
-            },
-          });
+        try {
+          for (const ranking of finalRankings) {
+            await prisma.matchParticipant.updateMany({
+              where: {
+                matchId: game.id,
+                botId: ranking.playerId,
+              },
+              data: {
+                finalRank: ranking.rank,
+                points: ranking.points || 0,
+              },
+            });
+          }
+        } catch (error) {
+          // MatchParticipants don't exist - this is fine for tournament games
+          console.log(`MatchParticipant records not found for game ${game.id}, skipping ranking updates`);
         }
       }
 
-      // Get all bots that participated in this tournament
+      // Get all bots that participated in this tournament (may be empty for tournament games)
       const participants = await prisma.matchParticipant.findMany({
         where: { matchId: game.id },
         include: { bot: true },

@@ -10,24 +10,6 @@ export const TOGGLE_BOT_ACTIVE = gql`
   }
 `;
 
-export const ENTER_QUEUE = gql`
-  mutation EnterQueue($botId: String!, $queueType: QueueType!) {
-    enterQueue(botId: $botId, queueType: $queueType) {
-      id
-      botId
-      queueType
-      status
-      enteredAt
-      expiresAt
-      bot {
-        id
-        name
-        avatar
-      }
-    }
-  }
-`;
-
 export const DELETE_BOT = gql`
   mutation DeleteBot($botId: String!) {
     deleteBot(botId: $botId) {

@@ -1,6 +1,56 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useMutation } from '@apollo/client';
-import { UPDATE_BOT_EXPERIENCE, LOG_BOT_ACTIVITY } from '@/modules/metaverse/queries';
+import { useMutation, useQuery } from '@apollo/client';
+import { gql } from '@apollo/client';
+
+// GraphQL Queries and Mutations
+const UPDATE_BOT_EXPERIENCE = gql`
+  mutation UpdateBotExperience($botId: String!, $xpGained: Int!) {
+    updateBotExperience(botId: $botId, xpGained: $xpGained) {
+      id
+      level
+      currentXP
+      totalXP
+      xpToNextLevel
+    }
+  }
+`;
+
+const LOG_BOT_ACTIVITY = gql`
+  mutation LogBotActivity(
+    $botId: String!
+    $activity: String!
+    $emoji: String!
+    $personality: String!
+    $xpGained: Int!
+  ) {
+    logBotActivity(
+      botId: $botId
+      activity: $activity
+      emoji: $emoji
+      personality: $personality
+      xpGained: $xpGained
+    ) {
+      id
+    }
+  }
+`;
+
+const CHECK_JACKPOT_WIN = gql`
+  mutation CheckJackpotWin($botId: String!) {
+    checkJackpotWin(botId: $botId) {
+      won
+      amount
+    }
+  }
+`;
+
+const CONTRIBUTE_TO_JACKPOT = gql`
+  mutation ContributeToJackpot($xpAmount: Int!) {
+    contributeToJackpot(xpAmount: $xpAmount) {
+      contribution
+    }
+  }
+`;
 
 // Activity pools by personality
 const ACTIVITIES = {
@@ -13,6 +63,8 @@ const ACTIVITIES = {
     { emoji: '🎭', activity: 'Creating fake identities' },
     { emoji: '💊', activity: 'Moving contraband' },
     { emoji: '🔓', activity: 'Picking locks' },
+    { emoji: '🏦', activity: 'Casing the bank' },
+    { emoji: '💣', activity: 'Setting up explosives' },
   ],
   GAMBLER: [
     { emoji: '🎰', activity: 'Playing slots' },
@@ -23,6 +75,8 @@ const ACTIVITIES = {
     { emoji: '🍀', activity: 'Testing luck' },
     { emoji: '💎', activity: 'Chasing jackpots' },
     { emoji: '🎪', activity: 'Bluffing opponents' },
+    { emoji: '🎱', activity: 'Shooting pool' },
+    { emoji: '🎮', activity: 'Playing arcade games' },
   ],
   WORKER: [
     { emoji: '⚒️', activity: 'Mining resources' },
@@ -33,6 +87,8 @@ const ACTIVITIES = {
     { emoji: '🏪', activity: 'Managing shop' },
     { emoji: '🚚', activity: 'Delivering goods' },
     { emoji: '📝', activity: 'Filing reports' },
+    { emoji: '🌾', activity: 'Harvesting crops' },
+    { emoji: '🛠️', activity: 'Crafting items' },
   ],
 };
 
@@ -43,10 +99,18 @@ const XP_RATES = {
   WORKER: 1.5,    // 50% bonus
 };
 
+// Jackpot chances per personality
+const JACKPOT_MULTIPLIERS = {
+  CRIMINAL: 1.2,  // 20% better odds
+  GAMBLER: 1.5,   // 50% better odds (lucky!)
+  WORKER: 1.0,    // Standard odds
+};
+
 const BASE_XP_PER_TICK = 1;
 const TICK_INTERVAL = 3000; // 3 seconds
 const ACTIVITY_ROTATION_INTERVAL = 15000; // 15 seconds
 const SAVE_INTERVAL = 30000; // 30 seconds
+const JACKPOT_CONTRIBUTION_RATE = 0.01; // 1% of XP to jackpot
 
 interface Activity {
   emoji: string;
@@ -54,28 +118,33 @@ interface Activity {
   xpGained?: number;
 }
 
-interface UseIdleLoopParams {
-  botId: string | null;
-  personality: string;
-  initialLevel?: number;
-  initialCurrentXP?: number;
-  initialTotalXP?: number;
-  initialXPToNextLevel?: number;
+interface JackpotWin {
+  won: boolean;
+  amount?: number;
 }
 
-export const useIdleLoop = ({ 
-  botId, 
+interface UseIdleLoopWithJackpotProps {
+  botId: string | null;
+  botName?: string;
+  personality?: string;
+  onJackpotWin?: (amount: number) => void;
+  riskMode?: 'SAFE' | 'DEGEN' | 'YOLO';
+}
+
+export const useIdleLoopWithJackpot = ({
+  botId,
+  botName = 'Bot',
   personality = 'WORKER',
-  initialLevel = 1,
-  initialCurrentXP = 0,
-  initialTotalXP = 0,
-  initialXPToNextLevel = 100
-}: UseIdleLoopParams) => {
+  onJackpotWin,
+  riskMode = 'SAFE'
+}: UseIdleLoopWithJackpotProps) => {
   const [currentActivity, setCurrentActivity] = useState<Activity | null>(null);
-  const [level, setLevel] = useState(initialLevel);
-  const [xp, setXp] = useState(initialCurrentXP);
-  const [maxXp, setMaxXp] = useState(initialXPToNextLevel);
-  const [totalXp, setTotalXp] = useState(initialTotalXP);
+  const [level, setLevel] = useState(1);
+  const [xp, setXp] = useState(0);
+  const [maxXp, setMaxXp] = useState(100);
+  const [totalXp, setTotalXp] = useState(0);
+  const [jackpotContributions, setJackpotContributions] = useState(0);
+  const [lastJackpotWin, setLastJackpotWin] = useState<number | null>(null);
   
   const tickIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activityIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -96,13 +165,27 @@ export const useIdleLoop = ({
     }
   });
 
-  // Update state when initial values change (e.g., bot switch or data load)
-  useEffect(() => {
-    setLevel(initialLevel);
-    setXp(initialCurrentXP);
-    setMaxXp(initialXPToNextLevel);
-    setTotalXp(initialTotalXP);
-  }, [initialLevel, initialCurrentXP, initialXPToNextLevel, initialTotalXP]);
+  const [checkJackpotWin] = useMutation(CHECK_JACKPOT_WIN, {
+    onError: (error) => {
+      console.error('Failed to check jackpot:', error);
+    }
+  });
+
+  const [contributeToJackpot] = useMutation(CONTRIBUTE_TO_JACKPOT, {
+    onError: (error) => {
+      console.error('Failed to contribute to jackpot:', error);
+    }
+  });
+
+  // Risk mode multipliers
+  const getRiskMultiplier = () => {
+    switch (riskMode) {
+      case 'SAFE': return 0.5;
+      case 'DEGEN': return 2.0;
+      case 'YOLO': return 5.0;
+      default: return 1.0;
+    }
+  };
 
   // Calculate XP required for next level
   const calculateMaxXp = useCallback((currentLevel: number) => {
@@ -125,13 +208,14 @@ export const useIdleLoop = ({
     
     const activity = activities[nextIndex];
     const xpRate = XP_RATES[personalityType as keyof typeof XP_RATES] || 1.0;
-    const xpGained = Math.floor(BASE_XP_PER_TICK * xpRate);
+    const riskMultiplier = getRiskMultiplier();
+    const xpGained = Math.floor(BASE_XP_PER_TICK * xpRate * riskMultiplier);
     
     return {
       ...activity,
       xpGained
     };
-  }, []);
+  }, [riskMode]);
 
   // Rotate activity
   const rotateActivity = useCallback(() => {
@@ -152,19 +236,69 @@ export const useIdleLoop = ({
           xpGained: newActivity.xpGained
         }
       }).catch(err => {
-        // Silently fail for now - activity logging is not critical
         console.debug('Activity log failed:', err);
       });
     }
   }, [botId, personality, getRandomActivity, logActivity]);
 
-  // Handle XP tick - removed currentActivity dependency to prevent infinite loop
-  const handleXpTick = useCallback(() => {
+  // Handle XP tick with jackpot integration
+  const handleXpTick = useCallback(async () => {
     if (!botId || !hasActivityRef.current) return;
     
     const xpRate = XP_RATES[personality as keyof typeof XP_RATES] || 1.0;
-    const xpGained = Math.floor(BASE_XP_PER_TICK * xpRate);
+    const riskMultiplier = getRiskMultiplier();
+    const xpGained = Math.floor(BASE_XP_PER_TICK * xpRate * riskMultiplier);
     
+    // Risk mode loss chance (YOLO mode can lose XP)
+    if (riskMode === 'YOLO' && Math.random() < 0.1) { // 10% chance to lose
+      const loss = Math.floor(xpGained * 2);
+      setXp(prev => Math.max(0, prev - loss));
+      setTotalXp(prev => Math.max(0, prev - loss));
+      console.log(`💀 YOLO mode loss! Lost ${loss} XP`);
+      return;
+    }
+    
+    // Contribute to jackpot (1% of XP gained)
+    const jackpotContribution = Math.floor(xpGained * JACKPOT_CONTRIBUTION_RATE);
+    if (jackpotContribution > 0) {
+      contributeToJackpot({
+        variables: { xpAmount: xpGained }
+      }).then(() => {
+        setJackpotContributions(prev => prev + jackpotContribution);
+      }).catch(err => {
+        console.debug('Jackpot contribution failed:', err);
+      });
+    }
+    
+    // Check for jackpot win (with personality bonus)
+    const jackpotBonus = JACKPOT_MULTIPLIERS[personality as keyof typeof JACKPOT_MULTIPLIERS] || 1.0;
+    const winChance = 0.001 * jackpotBonus * (riskMode === 'YOLO' ? 2 : 1); // Double chance in YOLO mode
+    
+    if (Math.random() < winChance) {
+      try {
+        const result = await checkJackpotWin({
+          variables: { botId }
+        });
+        
+        if (result.data?.checkJackpotWin?.won) {
+          const winAmount = result.data.checkJackpotWin.amount;
+          setLastJackpotWin(winAmount);
+          setXp(prev => prev + winAmount);
+          setTotalXp(prev => prev + winAmount);
+          
+          // Trigger callback
+          if (onJackpotWin) {
+            onJackpotWin(winAmount);
+          }
+          
+          console.log(`🎰 JACKPOT WIN! ${botName} won ${winAmount} $IDLE!`);
+        }
+      } catch (err) {
+        console.error('Jackpot check failed:', err);
+      }
+    }
+    
+    // Regular XP gain
     setXp(prevXp => {
       const newXp = prevXp + xpGained;
       
@@ -199,7 +333,7 @@ export const useIdleLoop = ({
     
     // Track pending XP for batch save
     pendingXpRef.current += xpGained;
-  }, [botId, personality, calculateMaxXp]);
+  }, [botId, botName, personality, riskMode, calculateMaxXp, checkJackpotWin, contributeToJackpot, onJackpotWin]);
 
   // Save progress to backend
   const saveProgress = useCallback(async () => {
@@ -223,7 +357,7 @@ export const useIdleLoop = ({
     }
   }, [botId, updateExperience]);
 
-  // Initialize and start loops - Fixed dependencies to prevent infinite loop
+  // Initialize and start loops
   useEffect(() => {
     if (!botId) {
       // Clear all intervals
@@ -263,7 +397,7 @@ export const useIdleLoop = ({
         saveProgress();
       }
     };
-  }, [botId, personality]); // Only depend on stable values
+  }, [botId, personality, riskMode]); // Only depend on stable values
 
   // Save on window unload
   useEffect(() => {
@@ -271,7 +405,7 @@ export const useIdleLoop = ({
       if (pendingXpRef.current > 0) {
         // Try to save synchronously (may not always work)
         navigator.sendBeacon(
-          '/api/save-progress',
+          '/api/save-xp',
           JSON.stringify({ botId, xp: pendingXpRef.current })
         );
       }
@@ -287,6 +421,12 @@ export const useIdleLoop = ({
     xp,
     maxXp,
     totalXp,
-    xpPerSecond: (XP_RATES[personality as keyof typeof XP_RATES] || 1.0) * (BASE_XP_PER_TICK / (TICK_INTERVAL / 1000))
+    jackpotContributions,
+    lastJackpotWin,
+    xpPercentage: maxXp > 0 ? (xp / maxXp) * 100 : 0,
+    xpRate: XP_RATES[personality as keyof typeof XP_RATES] || 1.0,
+    riskMultiplier: getRiskMultiplier(),
   };
 };
+
+export default useIdleLoopWithJackpot;

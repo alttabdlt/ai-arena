@@ -3,8 +3,8 @@ import { BOT_FRAGMENT } from './queries';
 
 // Bot mutations
 export const CREATE_BOT = gql`
-  mutation CreateBot($input: CreateBotInput!) {
-    createBot(input: $input) {
+  mutation AdoptCompanion($input: AdoptCompanionInput!) {
+    adoptCompanion(input: $input) {
       ...BotFields
     }
   }

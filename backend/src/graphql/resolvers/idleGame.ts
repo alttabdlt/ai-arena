@@ -1,8 +1,11 @@
 import { PrismaClient } from '@prisma/client';
 import { GraphQLError } from 'graphql';
 import { logger } from '@ai-arena/shared-logger';
+import { JackpotService } from '../../services/jackpotService';
+import { PubSub } from 'graphql-subscriptions';
 
 const prisma = new PrismaClient();
+const pubsub = new PubSub();
 
 // Personality-based idle multipliers
 const IDLE_MULTIPLIERS = {
@@ -93,6 +96,29 @@ export const idleGameResolvers = {
   Mutation: {
     updateBotExperience: async (_: any, { botId, xpGained }: { botId: string; xpGained: number }) => {
       try {
+        // Get bot info for personality bonus
+        const bot = await prisma.bot.findUnique({
+          where: { id: botId },
+        });
+
+        if (!bot) {
+          throw new GraphQLError('Bot not found');
+        }
+
+        // Contribute to jackpot (1% of XP)
+        if (xpGained > 0) {
+          const jackpotService = JackpotService.getInstance(prisma, pubsub);
+          await jackpotService.contributeToJackpot(xpGained);
+          
+          // Check for jackpot win with personality bonus
+          const winResult = await jackpotService.checkForJackpotWinWithBonus(botId, bot.personality);
+          if (winResult.won && winResult.amount) {
+            // Add jackpot winnings to XP
+            xpGained += winResult.amount;
+            logger.info('JACKPOT WON!', { botId, botName: bot.name, amount: winResult.amount });
+          }
+        }
+
         // Get or create experience record
         let experience = await prisma.botExperience.findUnique({
           where: { botId },
@@ -204,6 +230,12 @@ export const idleGameResolvers = {
         // Calculate XP based on personality
         const multiplier = IDLE_MULTIPLIERS[bot.personality] || 1.0;
         const xpGained = Math.floor(timeAwaySeconds * BASE_IDLE_XP_PER_SECOND * multiplier);
+
+        // Contribute to jackpot (1% of XP)
+        if (xpGained > 0) {
+          const jackpotService = JackpotService.getInstance(prisma, pubsub);
+          await jackpotService.contributeToJackpot(xpGained);
+        }
 
         // Update experience
         let experience = bot.experience;

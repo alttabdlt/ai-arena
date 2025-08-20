@@ -240,36 +240,50 @@ export class AIService {
   }
 
   constructor() {
-    if (process.env.OPENAI_API_KEY && !process.env.OPENAI_API_KEY.includes('YOUR_OPENAI_KEY_HERE')) {
+    // Only load the AI provider specified in environment (for faster startup)
+    const activeProvider = process.env.ACTIVE_AI_PROVIDER || 'openai';
+    const fastStartup = process.env.FAST_STARTUP === 'true';
+    
+    if (fastStartup) {
+      console.log(`⚡ Fast startup: Loading only ${activeProvider} AI provider`);
+    }
+    
+    // Load only the active provider, or all if not in fast startup mode
+    if ((activeProvider === 'openai' || !fastStartup) && 
+        process.env.OPENAI_API_KEY && 
+        !process.env.OPENAI_API_KEY.includes('YOUR_OPENAI_KEY_HERE')) {
       this.openai = new OpenAI({
         apiKey: process.env.OPENAI_API_KEY,
         timeout: 30000, // 30 seconds timeout
       });
-      console.log('✅ OpenAI API configured with 30s timeout');
-    } else {
+      console.log('✅ OpenAI API configured');
+    } else if (activeProvider === 'openai') {
       console.log('⚠️  OpenAI API key not configured - using fallback logic');
     }
 
-    if (process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY.includes('YOUR_ANTHROPIC_KEY_HERE')) {
+    if ((activeProvider === 'anthropic' || !fastStartup) && 
+        process.env.ANTHROPIC_API_KEY && 
+        !process.env.ANTHROPIC_API_KEY.includes('YOUR_ANTHROPIC_KEY_HERE')) {
       this.anthropic = new Anthropic({
         apiKey: process.env.ANTHROPIC_API_KEY,
         timeout: 30000, // 30 seconds timeout
       });
-      console.log('✅ Anthropic API configured with 30s timeout');
-    } else {
+      console.log('✅ Anthropic API configured');
+    } else if (activeProvider === 'anthropic') {
       console.log('⚠️  Anthropic API key not configured - using fallback logic');
     }
 
-    if (process.env.DEEPSEEK_API_KEY && !process.env.DEEPSEEK_API_KEY.includes('YOUR_DEEPSEEK_KEY_HERE')) {
+    if ((activeProvider === 'deepseek' || !fastStartup) && 
+        process.env.DEEPSEEK_API_KEY && 
+        !process.env.DEEPSEEK_API_KEY.includes('YOUR_DEEPSEEK_KEY_HERE')) {
       this.deepseek = new OpenAI({
         apiKey: process.env.DEEPSEEK_API_KEY,
         baseURL: 'https://api.deepseek.com/v1',
         timeout: 30000, // 30 seconds timeout
       });
-      console.log('✅ Deepseek API configured with 30s timeout, key:', process.env.DEEPSEEK_API_KEY.substring(0, 10) + '...');
-    } else {
+      console.log('✅ Deepseek API configured');
+    } else if (activeProvider === 'deepseek') {
       console.log('⚠️  Deepseek API key not configured - using fallback logic');
-      console.log('   Current DEEPSEEK_API_KEY value:', process.env.DEEPSEEK_API_KEY);
     }
   }
 

@@ -17,52 +17,73 @@ import Redis from 'ioredis';
 import { initializeGameManagerService, getGameManagerService } from './services/gameManagerService';
 import { logWalletConfig } from './config/wallets';
 import { PubSub } from 'graphql-subscriptions';
-import { initializeServices, getQueueService } from './services';
+import { initializeServices } from './services';
 import { fileLoggerService } from './services/fileLoggerService';
 import { energyScheduler } from './services/energyScheduler';
+import { initializeTournamentScheduler } from './services/tournamentScheduler';
+import { aiService } from './services/aiService';
+import { initializeStakingService } from './services/stakingService';
+import { initializeXPEconomyService } from './services/xpEconomyService';
 
-// Override console methods to capture backend logs
-const originalConsole = {
-  log: console.log.bind(console),
-  warn: console.warn.bind(console),
-  error: console.error.bind(console),
-  info: console.info.bind(console),
-  debug: console.debug.bind(console),
-};
+// Performance optimization flags
+const FAST_STARTUP = process.env.FAST_STARTUP === 'true';
+const ENABLE_SOLANA = FAST_STARTUP ? false : process.env.ENABLE_SOLANA !== 'false';
+const ENABLE_ENERGY = FAST_STARTUP ? false : process.env.ENABLE_ENERGY !== 'false';
+const ENABLE_STAKING = FAST_STARTUP ? false : process.env.ENABLE_STAKING !== 'false';
+const ENABLE_FILE_LOGGING = FAST_STARTUP ? false : process.env.ENABLE_FILE_LOGGING !== 'false';
+const ENABLE_CUSTOM_WS = FAST_STARTUP ? false : process.env.ENABLE_CUSTOM_WS !== 'false';
+const ENABLE_MEMORY_MONITOR = FAST_STARTUP ? false : process.env.ENABLE_MEMORY_MONITOR !== 'false';
 
-const captureLog = (level: 'log' | 'warn' | 'error' | 'info' | 'debug') => {
-  return (...args: any[]) => {
-    // Always call original console method
-    originalConsole[level](...args);
-    
-    // Log to file
-    fileLoggerService.addLog({
-      timestamp: new Date().toISOString(),
-      level,
-      source: 'backend',
-      message: args.map(arg => {
-        if (typeof arg === 'object') {
-          try {
-            return JSON.stringify(arg, null, 2);
-          } catch {
-            return String(arg);
-          }
-        }
-        return String(arg);
-      }).join(' '),
-      data: args.length > 1 ? args : args[0],
-      stack: level === 'error' && args[0] instanceof Error ? args[0].stack : undefined
-    });
+if (FAST_STARTUP) {
+  console.log('⚡ Fast startup mode enabled - non-essential services disabled');
+}
+
+// Override console methods to capture backend logs (only if file logging enabled)
+if (ENABLE_FILE_LOGGING) {
+  const originalConsole = {
+    log: console.log.bind(console),
+    warn: console.warn.bind(console),
+    error: console.error.bind(console),
+    info: console.info.bind(console),
+    debug: console.debug.bind(console),
   };
-};
 
-console.log = captureLog('log');
-console.warn = captureLog('warn');
-console.error = captureLog('error');
-console.info = captureLog('info');
-console.debug = captureLog('debug');
+  const captureLog = (level: 'log' | 'warn' | 'error' | 'info' | 'debug') => {
+    return (...args: any[]) => {
+      // Always call original console method
+      originalConsole[level](...args);
+      
+      // Log to file
+      fileLoggerService.addLog({
+        timestamp: new Date().toISOString(),
+        level,
+        source: 'backend',
+        message: args.map(arg => {
+          if (typeof arg === 'object') {
+            try {
+              return JSON.stringify(arg, null, 2);
+            } catch {
+              return String(arg);
+            }
+          }
+          return String(arg);
+        }).join(' '),
+        data: args.length > 1 ? args : args[0],
+        stack: level === 'error' && args[0] instanceof Error ? args[0].stack : undefined
+      });
+    };
+  };
 
-console.log('🎮 Backend logging initialized');
+  console.log = captureLog('log');
+  console.warn = captureLog('warn');
+  console.error = captureLog('error');
+  console.info = captureLog('info');
+  console.debug = captureLog('debug');
+  
+  console.log('📝 File logging enabled');
+}
+
+console.log('🎮 Backend starting...');
 
 // Create Redis client with error handling
 const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
@@ -89,11 +110,28 @@ if (typeof (pubsub as any).asyncIterator !== 'function') {
   };
 }
 
-// Initialize services
-initializeServices(prisma, redis, pubsub);
+// Initialize core services (always needed)
+initializeServices(prisma, redis, pubsub, { enableSolana: ENABLE_SOLANA });
 initializeGameManagerService(pubsub);
 
-console.log('🔍 Enhanced debugging enabled for queue and match flow');
+// Initialize tournament scheduler (always needed for betting system)
+const tournamentScheduler = initializeTournamentScheduler(
+  prisma,
+  pubsub,
+  getGameManagerService(),
+  aiService
+);
+
+// Initialize optional services
+let stakingService: any = null;
+if (ENABLE_STAKING) {
+  stakingService = initializeStakingService(prisma, pubsub);
+  console.log('💎 Staking service initialized');
+}
+
+// Initialize XP economy service (always needed for XP system)
+const xpEconomyService = initializeXPEconomyService(prisma, pubsub);
+void xpEconomyService; // Acknowledge future use
 
 async function startServer() {
   const app = express();
@@ -224,7 +262,10 @@ async function startServer() {
   // Webhook routes
   // Webhook routes moved to metaverse backend
 
-  const customWsServer = setupWebSocketServer(parseInt(WS_PORT.toString()));
+  let customWsServer: any = null;
+  if (ENABLE_CUSTOM_WS) {
+    customWsServer = setupWebSocketServer(parseInt(WS_PORT.toString()));
+  }
 
   httpServer.listen(PORT, async () => {
     console.log(`🚀 Server ready at http://localhost:${PORT}/graphql`);
@@ -238,45 +279,60 @@ async function startServer() {
       // Redis not available, already logged
     }
     
-    // Clean up any stuck matches from previous runs
-    await getQueueService().cleanupStuckMatches();
-    console.log('🧹 Cleaned up stuck matches');
-    
-    // Start queue matchmaking service
-    getQueueService().startMatchmaking();
-    console.log('🎮 Queue matchmaking service started');
-    
-    // Ensure demo bots are in queue
-    await getQueueService().ensureDemoBots();
-    console.log('🤖 Demo bots queue status checked');
-    
     // Transaction service is ready (Solana transaction validation)
     console.log('💰 Transaction service ready for Solana validation');
     
     // Game manager service is initialized as a singleton
     console.log('🎮 Game manager service ready');
     
-    // Start energy scheduler
-    energyScheduler.start();
-    console.log('⚡ Energy scheduler started - processing hourly consumption');
+    // Start energy scheduler (if enabled)
+    if (ENABLE_ENERGY) {
+      energyScheduler.start();
+      console.log('⚡ Energy scheduler started - processing hourly consumption');
+    }
     
-    // Log WebSocket server info
-    console.log(`🔌 Custom WebSocket server ready at ws://localhost:${WS_PORT}`);
+    // Start tournament scheduler (always needed)
+    tournamentScheduler.start();
+    console.log('🎰 Tournament scheduler started - tournaments every 15 minutes');
+    
+    // Start staking service (if enabled)
+    if (ENABLE_STAKING && stakingService) {
+      stakingService.initialize();
+      console.log('💎 Staking service started - XP generation every hour');
+    }
+    
+    // Log WebSocket server info (if enabled)
+    if (ENABLE_CUSTOM_WS) {
+      console.log(`🔌 Custom WebSocket server ready at ws://localhost:${WS_PORT}`);
+    }
     
     // Log wallet configuration
-    logWalletConfig();
+    if (!FAST_STARTUP) {
+      logWalletConfig();
+    }
   });
 
   process.on('SIGTERM', async () => {
     console.log('SIGTERM signal received: closing HTTP server');
     
     // Stop services
-    getQueueService().stopMatchmaking();
     await getGameManagerService().shutdown();
-    energyScheduler.stop();
+    
+    if (ENABLE_ENERGY) {
+      energyScheduler.stop();
+    }
+    
+    tournamentScheduler.stop();
+    
+    if (ENABLE_STAKING && stakingService) {
+      stakingService.stop();
+    }
     
     httpServer.close();
-    customWsServer.close();
+    
+    if (ENABLE_CUSTOM_WS && customWsServer) {
+      customWsServer.close();
+    }
     await prisma.$disconnect();
     
     // Disconnect Redis if connected
@@ -313,17 +369,19 @@ process.on('uncaughtException', (error) => {
   process.exit(1);
 });
 
-// Memory usage monitoring
-setInterval(() => {
-  const usage = process.memoryUsage();
-  const heapUsed = Math.round(usage.heapUsed / 1024 / 1024);
-  const heapTotal = Math.round(usage.heapTotal / 1024 / 1024);
-  const rss = Math.round(usage.rss / 1024 / 1024);
-  
-  if (heapUsed > 500) { // Alert if heap usage exceeds 500MB
-    console.warn(`⚠️  High memory usage: Heap ${heapUsed}MB / ${heapTotal}MB, RSS: ${rss}MB`);
-  }
-}, 30000); // Check every 30 seconds
+// Memory usage monitoring (only if enabled)
+if (ENABLE_MEMORY_MONITOR) {
+  setInterval(() => {
+    const usage = process.memoryUsage();
+    const heapUsed = Math.round(usage.heapUsed / 1024 / 1024);
+    const heapTotal = Math.round(usage.heapTotal / 1024 / 1024);
+    const rss = Math.round(usage.rss / 1024 / 1024);
+    
+    if (heapUsed > 500) { // Alert if heap usage exceeds 500MB
+      console.warn(`⚠️  High memory usage: Heap ${heapUsed}MB / ${heapTotal}MB, RSS: ${rss}MB`);
+    }
+  }, 30000); // Check every 30 seconds
+}
 
 startServer().catch((err) => {
   console.error('Error starting server:', err);

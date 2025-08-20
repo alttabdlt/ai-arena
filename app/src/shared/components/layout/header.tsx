@@ -1,8 +1,7 @@
-import { QueueStatusBar } from '@shared/components/layout/queue-status-bar';
 import { MobileNav } from '@shared/components/mobile/mobile-nav';
 import { Button } from '@ui/button';
 import { WalletNetworkButton } from '@ui/wallet-network-button';
-import { Bot, LayoutDashboard, Rocket, Trophy, Globe } from 'lucide-react';
+import { Bot, LayoutDashboard, Rocket, Trophy, Globe, Gamepad2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
 
@@ -20,7 +19,6 @@ export function Header() {
             <span className="text-base font-medium pixel-title">AI Arena</span>
           </Link>
           <div className="flex items-center gap-2">
-            {isConnected && <QueueStatusBar />}
             <WalletNetworkButton />
           </div>
         </div>
@@ -35,6 +33,7 @@ export function Header() {
 
           {/* Center Navigation */}
           <nav className="flex items-center space-x-1">
+            {/* Dashboard commented out - redundant with other pages
             {isConnected && (
               <Button variant="ghost" size="sm" className="text-sm pixel-btn" asChild>
                 <Link to="/dashboard">
@@ -43,6 +42,7 @@ export function Header() {
                 </Link>
               </Button>
             )}
+            */}
             <Button variant="ghost" size="sm" className="text-sm pixel-btn" asChild>
               <Link to="/tournaments">
                 <Trophy className="mr-1.5 h-3.5 w-3.5" />
@@ -50,28 +50,15 @@ export function Header() {
               </Link>
             </Button>
             <Button variant="ghost" size="sm" className="text-sm pixel-btn" asChild>
-              <Link to="/bots">
+              <Link to="/metaverse">
                 <Bot className="mr-1.5 h-3.5 w-3.5" />
                 Bots
-              </Link>
-            </Button>
-            <Button variant="ghost" size="sm" className="text-sm pixel-btn" asChild>
-              <Link to="/metaverse">
-                <Globe className="mr-1.5 h-3.5 w-3.5" />
-                Metaverse
               </Link>
             </Button>
           </nav>
 
           {/* Right Actions */}
           <div className="flex items-center gap-2">
-            {isConnected && <QueueStatusBar />}
-            <Button variant="ghost" size="sm" className="pixel-btn" asChild>
-              <Link to="/deploy">
-                <Rocket className="mr-1.5 h-3.5 w-3.5" />
-                Deploy
-              </Link>
-            </Button>
             <WalletNetworkButton />
           </div>
         </div>

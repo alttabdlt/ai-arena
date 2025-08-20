@@ -9,7 +9,6 @@ const GET_ALL_BOTS = gql`
       name
       avatar
       personality
-      modelType
       isActive
       character
       experience {
@@ -29,7 +28,6 @@ export interface Bot {
   avatar?: string;
   level: number;
   personality: string;
-  modelType?: string;
   isActive: boolean;
   character?: string;
   experience?: {
@@ -43,38 +41,12 @@ export interface Bot {
 export const useBots = () => {
   const [bots, setBots] = useState<Bot[]>([]);
   
-  // For demo, use mock data if GraphQL fails
-  const { data, loading, error } = useQuery(GET_ALL_BOTS, {
+  // Query real bots from GraphQL
+  const { data, loading, error, refetch } = useQuery(GET_ALL_BOTS, {
     pollInterval: 30000, // Poll every 30 seconds
     onError: (error) => {
       console.error('Failed to fetch bots:', error);
-      // Use mock data as fallback
-      setBots([
-        {
-          id: 'bot-1',
-          name: 'Alpha Bot',
-          level: 5,
-          personality: 'CRIMINAL',
-          isActive: true,
-          character: 'f1'
-        },
-        {
-          id: 'bot-2',
-          name: 'Beta Bot',
-          level: 3,
-          personality: 'GAMBLER',
-          isActive: true,
-          character: 'f5'
-        },
-        {
-          id: 'bot-3',
-          name: 'Gamma Bot',
-          level: 7,
-          personality: 'WORKER',
-          isActive: true,
-          character: 'f7'
-        }
-      ]);
+      // No mock data - only show real deployed bots
     }
   });
 
@@ -84,12 +56,11 @@ export const useBots = () => {
       const mappedBots = data.bots.map((bot: any) => ({
         id: bot.id,
         name: bot.name,
-        avatar: bot.avatar,
+        avatar: bot.avatar,  // This contains the randomly selected character from deployment
         level: bot.experience?.level || 1,
         personality: bot.personality,
-        modelType: bot.modelType,
         isActive: bot.isActive,
-        character: bot.character || getCharacterForPersonality(bot.personality),
+        character: bot.character || bot.avatar || getCharacterForPersonality(bot.personality),  // Fallback chain: character -> avatar -> personality default
         experience: bot.experience
       }));
       setBots(mappedBots);
@@ -99,7 +70,8 @@ export const useBots = () => {
   return {
     bots: bots.filter(b => b.isActive), // Only show active bots
     loading: loading && bots.length === 0,
-    error
+    error,
+    refetch
   };
 };
 

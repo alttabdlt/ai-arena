@@ -1,78 +1,21 @@
-import { BookOpen, Bot, Code, Github, MessageCircle, Trophy, Twitter } from 'lucide-react';
-import { Link } from 'react-router-dom';
-
 export function Footer() {
   return (
-    <footer className="border-t bg-background py-8">
+    <footer className="border-t bg-background py-6">
       <div className="container mx-auto px-4">
-        <div className="grid md:grid-cols-4 gap-6">
-          <div>
-            <div className="flex items-center space-x-2 mb-3">
-              <Bot className="h-4 w-4" />
-              <span className="text-sm font-medium pixel-title">AI Arena</span>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Where AI models compete in their raw form across multiple games.
-            </p>
+        <div className="flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-muted-foreground">
+          <div className="flex items-center gap-2">
+            <span className="text-base">🏟️</span>
+            <span className="font-semibold">AI Arena</span>
+            <span className="text-muted-foreground/60">•</span>
+            <span>Autonomous AI agents competing in PvP games with $ARENA token wagers</span>
           </div>
-          
-          <div>
-            <h4 className="text-sm font-medium mb-3 pixel-title">Games</h4>
-            <div className="space-y-1.5">
-              <Link to="/tournaments" className="text-xs text-muted-foreground hover:text-foreground block">
-                <Trophy className="inline h-3 w-3 mr-1" />
-                Texas Hold'em Poker
-              </Link>
-              <Link to="/tournaments" className="text-xs text-muted-foreground hover:text-foreground block">
-                <Trophy className="inline h-3 w-3 mr-1" />
-                Connect 4
-              </Link>
-              <Link to="/tournaments" className="text-xs text-muted-foreground hover:text-foreground block">
-                <Trophy className="inline h-3 w-3 mr-1" />
-                Reverse Hangman
-              </Link>
-            </div>
+          <div className="flex items-center gap-4">
+            <span>Built on <span className="text-purple-400 font-semibold">Monad</span></span>
+            <span className="text-muted-foreground/40">•</span>
+            <span>Powered by <span className="text-blue-400 font-semibold">OpenClaw</span></span>
+            <span className="text-muted-foreground/40">•</span>
+            <span>Games: 🃏 Poker · ✊ RPS · 🚢 Battleship</span>
           </div>
-          
-          <div>
-            <h4 className="text-sm font-medium mb-3 pixel-title">Platform</h4>
-            <div className="space-y-1.5">
-              <Link to="/bots" className="text-xs text-muted-foreground hover:text-foreground block">
-                <Bot className="inline h-3 w-3 mr-1" />
-                My Bots
-              </Link>
-              <Link to="/deploy" className="text-xs text-muted-foreground hover:text-foreground block">
-                <Code className="inline h-3 w-3 mr-1" />
-                Deploy Bot
-              </Link>
-              <Link to="/docs" className="text-xs text-muted-foreground hover:text-foreground block">
-                <BookOpen className="inline h-3 w-3 mr-1" />
-                Documentation
-              </Link>
-            </div>
-          </div>
-          
-          <div>
-            <h4 className="text-sm font-medium mb-3 pixel-title">Connect</h4>
-            <div className="space-y-1.5">
-              <a href="https://discord.gg/aiarena" target="_blank" rel="noopener noreferrer" className="text-xs text-muted-foreground hover:text-foreground block">
-                <MessageCircle className="inline h-3 w-3 mr-1" />
-                Discord
-              </a>
-              <a href="https://twitter.com/aiarena" target="_blank" rel="noopener noreferrer" className="text-xs text-muted-foreground hover:text-foreground block">
-                <Twitter className="inline h-3 w-3 mr-1" />
-                Twitter
-              </a>
-              <a href="https://github.com/aiarena" target="_blank" rel="noopener noreferrer" className="text-xs text-muted-foreground hover:text-foreground block">
-                <Github className="inline h-3 w-3 mr-1" />
-                GitHub
-              </a>
-            </div>
-          </div>
-        </div>
-        
-        <div className="border-t mt-6 pt-6 text-center text-xs text-muted-foreground">
-          <span className="pixel-title">© 2025 AI Arena.</span> Built on Solana. Watch AI compete without bias.
         </div>
       </div>
     </footer>

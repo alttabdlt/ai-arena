@@ -128,14 +128,14 @@ const ARCHETYPE_SYSTEM_PROMPTS: Record<AgentArchetype, Record<string, string>> =
   ROCK: {
     _base: `You are a tight, disciplined, patient competitor. You wait for premium situations and avoid marginal spots. You never chase, never tilt, never gamble unnecessarily. Your edge comes from discipline and hand selection. When in doubt, fold. Risk tolerance: LOW.`,
     POKER: `POKER STRATEGY — ROCK:
-- Play only the top 15-20% of hands (pairs 77+, suited broadways, AK/AQ)
-- Fold everything marginal preflop — don't get fancy
+- In heads-up, play the top 40% of hands (any pair, A-x, K-x suited, suited connectors 56+)
 - When you enter a pot, bet for VALUE, not for bluffs
 - Bet sizing: 50-65% pot (extracting value, not scaring opponents away)
 - If facing a big raise, fold unless you have top pair+ or a strong draw
-- Never bluff more than 10% of the time
+- CALL with any pair on any board. Pairs are strong heads-up.
+- Bluff sparingly (10-15% of river bets) but DO bluff sometimes
 - Protect your stack — a small profit is better than a big loss
-- If you're up significantly, tighten further to protect gains`,
+- Do NOT fold preflop with any ace, any pair, or any two broadway cards`,
     RPS: `RPS STRATEGY — ROCK:
 - Default strategy: RANDOMIZE between rock, paper, scissors equally.
 - Only deviate if opponent has a clear pattern (3+ same moves).
@@ -201,14 +201,15 @@ const ARCHETYPE_SYSTEM_PROMPTS: Record<AgentArchetype, Record<string, string>> =
     _base: `You are a mathematical, disciplined optimizer. Every decision is based on expected value. You use Kelly Criterion for bet sizing, pot odds for calls, and equity calculations for all-ins. You never tilt, never deviate from +EV plays. Your reasoning should include specific numbers and calculations.`,
     POKER: `POKER STRATEGY — GRINDER:
 - Calculate pot odds for EVERY call: toCall / (pot + toCall) = break-even %
-- Use Kelly Criterion for raise sizing: edge% × bankroll
-- Implied odds: consider future street value when calling draws
+- Heads-up poker: play WIDE. Most hands have 40%+ equity heads-up.
+- ANY ace, any pair, any two cards J+ are strong in heads-up. Do NOT fold these preflop.
 - Equity estimation: count outs × 2 (turn) or outs × 4 (flop to river)
-- Bet sizing: 60-75% pot for value (maximize EV), 33% pot for bluffs (risk efficiency)
-- Bluff-to-value ratio: maintain ~1:2 on river, ~1:1.5 on turn
-- Position awareness: play 25% of hands in EP, 35% in MP, 50% in LP
-- Stack-to-pot ratio: if SPR < 3, prepare to commit; if SPR > 10, play cautiously
-- ALWAYS include your calculation in reasoning`,
+- Bet sizing: 60-75% pot for value, 33% pot for bluffs
+- Call with any pair, any draw (4+ outs), any ace. Only fold total air facing big bets.
+- In heads-up, folding preflop with a playable hand is a MISTAKE.
+- Raise preflop with top 60% of hands (any ace, any pair, any two broadways, suited connectors)
+- Stack-to-pot ratio: if SPR < 3, prepare to commit with any pair+
+- ALWAYS include your pot odds calculation in reasoning`,
     RPS: `RPS STRATEGY — GRINDER:
 - Nash equilibrium: uniform random 33/33/33 is unexploitable
 - Only deviate if opponent has a significant pattern (>60% on one choice)
@@ -238,18 +239,18 @@ interface ModelSpec {
 
 const MODEL_SPECS: Record<string, ModelSpec> = {
   // OpenAI
-  'gpt-4o': { provider: 'openai', modelName: 'gpt-4o', costPer1kInput: 0.25, costPer1kOutput: 1.0, maxTokens: 1000, supportsJsonMode: true },
-  'gpt-4o-mini': { provider: 'openai', modelName: 'gpt-4o-mini', costPer1kInput: 0.015, costPer1kOutput: 0.06, maxTokens: 1000, supportsJsonMode: true },
-  'o3-mini': { provider: 'openai', modelName: 'o3-mini', costPer1kInput: 0.11, costPer1kOutput: 0.44, maxTokens: 2000, supportsJsonMode: true },
+  'gpt-4o': { provider: 'openai', modelName: 'gpt-4o', costPer1kInput: 0.25, costPer1kOutput: 1.0, maxTokens: 300, supportsJsonMode: true },
+  'gpt-4o-mini': { provider: 'openai', modelName: 'gpt-4o-mini', costPer1kInput: 0.015, costPer1kOutput: 0.06, maxTokens: 300, supportsJsonMode: true },
+  'o3-mini': { provider: 'openai', modelName: 'o3-mini', costPer1kInput: 0.11, costPer1kOutput: 0.44, maxTokens: 500, supportsJsonMode: true },
   
   // Anthropic
-  'claude-4-sonnet': { provider: 'anthropic', modelName: 'claude-sonnet-4-20250514', costPer1kInput: 0.3, costPer1kOutput: 1.5, maxTokens: 1000, supportsJsonMode: false },
-  'claude-4-opus': { provider: 'anthropic', modelName: 'claude-opus-4-20250514', costPer1kInput: 1.5, costPer1kOutput: 7.5, maxTokens: 1000, supportsJsonMode: false },
-  'claude-3.5-haiku': { provider: 'anthropic', modelName: 'claude-3-5-haiku-20241022', costPer1kInput: 0.08, costPer1kOutput: 0.4, maxTokens: 1000, supportsJsonMode: false },
+  'claude-4-sonnet': { provider: 'anthropic', modelName: 'claude-sonnet-4-20250514', costPer1kInput: 0.3, costPer1kOutput: 1.5, maxTokens: 300, supportsJsonMode: false },
+  'claude-4-opus': { provider: 'anthropic', modelName: 'claude-opus-4-20250514', costPer1kInput: 1.5, costPer1kOutput: 7.5, maxTokens: 300, supportsJsonMode: false },
+  'claude-3.5-haiku': { provider: 'anthropic', modelName: 'claude-3-5-haiku-20241022', costPer1kInput: 0.08, costPer1kOutput: 0.4, maxTokens: 300, supportsJsonMode: false },
   
   // DeepSeek
-  'deepseek-v3': { provider: 'deepseek', modelName: 'deepseek-chat', costPer1kInput: 0.014, costPer1kOutput: 0.028, maxTokens: 1000, supportsJsonMode: true },
-  'deepseek-r1': { provider: 'deepseek', modelName: 'deepseek-reasoner', costPer1kInput: 0.055, costPer1kOutput: 0.22, maxTokens: 2000, supportsJsonMode: false },
+  'deepseek-v3': { provider: 'deepseek', modelName: 'deepseek-chat', costPer1kInput: 0.014, costPer1kOutput: 0.028, maxTokens: 300, supportsJsonMode: true },
+  'deepseek-r1': { provider: 'deepseek', modelName: 'deepseek-reasoner', costPer1kInput: 0.055, costPer1kOutput: 0.22, maxTokens: 500, supportsJsonMode: false },
 };
 
 // ============================================
@@ -329,10 +330,17 @@ ${Object.keys(opponent.patterns).length > 0 ? `Observed patterns: ${JSON.stringi
     }
     
     // 3. Current game state
-    messages.push({
-      role: 'user',
-      content: `TURN ${turnNumber} — CURRENT GAME STATE:\n${JSON.stringify(gameState, null, 2)}${playerState ? `\n\nYOUR STATE:\n${JSON.stringify(playerState, null, 2)}` : ''}${gameType === 'RPS' ? `\n\nIMPORTANT: Your unique random seed for this move is ${Math.random().toFixed(6)}. Use this to decide: if seed < 0.33 play rock, if 0.33-0.66 play paper, if > 0.66 play scissors. ONLY deviate from this if you have strong evidence of an opponent pattern to exploit.` : ''}`,
-    });
+    if (gameType === 'POKER') {
+      messages.push({
+        role: 'user',
+        content: this.formatPokerState(gameState, turnNumber),
+      });
+    } else {
+      messages.push({
+        role: 'user',
+        content: `TURN ${turnNumber} — CURRENT GAME STATE:\n${JSON.stringify(gameState, null, 2)}${playerState ? `\n\nYOUR STATE:\n${JSON.stringify(playerState, null, 2)}` : ''}${gameType === 'RPS' ? `\n\nIMPORTANT: Your unique random seed for this move is ${Math.random().toFixed(6)}. Use this to decide: if seed < 0.33 play rock, if 0.33-0.66 play paper, if > 0.66 play scissors. ONLY deviate from this if you have strong evidence of an opponent pattern to exploit.` : ''}`,
+      });
+    }
     
     return messages;
   }
@@ -479,6 +487,96 @@ What should ${agent.name} do?`;
       inputTokens: response.usage?.prompt_tokens || 0,
       outputTokens: response.usage?.completion_tokens || 0,
     };
+  }
+
+  // ============================================
+  // Poker State Formatter
+  // ============================================
+
+  private formatPokerState(gameState: any, turnNumber: number): string {
+    const gs = gameState;
+    const yourCards = gs.yourCards || [];
+    const community = gs.communityCards || [];
+    const pot = gs.pot || 0;
+    const currentBet = gs.currentBet || 0;
+    const yourChips = gs.yourChips || 0;
+    const oppChips = gs.opponentChips || 0;
+    const phase = gs.phase || 'preflop';
+    const handNumber = gs.handNumber || 1;
+    const maxHands = gs.maxHands || 10;
+
+    // Find your player info
+    const you = gs.players?.find((p: any) => p.holeCards?.[0] !== '?');
+    const opp = gs.players?.find((p: any) => p.holeCards?.[0] === '?');
+    const yourBet = you?.bet || 0;
+    const oppBet = opp?.bet || 0;
+    const toCall = Math.max(0, currentBet - yourBet);
+
+    // Pot odds
+    const potAfterCall = pot + toCall;
+    const potOddsPercent = toCall > 0 ? Math.round((toCall / potAfterCall) * 100) : 0;
+
+    // Stack-to-pot ratio
+    const spr = pot > 0 ? (yourChips / pot).toFixed(1) : '∞';
+
+    // Hand history from this match
+    const history = gs.handHistory || [];
+    const historyStr = history.length > 0
+      ? history.map((h: any) => `  Hand ${h.handNumber}: ${h.showdown ? `Showdown (${h.winnerHand})` : 'Fold'} — ${h.winnerId ? 'Won' : 'Split'} ${h.amount}`).join('\n')
+      : '  (No previous hands)';
+
+    // Action log for current hand
+    const actionLog = gs.actionLog || [];
+    const currentHandActions = actionLog
+      .filter((a: any) => a.hand === handNumber)
+      .map((a: any) => `  ${a.phase}: ${a.playerId === you?.id ? 'You' : 'Opponent'} ${a.action}${a.amount ? ` ${a.amount}` : ''}`)
+      .join('\n');
+
+    // Valid actions
+    const validActions: string[] = [];
+    if (toCall === 0) {
+      validActions.push('check');
+    } else {
+      validActions.push(`call (${toCall} to call)`);
+    }
+    validActions.push('fold');
+    if (yourChips > toCall) {
+      const minRaise = Math.max(gs.minRaise || gs.bigBlind || 20, currentBet * 2);
+      validActions.push(`raise (min ${minRaise}, suggest 2-3x pot for value, 50-75% pot for bluffs)`);
+    }
+    if (yourChips > 0) {
+      validActions.push(`all-in (${yourChips} chips)`);
+    }
+
+    return `═══════════════════════════════════
+POKER — Hand ${handNumber}/${maxHands} | Turn ${turnNumber}
+═══════════════════════════════════
+
+📍 PHASE: ${phase.toUpperCase()}
+
+🃏 YOUR HOLE CARDS: ${yourCards.join(' ')}
+🏠 COMMUNITY CARDS: ${community.length > 0 ? community.join(' ') : '(none yet)'}
+
+💰 POT: ${pot} | Current Bet: ${currentBet}
+   Your bet this round: ${yourBet}
+   To call: ${toCall}${toCall > 0 ? ` (pot odds: ${potOddsPercent}% — you need ${potOddsPercent}% equity to break even)` : ''}
+
+📊 STACKS:
+   You: ${yourChips} chips | Opponent: ${oppChips} chips
+   Stack-to-Pot Ratio: ${spr}x
+
+${gs.opponentFolded ? '⚠️ OPPONENT HAS FOLDED\n' : ''}${gs.opponentIsAllIn ? '⚠️ OPPONENT IS ALL-IN\n' : ''}
+✅ VALID ACTIONS:
+${validActions.map(a => `   • ${a}`).join('\n')}
+
+📜 PREVIOUS HANDS:
+${historyStr}
+
+${currentHandActions ? `📋 THIS HAND'S ACTIONS:\n${currentHandActions}\n` : ''}
+IMPORTANT: Do NOT fold with a decent hand. Only fold trash (7-2, 8-3 offsuit) facing big raises.
+
+Respond ONLY with compact JSON (keep reasoning under 50 words):
+{"action":"fold|check|call|raise|all-in","amount":<if_raise>,"reasoning":"<brief>","confidence":<0-1>}`;
   }
 
   // ============================================

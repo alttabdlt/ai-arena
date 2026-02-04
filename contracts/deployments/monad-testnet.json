@@ -1,0 +1,16 @@
+{
+  "network": "monad-testnet",
+  "chainId": 10143,
+  "rpcUrl": "https://testnet-rpc.monad.xyz",
+  "deployedAt": "2026-02-04T17:45:00+08:00",
+  "deployer": "0xA5AE8A362A36c7f3242724AaF34FdEEF66A35b1f",
+  "contracts": {
+    "ArenaToken": "0x3A8a17AeBeF1F0eC493de5F935D556b0F62EeFDa",
+    "WagerEscrow": "0x98dC75f4fB69f83084baCA9C2fC4FfE6d35631C3"
+  },
+  "config": {
+    "treasury": "0xA5AE8A362A36c7f3242724AaF34FdEEF66A35b1f",
+    "rakePercent": 5,
+    "arenaTokenSupply": "1000000000000000000000000000"
+  }
+}

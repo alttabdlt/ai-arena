@@ -244,6 +244,26 @@ async function startServer() {
   app.use('/api/v1', cors<cors.CorsRequest>({ origin: '*' }), arenaApiRouter);
   console.log('🏟️  Arena PvP API ready at /api/v1');
 
+  // Startup cleanup: reset stuck agents and stale matches
+  try {
+    const { arenaService } = await import('./services/arenaService');
+    const cleaned = await arenaService.cleanupStaleMatches(5); // 5 minute threshold on startup
+    if (cleaned > 0) console.log(`🧹 Cleaned up ${cleaned} stale match(es)`);
+    // Also unstick any agents that claim to be in a match but have no active match
+    const stuckAgents = await prisma.arenaAgent.findMany({ where: { isInMatch: true } });
+    for (const agent of stuckAgents) {
+      const activeMatch = agent.currentMatchId
+        ? await prisma.arenaMatch.findFirst({ where: { id: agent.currentMatchId, status: { in: ['ACTIVE', 'WAITING'] } } })
+        : null;
+      if (!activeMatch) {
+        await prisma.arenaAgent.update({ where: { id: agent.id }, data: { isInMatch: false, currentMatchId: null } });
+        console.log(`🧹 Unstuck agent "${agent.name}" (no active match)`);
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[Arena] Startup cleanup failed: ${err.message}`);
+  }
+
   app.get('/health', async (_req, res) => {
     const memoryUsage = process.memoryUsage();
     const uptime = process.uptime();

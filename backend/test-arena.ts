@@ -88,10 +88,11 @@ async function main() {
   console.log('\n📝 Registering agents...');
   const agents: Array<{ name: string; key: string; id: string }> = [];
   
+  const ts = Date.now();
   const configs = [
-    { name: 'SharkBot', archetype: 'SHARK', systemPrompt: 'Vary moves unpredictably. Never repeat.' },
-    { name: 'RockWall', archetype: 'ROCK', systemPrompt: 'Analyze patterns. Counter opponent.' },
-    { name: 'DegenKing', archetype: 'DEGEN', systemPrompt: 'Pure chaos. Random moves.' },
+    { name: `SharkBot_${ts}`, archetype: 'SHARK', systemPrompt: 'Vary moves unpredictably. Never repeat.' },
+    { name: `RockWall_${ts}`, archetype: 'ROCK', systemPrompt: 'Analyze patterns. Counter opponent.' },
+    { name: `DegenKing_${ts}`, archetype: 'DEGEN', systemPrompt: 'Pure chaos. Random moves.' },
   ];
   
   for (const cfg of configs) {
@@ -103,7 +104,7 @@ async function main() {
   // 3. Validation tests
   console.log('\n🛡️  Validation tests...');
   
-  const { status: s1 } = await api('POST', '/agents/register', { name: 'SharkBot', archetype: 'SHARK' });
+  const { status: s1 } = await api('POST', '/agents/register', { name: `SharkBot_${ts}`, archetype: 'SHARK' });
   assert(s1 === 400, 'Duplicate name rejected');
   
   const { status: s2 } = await api('GET', '/me');
@@ -116,7 +117,7 @@ async function main() {
   assert(models.length > 0, `${models.length} models available`);
   
   const { data: lb } = await api('GET', '/leaderboard');
-  assert(lb.length === 3, 'Leaderboard has 3 agents');
+  assert(lb.length >= 3, `Leaderboard has ${lb.length} agents (≥3)`);
 
   // 4. Invalid move test (create match, try bad move, then cancel)
   console.log('\n🧪 Invalid move test...');

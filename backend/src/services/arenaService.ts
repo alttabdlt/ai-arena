@@ -9,7 +9,9 @@ import { ArenaAgent, ArenaMatch, ArenaGameType, AgentArchetype } from '@prisma/c
 import { randomBytes } from 'crypto';
 import { smartAiService, GameMoveRequest, OpponentScouting, MetaContext, AgentConfig } from './smartAiService';
 import { GameEngineAdapter, GameEngineAdapterFactory } from './gameEngineAdapter';
+import { ArenaPokerEngine } from './arenaPokerEngine';
 import { prisma } from '../config/database';
+import { monadService } from './monadService';
 
 // ============================================
 // Types
@@ -51,7 +53,7 @@ export class ArenaService {
   constructor() {
     this.gameEngines = new Map();
     this.matchLocks = new Map();
-    this.gameEngines.set('POKER', GameEngineAdapterFactory.create('poker'));
+    this.gameEngines.set('POKER', new ArenaPokerEngine());
     this.gameEngines.set('RPS', new RPSEngine());
     this.gameEngines.set('BATTLESHIP', new BattleshipEngine());
   }
@@ -292,7 +294,7 @@ export class ArenaService {
   // Game Execution
   // ============================================
 
-  async getMatchState(matchId: string) {
+  async getMatchState(matchId: string, viewerId?: string) {
     const match = await prisma.arenaMatch.findUnique({
       where: { id: matchId },
       include: {
@@ -303,8 +305,22 @@ export class ArenaService {
     });
     if (!match) throw new Error('Match not found');
 
-    const gameState = JSON.parse(match.gameState);
+    const rawGameState = JSON.parse(match.gameState);
     const engine = this.gameEngines.get(match.gameType);
+    const isLive = match.status === 'ACTIVE' || match.status === 'IN_PROGRESS';
+    const isPlayer = viewerId && (viewerId === match.player1Id || viewerId === match.player2Id);
+
+    // SECURITY: Filter game state during live matches
+    // - Players see filtered view (hidden opponent cards, hidden deck)
+    // - Non-participant viewers (spectators) see a neutral view (NO hole cards at all)
+    // - Completed matches show everything (replay value)
+    let gameState = rawGameState;
+    if (isLive && isPlayer && viewerId) {
+      gameState = this.getPlayerView(rawGameState, viewerId, match.gameType);
+    } else if (isLive && !isPlayer) {
+      // Spectator view: hide ALL private info (no one's hole cards visible)
+      gameState = this.getSpectatorView(rawGameState, match.gameType);
+    }
 
     return {
       matchId: match.id,
@@ -320,14 +336,17 @@ export class ArenaService {
       turnNumber: match.turnNumber,
       gameState,
       validActions: engine && match.currentTurnId
-        ? engine.getValidActions(gameState, match.currentTurnId)
+        ? engine.getValidActions(rawGameState, match.currentTurnId)
         : [],
-      isComplete: engine ? engine.isGameComplete(gameState) : false,
+      isComplete: engine ? engine.isGameComplete(rawGameState) : false,
       moves: match.moves.map(m => ({
         turnNumber: m.turnNumber,
         agentId: m.agentId,
         action: m.action,
-        reasoning: m.reasoning,
+        // SECURITY: Hide opponent reasoning during live match
+        reasoning: (isLive && isPlayer && m.agentId !== viewerId)
+          ? '(hidden during live match)'
+          : m.reasoning,
         timestamp: m.timestamp,
       })),
     };
@@ -348,12 +367,22 @@ export class ArenaService {
 
     const gameState = JSON.parse(match.gameState);
     
-    // Validate the action is legal
+    // Validate the action is legal (with auto-correction for common AI mistakes)
     const validActions = engine.getValidActions(gameState, input.agentId);
     if (validActions.length > 0 && typeof validActions[0] === 'string') {
-      // String-based validation (RPS, Poker)
-      if (!validActions.includes(input.action.toLowerCase())) {
-        throw new Error(`Invalid action "${input.action}". Valid: ${validActions.join(', ')}`);
+      let action = input.action.toLowerCase();
+      // Auto-correct common AI mistakes
+      if (!validActions.includes(action)) {
+        if (action === 'call' && validActions.includes('check')) {
+          action = 'check'; // Call with nothing to call → check
+        } else if (action === 'check' && validActions.includes('call')) {
+          action = 'call'; // Check when behind → call
+        } else if (action === 'bet' && validActions.includes('raise')) {
+          action = 'raise'; // "bet" is just "raise" in our engine
+        } else {
+          throw new Error(`Invalid action "${input.action}". Valid: ${validActions.join(', ')}`);
+        }
+        input.action = action;
       }
     }
     // For object-based valid actions (Battleship), validation happens in the engine
@@ -397,12 +426,13 @@ export class ArenaService {
       },
     });
 
-    // If complete, resolve wagers
+    // If complete, resolve wagers and clean up lock
     if (isComplete) {
       await this.resolveMatch(input.matchId, engine.getWinner(newState));
+      this.matchLocks.delete(input.matchId); // Eager cleanup
     }
 
-    const updatedState = await this.getMatchState(input.matchId);
+    const updatedState = await this.getMatchState(input.matchId, input.agentId);
     return { matchState: updatedState, isComplete };
   }
 
@@ -462,6 +492,10 @@ export class ArenaService {
       } else if (match.gameType === 'BATTLESHIP' && validActions.length > 0) {
         const target = validActions[Math.floor(Math.random() * validActions.length)];
         move = { action: 'fire', data: target, reasoning: 'AI error fallback', confidence: 0 };
+      } else if (match.gameType === 'POKER') {
+        // Poker validActions are strings: ['fold', 'check', 'call', 'raise', 'all-in']
+        const safeAction = validActions.includes('check') ? 'check' : validActions.includes('call') ? 'call' : 'fold';
+        move = { action: safeAction, reasoning: 'AI error fallback', confidence: 0 };
       } else {
         move = { action: validActions[0] || 'check', reasoning: 'AI error fallback', confidence: 0 };
       }
@@ -576,6 +610,7 @@ export class ArenaService {
           where: { id: pid },
           data: {
             bankroll: { increment: refund },
+            totalWon: { increment: refund }, // Track refund so profit = totalWon - totalWagered is correct
             draws: { increment: 1 },
             isInMatch: false,
             currentMatchId: null,
@@ -587,6 +622,18 @@ export class ArenaService {
     // Update opponent records
     await this.updateOpponentRecord(match.player1Id, match.player2Id, winnerId);
     await this.updateOpponentRecord(match.player2Id, match.player1Id, winnerId);
+
+    // Record on-chain (non-blocking, best-effort)
+    if (monadService.isInitialized()) {
+      monadService.recordMatchOnChain(matchId, winnerId).then(txHash => {
+        if (txHash) {
+          prisma.arenaMatch.update({
+            where: { id: matchId },
+            data: { resolveTxHash: txHash },
+          }).catch(() => {}); // Best effort
+        }
+      }).catch(() => {}); // Don't block match resolution
+    }
   }
 
   // ============================================
@@ -810,9 +857,16 @@ export class ArenaService {
         break;
     }
 
-    // Determine first turn
-    const firstTurn = gameType === 'RPS' ? player1Id : // RPS: both move simultaneously (player1 goes first for ordering)
-      Math.random() < 0.5 ? player1Id : player2Id; // Random for others
+    // Determine first turn — use the engine's getCurrentTurn if available,
+    // otherwise fallback to RPS/random logic
+    let firstTurn: string;
+    if (engine.getCurrentTurn(initialState)) {
+      firstTurn = engine.getCurrentTurn(initialState)!;
+    } else if (gameType === 'RPS') {
+      firstTurn = player1Id; // RPS: both move simultaneously (player1 goes first for ordering)
+    } else {
+      firstTurn = Math.random() < 0.5 ? player1Id : player2Id;
+    }
 
     await prisma.arenaMatch.update({
       where: { id: matchId },
@@ -825,24 +879,12 @@ export class ArenaService {
   }
 
   private initPokerState(p1: string, p2: string) {
-    // Simplified poker state — the existing poker engine will handle the full state
-    const deck = this.shuffleDeck();
-    return {
-      players: [
-        { id: p1, chips: 1000, bet: 0, folded: false, cards: [deck.pop(), deck.pop()] },
-        { id: p2, chips: 1000, bet: 0, folded: false, cards: [deck.pop(), deck.pop()] },
-      ],
-      deck,
-      communityCards: [],
-      pot: 0,
-      currentBet: 0,
-      phase: 'preflop',
-      dealerIndex: 0,
-      currentTurn: p1,
+    return ArenaPokerEngine.createInitialState(p1, p2, {
+      startingChips: 1000,
       smallBlind: 10,
       bigBlind: 20,
-      handNumber: 1,
-    };
+      maxHands: 5,
+    });
   }
 
   private initBattleshipState(p1: string, p2: string) {
@@ -854,17 +896,6 @@ export class ArenaService {
       currentTurn: p1,
       shipsRemaining: { [p1]: 5, [p2]: 5 },
     };
-  }
-
-  private shuffleDeck(): string[] {
-    const suits = ['♠', '♥', '♦', '♣'];
-    const ranks = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
-    const deck = suits.flatMap(s => ranks.map(r => `${r}${s}`));
-    for (let i = deck.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [deck[i], deck[j]] = [deck[j], deck[i]];
-    }
-    return deck;
   }
 
   private placeShipsRandomly() {
@@ -899,6 +930,47 @@ export class ArenaService {
     return placements;
   }
 
+  private getSpectatorView(gameState: any, gameType: string): any {
+    // Spectator view during live matches: hide ALL private info
+    switch (gameType) {
+      case 'POKER': {
+        return {
+          ...gameState,
+          deck: '(hidden)',
+          players: gameState.players?.map((p: any) => ({
+            id: p.id,
+            chips: p.chips,
+            bet: p.bet,
+            totalBet: p.totalBet,
+            folded: p.folded,
+            isAllIn: p.isAllIn,
+            holeCards: ['?', '?'],
+          })),
+        };
+      }
+      case 'BATTLESHIP': {
+        const boards = { ...gameState.boards };
+        for (const pid of Object.keys(boards)) {
+          boards[pid] = { ...boards[pid], ships: '(hidden)' };
+        }
+        return { ...gameState, boards };
+      }
+      case 'RPS': {
+        const view = JSON.parse(JSON.stringify(gameState));
+        if (view.moves) {
+          const filteredMoves: Record<string, string> = {};
+          for (const pid of Object.keys(view.moves)) {
+            filteredMoves[pid] = '(hidden)';
+          }
+          view.moves = filteredMoves;
+        }
+        return view;
+      }
+      default:
+        return gameState;
+    }
+  }
+
   private getPlayerView(gameState: any, playerId: string, gameType: string): any {
     // Return a player-specific view (hide opponent's hidden info)
     switch (gameType) {
@@ -907,14 +979,21 @@ export class ArenaService {
         const opponent = gameState.players?.find((p: any) => p.id !== playerId);
         return {
           ...gameState,
-          yourCards: player?.cards || [],
+          yourCards: player?.holeCards || [],
           yourChips: player?.chips || 0,
           opponentChips: opponent?.chips || 0,
           opponentFolded: opponent?.folded || false,
-          // Hide opponent's cards
+          opponentIsAllIn: opponent?.isAllIn || false,
+          // Hide opponent's hole cards and deck
+          deck: '(hidden)',
           players: gameState.players?.map((p: any) => ({
-            ...p,
-            cards: p.id === playerId ? p.cards : ['?', '?'],
+            id: p.id,
+            chips: p.chips,
+            bet: p.bet,
+            totalBet: p.totalBet,
+            folded: p.folded,
+            isAllIn: p.isAllIn,
+            holeCards: p.id === playerId ? p.holeCards : ['?', '?'],
           })),
         };
       }
@@ -1002,7 +1081,12 @@ class RPSEngine implements GameEngineAdapter {
     return newState;
   }
 
-  getValidActions(_state: any, _playerId: string): any[] {
+  getValidActions(state: any, playerId: string): any[] {
+    // No actions if game is complete or it's not this player's turn
+    if (this.isGameComplete(state)) return [];
+    if (state.currentTurn !== playerId) return [];
+    // No actions if player already submitted a move this round
+    if (state.moves && state.moves[playerId]) return [];
     return ['rock', 'paper', 'scissors'];
   }
 

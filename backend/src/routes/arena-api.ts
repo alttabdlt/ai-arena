@@ -154,6 +154,42 @@ router.get('/me/meta-decision', authenticateAgent, async (req: AuthenticatedRequ
 // Match Endpoints
 // ============================================
 
+// Recent completed matches (public, no auth needed)
+router.get('/matches/recent', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 20;
+    const matches = await import('@prisma/client').then(async () => {
+      const { prisma } = await import('../config/database');
+      return prisma.arenaMatch.findMany({
+        where: { status: { in: ['COMPLETED', 'CANCELLED'] } },
+        include: {
+          player1: { select: { id: true, name: true, archetype: true, elo: true } },
+          player2: { select: { id: true, name: true, archetype: true, elo: true } },
+          winner: { select: { id: true, name: true } },
+        },
+        orderBy: { completedAt: 'desc' },
+        take: limit,
+      });
+    });
+    res.json(matches.map(m => ({
+      id: m.id,
+      gameType: m.gameType,
+      status: m.status,
+      wagerAmount: m.wagerAmount,
+      totalPot: m.totalPot,
+      rakeAmount: m.rakeAmount,
+      player1: m.player1,
+      player2: m.player2,
+      winner: m.winner,
+      turnNumber: m.turnNumber,
+      completedAt: m.completedAt,
+      createdAt: m.createdAt,
+    })));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 router.get('/matches/available', authenticateAgent, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const matches = await arenaService.getAvailableMatches(req.agent!.id);
@@ -201,7 +237,7 @@ router.post('/matches/:id/join', authenticateAgent, async (req: AuthenticatedReq
 
 router.get('/matches/:id/state', authenticateAgent, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const state = await arenaService.getMatchState(req.params.id);
+    const state = await arenaService.getMatchState(req.params.id, req.agent!.id);
     res.json(state);
   } catch (error: any) {
     res.status(400).json({ error: error.message });
@@ -296,6 +332,81 @@ router.get('/models', async (_req: Request, res: Response): Promise<void> => {
     const { smartAiService } = await import('../services/smartAiService');
     const models = smartAiService.getAvailableModels();
     res.json(models);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// Match Moves (with reasoning — spectator view)
+// ============================================
+
+router.get('/matches/:id/moves', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const matchId = req.params.id;
+    const { prisma } = await import('../config/database');
+
+    // Get match to check status
+    const match = await prisma.arenaMatch.findUnique({
+      where: { id: matchId },
+      select: { status: true, player1Id: true, player2Id: true },
+    });
+
+    if (!match) {
+      res.status(404).json({ error: 'Match not found' });
+      return;
+    }
+
+    // Check if requester is a player in this match (via auth header)
+    let requesterId: string | null = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader?.startsWith('Bearer ')) {
+      const apiKey = authHeader.slice(7);
+      const agent = await prisma.arenaAgent.findUnique({ where: { apiKey } });
+      if (agent) requesterId = agent.id;
+    }
+
+    const moves = await prisma.arenaMove.findMany({
+      where: { matchId },
+      include: {
+        agent: { select: { id: true, name: true, archetype: true } },
+      },
+      orderBy: { turnNumber: 'asc' },
+    });
+
+    const isLive = match.status === 'IN_PROGRESS';
+
+    res.json(moves.map(m => {
+      // During live match: hide opponent's reasoning from the other player
+      // Spectators (no auth or non-players) always see reasoning
+      const hideReasoning = isLive && requesterId &&
+        (requesterId === match.player1Id || requesterId === match.player2Id) &&
+        m.agentId !== requesterId;
+
+      return {
+        turnNumber: m.turnNumber,
+        agent: m.agent,
+        action: m.action,
+        reasoning: hideReasoning ? '(hidden during live match)' : m.reasoning,
+        apiCostCents: m.apiCostCents,
+        responseTimeMs: m.responseTimeMs,
+        timestamp: m.timestamp,
+      };
+    }));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// Monad On-Chain Status
+// ============================================
+
+router.get('/chain/status', async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const { monadService } = await import('../services/monadService');
+    const status = await monadService.getStatus();
+    res.json(status);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

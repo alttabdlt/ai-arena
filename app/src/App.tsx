@@ -24,6 +24,7 @@ import Metaverse from "./pages/Metaverse";
 import Deploy from "./pages/Deploy";
 import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
+import Arena from "./pages/Arena";
 import { DeploymentStatus } from "@/modules/admin/DeploymentStatus";
 
 const App = () => {
@@ -73,7 +74,8 @@ const App = () => {
             >
               <Layout>
                 <Routes>
-            <Route path="/" element={<Index />} />
+            <Route path="/" element={<Arena />} />
+          <Route path="/arena" element={<Arena />} />
             
             {/* Core User Journey */}
             {/* <Route path="/dashboard" element={<Dashboard />} /> */} {/* Commented out - redundant */}

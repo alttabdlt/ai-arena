@@ -5,12 +5,11 @@
  * wager tracking, ELO updates, and opponent record management.
  */
 
-import { PrismaClient, ArenaAgent, ArenaMatch, ArenaGameType, AgentArchetype } from '@prisma/client';
+import { ArenaAgent, ArenaMatch, ArenaGameType, AgentArchetype } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { smartAiService, GameMoveRequest, OpponentScouting, MetaContext, AgentConfig } from './smartAiService';
-import { GameEngineAdapterFactory, GameEngineAdapter } from './gameEngineAdapter';
-
-const prisma = new PrismaClient();
+import { GameEngineAdapter, GameEngineAdapterFactory } from './gameEngineAdapter';
+import { prisma } from '../config/database';
 
 // ============================================
 // Types
@@ -47,13 +46,35 @@ export interface SubmitMoveInput {
 
 export class ArenaService {
   private gameEngines: Map<string, GameEngineAdapter>;
+  private matchLocks: Map<string, Promise<any>>; // Simple async lock per match
 
   constructor() {
     this.gameEngines = new Map();
+    this.matchLocks = new Map();
     this.gameEngines.set('POKER', GameEngineAdapterFactory.create('poker'));
-    // RPS and Battleship will be added
     this.gameEngines.set('RPS', new RPSEngine());
     this.gameEngines.set('BATTLESHIP', new BattleshipEngine());
+  }
+
+  // Simple per-match lock to prevent concurrent state mutations
+  private async withMatchLock<T>(matchId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.matchLocks.get(matchId) || Promise.resolve();
+    const next = prev.then(fn, fn); // Chain even on error
+    this.matchLocks.set(matchId, next.catch(() => {}));
+    try {
+      return await next;
+    } finally {
+      // Clean up completed matches to prevent memory leak
+      if (this.matchLocks.size > 100) {
+        // Prune old entries — keep only active ones
+        const active = new Set<string>();
+        const matches = await prisma.arenaMatch.findMany({ where: { status: 'ACTIVE' }, select: { id: true } });
+        matches.forEach(m => active.add(m.id));
+        for (const key of this.matchLocks.keys()) {
+          if (!active.has(key)) this.matchLocks.delete(key);
+        }
+      }
+    }
   }
 
   // ============================================
@@ -63,6 +84,12 @@ export class ArenaService {
   async registerAgent(input: RegisterAgentInput): Promise<ArenaAgent> {
     const apiKey = `arena_${randomBytes(32).toString('hex')}`;
     
+    // Check name uniqueness with friendly error
+    const existing = await prisma.arenaAgent.findUnique({ where: { name: input.name } });
+    if (existing) {
+      throw new Error(`Agent name "${input.name}" is already taken`);
+    }
+
     return prisma.arenaAgent.create({
       data: {
         name: input.name,
@@ -173,11 +200,25 @@ export class ArenaService {
       },
     });
 
-    // If opponent specified, also deduct and start
+    // If opponent specified, validate and start
     if (input.opponentId) {
       const opponent = await prisma.arenaAgent.findUnique({ where: { id: input.opponentId } });
-      if (!opponent) throw new Error('Opponent not found');
-      if (opponent.bankroll < input.wagerAmount) throw new Error('Opponent has insufficient bankroll');
+      if (!opponent) {
+        // Rollback creator's wager
+        await prisma.arenaAgent.update({ where: { id: input.agentId }, data: { bankroll: { increment: input.wagerAmount }, totalWagered: { decrement: input.wagerAmount }, isInMatch: false, currentMatchId: null } });
+        await prisma.arenaMatch.delete({ where: { id: match.id } });
+        throw new Error('Opponent not found');
+      }
+      if (opponent.isInMatch) {
+        await prisma.arenaAgent.update({ where: { id: input.agentId }, data: { bankroll: { increment: input.wagerAmount }, totalWagered: { decrement: input.wagerAmount }, isInMatch: false, currentMatchId: null } });
+        await prisma.arenaMatch.delete({ where: { id: match.id } });
+        throw new Error('Opponent is already in a match');
+      }
+      if (opponent.bankroll < input.wagerAmount) {
+        await prisma.arenaAgent.update({ where: { id: input.agentId }, data: { bankroll: { increment: input.wagerAmount }, totalWagered: { decrement: input.wagerAmount }, isInMatch: false, currentMatchId: null } });
+        await prisma.arenaMatch.delete({ where: { id: match.id } });
+        throw new Error('Opponent has insufficient bankroll');
+      }
 
       await prisma.arenaAgent.update({
         where: { id: input.opponentId },
@@ -271,6 +312,8 @@ export class ArenaService {
       status: match.status,
       wagerAmount: match.wagerAmount,
       totalPot: match.totalPot,
+      rakeAmount: match.rakeAmount,
+      winnerId: match.winnerId,
       player1: match.player1,
       player2: match.player2,
       currentTurnId: match.currentTurnId,
@@ -291,6 +334,10 @@ export class ArenaService {
   }
 
   async submitMove(input: SubmitMoveInput): Promise<{ matchState: any; isComplete: boolean }> {
+    return this.withMatchLock(input.matchId, () => this._submitMoveInner(input));
+  }
+
+  private async _submitMoveInner(input: SubmitMoveInput): Promise<{ matchState: any; isComplete: boolean }> {
     const match = await prisma.arenaMatch.findUnique({ where: { id: input.matchId } });
     if (!match) throw new Error('Match not found');
     if (match.status !== 'ACTIVE') throw new Error('Match is not active');
@@ -301,6 +348,16 @@ export class ArenaService {
 
     const gameState = JSON.parse(match.gameState);
     
+    // Validate the action is legal
+    const validActions = engine.getValidActions(gameState, input.agentId);
+    if (validActions.length > 0 && typeof validActions[0] === 'string') {
+      // String-based validation (RPS, Poker)
+      if (!validActions.includes(input.action.toLowerCase())) {
+        throw new Error(`Invalid action "${input.action}". Valid: ${validActions.join(', ')}`);
+      }
+    }
+    // For object-based valid actions (Battleship), validation happens in the engine
+
     // Apply the action
     const action = {
       action: input.action,
@@ -388,14 +445,36 @@ export class ArenaService {
       turnNumber: match.turnNumber + 1,
     };
 
-    // Get AI decision
-    const { move, cost } = await smartAiService.getGameMove(request);
+    // Get AI decision (with error recovery)
+    let move: any;
+    let cost: any;
+    try {
+      const aiResult = await smartAiService.getGameMove(request);
+      move = aiResult.move;
+      cost = aiResult.cost;
+    } catch (err: any) {
+      console.error(`[Arena] AI call failed for agent ${agentId}: ${err.message}`);
+      // Fallback: random move so the game doesn't stall
+      const validActions = engine.getValidActions(gameState, agentId);
+      if (match.gameType === 'RPS') {
+        const choices = ['rock', 'paper', 'scissors'];
+        move = { action: choices[Math.floor(Math.random() * 3)], reasoning: 'AI error fallback', confidence: 0 };
+      } else if (match.gameType === 'BATTLESHIP' && validActions.length > 0) {
+        const target = validActions[Math.floor(Math.random() * validActions.length)];
+        move = { action: 'fire', data: target, reasoning: 'AI error fallback', confidence: 0 };
+      } else {
+        move = { action: validActions[0] || 'check', reasoning: 'AI error fallback', confidence: 0 };
+      }
+      cost = { inputTokens: 0, outputTokens: 0, costCents: 0, model: 'fallback', latencyMs: 0 };
+    }
 
     // Record cost
-    await prisma.arenaAgent.update({
-      where: { id: agentId },
-      data: { apiCostCents: { increment: cost.costCents } },
-    });
+    if (cost.costCents > 0) {
+      await prisma.arenaAgent.update({
+        where: { id: agentId },
+        data: { apiCostCents: { increment: cost.costCents } },
+      });
+    }
 
     // Submit the move
     const result = await this.submitMove({
@@ -410,13 +489,44 @@ export class ArenaService {
     await prisma.arenaMove.updateMany({
       where: { matchId, agentId, turnNumber: match.turnNumber + 1 },
       data: {
-        reasoning: move.reasoning,
+        reasoning: move.reasoning || '',
         apiCostCents: cost.costCents,
         responseTimeMs: cost.latencyMs,
       },
     });
 
     return { move, cost, isComplete: result.isComplete };
+  }
+
+  // Cancel a match (refund wagers)
+  async cancelMatch(matchId: string, agentId: string): Promise<{ status: string }> {
+    const match = await prisma.arenaMatch.findUnique({ where: { id: matchId } });
+    if (!match) throw new Error('Match not found');
+    if (match.status === 'COMPLETED' || match.status === 'CANCELLED') {
+      throw new Error(`Match is already ${match.status.toLowerCase()}`);
+    }
+    if (match.player1Id !== agentId && match.player2Id !== agentId) {
+      throw new Error('You are not a participant in this match');
+    }
+
+    // Refund wagers and revert totalWagered
+    await prisma.arenaAgent.update({
+      where: { id: match.player1Id },
+      data: { bankroll: { increment: match.wagerAmount }, totalWagered: { decrement: match.wagerAmount }, isInMatch: false, currentMatchId: null },
+    });
+    if (match.player2Id) {
+      await prisma.arenaAgent.update({
+        where: { id: match.player2Id },
+        data: { bankroll: { increment: match.wagerAmount }, totalWagered: { decrement: match.wagerAmount }, isInMatch: false, currentMatchId: null },
+      });
+    }
+
+    await prisma.arenaMatch.update({
+      where: { id: matchId },
+      data: { status: 'CANCELLED', completedAt: new Date() },
+    });
+
+    return { status: 'cancelled' };
   }
 
   // ============================================
@@ -432,6 +542,8 @@ export class ArenaService {
 
     if (winnerId) {
       // Winner gets pot minus rake
+      // totalWon tracks gross payouts received (including return of own wager)
+      // profit = totalWon - totalWagered (net gain/loss)
       await prisma.arenaAgent.update({
         where: { id: winnerId },
         data: {
@@ -640,6 +752,44 @@ export class ArenaService {
   }
 
   // ============================================
+  // Stale Match Cleanup
+  // ============================================
+
+  async cleanupStaleMatches(maxAgeMinutes = 30) {
+    const cutoff = new Date(Date.now() - maxAgeMinutes * 60 * 1000);
+    const staleMatches = await prisma.arenaMatch.findMany({
+      where: {
+        status: { in: ['ACTIVE', 'WAITING'] },
+        createdAt: { lt: cutoff },
+      },
+    });
+
+    for (const match of staleMatches) {
+      console.log(`[Arena] Cleaning up stale match ${match.id} (created ${match.createdAt})`);
+      try {
+        // Refund both players
+        await prisma.arenaAgent.update({
+          where: { id: match.player1Id },
+          data: { bankroll: { increment: match.wagerAmount }, totalWagered: { decrement: match.wagerAmount }, isInMatch: false, currentMatchId: null },
+        });
+        if (match.player2Id) {
+          await prisma.arenaAgent.update({
+            where: { id: match.player2Id },
+            data: { bankroll: { increment: match.wagerAmount }, totalWagered: { decrement: match.wagerAmount }, isInMatch: false, currentMatchId: null },
+          });
+        }
+        await prisma.arenaMatch.update({
+          where: { id: match.id },
+          data: { status: 'CANCELLED', completedAt: new Date() },
+        });
+      } catch (err: any) {
+        console.error(`[Arena] Failed to cleanup match ${match.id}: ${err.message}`);
+      }
+    }
+    return staleMatches.length;
+  }
+
+  // ============================================
   // Game Initialization Helpers
   // ============================================
 
@@ -778,6 +928,19 @@ export class ArenaService {
         }
         return { ...gameState, boards };
       }
+      case 'RPS': {
+        // Hide opponent's pending move for current round
+        const view = JSON.parse(JSON.stringify(gameState));
+        if (view.moves) {
+          const filteredMoves: Record<string, string> = {};
+          for (const [pid, move] of Object.entries(view.moves)) {
+            filteredMoves[pid] = pid === playerId ? (move as string) : '(hidden)';
+          }
+          view.moves = filteredMoves;
+        }
+        // Show completed round history (both moves visible after resolution)
+        return view;
+      }
       default:
         return gameState;
     }
@@ -789,10 +952,22 @@ export class ArenaService {
 // ============================================
 
 class RPSEngine implements GameEngineAdapter {
+  private static VALID_MOVES = new Set(['rock', 'paper', 'scissors']);
+
   processAction(state: any, action: any): any {
     const newState = JSON.parse(JSON.stringify(state));
     const playerId = action.playerId;
-    newState.moves[playerId] = action.action; // rock/paper/scissors
+    
+    // Normalize and validate move
+    const move = String(action.action).toLowerCase().trim();
+    if (!RPSEngine.VALID_MOVES.has(move)) {
+      // Invalid move — pick randomly as penalty
+      const moves = ['rock', 'paper', 'scissors'];
+      console.warn(`[RPS] Invalid move "${action.action}" from ${playerId}, randomizing`);
+      newState.moves[playerId] = moves[Math.floor(Math.random() * 3)];
+    } else {
+      newState.moves[playerId] = move;
+    }
 
     // Check if both players have moved
     const playerIds = Object.keys(newState.scores);
@@ -832,11 +1007,12 @@ class RPSEngine implements GameEngineAdapter {
   }
 
   isGameComplete(state: any): boolean {
-    const maxRounds = state.maxRounds || 5;
-    // Bo5: first to 3 wins, or all rounds played
+    const winsNeeded = 3; // Best of 5: first to 3 wins
+    const maxTotalRounds = 9; // Safety cap (draws extend the game)
     const scores = Object.values(state.scores) as number[];
-    if (scores.some(s => s >= Math.ceil(maxRounds / 2))) return true;
-    if (state.round > maxRounds) return true;
+    if (scores.some(s => s >= winsNeeded)) return true;
+    // Total rounds played (including draws) — safety cap to prevent infinite games
+    if (state.history && state.history.length >= maxTotalRounds) return true;
     return false;
   }
 
@@ -857,12 +1033,29 @@ class BattleshipEngine implements GameEngineAdapter {
     const newState = JSON.parse(JSON.stringify(state));
     const playerId = action.playerId;
     const { row, col } = action.data || {};
+
+    // Validate coordinates
+    if (row === undefined || col === undefined || row < 0 || row > 9 || col < 0 || col > 9) {
+      // Invalid shot — skip turn as penalty
+      const opponentId = Object.keys(newState.boards).find(id => id !== playerId);
+      if (opponentId) newState.currentTurn = opponentId;
+      return newState;
+    }
     
     // Find opponent
     const opponentId = Object.keys(newState.boards).find(id => id !== playerId);
     if (!opponentId) return newState;
 
     const opponentBoard = newState.boards[opponentId];
+
+    // Check for duplicate shot
+    const alreadyShot = [...opponentBoard.hits, ...opponentBoard.misses]
+      .some(([r, c]: [number, number]) => r === row && c === col);
+    if (alreadyShot) {
+      // Duplicate — skip turn as penalty
+      newState.currentTurn = opponentId;
+      return newState;
+    }
     
     // Check if hit
     let hit = false;

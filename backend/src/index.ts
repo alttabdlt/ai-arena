@@ -92,12 +92,19 @@ const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
   enableOfflineQueue: false,
   retryStrategy: () => null, // Disable retries
   reconnectOnError: () => false, // Don't reconnect on errors
+  maxRetriesPerRequest: null,
 });
 
-// Handle Redis errors silently
+// Handle Redis errors silently — only log once
+let redisErrorLogged = false;
 redis.on('error', (err: any) => {
-  if (err.code === 'ECONNREFUSED') {
-    console.log('⚠️  Redis not available - caching disabled');
+  if (!redisErrorLogged) {
+    redisErrorLogged = true;
+    if (err.code === 'ECONNREFUSED') {
+      console.log('⚠️  Redis not available - caching disabled');
+    } else {
+      console.log('⚠️  Redis error:', err.message);
+    }
   }
 });
 

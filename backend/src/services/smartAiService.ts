@@ -112,11 +112,11 @@ const ARCHETYPE_SYSTEM_PROMPTS: Record<AgentArchetype, Record<string, string>> =
 - If opponent is tight/passive: steal everything
 - If opponent is aggressive: let them bluff into your traps`,
     RPS: `RPS STRATEGY — SHARK:
-- Track opponent's last 5 moves for patterns
-- Most opponents shift after losing (rock→paper→scissors cycle)
-- If you won, play what BEATS what would beat your winning move
-- Occasionally double up on the same move to confuse
-- In Bo5: sacrifice rounds 1-2 to pattern-read, then exploit rounds 3-5`,
+- Be UNPREDICTABLE. Use all three moves roughly equally.
+- Track opponent's last moves. If they repeat, counter them.
+- If you won last round, SWITCH to a different move.
+- Mix it up: never play the same move 3 times in a row.
+- Surprise is your weapon. Keep them guessing.`,
     BATTLESHIP: `BATTLESHIP STRATEGY — SHARK:
 - Open with a diagonal pattern to maximize coverage
 - Once you get a hit, switch to hunt mode: check all 4 adjacent cells
@@ -137,10 +137,10 @@ const ARCHETYPE_SYSTEM_PROMPTS: Record<AgentArchetype, Record<string, string>> =
 - Protect your stack — a small profit is better than a big loss
 - If you're up significantly, tighten further to protect gains`,
     RPS: `RPS STRATEGY — ROCK:
-- Play the statistically optimal mixed strategy
-- Default to uniform random: 33/33/33 distribution
-- Only deviate if opponent has an extremely obvious pattern (3+ repeats)
-- Minimize variance: play to not lose rather than to win big`,
+- Default strategy: RANDOMIZE between rock, paper, scissors equally.
+- Only deviate if opponent has a clear pattern (3+ same moves).
+- If deviating, play what BEATS their most common move.
+- Always vary your choices. Never be predictable.`,
     BATTLESHIP: `BATTLESHIP STRATEGY — ROCK:
 - Use a probability-based grid search: check every other cell (checkerboard)
 - Focus on finding the largest remaining ship first
@@ -185,11 +185,11 @@ const ARCHETYPE_SYSTEM_PROMPTS: Record<AgentArchetype, Record<string, string>> =
 - The goal isn't to play perfect poker. The goal is to be ENTERTAINING.
 - Include trash talk and hype in your reasoning`,
     RPS: `RPS STRATEGY — DEGEN:
-- Trust your gut. Go with your INSTINCT.
-- Rock is the power move. When in doubt, ROCK.
-- If you just lost, DOUBLE DOWN on the same choice
-- Never play the same thing 3x in a row (even degens have limits)
-- Your energy IS your strategy. Chaos is a ladder.`,
+- BE RANDOM. Pick rock, paper, or scissors with roughly equal probability.
+- Go with pure chaos — no patterns, no logic, just vibes.
+- Explicitly randomize: mentally flip between all three options.
+- NEVER default to the same move. Variety is chaos.
+- Your unpredictability IS your strength.`,
     BATTLESHIP: `BATTLESHIP STRATEGY — DEGEN:
 - Don't use a pattern. GO RANDOM. Pure chaos.
 - Target the spots that FEEL right
@@ -331,7 +331,7 @@ ${Object.keys(opponent.patterns).length > 0 ? `Observed patterns: ${JSON.stringi
     // 3. Current game state
     messages.push({
       role: 'user',
-      content: `TURN ${turnNumber} — CURRENT GAME STATE:\n${JSON.stringify(gameState, null, 2)}${playerState ? `\n\nYOUR STATE:\n${JSON.stringify(playerState, null, 2)}` : ''}`,
+      content: `TURN ${turnNumber} — CURRENT GAME STATE:\n${JSON.stringify(gameState, null, 2)}${playerState ? `\n\nYOUR STATE:\n${JSON.stringify(playerState, null, 2)}` : ''}${gameType === 'RPS' ? `\n\nIMPORTANT: Your unique random seed for this move is ${Math.random().toFixed(6)}. Use this to decide: if seed < 0.33 play rock, if 0.33-0.66 play paper, if > 0.66 play scissors. ONLY deviate from this if you have strong evidence of an opponent pattern to exploit.` : ''}`,
     });
     
     return messages;

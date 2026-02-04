@@ -240,6 +240,15 @@ router.post('/matches/:id/ai-move', authenticateAgent, async (req: Authenticated
   }
 });
 
+router.post('/matches/:id/cancel', authenticateAgent, async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const result = await arenaService.cancelMatch(req.params.id, req.agent!.id);
+    res.json(result);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 router.get('/matches/:id/result', async (req: Request, res: Response): Promise<void> => {
   try {
     const state = await arenaService.getMatchState(req.params.id);

@@ -18,6 +18,8 @@ import { GameErrorBoundary } from "@shared/components/ErrorBoundary";
 import Index from "./pages/Index";
 // import Dashboard from "./pages/Dashboard"; // Commented out - redundant
 import Tournaments from "@tournament/pages/Tournaments";
+import PlayPoker from "@queue/pages/PlayPoker";
+import PokerViewer from "@game/poker/PokerViewer";
 import Metaverse from "./pages/Metaverse";
 import Deploy from "./pages/Deploy";
 import Settings from "./pages/Settings";
@@ -63,7 +65,12 @@ const App = () => {
             <Toaster />
             <Sonner />
             <LoggingIndicator />
-            <BrowserRouter>
+            <BrowserRouter
+              future={{
+                v7_startTransition: true,
+                v7_relativeSplatPath: true
+              }}
+            >
               <Layout>
                 <Routes>
             <Route path="/" element={<Index />} />
@@ -71,10 +78,13 @@ const App = () => {
             {/* Core User Journey */}
             {/* <Route path="/dashboard" element={<Dashboard />} /> */} {/* Commented out - redundant */}
             <Route path="/tournaments" element={<Tournaments />} />
+            <Route path="/play/poker" element={<PlayPoker />} />
+            <Route path="/play/poker/:gameId" element={<PokerViewer />} />
             {/* Complex tournament views removed - simplified betting interface only */}
             
             {/* Bots - Idle Game */}
-            <Route path="/metaverse" element={<Metaverse />} />
+            <Route path="/bots" element={<Metaverse />} />
+            <Route path="/metaverse" element={<Navigate to="/bots" replace />} />
             <Route path="/deploy" element={<Deploy />} />
             
             {/* Platform Features */}
@@ -85,9 +95,9 @@ const App = () => {
             <Route path="/admin/deployment" element={<DeploymentStatus />} />
             
             {/* Redirects from old pages */}
-            <Route path="/analytics" element={<Navigate to="/metaverse" replace />} />
-            <Route path="/social" element={<Navigate to="/metaverse" replace />} />
-            <Route path="/dashboard" element={<Navigate to="/metaverse" replace />} />
+            <Route path="/analytics" element={<Navigate to="/bots" replace />} />
+            <Route path="/social" element={<Navigate to="/bots" replace />} />
+            <Route path="/dashboard" element={<Navigate to="/bots" replace />} />
             
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />

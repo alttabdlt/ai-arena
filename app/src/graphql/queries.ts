@@ -17,12 +17,11 @@ export const BOT_FRAGMENT = gql`
       id
     }
     stats {
-      power
-      defense
-      speed
-      intelligence
-      psyche
-      energy
+      wins
+      losses
+      earnings
+      winRate
+      avgFinishPosition
     }
     socialStats {
       likes
@@ -36,7 +35,6 @@ export const BOT_FRAGMENT = gql`
       totalXP
       xpToNextLevel
     }
-    character
   }
 `;
 

@@ -1380,7 +1380,7 @@ class GameManagerService {
   private getLoopDelay(gameType: GameInstance['type']): number {
     switch (gameType) {
       case 'poker':
-        return 3000; // 3 seconds per turn - increased to better handle AI response times
+        return 5000; // 5 seconds per turn for clearer UI pacing
       case 'reverse-hangman':
         return 3000; // 3 seconds per turn
       case 'connect4':

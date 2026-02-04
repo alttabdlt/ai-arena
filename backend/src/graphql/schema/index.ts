@@ -269,6 +269,9 @@ const baseTypeDefs = gql`
     joinGame(gameId: String!): GameViewerResponse!
     updateGameSpeed(gameId: String!, speed: String!): GameViewerResponse!
     
+    # Quick matchmaking for head-to-head poker
+    quickMatch(botId: String!, mmr: Int, timeoutMs: Int): QuickMatchResult!
+    
     # Debug logging control
     startDebugLogging(gameType: String!, matchId: String): Boolean!
     stopDebugLogging: Boolean!
@@ -304,6 +307,12 @@ const baseTypeDefs = gql`
     
     # Channel mutations
     switchChannel(botId: String!, channelName: String!): Bot!
+  }
+
+  type QuickMatchResult {
+    status: String!
+    gameId: ID
+    estimatedWaitMs: Int
   }
 
   type Subscription {

@@ -7,7 +7,6 @@ export const DEPLOY_BOT = gql`
       name
       avatar
       prompt
-      modelType
       isActive
       stats {
         wins
@@ -21,7 +20,6 @@ export const DEPLOY_BOT = gql`
         address
         username
       }
-      queuePosition
       createdAt
     }
   }

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWallet } from '@solana/wallet-adapter-react';
+import { useAuth } from '@auth/contexts/AuthContext';
 import { useMutation } from '@apollo/client';
 import { Button } from '@ui/button';
 import { Input } from '@ui/input';
@@ -38,6 +39,7 @@ const PERSONALITIES = [
 const DeployPage = () => {
   const navigate = useNavigate();
   const { publicKey } = useWallet();
+  const { isAuthenticated, isLoggingIn, login } = useAuth();
   const { toast } = useToast();
   const [botName, setBotName] = useState('');
   const [personality, setPersonality] = useState('');
@@ -46,12 +48,16 @@ const DeployPage = () => {
   const address = publicKey?.toString();
 
   const [createBot] = useMutation(CREATE_BOT, {
-    onCompleted: () => {
+    onCompleted: (res) => {
+      const newId = res?.adoptCompanion?.id;
+      if (newId) {
+        localStorage.setItem('selectedBotId', newId);
+      }
       toast({
         title: "Bot Deployed!",
         description: `${botName} has been successfully deployed and is ready to earn XP!`,
       });
-      navigate('/metaverse');
+      navigate('/bots');
     },
     onError: (error) => {
       toast({
@@ -82,6 +88,15 @@ const DeployPage = () => {
       return;
     }
 
+    // Ensure authenticated (signs a message via wallet)
+    if (!isAuthenticated) {
+      await login();
+      if (!localStorage.getItem('ai-arena-access-token')) {
+        toast({ title: 'Authentication required', description: 'Please complete wallet sign-in', variant: 'destructive' });
+        return;
+      }
+    }
+
     setDeploying(true);
 
     // Use the actual mutation
@@ -90,7 +105,8 @@ const DeployPage = () => {
         input: {
           name: botName,
           personality,
-          txHash: 'test-deployment-' + Date.now() // Placeholder for testing
+          // Use mock signature accepted by backend validator
+          txHash: 'test_' + Date.now()
         }
       }
     });
@@ -122,7 +138,7 @@ const DeployPage = () => {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => navigate('/metaverse')}
+                  onClick={() => navigate('/bots')}
             >
               <ArrowLeft className="mr-2 h-4 w-4" />
               Back to Bots
@@ -213,7 +229,7 @@ const DeployPage = () => {
               className="w-full"
               size="lg"
               onClick={handleDeploy}
-              disabled={deploying || !botName.trim() || !personality}
+              disabled={deploying || isLoggingIn || !botName.trim() || !personality}
             >
               {deploying ? (
                 <>

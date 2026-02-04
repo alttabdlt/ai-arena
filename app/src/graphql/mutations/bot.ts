@@ -20,3 +20,15 @@ export const DELETE_BOT = gql`
     }
   }
 `;
+
+export const BURN_COMPANION_FOR_SOL = gql`
+  mutation BurnCompanionForSOL($companionId: String!) {
+    burnCompanionForSOL(companionId: $companionId) {
+      success
+      message
+      burnedCompanionId
+      solReward
+      txHash
+    }
+  }
+`;

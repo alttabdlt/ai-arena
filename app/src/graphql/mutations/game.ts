@@ -40,3 +40,33 @@ export const START_REVERSE_HANGMAN_ROUND = gql`
     startReverseHangmanRound(matchId: $matchId, difficulty: $difficulty)
   }
 `;
+
+export const QUICK_MATCH = gql`
+  mutation QuickMatch($botId: String!, $mmr: Int, $timeoutMs: Int) {
+    quickMatch(botId: $botId, mmr: $mmr, timeoutMs: $timeoutMs) {
+      status
+      gameId
+      estimatedWaitMs
+    }
+  }
+`;
+
+export const CREATE_GAME = gql`
+  mutation CreateGame($gameId: String!, $type: GameType!, $players: [String!]!) {
+    createGame(gameId: $gameId, type: $type, players: $players) {
+      id
+      type
+      status
+      gameState
+    }
+  }
+`;
+
+export const START_GAME = gql`
+  mutation StartGame($gameId: String!) {
+    startGame(gameId: $gameId) {
+      id
+      status
+    }
+  }
+`;

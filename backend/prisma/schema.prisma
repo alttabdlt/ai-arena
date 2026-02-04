@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -46,13 +46,13 @@ model Bot {
   tokenId         Int                     @unique
   name            String
   avatar          String
-  prompt          String                  @db.VarChar(1000)
+  prompt          String
   personality     BotPersonality          @default(WORKER)
   isDemo          Boolean                 @default(false)
   modelType       AIModel?
   creatorId       String
   isActive        Boolean                 @default(true)
-  stats           Json                    @default("{}")
+  stats           String                  @default("{}")
   character       String?
   createdAt       DateTime                @default(now())
   updatedAt       DateTime                @updatedAt
@@ -85,7 +85,7 @@ model DeploymentTransaction {
   botId     String   @unique
   userId    String
   txHash    String   @unique
-  amount    Decimal  @db.Decimal(78, 18)
+  amount    Decimal
   status    TxStatus @default(PENDING)
   createdAt DateTime @default(now())
   bot       Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
@@ -120,9 +120,9 @@ model Match {
   id             String             @id @default(cuid())
   type           MatchType          @default(TOURNAMENT)
   status         MatchStatus        @default(SCHEDULED)
-  gameHistory    Json
-  decisions      Json
-  result         Json?
+  gameHistory    String
+  decisions      String
+  result         String?
   replayUrl      String?
   createdAt      DateTime           @default(now())
   startedAt      DateTime?
@@ -158,8 +158,8 @@ model AIDecision {
   matchId    String
   botId      String
   handNumber Int
-  decision   Json
-  gameState  Json
+  decision   String
+  gameState  String
   timestamp  DateTime @default(now())
   match      Match    @relation(fields: [matchId], references: [id])
 
@@ -172,8 +172,8 @@ model Tournament {
   name         String
   type         TournamentType
   status       TournamentStatus        @default(UPCOMING)
-  entryFee     Decimal                 @db.Decimal(78, 18)
-  prizePool    Decimal                 @db.Decimal(78, 18)
+  entryFee     Decimal
+  prizePool    Decimal
   startTime    DateTime
   endTime      DateTime
   createdAt    DateTime                @default(now())
@@ -282,7 +282,7 @@ model BotEquipment {
   rangeBonus    Int           @default(0)
   healingPower  Int           @default(0)
   duration      Int?
-  metadata      Json          @default("{}")
+  metadata      String        @default("{}")
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
   bot           Bot           @relation(fields: [botId], references: [id], onDelete: Cascade)
@@ -299,7 +299,7 @@ model BotHouse {
   defenseLevel    Int         @default(1)
   lastRobbed      DateTime?
   robberyCooldown DateTime?
-  worldPosition   Json        @default("{\"x\": 0, \"y\": 0}")
+  worldPosition   String        @default("{\"x\": 0, \"y\": 0}")
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
   bot             Bot         @relation(fields: [botId], references: [id], onDelete: Cascade)
@@ -316,8 +316,8 @@ model Furniture {
   rarity        ItemRarity
   scoreBonus    Int           @default(0)
   defenseBonus  Int           @default(0)
-  position      Json          @default("{\"x\": 0, \"y\": 0, \"rotation\": 0}")
-  metadata      Json          @default("{}")
+  position      String          @default("{\"x\": 0, \"y\": 0, \"rotation\": 0}")
+  metadata      String        @default("{}")
   createdAt     DateTime      @default(now())
   house         BotHouse      @relation(fields: [houseId], references: [id], onDelete: Cascade)
 
@@ -353,7 +353,7 @@ model BotExperience {
   prestigeLevel   Int      @default(0)
   prestigeTokens  Int      @default(0)
   skillPoints     Int      @default(0)
-  allocatedSkills Json     @default("{}")
+  allocatedSkills String     @default("{}")
   bettingWins     Int      @default(0)
   bettingLosses   Int      @default(0)
   winStreak       Int      @default(0)
@@ -375,8 +375,8 @@ model LootboxReward {
   matchId          String
   botId            String
   lootboxRarity    ItemRarity
-  equipmentRewards Json       @default("[]")
-  furnitureRewards Json       @default("[]")
+  equipmentRewards String       @default("[]")
+  furnitureRewards String       @default("[]")
   currencyReward   Int        @default(0)
   opened           Boolean    @default(false)
   openedAt         DateTime?
@@ -741,4 +741,225 @@ enum StakingTier {
   GOLD        // 20k XP/hour
   PLATINUM    // 25k XP/hour
   DIAMOND     // 30k XP/hour
+}
+
+// ============================================
+// Arena PvP System (OpenClaw Agent Framework)
+// ============================================
+
+model ArenaAgent {
+  id              String          @id @default(cuid())
+  name            String          @unique
+  archetype       AgentArchetype  @default(CHAMELEON)
+  modelId         String          // LLM model identifier (e.g., "gpt-4o", "claude-4-sonnet")
+  walletAddress   String?         @unique // Monad EOA address
+  apiKey          String          @unique // Bearer token for REST API auth
+  
+  // Strategy
+  systemPrompt    String          @default("") // Custom strategy instructions
+  riskTolerance   Float           @default(0.5) // 0.0 = ultra-conservative, 1.0 = degen
+  maxWagerPercent Float           @default(0.15) // Max % of bankroll per wager
+  
+  // Stats
+  elo             Int             @default(1500)
+  bankroll        Int             @default(10000) // $ARENA balance (off-chain tracking)
+  wins            Int             @default(0)
+  losses          Int             @default(0)
+  draws           Int             @default(0)
+  totalWagered    Int             @default(0)
+  totalWon        Int             @default(0)
+  totalRake       Int             @default(0) // Total rake paid
+  apiCostCents    Int             @default(0) // Cumulative LLM API cost in cents
+  
+  // State
+  isActive        Boolean         @default(true)
+  isInMatch       Boolean         @default(false)
+  currentMatchId  String?
+  lastActiveAt    DateTime        @default(now())
+  
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  
+  // Relations
+  matchesAsPlayer1  ArenaMatch[]    @relation("player1")
+  matchesAsPlayer2  ArenaMatch[]    @relation("player2")
+  matchesWon        ArenaMatch[]    @relation("winner")
+  moves             ArenaMove[]
+  opponentRecords   OpponentRecord[] @relation("agent")
+  opponentOf        OpponentRecord[] @relation("opponent")
+  tournamentEntries ArenaTournamentEntry[]
+  
+  @@index([elo])
+  @@index([isActive])
+  @@index([archetype])
+  @@index([apiKey])
+}
+
+model ArenaMatch {
+  id              String          @id @default(cuid())
+  gameType        ArenaGameType
+  status          ArenaMatchStatus @default(WAITING)
+  
+  // Players
+  player1Id       String
+  player2Id       String?
+  winnerId        String?
+  
+  // Wager
+  wagerAmount     Int             @default(0) // $ARENA per player
+  totalPot        Int             @default(0) // wagerAmount * 2
+  rakeAmount      Int             @default(0) // 5% of pot
+  
+  // Game state
+  gameState       String          @default("{}") // JSON serialized game state
+  turnNumber      Int             @default(0)
+  currentTurnId   String?         // Agent ID whose turn it is
+  
+  // On-chain (nullable until Monad integration)
+  depositTxHash   String?
+  resolveTxHash   String?
+  
+  // Timing
+  createdAt       DateTime        @default(now())
+  startedAt       DateTime?
+  completedAt     DateTime?
+  
+  // Tournament reference
+  tournamentId    String?
+  tournament      ArenaTournament? @relation(fields: [tournamentId], references: [id])
+  
+  // Relations
+  player1         ArenaAgent      @relation("player1", fields: [player1Id], references: [id])
+  player2         ArenaAgent?     @relation("player2", fields: [player2Id], references: [id])
+  winner          ArenaAgent?     @relation("winner", fields: [winnerId], references: [id])
+  moves           ArenaMove[]
+  
+  @@index([status])
+  @@index([player1Id])
+  @@index([player2Id])
+  @@index([gameType])
+  @@index([createdAt])
+  @@index([tournamentId])
+}
+
+model ArenaMove {
+  id              String          @id @default(cuid())
+  matchId         String
+  agentId         String
+  turnNumber      Int
+  action          String          // JSON: {"action": "raise", "amount": 100}
+  reasoning       String          @default("") // LLM's explanation
+  gameStateBefore String          @default("{}") // Snapshot before move
+  apiCostCents    Int             @default(0) // Cost of this LLM call
+  responseTimeMs  Int             @default(0) // LLM response latency
+  timestamp       DateTime        @default(now())
+  
+  match           ArenaMatch      @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  agent           ArenaAgent      @relation(fields: [agentId], references: [id])
+  
+  @@index([matchId, turnNumber])
+  @@index([agentId])
+}
+
+model OpponentRecord {
+  id              String          @id @default(cuid())
+  agentId         String          // The agent who owns this scouting report
+  opponentId      String          // The opponent being scouted
+  
+  // Stats
+  matchesPlayed   Int             @default(0)
+  wins            Int             @default(0)
+  losses          Int             @default(0)
+  draws           Int             @default(0)
+  
+  // Behavioral data (JSON blobs for flexibility)
+  patterns        String          @default("{}") // Tracked patterns per game type
+  notes           String          @default("") // Agent's own notes about this opponent
+  
+  lastPlayedAt    DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  
+  agent           ArenaAgent      @relation("agent", fields: [agentId], references: [id], onDelete: Cascade)
+  opponent        ArenaAgent      @relation("opponent", fields: [opponentId], references: [id], onDelete: Cascade)
+  
+  @@unique([agentId, opponentId])
+  @@index([agentId])
+  @@index([opponentId])
+}
+
+model ArenaTournament {
+  id              String                @id @default(cuid())
+  name            String
+  format          TournamentFormat      @default(SWISS)
+  status          ArenaTournamentStatus @default(SCHEDULED)
+  
+  // Config
+  gameTypes       String                @default("[]") // JSON array of game types
+  wagerPerMatch   Int                   @default(100)
+  totalRounds     Int                   @default(5)
+  currentRound    Int                   @default(0)
+  
+  // Results
+  prizePool       Int                   @default(0)
+  
+  createdAt       DateTime              @default(now())
+  startedAt       DateTime?
+  completedAt     DateTime?
+  
+  matches         ArenaMatch[]
+  entries         ArenaTournamentEntry[]
+  
+  @@index([status])
+}
+
+model ArenaTournamentEntry {
+  id              String          @id @default(cuid())
+  tournamentId    String
+  agentId         String
+  score           Float           @default(0)
+  buchholz        Float           @default(0) // Tiebreaker
+  rank            Int?
+  
+  tournament      ArenaTournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  agent           ArenaAgent      @relation(fields: [agentId], references: [id])
+  
+  @@unique([tournamentId, agentId])
+  @@index([tournamentId])
+  @@index([agentId])
+}
+
+enum AgentArchetype {
+  SHARK       // Aggressive, big bluffs, pressure
+  ROCK        // Conservative, only strong hands
+  CHAMELEON   // Adaptive, counter-strategy
+  DEGEN       // Chaotic, unpredictable, YOLO
+  GRINDER     // Mathematical, Kelly Criterion, +EV
+}
+
+enum ArenaGameType {
+  POKER
+  RPS
+  BATTLESHIP
+}
+
+enum ArenaMatchStatus {
+  WAITING       // Player 1 created, waiting for opponent
+  ACTIVE        // Both players in, game in progress
+  COMPLETED     // Game finished, winner determined
+  CANCELLED     // Match cancelled before completion
+  TIMEOUT       // Match timed out
+}
+
+enum TournamentFormat {
+  SWISS
+  ROUND_ROBIN
+  SINGLE_ELIMINATION
+}
+
+enum ArenaTournamentStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
 }

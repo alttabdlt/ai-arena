@@ -33,6 +33,7 @@ const ENABLE_STAKING = FAST_STARTUP ? false : process.env.ENABLE_STAKING !== 'fa
 const ENABLE_FILE_LOGGING = FAST_STARTUP ? false : process.env.ENABLE_FILE_LOGGING !== 'false';
 const ENABLE_CUSTOM_WS = FAST_STARTUP ? false : process.env.ENABLE_CUSTOM_WS !== 'false';
 const ENABLE_MEMORY_MONITOR = FAST_STARTUP ? false : process.env.ENABLE_MEMORY_MONITOR !== 'false';
+const ENABLE_TOURNAMENTS = FAST_STARTUP ? false : process.env.ENABLE_TOURNAMENTS === 'true';
 
 if (FAST_STARTUP) {
   console.log('⚡ Fast startup mode enabled - non-essential services disabled');
@@ -114,13 +115,16 @@ if (typeof (pubsub as any).asyncIterator !== 'function') {
 initializeServices(prisma, redis, pubsub, { enableSolana: ENABLE_SOLANA });
 initializeGameManagerService(pubsub);
 
-// Initialize tournament scheduler (always needed for betting system)
-const tournamentScheduler = initializeTournamentScheduler(
-  prisma,
-  pubsub,
-  getGameManagerService(),
-  aiService
-);
+// Initialize tournament scheduler (optional based on feature flag)
+let tournamentScheduler: ReturnType<typeof initializeTournamentScheduler> | null = null;
+if (ENABLE_TOURNAMENTS) {
+  tournamentScheduler = initializeTournamentScheduler(
+    prisma,
+    pubsub,
+    getGameManagerService(),
+    aiService
+  );
+}
 
 // Initialize optional services
 let stakingService: any = null;
@@ -226,6 +230,13 @@ async function startServer() {
     }) as any
   );
 
+  // ============================================
+  // Arena PvP REST API
+  // ============================================
+  const arenaApiRouter = (await import('./routes/arena-api')).default;
+  app.use('/api/v1', cors<cors.CorsRequest>({ origin: '*' }), arenaApiRouter);
+  console.log('🏟️  Arena PvP API ready at /api/v1');
+
   app.get('/health', async (_req, res) => {
     const memoryUsage = process.memoryUsage();
     const uptime = process.uptime();
@@ -291,9 +302,11 @@ async function startServer() {
       console.log('⚡ Energy scheduler started - processing hourly consumption');
     }
     
-    // Start tournament scheduler (always needed)
-    tournamentScheduler.start();
-    console.log('🎰 Tournament scheduler started - tournaments every 15 minutes');
+    // Start tournament scheduler (if enabled)
+    if (ENABLE_TOURNAMENTS && tournamentScheduler) {
+      tournamentScheduler.start();
+      console.log('🎰 Tournament scheduler started - tournaments every 15 minutes');
+    }
     
     // Start staking service (if enabled)
     if (ENABLE_STAKING && stakingService) {
@@ -322,7 +335,9 @@ async function startServer() {
       energyScheduler.stop();
     }
     
-    tournamentScheduler.stop();
+    if (ENABLE_TOURNAMENTS && tournamentScheduler) {
+      tournamentScheduler.stop();
+    }
     
     if (ENABLE_STAKING && stakingService) {
       stakingService.stop();

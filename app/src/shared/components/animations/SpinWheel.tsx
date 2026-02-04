@@ -78,8 +78,11 @@ export default function SpinWheel({ onGameSelected }: SpinWheelProps) {
           <svg
             width="300"
             height="300"
-            className="transform transition-transform duration-[4000ms] ease-out"
-            style={{ transform: `rotate(${rotation}deg)` }}
+            className="transform transition-transform ease-out"
+            style={{
+              transform: `rotate(${rotation}deg)`,
+              transitionDuration: '4000ms'
+            }}
           >
             {enabledGames.map((game, index) => {
               const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];

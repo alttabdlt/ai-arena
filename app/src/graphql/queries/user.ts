@@ -23,7 +23,6 @@ export const GET_USER_STATS = gql`
         id
         name
         avatar
-        modelType
         stats {
           wins
           losses
@@ -53,7 +52,6 @@ export const GET_USER_BOTS = gql`
       tokenId
       name
       avatar
-      modelType
       isActive
       isDemo
       createdAt
@@ -73,7 +71,6 @@ export const GET_USER_BOTS = gql`
         regenerationRate
         netConsumption
       }
-      queuePosition
       equipment {
         id
         name

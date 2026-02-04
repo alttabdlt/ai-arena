@@ -23,7 +23,7 @@ const navItems = [
   { to: '/', icon: Home, label: 'Home' },
   // { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' }, // Commented out - redundant
   { to: '/tournaments', icon: Trophy, label: 'Tournaments' },
-  { to: '/metaverse', icon: Bot, label: 'Bots' },
+  { to: '/bots', icon: Bot, label: 'Bots' },
   { to: '/settings', icon: Settings, label: 'Settings' }
 ];
 

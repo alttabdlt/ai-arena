@@ -7,9 +7,12 @@ import { RetryLink } from '@apollo/client/link/retry';
 import { onError } from '@apollo/client/link/error';
 import { formatTimestamp } from '@shared/utils/dateFormatter';
 
+// Resolve API URLs
+const API_HTTP_URL = import.meta.env.VITE_API_URL || '/graphql';
+
 // HTTP connection to the API
 const httpLink = createHttpLink({
-  uri: import.meta.env.VITE_API_URL || '/graphql',
+  uri: API_HTTP_URL,
   credentials: 'include',
 });
 
@@ -178,6 +181,41 @@ const loggingLink = new ApolloLink((operation, forward) => {
 });
 
 // Error link to log GraphQL errors
+// Lightweight token refresh on auth errors (non-blocking)
+let isRefreshing = false;
+async function tryRefreshToken() {
+  if (isRefreshing) return;
+  const storedRefresh = localStorage.getItem('ai-arena-refresh-token');
+  if (!storedRefresh) return;
+  isRefreshing = true;
+  try {
+    const resp = await fetch(API_HTTP_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        query: `mutation RefreshToken($refreshToken: String!) {\n  refreshToken(refreshToken: $refreshToken) {\n    accessToken\n    refreshToken\n  }\n}`,
+        variables: { refreshToken: storedRefresh }
+      })
+    });
+    const json = await resp.json();
+    const result = json?.data?.refreshToken;
+    if (result?.accessToken && result?.refreshToken) {
+      localStorage.setItem('ai-arena-access-token', result.accessToken);
+      localStorage.setItem('ai-arena-refresh-token', result.refreshToken);
+    } else {
+      // Clear invalid tokens
+      localStorage.removeItem('ai-arena-access-token');
+      localStorage.removeItem('ai-arena-refresh-token');
+      localStorage.removeItem('ai-arena-user');
+    }
+  } catch (_) {
+    // Ignore refresh failures here; AuthContext handles full logout flows
+  } finally {
+    isRefreshing = false;
+  }
+}
+
 const errorLink = onError(({ graphQLErrors, networkError, operation, forward }) => {
   // Skip logging for debug log mutations to prevent feedback loop
   const skipLogging = operation.operationName === 'SendDebugLog' || 
@@ -195,6 +233,13 @@ const errorLink = onError(({ graphQLErrors, networkError, operation, forward }) 
           timestamp: formatTimestamp()
         });
       });
+
+      // Opportunistically refresh tokens on auth failures
+      if (graphQLErrors.some(e => e.message === 'Not authenticated') && 
+          operation.operationName !== 'RefreshToken' &&
+          operation.operationName !== 'ConnectWallet') {
+        tryRefreshToken();
+      }
     }
     
     if (networkError) {

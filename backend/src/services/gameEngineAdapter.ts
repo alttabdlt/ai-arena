@@ -191,7 +191,7 @@ export class PokerEngineAdapter implements GameEngineAdapter {
     // 1. Only one player has chips left
     // 2. Maximum number of hands (20) has been reached
     // 3. Phase is explicitly set to 'complete' (for error cases)
-    const maxHands = 20;
+    const maxHands = Number(gameState.maxHands ?? 5);
     return playersWithChips.length <= 1 || (handNumber && handNumber >= maxHands) || phase === 'complete';
   }
   

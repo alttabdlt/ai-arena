@@ -137,12 +137,13 @@ const Index = () => {
             variant: 'destructive',
           });
           navigate('/deploy');
-        } else if (activeBots.length === 1) {
-          setSelectedBotId(activeBots[0].id);
-          navigate('/metaverse');
-        } else {
-          setShowGameSelection(true);
         }
+        // Select a default bot if available then go to Quick Match
+        if (activeBots.length > 0) {
+          setSelectedBotId(activeBots[0].id);
+          localStorage.setItem('selectedBotId', activeBots[0].id);
+        }
+        navigate('/play/poker');
       }
     };
     
@@ -205,21 +206,19 @@ const Index = () => {
     }
 
     // If user has only one bot, auto-select it
-    if (activeBots.length === 1) {
+    if (activeBots.length > 0 && !selectedBotId) {
       setSelectedBotId(activeBots[0].id);
-      navigate('/metaverse');
-    } else {
-      // Show bot selection
-      setShowGameSelection(true);
+      localStorage.setItem('selectedBotId', activeBots[0].id);
     }
+    navigate('/play/poker');
   };
 
   const handleBotSelect = (botId: string) => {
     setSelectedBotId(botId);
     localStorage.setItem('selectedBotId', botId);
     setShowGameSelection(false);
-    // Navigate to tournaments or bots page
-    navigate('/tournaments');
+    // Go straight to Quick Match flow
+    navigate('/play/poker');
   };
 
   // Navigate to tournaments instead of queue

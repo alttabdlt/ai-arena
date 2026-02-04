@@ -11,7 +11,7 @@ const MetaversePage = () => {
   const address = publicKey?.toString();
 
   useEffect(() => {
-    console.log('Metaverse page mounted');
+    console.log('Bots page mounted');
     console.log('Wallet address:', address);
   }, [address]);
 
@@ -22,7 +22,7 @@ const MetaversePage = () => {
           <Bot className="h-16 w-16 text-muted-foreground/30 mx-auto mb-4" />
           <h2 className="text-2xl font-bold mb-2">Connect Your Wallet</h2>
           <p className="text-muted-foreground mb-4">
-            Connect your wallet to play the idle game and watch your bots earn XP!
+            Connect your wallet to view your bots and idle earnings.
           </p>
           <Button onClick={() => navigate('/')} variant="default">
             Connect Wallet

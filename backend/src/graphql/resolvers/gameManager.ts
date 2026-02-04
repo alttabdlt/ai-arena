@@ -1,4 +1,5 @@
 import { getGameManagerService } from '../../services/gameManagerService';
+import type { Context } from '../../config/context';
 import { withFilter } from 'graphql-subscriptions';
 import { PubSub } from 'graphql-subscriptions';
 
@@ -45,19 +46,97 @@ export const gameManagerResolvers = {
   },
 
   Mutation: {
-    createGame: async (_: any, args: any) => {
+    createGame: async (_: any, args: any, ctx: Context) => {
       const { gameId, type, players } = args;
       
       // Convert enum to lowercase for internal use
       const gameType = type.toLowerCase().replace('_', '-') as any;
       
-      // TODO: Load initial state from tournament data
-      const initialState = {
-        gameId,
-        phase: 'waiting',
-        players: players.map((id: string) => ({ id, isAI: true })),
-        turnCount: 0,
-      };
+      // Build a sensible initial state per game type
+      let initialState: any;
+      
+      if (gameType === 'poker') {
+        // Load bots to map model/name when available
+        let botMap: Record<string, any> = {};
+        try {
+          const bots = await ctx.prisma.bot.findMany({ where: { id: { in: players } } });
+          botMap = Object.fromEntries(bots.map(b => [b.id, b]));
+        } catch (e) {
+          // continue with defaults
+        }
+        // Initialize poker with handComplete=true to trigger first hand start
+        const startingChips = 10000;
+        const smallBlind = 50;
+        const bigBlind = 100;
+        
+        initialState = {
+          phase: 'handComplete',
+          handComplete: true,
+          players: players.map((id: string, idx: number) => {
+            const bot = botMap[id];
+            const aiModel = bot?.modelType || (idx % 2 === 0 ? 'DEEPSEEK_CHAT' : 'GPT_4O');
+            return {
+              id,
+              name: bot?.name || id,
+              isAI: true,
+              aiModel, // normalize later in game manager
+              aiStrategy: 'Play optimal poker strategy',
+              chips: startingChips,
+              bet: 0,
+              totalBet: 0,
+              folded: false,
+              isActive: true,
+              isAllIn: false,
+              hasActed: false,
+              position: idx,
+            };
+          }),
+          communityCards: [],
+          pot: 0,
+          currentBet: 0,
+          currentTurn: players[0],
+          deck: null, // Created on first hand
+          burnt: [],
+          handNumber: 1,
+          maxHands: 5,
+          bigBlind,
+          smallBlind,
+          dealerIndex: 0,
+          minRaise: bigBlind * 2,
+          sidePots: [],
+          winners: [],
+          speed: 'thinking',
+          timeoutMs: 10000,
+        };
+      } else if (gameType === 'reverse-hangman') {
+        initialState = {
+          phase: 'playing',
+          players: players.map((id: string) => ({ id, roundsWon: 0, totalScore: 0 })),
+          attempts: [],
+          maxAttempts: 5,
+          currentTurn: players[0],
+          turnCount: 0,
+          timeoutMs: 10000,
+        };
+      } else if (gameType === 'connect4') {
+        initialState = {
+          phase: 'waiting',
+          players: players.map((id: string) => ({ id })),
+          board: Array.from({ length: 8 }, () => Array(8).fill(0)),
+          currentTurn: players[0],
+          currentPlayerIndex: 0,
+          moveCount: 0,
+          gamePhase: 'playing',
+        };
+      } else {
+        // Fallback minimal state
+        initialState = {
+          gameId,
+          phase: 'waiting',
+          players: players.map((id: string) => ({ id, isAI: true })),
+          turnCount: 0,
+        };
+      }
       
       const game = await gameManagerService().createGame(gameId, gameType, players, initialState);
       return transformGameInstance(game);

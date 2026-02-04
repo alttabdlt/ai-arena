@@ -50,7 +50,7 @@ export function Header() {
               </Link>
             </Button>
             <Button variant="ghost" size="sm" className="text-sm pixel-btn" asChild>
-              <Link to="/metaverse">
+              <Link to="/bots">
                 <Bot className="mr-1.5 h-3.5 w-3.5" />
                 Bots
               </Link>

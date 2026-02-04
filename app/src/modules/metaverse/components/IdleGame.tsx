@@ -10,6 +10,10 @@ import { useIdleLoop } from '@/modules/metaverse/hooks/useIdleLoop';
 import { useOfflineProgress } from '@/modules/metaverse/hooks/useOfflineProgress';
 import WelcomeBackModal from '@/modules/metaverse/components/WelcomeBackModal';
 import { GET_UNCLAIMED_WINNINGS } from '@/graphql/queries/betting';
+import { useMutation } from '@apollo/client';
+import { BURN_COMPANION_FOR_SOL } from '@/graphql/mutations/bot';
+import { toast } from 'sonner';
+import { useAuth } from '@auth/contexts/AuthContext';
 // import { JackpotDisplay, WinnerModal } from '@/modules/idle-revolution/components/jackpot';
 
 const IdleGame: React.FC = () => {
@@ -19,6 +23,7 @@ const IdleGame: React.FC = () => {
   const [showClaimModal, setShowClaimModal] = useState(false);
   const [unclaimedWinnings, setUnclaimedWinnings] = useState<any[]>([]);
   const { bots, loading, refetch: refetchBots } = useBots();
+  const { isAuthenticated } = useAuth();
   
   // Add console logging for debugging
   useEffect(() => {
@@ -28,6 +33,7 @@ const IdleGame: React.FC = () => {
   }, [bots, loading]);
   
   const selectedBot = bots.find(b => b.id === selectedBotId);
+  const [burnCompanion, { loading: burning }] = useMutation(BURN_COMPANION_FOR_SOL);
   
   // Use offline progress hook
   const {
@@ -41,7 +47,8 @@ const IdleGame: React.FC = () => {
   // Query for unclaimed winnings
   const { data: winningsData, refetch: refetchWinnings } = useQuery(GET_UNCLAIMED_WINNINGS, {
     variables: { botId: selectedBotId || '' },
-    skip: !selectedBotId,
+    // Only query when a bot is selected AND the user is authenticated
+    skip: !selectedBotId || !isAuthenticated,
     pollInterval: 30000, // Check every 30 seconds
     onCompleted: (data) => {
       if (data?.myBets && data.myBets.length > 0) {
@@ -79,6 +86,26 @@ const IdleGame: React.FC = () => {
   // Calculate total earnings
   const totalXPEarned = totalXp || selectedBot?.experience?.totalXP || 0;
   const totalIdleEarned = Math.floor((totalXPEarned / 100) * 10); // Rough estimate
+  const mockStakedIDLE = 100000; // Mocked staked amount for display
+
+  const handleBurn = async () => {
+    if (!selectedBotId) return;
+    const confirmBurn = window.confirm('Burn this bot for SOL? This action is irreversible.');
+    if (!confirmBurn) return;
+    try {
+      const { data } = await burnCompanion({ variables: { companionId: selectedBotId } });
+      if (data?.burnCompanionForSOL?.success) {
+        toast.success(data.burnCompanionForSOL.message || 'Bot burned for SOL');
+        // Refresh bots list
+        refetchBots();
+        setSelectedBotId(null);
+      } else {
+        toast.error(data?.burnCompanionForSOL?.message || 'Failed to burn bot');
+      }
+    } catch (e: any) {
+      toast.error(e.message || 'Failed to burn bot');
+    }
+  };
 
   return (
     <>
@@ -131,6 +158,10 @@ const IdleGame: React.FC = () => {
                 <span className="stat-label">$IDLE</span>
                 <span className="stat-value">{totalIdleEarned.toLocaleString()}</span>
               </div>
+              <div className="quick-stat">
+                <span className="stat-label">Staked</span>
+                <span className="stat-value">{mockStakedIDLE.toLocaleString()}</span>
+              </div>
             </div>
           )}
         </div>
@@ -166,6 +197,37 @@ const IdleGame: React.FC = () => {
               <span style={{ fontSize: '20px' }}>+</span>
               Deploy New Bot
             </button>
+            {selectedBot && (
+              <button
+                className="deploy-btn"
+                onClick={handleBurn}
+                disabled={burning}
+                title={selectedBot?.experience?.level >= 100 ? 'Burn for SOL' : 'Requires level 100'}
+                style={{
+                  padding: '8px 16px',
+                  background: 'linear-gradient(135deg, #ef4444 0%, #b91c1c 100%)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: selectedBot?.experience?.level >= 100 ? 'pointer' : 'not-allowed',
+                  opacity: selectedBot?.experience?.level >= 100 ? 1 : 0.6,
+                  fontSize: '14px',
+                  fontWeight: '600',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  transition: 'transform 0.2s',
+                }}
+                onMouseEnter={(e) => {
+                  if (selectedBot?.experience?.level >= 100) e.currentTarget.style.transform = 'scale(1.05)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'scale(1)'
+                }}
+              >
+                {burning ? 'Burning…' : 'Burn for SOL'}
+              </button>
+            )}
           </div>
         </div>
       </header>

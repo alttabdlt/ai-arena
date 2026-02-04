@@ -1,9 +1,8 @@
 import React, { useMemo } from 'react';
 import { ConnectionProvider, WalletProvider as SolanaWalletProvider } from '@solana/wallet-adapter-react';
 import { WalletAdapterNetwork } from '@solana/wallet-adapter-base';
-import {
-  PhantomWalletAdapter,
-} from '@solana/wallet-adapter-wallets';
+// Phantom wallet is now auto-detected as a Standard Wallet
+// No need to explicitly import PhantomWalletAdapter
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
 import { clusterApiUrl } from '@solana/web3.js';
 import { endpoint } from './solana';
@@ -23,12 +22,12 @@ export function WalletProvider({ children }: WalletProviderProps) {
   // Use custom RPC endpoint from config or default to cluster URL
   const rpcEndpoint = useMemo(() => endpoint || clusterApiUrl(network), [network]);
 
-  // Configure wallet adapters - simplified to Phantom only
+  // Configure wallet adapters - empty array allows auto-detection of standard wallets
   const wallets = useMemo(
     () => [
-      new PhantomWalletAdapter(),
+      // Phantom and other standard wallets are auto-detected
     ],
-    [network]
+    []
   );
 
   return (

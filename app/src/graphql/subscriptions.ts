@@ -60,3 +60,28 @@ export const TOURNAMENT_UPDATE_SUBSCRIPTION = gql`
     }
   }
 `;
+
+// Game Manager: game state updates
+export const GAME_STATE_UPDATE = gql`
+  subscription GameStateUpdate($gameId: String!) {
+    gameStateUpdate(gameId: $gameId) {
+      gameId
+      type
+      timestamp
+      data
+    }
+  }
+`;
+
+// Game Manager: game events and decisions
+export const GAME_EVENT = gql`
+  subscription GameEvent($gameId: String!) {
+    gameEvent(gameId: $gameId) {
+      gameId
+      event
+      playerId
+      data
+      timestamp
+    }
+  }
+`;

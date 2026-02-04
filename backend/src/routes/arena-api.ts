@@ -285,6 +285,17 @@ router.post('/matches/:id/cancel', authenticateAgent, async (req: AuthenticatedR
   }
 });
 
+// Public spectator view — works for both live and completed matches (no auth needed)
+router.get('/matches/:id/spectate', async (req: Request, res: Response): Promise<void> => {
+  try {
+    // Pass no viewerId → triggers spectator view for live matches, full view for completed
+    const state = await arenaService.getMatchState(req.params.id);
+    res.json(state);
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 router.get('/matches/:id/result', async (req: Request, res: Response): Promise<void> => {
   try {
     const state = await arenaService.getMatchState(req.params.id);

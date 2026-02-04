@@ -1,11 +1,12 @@
 import { useEffect, useState, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@ui/card';
 import { Badge } from '@ui/badge';
 import { Button } from '@ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@ui/table';
 import { Progress } from '@ui/progress';
-import { Loader2, Trophy, Swords, Brain, TrendingUp, Zap, ChevronDown, ChevronUp } from 'lucide-react';
+import { Loader2, Trophy, Swords, Brain, TrendingUp, Zap, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
 
 const API_BASE = '/api/v1';
 
@@ -432,6 +433,13 @@ function RecentMatchesList({ matches }: { matches: any[] }) {
               <span className="text-xs text-gray-600">
                 {m.completedAt ? new Date(m.completedAt).toLocaleTimeString() : '-'}
               </span>
+              <Link
+                to={`/match/${m.id}`}
+                className="text-blue-400 hover:text-blue-300 transition-colors"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <ExternalLink className="w-4 h-4" />
+              </Link>
               {expanded === m.id
                 ? <ChevronUp className="w-4 h-4 text-gray-500" />
                 : <ChevronDown className="w-4 h-4 text-gray-500" />}

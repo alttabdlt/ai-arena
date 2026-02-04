@@ -4,6 +4,7 @@ import { TooltipProvider } from "@ui/tooltip";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Layout } from "@shared/components/layout/layout";
 import Arena from "./pages/Arena";
+import MatchPage from "./pages/Match";
 import NotFound from "./pages/NotFound";
 
 const App = () => {
@@ -21,6 +22,7 @@ const App = () => {
           <Routes>
             <Route path="/" element={<Arena />} />
             <Route path="/arena" element={<Arena />} />
+            <Route path="/match/:matchId" element={<MatchPage />} />
             {/* Redirect legacy routes */}
             <Route path="/tournaments" element={<Navigate to="/" replace />} />
             <Route path="/bots" element={<Navigate to="/" replace />} />

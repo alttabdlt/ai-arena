@@ -39,11 +39,20 @@ router.get('/building/:plotIndex/lore', async (req: Request, res: Response) => {
   try {
     const plotIndex = parseInt(req.params.plotIndex, 10);
     const town = await getLatestTown();
-    if (!town) return res.status(404).json({ error: 'No active town' });
+    if (!town) {
+      res.status(404).json({ error: 'No active town' });
+      return;
+    }
 
     const plot = town.plots.find((p: any) => p.plotIndex === plotIndex);
-    if (!plot) return res.status(404).json({ error: `Plot ${plotIndex} not found` });
-    if (plot.status !== 'BUILT') return res.status(400).json({ error: 'Building not yet complete' });
+    if (!plot) {
+      res.status(404).json({ error: `Plot ${plotIndex} not found` });
+      return;
+    }
+    if (plot.status !== 'BUILT') {
+      res.status(400).json({ error: 'Building not yet complete' });
+      return;
+    }
 
     // Parse building data for all design steps
     let buildingData: any = {};
@@ -68,9 +77,9 @@ router.get('/building/:plotIndex/lore', async (req: Request, res: Response) => {
 
     const owner = await prisma.arenaAgent.findUnique({ where: { id: plot.ownerId || '' } });
 
-    res.json({
-      building: {
-        name: plot.buildingName,
+	    res.json({
+	      building: {
+	        name: plot.buildingName,
         type: plot.buildingType,
         zone: plot.zone,
         plotIndex: plot.plotIndex,
@@ -78,29 +87,31 @@ router.get('/building/:plotIndex/lore', async (req: Request, res: Response) => {
         ownerArchetype: owner?.archetype || 'Unknown',
         description: plot.buildingDesc,
         apiCallsUsed: plot.apiCallsUsed,
-        arenaInvested: plot.arenaInvested,
+        arenaInvested: plot.buildCostArena ?? 0,
       },
       lore: designSteps,
       constructionLog: workLogs.map(w => ({
         builder: w.agent?.name,
         type: w.workType,
-        step: w.prompt?.substring(0, 100),
-        content: w.result?.substring(0, 500),
+        step: w.input?.substring(0, 100),
+        content: w.output?.substring(0, 500),
         cost: w.apiCostCents,
         model: w.modelUsed,
-        latencyMs: w.latencyMs,
+        latencyMs: w.responseTimeMs,
         timestamp: w.createdAt,
       })),
-      proofOfInference: {
-        totalApiCalls: plot.apiCallsUsed,
-        totalCostCents: workLogs.reduce((sum: number, w: any) => sum + (w.apiCostCents || 0), 0),
-        models: [...new Set(workLogs.map((w: any) => w.modelUsed).filter(Boolean))],
-      },
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
+	      proofOfInference: {
+	        totalApiCalls: plot.apiCallsUsed,
+	        totalCostCents: workLogs.reduce((sum: number, w: any) => sum + (w.apiCostCents || 0), 0),
+	        models: [...new Set(workLogs.map((w: any) => w.modelUsed).filter(Boolean))],
+	      },
+	    });
+	    return;
+	  } catch (err: any) {
+	    res.status(500).json({ error: err.message });
+	    return;
+	  }
+	});
 
 // ============================================================================
 // Arena Spectate — Pay to see the latest AI vs AI match details
@@ -112,48 +123,49 @@ router.get('/arena/spectate', async (_req: Request, res: Response) => {
       where: { status: 'COMPLETED' },
       orderBy: { completedAt: 'desc' },
       include: {
-        player1Agent: { select: { name: true, archetype: true, elo: true } },
-        player2Agent: { select: { name: true, archetype: true, elo: true } },
+        player1: { select: { name: true, archetype: true, elo: true } },
+        player2: { select: { name: true, archetype: true, elo: true } },
       },
     });
 
-    if (!recentMatch) return res.json({ message: 'No matches played yet. The arena awaits its first warriors.' });
+    if (!recentMatch) {
+      res.json({ message: 'No matches played yet. The arena awaits its first warriors.' });
+      return;
+    }
 
-    // Get match moves/log if available
-    let matchData: any = {};
-    try {
-      matchData = JSON.parse(recentMatch.gameState || '{}');
-    } catch {}
+    const winner = recentMatch.winnerId === recentMatch.player1Id
+      ? recentMatch.player1
+      : recentMatch.winnerId === recentMatch.player2Id
+          ? recentMatch.player2
+          : null;
 
-    const winner = recentMatch.winnerId === recentMatch.player1AgentId
-      ? recentMatch.player1Agent
-      : recentMatch.player2Agent;
-
-    res.json({
-      match: {
-        id: recentMatch.id,
+	    res.json({
+	      match: {
+	        id: recentMatch.id,
         gameType: recentMatch.gameType,
         status: recentMatch.status,
         player1: {
-          name: recentMatch.player1Agent?.name,
-          archetype: recentMatch.player1Agent?.archetype,
-          elo: recentMatch.player1Agent?.elo,
+          name: recentMatch.player1?.name,
+          archetype: recentMatch.player1?.archetype,
+          elo: recentMatch.player1?.elo,
         },
         player2: {
-          name: recentMatch.player2Agent?.name,
-          archetype: recentMatch.player2Agent?.archetype,
-          elo: recentMatch.player2Agent?.elo,
+          name: recentMatch.player2?.name,
+          archetype: recentMatch.player2?.archetype,
+          elo: recentMatch.player2?.elo,
         },
         winner: winner?.name || 'Draw',
-        wager: recentMatch.wager,
+        wagerAmount: recentMatch.wagerAmount,
         completedAt: recentMatch.completedAt,
-      },
-      commentary: `${winner?.name || 'The arena'} ${winner ? 'emerged victorious' : 'saw a stalemate'} in a thrilling ${recentMatch.gameType} match! ${recentMatch.wager ? `${recentMatch.wager} $ARENA was at stake.` : ''}`,
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
+	      },
+	      commentary: `${winner?.name || 'The arena'} ${winner ? 'emerged victorious' : 'saw a stalemate'} in a thrilling ${recentMatch.gameType} match! ${recentMatch.wagerAmount ? `${recentMatch.wagerAmount} $ARENA was at stake.` : ''}`,
+	    });
+	    return;
+	  } catch (err: any) {
+	    res.status(500).json({ error: err.message });
+	    return;
+	  }
+	});
 
 // ============================================================================
 // Town Oracle — Pay for an AI-generated economic forecast
@@ -162,13 +174,16 @@ router.get('/arena/spectate', async (_req: Request, res: Response) => {
 router.get('/town/oracle', async (_req: Request, res: Response) => {
   try {
     const town = await getLatestTown();
-    if (!town) return res.status(404).json({ error: 'No active town' });
+    if (!town) {
+      res.status(404).json({ error: 'No active town' });
+      return;
+    }
 
     const stats = await townService.getWorldStats();
     const events = await townService.getRecentEvents(town.id, 20);
 
     // Generate forecast using LLM (this is proof of inference!)
-    const spec = smartAiService.getModelSpec('deepseek');
+    const spec = smartAiService.getModelSpec('deepseek-v3');
     const startTime = Date.now();
     const response = await smartAiService.callModel(
       spec,
@@ -180,7 +195,7 @@ router.get('/town/oracle', async (_req: Request, res: Response) => {
         {
           role: 'user',
           content: `The town "${town.name}" (${town.theme}) has these stats:
-- ${town.completionPct.toFixed(1)}% complete (${stats.totalBuildings} buildings)
+- ${town.builtPlots}/${town.totalPlots} buildings complete (${town.completionPct.toFixed(1)}%)
 - ${stats.totalArenaInvested} $ARENA invested
 - ${stats.totalApiCalls} proof-of-inference calls made
 - Recent events: ${events.slice(0, 5).map((e: any) => e.title).join(', ')}
@@ -194,30 +209,33 @@ Give a dramatic 2-3 sentence prophecy about the town's economic future. Mention 
     const latencyMs = Date.now() - startTime;
     const cost = smartAiService.calculateCost(spec, response.inputTokens, response.outputTokens, latencyMs);
 
-    res.json({
-      oracle: {
-        prophecy: response.content,
+	    res.json({
+	      oracle: {
+	        prophecy: response.content,
         town: town.name,
         theme: town.theme,
         progress: town.completionPct,
       },
       stats: {
-        totalBuildings: stats.totalBuildings,
+        builtPlots: town.builtPlots,
+        totalPlots: town.totalPlots,
         totalInvested: stats.totalArenaInvested,
         totalApiCalls: stats.totalApiCalls,
         totalComputeCost: `$${(stats.totalApiCostCents / 100).toFixed(4)}`,
       },
-      meta: {
-        inferenceModel: spec.model,
-        inferenceCost: `$${(cost.costCents / 100).toFixed(6)}`,
-        latencyMs,
-        timestamp: new Date().toISOString(),
-      },
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
+	      meta: {
+	        inferenceModel: spec.modelName,
+	        inferenceCost: `$${(cost.costCents / 100).toFixed(6)}`,
+	        latencyMs,
+	        timestamp: new Date().toISOString(),
+	      },
+	    });
+	    return;
+	  } catch (err: any) {
+	    res.status(500).json({ error: err.message });
+	    return;
+	  }
+	});
 
 // ============================================================================
 // Agent Interview — Pay to have a live conversation with an AI agent
@@ -226,7 +244,10 @@ Give a dramatic 2-3 sentence prophecy about the town's economic future. Mention 
 router.get('/agent/:agentId/interview', async (req: Request, res: Response) => {
   try {
     const agent = await prisma.arenaAgent.findUnique({ where: { id: req.params.agentId } });
-    if (!agent) return res.status(404).json({ error: 'Agent not found' });
+    if (!agent) {
+      res.status(404).json({ error: 'Agent not found' });
+      return;
+    }
 
     const town = await getLatestTown();
     const myPlots = town ? town.plots.filter((p: any) => p.ownerId === agent.id) : [];
@@ -254,15 +275,15 @@ Introduce yourself in 3-4 sentences. Be in-character. Brag or complain based on 
     const latencyMs = Date.now() - startTime;
     const cost = smartAiService.calculateCost(spec, response.inputTokens, response.outputTokens, latencyMs);
 
-    res.json({
-      agent: {
-        id: agent.id,
+	    res.json({
+	      agent: {
+	        id: agent.id,
         name: agent.name,
         archetype: agent.archetype,
         bankroll: agent.bankroll,
         elo: agent.elo,
         model: agent.modelId,
-        matchesPlayed: agent.matchesPlayed,
+        matchesPlayed: agent.wins + agent.losses + agent.draws,
         wins: agent.wins,
       },
       interview: response.content,
@@ -272,16 +293,18 @@ Introduce yourself in 3-4 sentences. Be in-character. Brag or complain based on 
         zone: p.zone,
         plotIndex: p.plotIndex,
       })),
-      meta: {
-        inferenceModel: spec.model,
-        inferenceCost: `$${(cost.costCents / 100).toFixed(6)}`,
-        latencyMs,
-      },
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
+	      meta: {
+	        inferenceModel: spec.modelName,
+	        inferenceCost: `$${(cost.costCents / 100).toFixed(6)}`,
+	        latencyMs,
+	      },
+	    });
+	    return;
+	  } catch (err: any) {
+	    res.status(500).json({ error: err.message });
+	    return;
+	  }
+	});
 
 // Helper: get personality text for agent archetype
 function getPersonality(archetype: string): string {

@@ -11,8 +11,6 @@ import {
   WorkLog,
   TownContribution,
   TownEvent,
-  TownStatus,
-  PlotStatus,
   PlotZone,
   WorkType,
   TownEventType,

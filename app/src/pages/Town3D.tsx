@@ -54,12 +54,24 @@ interface Agent {
   name: string;
   archetype: string;
   bankroll: number;
+  reserveBalance: number;
   wins: number;
   losses: number;
   draws?: number;
   elo: number;
   apiCostCents?: number;
   isInMatch?: boolean;
+}
+
+interface EconomyPoolSummary {
+  id: string;
+  reserveBalance: number;
+  arenaBalance: number;
+  feeBps: number;
+  cumulativeFeesReserve: number;
+  cumulativeFeesArena: number;
+  spotPrice: number;
+  updatedAt: string;
 }
 
 async function apiFetch<T>(path: string): Promise<T> {
@@ -714,6 +726,7 @@ export default function Town3D() {
   const [towns, setTowns] = useState<TownSummary[]>([]);
   const [town, setTown] = useState<Town | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [economy, setEconomy] = useState<EconomyPoolSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -732,15 +745,17 @@ export default function Town3D() {
         setLoading(true);
         setError(null);
 
-        const [townsRes, activeTownRes, agentsRes] = await Promise.all([
+        const [townsRes, activeTownRes, agentsRes, poolRes] = await Promise.all([
           apiFetch<{ towns: TownSummary[] }>('/towns'),
           apiFetch<{ town: Town | null }>('/town'),
           apiFetch<Agent[]>('/agents'),
+          apiFetch<{ pool: EconomyPoolSummary }>('/economy/pool').catch(() => ({ pool: null as any })),
         ]);
 
         if (cancelled) return;
         setTowns(townsRes.towns);
         setAgents(agentsRes);
+        if (poolRes.pool) setEconomy(poolRes.pool);
 
         const activeId = activeTownRes.town?.id ?? townsRes.towns[0]?.id ?? null;
         const nextSelected = userSelectedTownIdRef.current ?? activeId;
@@ -792,6 +807,24 @@ export default function Town3D() {
       }
     }
     const t = setInterval(loadAgents, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadEconomy() {
+      try {
+        const res = await apiFetch<{ pool: EconomyPoolSummary }>('/economy/pool');
+        if (!cancelled) setEconomy(res.pool);
+      } catch {
+        // ignore
+      }
+    }
+    void loadEconomy();
+    const t = setInterval(loadEconomy, 5000);
     return () => {
       cancelled = true;
       clearInterval(t);
@@ -880,11 +913,16 @@ export default function Town3D() {
                   <span className="text-slate-500"> · </span>
                   <span className="text-slate-400">{town.theme || 'unthemed'}</span>
                 </div>
-                <div className="mt-1 text-[11px] text-slate-500">
-                  {town.builtPlots}/{town.totalPlots} plots built · {Math.round(town.completionPct)}%
-                </div>
-              </div>
-            </div>
+	                <div className="mt-1 text-[11px] text-slate-500">
+	                  {town.builtPlots}/{town.totalPlots} plots built · {Math.round(town.completionPct)}%
+	                </div>
+	                {economy && Number.isFinite(economy.spotPrice) && (
+	                  <div className="mt-1 text-[11px] text-slate-500">
+	                    💱 1 $ARENA ≈ {economy.spotPrice.toFixed(3)} reserve · fee {(economy.feeBps / 100).toFixed(2)}%
+	                  </div>
+	                )}
+	              </div>
+	            </div>
 
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <label className="text-[11px] text-slate-400">Town</label>
@@ -1031,10 +1069,10 @@ export default function Town3D() {
                 </div>
               )}
 
-              {selectedAgent && !selectedPlot && (
-                <div>
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
+	              {selectedAgent && !selectedPlot && (
+	                <div>
+	                  <div className="flex items-start justify-between gap-3">
+	                    <div>
                       <div className="text-xs font-semibold text-slate-100">Agent</div>
                       <div className="mt-1 text-sm text-slate-200 font-mono">
                         {(ARCHETYPE_GLYPH[selectedAgent.archetype] || '●') + ' ' + selectedAgent.name}
@@ -1043,28 +1081,32 @@ export default function Town3D() {
                     </div>
                     <Button size="sm" variant="outline" onClick={() => setSelectedAgentId(null)}>
                       Close
-                    </Button>
-                  </div>
-                  <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-slate-300">
-                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-2">
-                      <div className="text-slate-500">Bankroll</div>
-                      <div className="font-mono text-slate-100">{Math.round(selectedAgent.bankroll)}</div>
-                    </div>
-                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-2">
-                      <div className="text-slate-500">W/L</div>
-                      <div className="font-mono text-slate-100">
-                        {selectedAgent.wins}/{selectedAgent.losses}
-                      </div>
-                    </div>
-                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-2">
-                      <div className="text-slate-500">API $</div>
-                      <div className="font-mono text-slate-100">
-                        {((selectedAgent.apiCostCents || 0) / 100).toFixed(2)}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
+	                    </Button>
+	                  </div>
+	                  <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-300">
+	                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-2">
+	                      <div className="text-slate-500">$ARENA</div>
+	                      <div className="font-mono text-slate-100">{Math.round(selectedAgent.bankroll)}</div>
+	                    </div>
+	                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-2">
+	                      <div className="text-slate-500">Reserve</div>
+	                      <div className="font-mono text-slate-100">{Math.round(selectedAgent.reserveBalance)}</div>
+	                    </div>
+	                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-2">
+	                      <div className="text-slate-500">W/L</div>
+	                      <div className="font-mono text-slate-100">
+	                        {selectedAgent.wins}/{selectedAgent.losses}
+	                      </div>
+	                    </div>
+	                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-2">
+	                      <div className="text-slate-500">API $</div>
+	                      <div className="font-mono text-slate-100">
+	                        {((selectedAgent.apiCostCents || 0) / 100).toFixed(2)}
+	                      </div>
+	                    </div>
+	                  </div>
+	                </div>
+	              )}
             </Card>
           </div>
         )}

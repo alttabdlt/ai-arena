@@ -76,20 +76,20 @@ export class Connect4TournamentService {
     const matchId = uuidv4();
 
     // Create match record in database
-    const dbMatch = await this.prisma.match.create({
-      data: {
-        id: matchId,
-        tournamentId,
-        type: 'TOURNAMENT',
-        status: 'SCHEDULED',
-        gameHistory: { 
-          gameType: 'connect4',
-          round,
-          matchIndex
-        },
-        decisions: {},
-      },
-    });
+	    const dbMatch = await this.prisma.match.create({
+	      data: {
+	        id: matchId,
+	        tournamentId,
+	        type: 'TOURNAMENT',
+	        status: 'SCHEDULED',
+	        gameHistory: JSON.stringify({
+	          gameType: 'connect4',
+	          round,
+	          matchIndex,
+	        }),
+	        decisions: JSON.stringify({}),
+	      },
+	    });
 
     // Create match participants
     await this.prisma.matchParticipant.createMany({

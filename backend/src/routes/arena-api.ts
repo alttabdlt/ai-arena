@@ -89,6 +89,7 @@ router.get('/agents', async (_req: Request, res: Response): Promise<void> => {
       losses: a.losses,
       draws: a.draws,
       bankroll: a.bankroll,
+      reserveBalance: a.reserveBalance,
       isInMatch: a.isInMatch,
       apiCostCents: a.apiCostCents,
     })));
@@ -385,7 +386,7 @@ router.get('/matches/:id/moves', async (req: Request, res: Response): Promise<vo
       orderBy: { turnNumber: 'asc' },
     });
 
-    const isLive = match.status === 'IN_PROGRESS';
+    const isLive = match.status === 'ACTIVE';
 
     res.json(moves.map(m => {
       // During live match: hide opponent's reasoning from the other player

@@ -97,7 +97,7 @@ const TYPE_TO_CATEGORY: Record<string, SpriteCategory> = {
   // Entertainment
   arena: 'entertainment', colosseum: 'entertainment', stadium: 'entertainment',
   theater: 'entertainment', theatre: 'entertainment', casino: 'entertainment',
-  tavern: 'entertainment', circus: 'entertainment', amphitheater: 'entertainment',
+  circus: 'entertainment', amphitheater: 'entertainment',
   
   // Nature
   farm: 'nature', garden: 'nature', park: 'nature', orchard: 'nature',

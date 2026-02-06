@@ -8,7 +8,7 @@
 import { ArenaAgent, ArenaMatch, ArenaGameType, AgentArchetype } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { smartAiService, GameMoveRequest, OpponentScouting, MetaContext, AgentConfig } from './smartAiService';
-import { GameEngineAdapter, GameEngineAdapterFactory } from './gameEngineAdapter';
+import { GameEngineAdapter } from './gameEngineAdapter';
 import { ArenaPokerEngine } from './arenaPokerEngine';
 import { prisma } from '../config/database';
 import { monadService } from './monadService';
@@ -102,7 +102,9 @@ export class ArenaService {
         maxWagerPercent: input.maxWagerPercent ?? 0.15,
         walletAddress: input.walletAddress,
         apiKey,
-        bankroll: 10000, // Starting bankroll
+        // Hackathon economy: start with reserve, and let agents decide when to buy $ARENA fuel.
+        reserveBalance: 10000,
+        bankroll: 0,
         elo: 1500,
       },
     });
@@ -307,7 +309,7 @@ export class ArenaService {
 
     const rawGameState = JSON.parse(match.gameState);
     const engine = this.gameEngines.get(match.gameType);
-    const isLive = match.status === 'ACTIVE' || match.status === 'IN_PROGRESS';
+    const isLive = match.status === 'ACTIVE';
     const isPlayer = viewerId && (viewerId === match.player1Id || viewerId === match.player2Id);
 
     // SECURITY: Filter game state during live matches

@@ -754,6 +754,10 @@ model ArenaAgent {
   modelId         String          // LLM model identifier (e.g., "gpt-4o", "claude-4-sonnet")
   walletAddress   String?         @unique // Monad EOA address
   apiKey          String          @unique // Bearer token for REST API auth
+
+  // Economy (off-chain)
+  // Reserve token used to buy/sell $ARENA (simulated AMM for hackathon demo).
+  reserveBalance  Int             @default(10000)
   
   // Strategy
   systemPrompt    String          @default("") // Custom strategy instructions
@@ -794,6 +798,8 @@ model ArenaAgent {
   builtPlots        Plot[]             @relation("plotBuilder")
   workLogs          WorkLog[]
   townContributions TownContribution[]
+
+  economySwaps      EconomySwap[]
   
   @@index([elo])
   @@index([isActive])
@@ -1167,4 +1173,42 @@ enum TownEventType {
   TRADE
   ARENA_MATCH
   CUSTOM
+}
+
+enum EconomySwapSide {
+  BUY_ARENA
+  SELL_ARENA
+}
+
+model EconomyPool {
+  id                    String   @id @default(cuid())
+
+  // Constant-product style reserves (off-chain).
+  reserveBalance        Int      @default(0) // "USDC" / reserve token
+  arenaBalance          Int      @default(0) // $ARENA
+
+  // Fees routed to treasury (not kept in the pool reserves).
+  feeBps                Int      @default(100) // 1.00%
+  cumulativeFeesReserve Int      @default(0)
+  cumulativeFeesArena   Int      @default(0)
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+model EconomySwap {
+  id          String           @id @default(cuid())
+  agentId     String
+  side        EconomySwapSide
+  amountIn    Int
+  amountOut   Int
+  feeAmount   Int
+  priceBefore Float
+  priceAfter  Float
+  createdAt   DateTime         @default(now())
+
+  agent       ArenaAgent       @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId])
+  @@index([createdAt])
 }

@@ -278,6 +278,13 @@ async function startServer() {
   console.log('🤖 Agent Loop API ready at /api/v1');
 
   // ============================================
+  // Economy REST API (off-chain AMM)
+  // ============================================
+  const economyApiRouter = (await import('./routes/economy-api')).default;
+  app.use('/api/v1', cors<cors.CorsRequest>({ origin: '*' }), economyApiRouter);
+  console.log('💱 Economy API ready at /api/v1');
+
+  // ============================================
   // x402 Payable API (micropayments for AI services)
   // ============================================
   try {

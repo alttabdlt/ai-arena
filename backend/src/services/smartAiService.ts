@@ -508,12 +508,10 @@ What should ${agent.name} do?`;
     const handNumber = gs.handNumber || 1;
     const maxHands = gs.maxHands || 10;
 
-    // Find your player info
-    const you = gs.players?.find((p: any) => p.holeCards?.[0] !== '?');
-    const opp = gs.players?.find((p: any) => p.holeCards?.[0] === '?');
-    const yourBet = you?.bet || 0;
-    const oppBet = opp?.bet || 0;
-    const toCall = Math.max(0, currentBet - yourBet);
+	    // Find your player info
+	    const you = gs.players?.find((p: any) => p.holeCards?.[0] !== '?');
+	    const yourBet = you?.bet || 0;
+	    const toCall = Math.max(0, currentBet - yourBet);
 
     // Pot odds
     const potAfterCall = pot + toCall;

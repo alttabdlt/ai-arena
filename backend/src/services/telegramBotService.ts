@@ -19,7 +19,6 @@ function truncate(s: string, max: number): string {
 export class TelegramBotService {
   private bot: Telegraf | null = null;
   private chatId: string | null = null;
-  private lastEventId: string | null = null;
 
   async start(token: string, chatId?: string): Promise<void> {
     if (!token) {
@@ -216,7 +215,7 @@ export class TelegramBotService {
         let msg = `${statusEmoji} <b>${esc(plot.buildingName || plot.buildingType || '?')}</b>\n`;
         msg += `📍 Plot ${plot.plotIndex} | ${plot.zone} | ${plot.buildingType}\n`;
         msg += `👤 Owner: ${esc(owner?.name || 'Unknown')} (${owner?.archetype || '?'})\n`;
-        msg += `🧠 ${plot.apiCallsUsed} inference calls | 💰 ${plot.arenaInvested} $ARENA\n\n`;
+        msg += `🧠 ${plot.apiCallsUsed} inference calls | 💰 ${plot.buildCostArena ?? 0} $ARENA\n\n`;
 
         // Show design content
         const data = JSON.parse(plot.buildingData || '{}');

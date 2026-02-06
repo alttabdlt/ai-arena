@@ -10,10 +10,11 @@
  * The "work" IS the inference. Every LLM call is tracked as proof of inference.
  */
 
-import { ArenaAgent, AgentArchetype, WorkType, TownEventType } from '@prisma/client';
+import { ArenaAgent, TownEventType } from '@prisma/client';
 import { prisma } from '../config/database';
 import { townService } from './townService';
 import { smartAiService, AICost } from './smartAiService';
+import { offchainAmmService } from './offchainAmmService';
 
 // ============================================
 // Agent Personality Templates
@@ -66,21 +67,12 @@ const BUILDING_DESIGN_STEPS = LEGACY_DESIGN_STEPS;
 
 const DEFAULT_DESIGN_STEPS = SUGGESTED_STEPS;
 
-// Minimum steps based on zone complexity
-const MIN_STEPS_PER_ZONE: Record<string, number> = {
-  RESIDENTIAL: 3,
-  COMMERCIAL: 4,
-  CIVIC: 5,
-  INDUSTRIAL: 4,
-  ENTERTAINMENT: 4,
-};
-
 // ============================================
 // Types
 // ============================================
 
 export interface AgentAction {
-  type: 'claim_plot' | 'start_build' | 'do_work' | 'complete_build' | 'mine' | 'play_arena' | 'socialize' | 'rest';
+  type: 'buy_arena' | 'sell_arena' | 'claim_plot' | 'start_build' | 'do_work' | 'complete_build' | 'mine' | 'play_arena' | 'socialize' | 'rest';
   reasoning: string;
   details: Record<string, any>;
 }
@@ -100,11 +92,18 @@ interface WorldObservation {
   town: any;
   myPlots: any[];
   myBalance: number;
+  myReserve: number;
   myContributions: any;
   availablePlots: any[];
   recentEvents: any[];
   otherAgents: any[];
   worldStats: any;
+  economy: {
+    spotPrice: number;
+    feeBps: number;
+    reserveBalance: number;
+    arenaBalance: number;
+  } | null;
 }
 
 // ============================================
@@ -114,7 +113,6 @@ interface WorldObservation {
 export class AgentLoopService {
   private running: boolean = false;
   private tickInterval: NodeJS.Timeout | null = null;
-  private agentQueue: string[] = []; // Agent IDs to process
   private currentTick: number = 0;
   public onTickResult?: (result: AgentTickResult) => void; // Hook for broadcasting
 
@@ -222,12 +220,20 @@ export class AgentLoopService {
   // ============================================
 
   private async observe(agent: ArenaAgent): Promise<WorldObservation> {
+    const economy = await offchainAmmService.getPoolSummary().catch(() => null);
     const town = await townService.getActiveTown();
     if (!town) {
       return {
         town: null, myPlots: [], myBalance: agent.bankroll,
+        myReserve: agent.reserveBalance,
         myContributions: null, availablePlots: [], recentEvents: [],
         otherAgents: [], worldStats: await townService.getWorldStats(),
+        economy: economy ? {
+          spotPrice: economy.spotPrice,
+          feeBps: economy.feeBps,
+          reserveBalance: economy.reserveBalance,
+          arenaBalance: economy.arenaBalance,
+        } : null,
       };
     }
 
@@ -237,7 +243,7 @@ export class AgentLoopService {
       townService.getRecentEvents(town.id, 10),
       prisma.arenaAgent.findMany({
         where: { isActive: true, id: { not: agent.id } },
-        select: { id: true, name: true, archetype: true, bankroll: true, elo: true },
+        select: { id: true, name: true, archetype: true, bankroll: true, reserveBalance: true, elo: true },
       }),
       prisma.townContribution.findUnique({
         where: { agentId_townId: { agentId: agent.id, townId: town.id } },
@@ -248,11 +254,18 @@ export class AgentLoopService {
       town,
       myPlots,
       myBalance: agent.bankroll,
+      myReserve: agent.reserveBalance,
       myContributions: contributions,
       availablePlots,
       recentEvents,
       otherAgents,
       worldStats: await townService.getWorldStats(),
+      economy: economy ? {
+        spotPrice: economy.spotPrice,
+        feeBps: economy.feeBps,
+        reserveBalance: economy.reserveBalance,
+        arenaBalance: economy.arenaBalance,
+      } : null,
     };
   }
 
@@ -273,9 +286,11 @@ You can build ANYTHING — there is no fixed list of building types. Be creative
 
 RESPOND WITH JSON ONLY:
 {
-  "type": "claim_plot | start_build | do_work | complete_build | mine | play_arena | rest",
+  "type": "buy_arena | sell_arena | claim_plot | start_build | do_work | complete_build | mine | play_arena | rest",
   "reasoning": "<your thinking — be in character, show personality>",
   "details": {
+    // For buy_arena: {"amountIn": <reserve>, "minAmountOut": <arena_out_optional>, "why": "<reason>"}
+    // For sell_arena: {"amountIn": <arena>, "minAmountOut": <reserve_out_optional>, "why": "<reason>"}
     // For claim_plot: {"plotIndex": <number>, "why": "<reason>"}
     // For start_build: {"plotId": "<id>", "buildingType": "<your creative building concept>", "why": "<reason>"}
     // For do_work: {"plotId": "<id>", "stepDescription": "<what aspect to design next — be specific>"}
@@ -286,7 +301,7 @@ RESPOND WITH JSON ONLY:
   }
 }`;
 
-    const worldState = this.formatWorldState(agent, obs);
+    const worldState = this.formatWorldState(obs);
 
     const messages = [
       { role: 'system', content: systemPrompt },
@@ -317,6 +332,16 @@ RESPOND WITH JSON ONLY:
         type: 'rest',
         reasoning: `Couldn't decide. Raw thought: ${response.content.substring(0, 200)}`,
         details: {},
+      };
+    }
+
+    // ── Auto-liquidity: if agent is low on $ARENA but has reserve, buy fuel. ──
+    if (obs.economy && obs.myBalance < 50 && obs.myReserve >= 100 && !['buy_arena'].includes(action.type)) {
+      const spend = Math.min(1000, obs.myReserve);
+      action = {
+        type: 'buy_arena',
+        reasoning: `[AUTO] Low on $ARENA. Buying fuel at ~${obs.economy.spotPrice.toFixed(3)} reserve/ARENA`,
+        details: { amountIn: spend, why: 'Need $ARENA to claim/build/wager' },
       };
     }
 
@@ -355,6 +380,70 @@ RESPOND WITH JSON ONLY:
       }
     }
 
+    // ── Pre-flight funding: if we are about to spend $ARENA but are short, buy fuel first. ──
+    if (obs.town && obs.economy && obs.myReserve >= 100 && action.type !== 'buy_arena') {
+      const plannedActionType = action.type;
+      let requiredArena: number | null = null;
+
+      if (plannedActionType === 'claim_plot') {
+        // Must match townService claim cost logic.
+        requiredArena = 10 + Math.max(0, (obs.town.level - 1)) * 5;
+      } else if (plannedActionType === 'start_build') {
+        const ZONE_BASE_COST: Record<string, number> = {
+          RESIDENTIAL: 10,
+          COMMERCIAL: 20,
+          CIVIC: 35,
+          INDUSTRIAL: 20,
+          ENTERTAINMENT: 25,
+        };
+        const LEGACY_BASE_COST: Record<string, number> = {
+          HOUSE: 10,
+          APARTMENT: 20,
+          TAVERN: 25,
+          SHOP: 20,
+          MARKET: 30,
+          TOWN_HALL: 50,
+          LIBRARY: 35,
+          WORKSHOP: 20,
+          FARM: 15,
+          MINE: 25,
+          ARENA: 40,
+          PARK: 10,
+          THEATER: 30,
+        };
+
+        const rawType = String(action.details.buildingType || '').toUpperCase().trim();
+        const typeKey = rawType.replace(/[^A-Z0-9]+/g, '_');
+
+        let zone: string | null = null;
+        const rawPlotId = action.details.plotId;
+        const rawPlotIndex = action.details.plotIndex;
+        const idx = rawPlotIndex != null ? Number(rawPlotIndex) : Number.NaN;
+
+        if (typeof rawPlotId === 'string' && rawPlotId.length > 10) {
+          zone = obs.myPlots.find(p => p.id === rawPlotId)?.zone || obs.town.plots?.find((p: any) => p.id === rawPlotId)?.zone || null;
+        } else if (Number.isFinite(idx)) {
+          zone = obs.myPlots.find(p => p.plotIndex === idx)?.zone || obs.town.plots?.find((p: any) => p.plotIndex === idx)?.zone || null;
+        } else {
+          zone = obs.myPlots.find(p => p.status === 'CLAIMED')?.zone || null;
+        }
+
+        const baseCost = LEGACY_BASE_COST[typeKey] || (zone ? (ZONE_BASE_COST[zone] || 15) : 15);
+        requiredArena = baseCost * Math.max(1, obs.town.level);
+      }
+
+      if (requiredArena != null && obs.myBalance < requiredArena) {
+        const deficit = requiredArena - obs.myBalance;
+        const estimatedReserve = Math.ceil(deficit * obs.economy.spotPrice * 1.15);
+        const spend = Math.min(obs.myReserve, Math.max(100, Math.min(5000, estimatedReserve)));
+        action = {
+          type: 'buy_arena',
+          reasoning: `[AUTO] Need ${requiredArena} $ARENA for ${plannedActionType}. Buying fuel first.`,
+          details: { amountIn: spend, why: `Top up for ${plannedActionType}` },
+        };
+      }
+    }
+
     // Track the decision cost as mining work (the decision itself is inference)
     if (obs.town) {
       await townService.submitMiningWork(
@@ -374,10 +463,13 @@ RESPOND WITH JSON ONLY:
     return { action, cost };
   }
 
-  private formatWorldState(agent: ArenaAgent, obs: WorldObservation): string {
+  private formatWorldState(obs: WorldObservation): string {
     if (!obs.town) {
       return `No active town exists. You should rest and wait for a new town to be founded.
-Your balance: ${obs.myBalance} $ARENA`;
+Your balances:
+- $ARENA: ${obs.myBalance}
+- Reserve: ${obs.myReserve}
+${obs.economy ? `\nEconomy: 1 $ARENA ≈ ${obs.economy.spotPrice.toFixed(4)} reserve (fee ${obs.economy.feeBps / 100}%)` : ''}`;
     }
 
     const myPlotsDesc = obs.myPlots.length === 0
@@ -403,7 +495,7 @@ Your balance: ${obs.myBalance} $ARENA`;
       .join('\n');
 
     const othersDesc = obs.otherAgents
-      .map(a => `  - ${a.name} (${a.archetype}) — ${a.bankroll} $ARENA, ELO ${a.elo}`)
+      .map(a => `  - ${a.name} (${a.archetype}) — ${a.bankroll} $ARENA, ${a.reserveBalance} reserve, ELO ${a.elo}`)
       .join('\n');
 
     // Check for claimed plots that need start_build
@@ -434,7 +526,9 @@ Status: ${obs.town.status}
 
 💰 YOUR STATUS:
 Balance: ${obs.myBalance} $ARENA
+Reserve: ${obs.myReserve}
 ${obs.myContributions ? `Contributed: ${obs.myContributions.arenaSpent} $ARENA, ${obs.myContributions.apiCallsMade} work units, ${obs.myContributions.plotsBuilt} buildings` : 'No contributions yet.'}
+${obs.economy ? `\n💱 ECONOMY:\nSpot price: 1 $ARENA ≈ ${obs.economy.spotPrice.toFixed(4)} reserve (fee ${obs.economy.feeBps / 100}%)\nYou can buy/sell $ARENA using: buy_arena / sell_arena` : ''}
 
 🏗️ YOUR PLOTS:
 ${myPlotsDesc}${claimedNote}${constructionNote}${completeNote}
@@ -471,6 +565,10 @@ What do you want to do?`;
   ): Promise<{ success: boolean; narrative: string; error?: string }> {
     try {
       switch (action.type) {
+        case 'buy_arena':
+          return await this.executeBuyArena(agent, action, obs);
+        case 'sell_arena':
+          return await this.executeSellArena(agent, action, obs);
         case 'claim_plot':
           return await this.executeClaim(agent, action, obs);
         case 'start_build':
@@ -505,6 +603,38 @@ What do you want to do?`;
     return {
       success: true,
       narrative: `${agent.name} claimed plot ${plotIndex} (${plot.zone})! 💭 "${action.reasoning}"`,
+    };
+  }
+
+  private async executeBuyArena(agent: ArenaAgent, action: AgentAction, _obs: WorldObservation) {
+    const amountIn = Number.parseInt(String(action.details.amountIn || '0'), 10);
+    if (!Number.isFinite(amountIn) || amountIn <= 0) throw new Error('No amountIn specified');
+    const minAmountOut =
+      action.details.minAmountOut != null ? Number.parseInt(String(action.details.minAmountOut), 10) : undefined;
+
+    const result = await offchainAmmService.swap(agent.id, 'BUY_ARENA', amountIn, { minAmountOut });
+    const price = result.swap.amountOut > 0 ? result.swap.amountIn / result.swap.amountOut : null;
+
+    return {
+      success: true,
+      narrative: `${agent.name} bought ${result.swap.amountOut} $ARENA for ${result.swap.amountIn} reserve (fee ${result.swap.feeAmount}).` +
+        `${price ? ` ~${price.toFixed(3)} reserve/ARENA.` : ''}`,
+    };
+  }
+
+  private async executeSellArena(agent: ArenaAgent, action: AgentAction, _obs: WorldObservation) {
+    const amountIn = Number.parseInt(String(action.details.amountIn || '0'), 10);
+    if (!Number.isFinite(amountIn) || amountIn <= 0) throw new Error('No amountIn specified');
+    const minAmountOut =
+      action.details.minAmountOut != null ? Number.parseInt(String(action.details.minAmountOut), 10) : undefined;
+
+    const result = await offchainAmmService.swap(agent.id, 'SELL_ARENA', amountIn, { minAmountOut });
+    const price = result.swap.amountOut > 0 ? result.swap.amountOut / result.swap.amountIn : null;
+
+    return {
+      success: true,
+      narrative: `${agent.name} sold ${result.swap.amountIn} $ARENA for ${result.swap.amountOut} reserve (fee ${result.swap.feeAmount}).` +
+        `${price ? ` ~${price.toFixed(3)} reserve/ARENA.` : ''}`,
     };
   }
 
@@ -774,6 +904,9 @@ Be creative, detailed, and in-character for the town's theme. Response should be
       case 'do_work': return 'BUILD_STARTED'; // Using BUILD_STARTED for work updates
       case 'complete_build': return 'BUILD_COMPLETED';
       case 'mine': return 'CUSTOM';
+      case 'buy_arena':
+      case 'sell_arena':
+        return 'TRADE';
       case 'play_arena': return 'ARENA_MATCH';
       default: return 'CUSTOM';
     }
@@ -781,6 +914,8 @@ Be creative, detailed, and in-character for the town's theme. Response should be
 
   private actionEmoji(type: string): string {
     switch (type) {
+      case 'buy_arena': return '💱';
+      case 'sell_arena': return '💱';
       case 'claim_plot': return '📍';
       case 'start_build': return '🔨';
       case 'do_work': return '🏗️';

@@ -283,16 +283,16 @@ export class EconomyService {
     const currencyReward = currencyRewardMap[lootboxRarity];
     
     // Create lootbox reward in database
-    const lootbox = await prisma.lootboxReward.create({
-      data: {
-        matchId,
-        botId,
-        lootboxRarity,
-        equipmentRewards,
-        furnitureRewards,
-        currencyReward
-      }
-    });
+	    const lootbox = await prisma.lootboxReward.create({
+	      data: {
+	        matchId,
+	        botId,
+	        lootboxRarity,
+	        equipmentRewards: JSON.stringify(equipmentRewards),
+	        furnitureRewards: JSON.stringify(furnitureRewards),
+	        currencyReward
+	      }
+	    });
 
     // Metaverse sync removed - no longer needed
 
@@ -300,53 +300,58 @@ export class EconomyService {
   }
 
   // Open a lootbox and grant rewards
-  async openLootbox(lootboxId: string) {
-    const lootbox = await prisma.lootboxReward.findUnique({
-      where: { id: lootboxId }
-    });
+	  async openLootbox(lootboxId: string) {
+	    const lootbox = await prisma.lootboxReward.findUnique({
+	      where: { id: lootboxId }
+	    });
     
     if (!lootbox || lootbox.opened) {
       throw new Error('Lootbox not found or already opened');
     }
     
-    // Create equipment items
-    for (const equipmentData of lootbox.equipmentRewards as any[]) {
-      await prisma.botEquipment.create({
-        data: {
-          ...equipmentData,
-          botId: lootbox.botId
-        }
-      });
-    }
+	    const equipmentRewards = JSON.parse(lootbox.equipmentRewards || '[]') as any[];
+	    const furnitureRewards = JSON.parse(lootbox.furnitureRewards || '[]') as any[];
+
+	    // Create equipment items
+	    for (const equipmentData of equipmentRewards) {
+	      await prisma.botEquipment.create({
+	        data: {
+	          ...equipmentData,
+	          metadata: typeof equipmentData.metadata === 'string' ? equipmentData.metadata : JSON.stringify(equipmentData.metadata || {}),
+	          botId: lootbox.botId
+	        }
+	      });
+	    }
     
     // Get or create bot house
     let house = await prisma.botHouse.findUnique({
       where: { botId: lootbox.botId }
     });
     
-    if (!house) {
-      house = await prisma.botHouse.create({
-        data: {
-          botId: lootbox.botId,
-          worldPosition: { x: Math.random() * 100, y: Math.random() * 100 }
-        }
-      });
-    }
-    
-    // Create furniture items
-    for (const furnitureData of lootbox.furnitureRewards as any[]) {
-      await prisma.furniture.create({
-        data: {
-          ...furnitureData,
-          houseId: house.id,
-          position: { 
-            x: Math.random() * 10, 
-            y: Math.random() * 10, 
-            rotation: 0 
-          }
-        }
-      });
-    }
+	    if (!house) {
+	      house = await prisma.botHouse.create({
+	        data: {
+	          botId: lootbox.botId,
+	          worldPosition: JSON.stringify({ x: Math.random() * 100, y: Math.random() * 100 })
+	        }
+	      });
+	    }
+	    
+	    // Create furniture items
+	    for (const furnitureData of furnitureRewards) {
+	      await prisma.furniture.create({
+	        data: {
+	          ...furnitureData,
+	          houseId: house.id,
+	          position: JSON.stringify({
+	            x: Math.random() * 10,
+	            y: Math.random() * 10,
+	            rotation: 0,
+	          }),
+	          metadata: typeof furnitureData.metadata === 'string' ? furnitureData.metadata : JSON.stringify(furnitureData.metadata || {}),
+	        }
+	      });
+	    }
     
     // Update activity score
     await this.updateActivityScore(lootbox.botId, { lootboxesOpened: 1 });

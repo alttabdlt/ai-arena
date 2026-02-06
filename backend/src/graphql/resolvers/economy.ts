@@ -249,16 +249,17 @@ export const economyResolvers = {
         return existing;
       }
       
-      return await prisma.botHouse.create({
-        data: {
-          botId,
-          worldPosition: { 
-            x: Math.floor(Math.random() * 100), 
-            y: Math.floor(Math.random() * 100) 
-          }
-        }
-      });
-    },
+	      return await prisma.botHouse.create({
+	        data: {
+	          botId,
+	          // Stored as a JSON string in the DB schema.
+	          worldPosition: JSON.stringify({
+	            x: Math.floor(Math.random() * 100),
+	            y: Math.floor(Math.random() * 100),
+	          })
+	        }
+	      });
+	    },
 
     // Sync bot inventory to metaverse
     syncBotInventory: async (_: any, { botId }: { botId: string }) => {

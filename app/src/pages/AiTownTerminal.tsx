@@ -21,10 +21,9 @@ function useElementSize<T extends HTMLElement>(): [RefObject<T>, { width: number
   return [ref, size];
 }
 
-const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-const API = import.meta.env.VITE_API_URL || (isLocalhost
-  ? 'http://localhost:4000/api/v1'
-  : '');
+// NOTE: `VITE_API_URL` is used by Apollo for GraphQL (`/graphql`).
+// This view uses the REST API under `/api/v1`, so don't reuse `VITE_API_URL`.
+const API = import.meta.env.VITE_REST_API_URL || '/api/v1';
 const TOKEN = import.meta.env.VITE_TOKEN_ADDRESS || '0x0bA5E04470Fe327AC191179Cf6823E667B007777';
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -41,7 +40,7 @@ interface Plot {
   buildingData?: string;
   ownerId?: string;
   apiCallsUsed: number;
-  arenaInvested: number;
+  buildCostArena: number;
 }
 interface Town {
   id: string;
@@ -1153,7 +1152,7 @@ export default function TerminalDashboard() {
                   <div className="td-detail-meta">
                     {selectedPlotData.status} · {selectedPlotData.zone} · plot {selectedPlotData.plotIndex}
                     {selectedPlotData.apiCallsUsed > 0 && ` · ${selectedPlotData.apiCallsUsed} inference calls`}
-                    {selectedPlotData.arenaInvested > 0 && ` · ${selectedPlotData.arenaInvested} $ARENA`}
+                    {selectedPlotData.buildCostArena > 0 && ` · ${selectedPlotData.buildCostArena} $ARENA`}
                     {selectedPlotData.ownerId && agentMap[selectedPlotData.ownerId] && (
                       <> · <span className="white">{agentMap[selectedPlotData.ownerId].name}</span></>
                     )}
@@ -1250,7 +1249,7 @@ export default function TerminalDashboard() {
                   const isActive = !!(activeAgents[selectedAgent.id] && Date.now() - activeAgents[selectedAgent.id].time < 15000);
                   const agentBuildings = getAgentBuildings(selectedAgent.id);
                   const agentPlots = activeTown?.plots.filter(p => p.ownerId === selectedAgent.id) || [];
-                  const agentInvested = agentPlots.reduce((s, p) => s + (p.arenaInvested || 0), 0);
+                  const agentInvested = agentPlots.reduce((s, p) => s + (p.buildCostArena || 0), 0);
 
                   return (
                     <div className="my-agent-card" style={{ margin: '8px 0' }}>

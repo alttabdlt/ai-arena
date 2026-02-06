@@ -10,7 +10,11 @@ const router = Router();
 // Start the agent loop
 router.post('/agent-loop/start', async (req: Request, res: Response): Promise<void> => {
   try {
-    const intervalMs = req.body.intervalMs || 60000; // Default 60s between ticks
+    // `req.body` is only populated when the request has a JSON Content-Type.
+    // Allow calls with no body (or wrong content-type) to still work.
+    const raw = (req.body as any)?.intervalMs;
+    const parsed = typeof raw === 'number' ? raw : raw != null ? Number.parseInt(String(raw), 10) : NaN;
+    const intervalMs = Number.isFinite(parsed) && parsed > 0 ? parsed : 60000; // Default 60s between ticks
     agentLoopService.start(intervalMs);
     res.json({ status: 'started', intervalMs });
   } catch (error: any) {

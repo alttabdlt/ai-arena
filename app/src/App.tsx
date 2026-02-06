@@ -2,12 +2,7 @@ import { Toaster } from "@ui/toaster";
 import { Toaster as Sonner } from "@ui/sonner";
 import { TooltipProvider } from "@ui/tooltip";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { Layout } from "@shared/components/layout/layout";
-import Arena from "./pages/Arena";
-import AiTownTerminal from "./pages/AiTownTerminal";
 import Town3D from "./pages/Town3D";
-import MatchPage from "./pages/Match";
-import NotFound from "./pages/NotFound";
 
 const App = () => {
   return (
@@ -22,19 +17,8 @@ const App = () => {
       >
         <Routes>
           <Route path="/town" element={<Town3D />} />
-          <Route path="/terminal" element={<AiTownTerminal />} />
-          <Route element={<Layout />}>
-            <Route path="/" element={<Arena />} />
-            <Route path="/arena" element={<Arena />} />
-            <Route path="/match/:matchId" element={<MatchPage />} />
-            {/* Redirect legacy routes */}
-            <Route path="/tournaments" element={<Navigate to="/" replace />} />
-            <Route path="/bots" element={<Navigate to="/" replace />} />
-            <Route path="/dashboard" element={<Navigate to="/" replace />} />
-            <Route path="/metaverse" element={<Navigate to="/town" replace />} />
-            <Route path="/play/*" element={<Navigate to="/" replace />} />
-            <Route path="*" element={<NotFound />} />
-          </Route>
+          {/* Everything else routes into the Town UI. */}
+          <Route path="*" element={<Navigate to="/town" replace />} />
         </Routes>
       </BrowserRouter>
     </TooltipProvider>

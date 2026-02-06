@@ -272,8 +272,7 @@ model WorkLog {
 
 #### Frontend (app) ✅
 - [x] Consolidated UI into a single frontend (`app/`)
-- [x] Kept the terminal town view as a debug/legacy route (`/terminal`)
-- [ ] Next: SimCity-style Three.js town renderer (agents walking + evolving city)
+- [x] SimCity-style Three.js town renderer (`/town`) — agents walking + evolving city
 
 ---
 

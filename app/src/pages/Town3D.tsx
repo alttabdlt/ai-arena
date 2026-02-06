@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
 import * as THREE from 'three';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Sky } from '@react-three/drei';
@@ -824,9 +823,6 @@ export default function Town3D() {
             <Button onClick={() => window.location.reload()} variant="secondary">
               Reload
             </Button>
-            <Button asChild variant="outline">
-              <Link to="/terminal">Terminal</Link>
-            </Button>
           </div>
         </div>
       </div>
@@ -887,14 +883,6 @@ export default function Town3D() {
                 <div className="mt-1 text-[11px] text-slate-500">
                   {town.builtPlots}/{town.totalPlots} plots built · {Math.round(town.completionPct)}%
                 </div>
-              </div>
-              <div className="flex gap-2">
-                <Button asChild variant="outline" size="sm" className="pointer-events-auto">
-                  <Link to="/arena">Arena</Link>
-                </Button>
-                <Button asChild variant="outline" size="sm" className="pointer-events-auto">
-                  <Link to="/terminal">Terminal</Link>
-                </Button>
               </div>
             </div>
 
@@ -1084,4 +1072,3 @@ export default function Town3D() {
     </div>
   );
 }
-

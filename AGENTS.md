@@ -2,7 +2,7 @@
 
 ## Project Structure
 - `backend/` — Express + Prisma backend (TypeScript). Arena + Town systems + agent loop.
-- `app/` — React + Vite frontend (TypeScript). Primary UI (Three.js town view + arena pages). Includes a terminal “debug” UI.
+- `app/` — React + Vite frontend (TypeScript). Primary UI (Three.js town view).
 - `contracts/` — Solidity smart contracts (Foundry). ERC-20 $ARENA token + WagerEscrow on Monad testnet.
 - `shared/` — Legacy TypeScript packages (`logger/`, `utils/`, `types/`, `events/`). Still used by backend.
 
@@ -19,8 +19,7 @@ Prisma: `npx prisma generate`, `npx prisma migrate dev`, `npx prisma studio`
 cd app && npm run dev
 ```
 Key routes:
-- `/` — Arena
-- `/terminal` — AI Town terminal UI (debug/legacy, keep around for reference)
+- `/town` — AI Town 3D view (primary UI). All other routes redirect here.
 
 ### Contracts
 ```bash
@@ -44,7 +43,6 @@ cd shared/<pkg> && npm run build   # Rebuild after changes
 - **Agent loop** in `agentLoopService.ts`: observe → LLM decides → execute → log
 - **Town system** in `townService.ts`: plots, buildings, zones, yield, completion
 - **LLM routing** via `smartAiService.ts`: OpenAI, Anthropic, DeepSeek
-- **Terminal dashboard** (`app/src/pages/AiTownTerminal.tsx`) is a debug/legacy UI we can revisit
 - **Telegram bot** starts automatically with backend when `TELEGRAM_BOT_TOKEN` is set
 
 ## Commit Guidelines

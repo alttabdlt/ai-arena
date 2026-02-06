@@ -1,0 +1,826 @@
+/**
+ * TownService — World state management for AI Town.
+ *
+ * Handles: town creation, plot management, building construction (proof of inference),
+ * yield distribution, event logging, and world stats.
+ */
+
+import {
+  Town,
+  Plot,
+  WorkLog,
+  TownContribution,
+  TownEvent,
+  TownStatus,
+  PlotStatus,
+  PlotZone,
+  WorkType,
+  TownEventType,
+} from '@prisma/client';
+import { prisma } from '../config/database';
+
+// ============================================
+// Constants
+// ============================================
+
+const BASE_PLOTS = 25; // Plots per town at level 1
+const PLOTS_PER_LEVEL = 5; // Extra plots per level
+const BASE_YIELD_PER_TICK = 10; // $ARENA per yield tick at level 1
+const YIELD_MULTIPLIER = 1.5; // Yield scales per level
+const BASE_PLOT_COST = 10; // $ARENA to claim a plot at level 1
+const COST_PER_LEVEL = 5; // Extra cost per level
+const MIN_API_CALLS_TO_BUILD = 3; // Minimum inference calls to complete a building
+
+// Building types and their requirements
+// Open-ended building system — agents can build ANYTHING.
+// Cost scales by zone complexity. No fixed building type list.
+const ZONE_BASE_COST: Record<string, number> = {
+  RESIDENTIAL: 10,
+  COMMERCIAL: 20,
+  CIVIC: 35,
+  INDUSTRIAL: 20,
+  ENTERTAINMENT: 25,
+};
+const MIN_API_CALLS_PER_ZONE: Record<string, number> = {
+  RESIDENTIAL: 3,
+  COMMERCIAL: 4,
+  CIVIC: 5,
+  INDUSTRIAL: 4,
+  ENTERTAINMENT: 4,
+};
+
+// Legacy lookup for backwards compat (existing buildings)
+const BUILDING_REQUIREMENTS: Record<string, { zone: PlotZone; minApiCalls: number; baseCost: number }> = {
+  HOUSE: { zone: 'RESIDENTIAL', minApiCalls: 3, baseCost: 10 },
+  APARTMENT: { zone: 'RESIDENTIAL', minApiCalls: 5, baseCost: 20 },
+  TAVERN: { zone: 'COMMERCIAL', minApiCalls: 5, baseCost: 25 },
+  SHOP: { zone: 'COMMERCIAL', minApiCalls: 4, baseCost: 20 },
+  MARKET: { zone: 'COMMERCIAL', minApiCalls: 6, baseCost: 30 },
+  TOWN_HALL: { zone: 'CIVIC', minApiCalls: 8, baseCost: 50 },
+  LIBRARY: { zone: 'CIVIC', minApiCalls: 6, baseCost: 35 },
+  WORKSHOP: { zone: 'INDUSTRIAL', minApiCalls: 4, baseCost: 20 },
+  FARM: { zone: 'INDUSTRIAL', minApiCalls: 4, baseCost: 15 },
+  MINE: { zone: 'INDUSTRIAL', minApiCalls: 5, baseCost: 25 },
+  ARENA: { zone: 'ENTERTAINMENT', minApiCalls: 7, baseCost: 40 },
+  PARK: { zone: 'ENTERTAINMENT', minApiCalls: 3, baseCost: 10 },
+  THEATER: { zone: 'ENTERTAINMENT', minApiCalls: 6, baseCost: 30 },
+};
+
+// Town themes for procedural generation
+const TOWN_THEMES = [
+  'medieval fishing village',
+  'cyberpunk trading hub',
+  'steampunk mining outpost',
+  'tropical island resort',
+  'desert oasis marketplace',
+  'mountain fortress town',
+  'floating sky city',
+  'underground crystal caverns settlement',
+  'enchanted forest commune',
+  'volcanic forge city',
+  'arctic research station',
+  'pirate cove harbor',
+];
+
+// Plot zone distribution for a town (percentage-based)
+const ZONE_DISTRIBUTION: { zone: PlotZone; pct: number }[] = [
+  { zone: 'RESIDENTIAL', pct: 0.32 },
+  { zone: 'COMMERCIAL', pct: 0.24 },
+  { zone: 'CIVIC', pct: 0.08 },
+  { zone: 'INDUSTRIAL', pct: 0.20 },
+  { zone: 'ENTERTAINMENT', pct: 0.16 },
+];
+
+// ============================================
+// Town Service
+// ============================================
+
+export class TownService {
+  // ============================================
+  // Town Management
+  // ============================================
+
+  async createTown(name: string, theme?: string, totalPlots?: number, level?: number): Promise<Town & { plots: Plot[] }> {
+    const lvl = level || 1;
+    const plots = totalPlots || BASE_PLOTS + (lvl - 1) * PLOTS_PER_LEVEL;
+    const chosenTheme = theme || TOWN_THEMES[Math.floor(Math.random() * TOWN_THEMES.length)];
+    const yieldPerTick = Math.floor(BASE_YIELD_PER_TICK * Math.pow(YIELD_MULTIPLIER, lvl - 1));
+
+    // Create town + plots in a transaction
+    const town = await prisma.$transaction(async (tx) => {
+      const t = await tx.town.create({
+        data: {
+          name,
+          level: lvl,
+          theme: chosenTheme,
+          totalPlots: plots,
+          yieldPerTick,
+        },
+      });
+
+      // Generate plots with zone distribution
+      const plotData = this.generatePlotLayout(t.id, plots);
+      await tx.plot.createMany({ data: plotData });
+
+      // Log creation event
+      await tx.townEvent.create({
+        data: {
+          townId: t.id,
+          eventType: 'TOWN_CREATED',
+          title: `🏗️ ${name} Founded!`,
+          description: `A new ${chosenTheme} is being built! ${plots} plots available for construction.`,
+          metadata: JSON.stringify({ level: lvl, theme: chosenTheme, totalPlots: plots }),
+        },
+      });
+
+      return tx.town.findUniqueOrThrow({
+        where: { id: t.id },
+        include: { plots: { orderBy: { plotIndex: 'asc' } } },
+      });
+    });
+
+    return town;
+  }
+
+  private generatePlotLayout(townId: string, totalPlots: number): Array<{
+    townId: string;
+    plotIndex: number;
+    x: number;
+    y: number;
+    zone: PlotZone;
+  }> {
+    const plots: Array<{ townId: string; plotIndex: number; x: number; y: number; zone: PlotZone }> = [];
+    const gridSize = Math.ceil(Math.sqrt(totalPlots));
+
+    // Build zone list based on distribution
+    const zoneList: PlotZone[] = [];
+    for (const { zone, pct } of ZONE_DISTRIBUTION) {
+      const count = Math.round(totalPlots * pct);
+      for (let i = 0; i < count; i++) zoneList.push(zone);
+    }
+    // Fill remaining with RESIDENTIAL
+    while (zoneList.length < totalPlots) zoneList.push('RESIDENTIAL');
+    // Shuffle
+    for (let i = zoneList.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [zoneList[i], zoneList[j]] = [zoneList[j], zoneList[i]];
+    }
+
+    for (let i = 0; i < totalPlots; i++) {
+      plots.push({
+        townId,
+        plotIndex: i,
+        x: i % gridSize,
+        y: Math.floor(i / gridSize),
+        zone: zoneList[i],
+      });
+    }
+    return plots;
+  }
+
+  async getTown(townId: string): Promise<(Town & { plots: Plot[]; contributions: TownContribution[] }) | null> {
+    return prisma.town.findUnique({
+      where: { id: townId },
+      include: {
+        plots: { orderBy: { plotIndex: 'asc' } },
+        contributions: {
+          include: { agent: { select: { id: true, name: true, archetype: true } } },
+          orderBy: { arenaSpent: 'desc' },
+        },
+      },
+    });
+  }
+
+  async getActiveTown(): Promise<(Town & { plots: Plot[] }) | null> {
+    return prisma.town.findFirst({
+      where: { status: 'BUILDING' },
+      orderBy: { createdAt: 'desc' },
+      include: { plots: { orderBy: { plotIndex: 'asc' } } },
+    });
+  }
+
+  async getAllTowns(): Promise<Town[]> {
+    return prisma.town.findMany({ orderBy: { level: 'asc' } });
+  }
+
+  async getTownProgress(townId: string) {
+    const town = await prisma.town.findUniqueOrThrow({ where: { id: townId } });
+    const contributions = await prisma.townContribution.findMany({
+      where: { townId },
+      include: { agent: { select: { id: true, name: true, archetype: true } } },
+      orderBy: { arenaSpent: 'desc' },
+      take: 10,
+    });
+    const totalApiCalls = await prisma.workLog.aggregate({
+      where: { townId },
+      _sum: { apiCalls: true },
+    });
+
+    return {
+      townId,
+      name: town.name,
+      level: town.level,
+      status: town.status,
+      completion: town.completionPct,
+      plotsBuilt: town.builtPlots,
+      totalPlots: town.totalPlots,
+      totalInvested: town.totalInvested,
+      totalApiCalls: totalApiCalls._sum.apiCalls || 0,
+      yieldPerTick: town.yieldPerTick,
+      topContributors: contributions,
+    };
+  }
+
+  // ============================================
+  // Plot Management
+  // ============================================
+
+  async claimPlot(agentId: string, townId: string, plotIndex: number): Promise<Plot> {
+    return prisma.$transaction(async (tx) => {
+      const town = await tx.town.findUniqueOrThrow({ where: { id: townId } });
+      if (town.status !== 'BUILDING') {
+        throw new Error('Town is not accepting new construction');
+      }
+
+      const plot = await tx.plot.findUnique({
+        where: { townId_plotIndex: { townId, plotIndex } },
+      });
+      if (!plot) throw new Error(`Plot ${plotIndex} does not exist`);
+      if (plot.status !== 'EMPTY') throw new Error(`Plot ${plotIndex} is already ${plot.status.toLowerCase()}`);
+
+      const claimCost = BASE_PLOT_COST + (town.level - 1) * COST_PER_LEVEL;
+
+      // Check agent balance
+      const agent = await tx.arenaAgent.findUniqueOrThrow({ where: { id: agentId } });
+      if (agent.bankroll < claimCost) {
+        throw new Error(`Not enough $ARENA. Need ${claimCost}, have ${agent.bankroll}`);
+      }
+
+      // Deduct cost
+      await tx.arenaAgent.update({
+        where: { id: agentId },
+        data: { bankroll: { decrement: claimCost } },
+      });
+
+      // Update plot
+      const updated = await tx.plot.update({
+        where: { id: plot.id },
+        data: { status: 'CLAIMED', ownerId: agentId },
+      });
+
+      // Track contribution
+      await this.upsertContribution(tx, agentId, townId, claimCost, 0, 0);
+
+      // Update town investment
+      await tx.town.update({
+        where: { id: townId },
+        data: { totalInvested: { increment: claimCost } },
+      });
+
+      // Log event
+      await tx.townEvent.create({
+        data: {
+          townId,
+          agentId,
+          eventType: 'PLOT_CLAIMED',
+          title: `📍 Plot ${plotIndex} claimed!`,
+          description: `${agent.name} claimed plot ${plotIndex} (${plot.zone}) for ${claimCost} $ARENA`,
+          metadata: JSON.stringify({ plotIndex, zone: plot.zone, cost: claimCost }),
+        },
+      });
+
+      return updated;
+    });
+  }
+
+  async getAvailablePlots(townId: string): Promise<Plot[]> {
+    return prisma.plot.findMany({
+      where: { townId, status: 'EMPTY' },
+      orderBy: { plotIndex: 'asc' },
+    });
+  }
+
+  async getAgentPlots(agentId: string): Promise<Plot[]> {
+    return prisma.plot.findMany({
+      where: { OR: [{ ownerId: agentId }, { builderId: agentId }] },
+      include: { town: { select: { name: true, level: true, status: true } } },
+    });
+  }
+
+  // ============================================
+  // Building (Proof of Inference)
+  // ============================================
+
+  async startBuild(agentId: string, plotId: string, buildingType: string): Promise<Plot> {
+    const bt = buildingType.toUpperCase();
+
+    return prisma.$transaction(async (tx) => {
+      const plot = await tx.plot.findUniqueOrThrow({
+        where: { id: plotId },
+        include: { town: true },
+      });
+
+      if (plot.status !== 'CLAIMED') {
+        throw new Error(`Plot must be CLAIMED before building. Current: ${plot.status}`);
+      }
+      if (plot.ownerId !== agentId) {
+        throw new Error('You do not own this plot');
+      }
+
+      // Open-ended: any building type is allowed. Cost based on zone.
+      const legacyReqs = BUILDING_REQUIREMENTS[bt];
+      const baseCost = legacyReqs?.baseCost || ZONE_BASE_COST[plot.zone] || 15;
+      const buildCost = baseCost * plot.town.level;
+      const agent = await tx.arenaAgent.findUniqueOrThrow({ where: { id: agentId } });
+      if (agent.bankroll < buildCost) {
+        throw new Error(`Not enough $ARENA. Building ${bt} costs ${buildCost}, have ${agent.bankroll}`);
+      }
+
+      // Deduct build cost
+      await tx.arenaAgent.update({
+        where: { id: agentId },
+        data: { bankroll: { decrement: buildCost } },
+      });
+
+      // Update plot
+      const updated = await tx.plot.update({
+        where: { id: plotId },
+        data: {
+          status: 'UNDER_CONSTRUCTION',
+          buildingType: bt,
+          builderId: agentId,
+          buildCostArena: buildCost,
+          buildStartedAt: new Date(),
+        },
+      });
+
+      // Track contribution
+      await this.upsertContribution(tx, agentId, plot.townId, buildCost, 0, 0);
+
+      // Update town investment
+      await tx.town.update({
+        where: { id: plot.townId },
+        data: { totalInvested: { increment: buildCost } },
+      });
+
+      // Log event
+      await tx.townEvent.create({
+        data: {
+          townId: plot.townId,
+          agentId,
+          eventType: 'BUILD_STARTED',
+          title: `🔨 ${bt} construction started!`,
+          description: `${agent.name} began building a ${bt} on plot ${plot.plotIndex} (${buildCost} $ARENA)`,
+          metadata: JSON.stringify({ plotIndex: plot.plotIndex, buildingType: bt, cost: buildCost }),
+        },
+      });
+
+      return updated;
+    });
+  }
+
+  // Sanitize strings for PostgreSQL — strip null bytes and invalid sequences
+  private sanitize(s: string): string {
+    return s.replace(/\x00/g, '').replace(/\\x[0-9a-fA-F]{0,1}(?![0-9a-fA-F])/g, '');
+  }
+
+  async submitWork(
+    agentId: string,
+    plotId: string,
+    workType: WorkType,
+    description: string,
+    input: string,
+    output: string,
+    apiCalls: number,
+    apiCostCents: number,
+    modelUsed: string,
+    responseTimeMs: number = 0,
+  ): Promise<WorkLog> {
+    const plot = await prisma.plot.findUniqueOrThrow({
+      where: { id: plotId },
+      include: { town: true },
+    });
+
+    if (plot.status !== 'UNDER_CONSTRUCTION') {
+      throw new Error(`Plot is not under construction. Status: ${plot.status}`);
+    }
+    if (plot.builderId !== agentId && plot.ownerId !== agentId) {
+      throw new Error('You are not the builder or owner of this plot');
+    }
+
+    // Create work log (sanitize LLM output for DB safety)
+    const safeDesc = this.sanitize(description);
+    const safeInput = this.sanitize(input);
+    const safeOutput = this.sanitize(output);
+    const workLog = await prisma.workLog.create({
+      data: {
+        agentId,
+        plotId,
+        townId: plot.townId,
+        workType,
+        description: safeDesc,
+        input: safeInput,
+        output: safeOutput,
+        apiCalls,
+        apiCostCents,
+        modelUsed,
+        responseTimeMs,
+      },
+    });
+
+    // Update plot API call count and building data
+    const existingData = JSON.parse(plot.buildingData || '{}');
+    const workKey = `${workType.toLowerCase()}_${Date.now()}`;
+    existingData[workKey] = { description: safeDesc, output: safeOutput.substring(0, 2000) }; // Cap stored output
+
+    await prisma.plot.update({
+      where: { id: plotId },
+      data: {
+        apiCallsUsed: { increment: apiCalls },
+        buildingData: JSON.stringify(existingData),
+      },
+    });
+
+    // Track contribution (api calls)
+    await this.upsertContribution(prisma, agentId, plot.townId, 0, apiCalls, 0);
+
+    // Update agent API cost tracking
+    await prisma.arenaAgent.update({
+      where: { id: agentId },
+      data: { apiCostCents: { increment: apiCostCents } },
+    });
+
+    return workLog;
+  }
+
+  async completeBuild(agentId: string, plotId: string): Promise<Plot> {
+    return prisma.$transaction(async (tx) => {
+      const plot = await tx.plot.findUniqueOrThrow({
+        where: { id: plotId },
+        include: { town: true },
+      });
+
+      if (plot.status !== 'UNDER_CONSTRUCTION') {
+        throw new Error(`Plot is not under construction. Status: ${plot.status}`);
+      }
+      if (plot.builderId !== agentId && plot.ownerId !== agentId) {
+        throw new Error('You are not the builder or owner of this plot');
+      }
+
+      // Check minimum API calls — open-ended system uses zone-based minimums
+      const bt = plot.buildingType || '';
+      const legacyReqs = BUILDING_REQUIREMENTS[bt];
+      const minCalls = legacyReqs?.minApiCalls || MIN_API_CALLS_PER_ZONE[plot.zone] || MIN_API_CALLS_TO_BUILD;
+      if (plot.apiCallsUsed < minCalls) {
+        throw new Error(`Not enough work done. Requires ${minCalls} API calls, only ${plot.apiCallsUsed} submitted.`);
+      }
+
+      // Complete the build
+      const updated = await tx.plot.update({
+        where: { id: plotId },
+        data: {
+          status: 'BUILT',
+          buildCompletedAt: new Date(),
+        },
+      });
+
+      // Update town progress
+      const town = await tx.town.update({
+        where: { id: plot.townId },
+        data: {
+          builtPlots: { increment: 1 },
+          completionPct: ((plot.town.builtPlots + 1) / plot.town.totalPlots) * 100,
+        },
+      });
+
+      // Track plots built
+      await this.upsertContribution(tx, agentId, plot.townId, 0, 0, 1);
+
+      // Get agent name for event
+      const agent = await tx.arenaAgent.findUniqueOrThrow({
+        where: { id: agentId },
+        select: { name: true },
+      });
+
+      // Log event
+      await tx.townEvent.create({
+        data: {
+          townId: plot.townId,
+          agentId,
+          eventType: 'BUILD_COMPLETED',
+          title: `🏠 ${plot.buildingName || bt} complete!`,
+          description: `${agent.name} finished building ${plot.buildingName || `a ${bt}`} on plot ${plot.plotIndex}. ${plot.apiCallsUsed} API calls of work invested.`,
+          metadata: JSON.stringify({
+            plotIndex: plot.plotIndex,
+            buildingType: bt,
+            buildingName: plot.buildingName,
+            apiCalls: plot.apiCallsUsed,
+            costArena: plot.buildCostArena,
+          }),
+        },
+      });
+
+      // Check town completion
+      if (town.builtPlots + 1 >= town.totalPlots) {
+        await this.completeTown(tx, plot.townId);
+      }
+
+      return updated;
+    });
+  }
+
+  private async completeTown(tx: any, townId: string): Promise<void> {
+    const town = await tx.town.update({
+      where: { id: townId },
+      data: { status: 'COMPLETE', completedAt: new Date(), completionPct: 100 },
+    });
+
+    // Calculate yield shares based on contributions
+    const contributions = await tx.townContribution.findMany({ where: { townId } });
+    const totalWeight = contributions.reduce(
+      (sum: number, c: TownContribution) => sum + c.arenaSpent + c.apiCallsMade * 2, // Weight API calls 2x
+      0,
+    );
+
+    if (totalWeight > 0) {
+      for (const c of contributions) {
+        const weight = c.arenaSpent + c.apiCallsMade * 2;
+        const share = weight / totalWeight;
+        await tx.townContribution.update({
+          where: { id: c.id },
+          data: { yieldShare: share },
+        });
+      }
+    }
+
+    // Log event
+    await tx.townEvent.create({
+      data: {
+        townId,
+        eventType: 'TOWN_COMPLETED',
+        title: `🎉 ${town.name} is COMPLETE!`,
+        description: `All ${town.totalPlots} plots have been built! The town now generates ${town.yieldPerTick} $ARENA per tick. Contributors will earn yield based on their share.`,
+        metadata: JSON.stringify({
+          level: town.level,
+          totalInvested: town.totalInvested,
+          contributors: contributions.length,
+        }),
+      },
+    });
+  }
+
+  // ============================================
+  // Mining (earn $ARENA through computational work)
+  // ============================================
+
+  async submitMiningWork(
+    agentId: string,
+    townId: string,
+    description: string,
+    input: string,
+    output: string,
+    apiCalls: number,
+    apiCostCents: number,
+    modelUsed: string,
+    arenaEarned: number,
+    responseTimeMs: number = 0,
+  ): Promise<WorkLog> {
+    // Verify town exists and is building
+    const town = await prisma.town.findUniqueOrThrow({ where: { id: townId } });
+    if (town.status !== 'BUILDING') {
+      throw new Error('Can only mine in towns under construction');
+    }
+
+    return prisma.$transaction(async (tx) => {
+      const workLog = await tx.workLog.create({
+        data: {
+          agentId,
+          townId,
+          workType: 'MINE',
+          description: this.sanitize(description),
+          input: this.sanitize(input),
+          output: this.sanitize(output),
+          apiCalls,
+          apiCostCents,
+          modelUsed,
+          responseTimeMs,
+          arenaEarned,
+        },
+      });
+
+      // Credit agent
+      await tx.arenaAgent.update({
+        where: { id: agentId },
+        data: {
+          bankroll: { increment: arenaEarned },
+          apiCostCents: { increment: apiCostCents },
+        },
+      });
+
+      // Track contribution
+      await this.upsertContribution(tx, agentId, townId, 0, apiCalls, 0);
+
+      return workLog;
+    });
+  }
+
+  // ============================================
+  // Economics
+  // ============================================
+
+  async distributeYield(townId: string): Promise<{ distributed: number; recipients: number }> {
+    return prisma.$transaction(async (tx) => {
+      const town = await tx.town.findUniqueOrThrow({ where: { id: townId } });
+      if (town.status !== 'COMPLETE') {
+        throw new Error('Town is not complete — no yield to distribute');
+      }
+
+      const contributions = await tx.townContribution.findMany({
+        where: { townId, yieldShare: { gt: 0 } },
+      });
+
+      let totalDistributed = 0;
+      for (const c of contributions) {
+        const amount = Math.floor(town.yieldPerTick * c.yieldShare);
+        if (amount > 0) {
+          await tx.arenaAgent.update({
+            where: { id: c.agentId },
+            data: { bankroll: { increment: amount } },
+          });
+          await tx.townContribution.update({
+            where: { id: c.id },
+            data: { totalYieldClaimed: { increment: amount } },
+          });
+          totalDistributed += amount;
+        }
+      }
+
+      await tx.town.update({
+        where: { id: townId },
+        data: { totalYieldPaid: { increment: totalDistributed } },
+      });
+
+      return { distributed: totalDistributed, recipients: contributions.length };
+    });
+  }
+
+  async getAgentEconomy(agentId: string) {
+    const agent = await prisma.arenaAgent.findUniqueOrThrow({
+      where: { id: agentId },
+      select: { id: true, name: true, bankroll: true, apiCostCents: true },
+    });
+
+    const contributions = await prisma.townContribution.findMany({
+      where: { agentId },
+      include: { town: { select: { name: true, status: true, yieldPerTick: true } } },
+    });
+
+    const totalYieldPending = contributions
+      .filter((c) => c.yieldShare > 0)
+      .reduce((sum, c) => sum + Math.floor((c as any).town.yieldPerTick * c.yieldShare), 0);
+
+    const totalWorkLogs = await prisma.workLog.count({ where: { agentId } });
+    const totalApiCalls = await prisma.workLog.aggregate({
+      where: { agentId },
+      _sum: { apiCalls: true },
+    });
+
+    return {
+      agentId: agent.id,
+      name: agent.name,
+      bankroll: agent.bankroll,
+      apiCostCents: agent.apiCostCents,
+      totalWorkDone: totalWorkLogs,
+      totalApiCalls: totalApiCalls._sum.apiCalls || 0,
+      yieldPerTick: totalYieldPending,
+      contributions: contributions.map((c) => ({
+        townName: (c as any).town.name,
+        townStatus: (c as any).town.status,
+        arenaSpent: c.arenaSpent,
+        apiCallsMade: c.apiCallsMade,
+        plotsBuilt: c.plotsBuilt,
+        yieldShare: c.yieldShare,
+        totalYieldClaimed: c.totalYieldClaimed,
+      })),
+    };
+  }
+
+  // ============================================
+  // Town Progression
+  // ============================================
+
+  async startNextTown(): Promise<Town & { plots: Plot[] }> {
+    // Find current highest level
+    const latest = await prisma.town.findFirst({ orderBy: { level: 'desc' } });
+    const nextLevel = (latest?.level || 0) + 1;
+
+    // Generate name
+    const adjectives = ['New', 'Old', 'Greater', 'Lower', 'Upper', 'North', 'South', 'East', 'West', 'Inner', 'Outer'];
+    const nouns = [
+      'Haven', 'Creek', 'Ridge', 'Falls', 'Harbor', 'Crossing', 'Hollow',
+      'Summit', 'Valley', 'Forge', 'Watch', 'Gate', 'Keep', 'Shore',
+    ];
+    const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
+    const noun = nouns[Math.floor(Math.random() * nouns.length)];
+    const name = `${adj} ${noun}`;
+
+    return this.createTown(name, undefined, undefined, nextLevel);
+  }
+
+  // ============================================
+  // Events
+  // ============================================
+
+  async logEvent(
+    townId: string,
+    eventType: TownEventType,
+    title: string,
+    description: string,
+    agentId?: string,
+    metadata?: any,
+  ): Promise<TownEvent> {
+    return prisma.townEvent.create({
+      data: {
+        townId,
+        agentId,
+        eventType,
+        title,
+        description,
+        metadata: metadata ? JSON.stringify(metadata) : '{}',
+      },
+    });
+  }
+
+  async getRecentEvents(townId: string, limit: number = 20): Promise<TownEvent[]> {
+    return prisma.townEvent.findMany({
+      where: { townId },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+  }
+
+  async getGlobalEvents(limit: number = 50): Promise<TownEvent[]> {
+    return prisma.townEvent.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+  }
+
+  // ============================================
+  // Stats
+  // ============================================
+
+  async getWorldStats() {
+    const [towns, agents, workAgg] = await Promise.all([
+      prisma.town.findMany({ select: { status: true, totalInvested: true, totalYieldPaid: true } }),
+      prisma.arenaAgent.count({ where: { isActive: true } }),
+      prisma.workLog.aggregate({ _sum: { apiCalls: true, apiCostCents: true }, _count: true }),
+    ]);
+
+    return {
+      totalTowns: towns.length,
+      completedTowns: towns.filter((t) => t.status === 'COMPLETE').length,
+      buildingTowns: towns.filter((t) => t.status === 'BUILDING').length,
+      totalAgents: agents,
+      totalArenaInvested: towns.reduce((s, t) => s + t.totalInvested, 0),
+      totalYieldPaid: towns.reduce((s, t) => s + t.totalYieldPaid, 0),
+      totalWorkLogs: workAgg._count,
+      totalApiCalls: workAgg._sum.apiCalls || 0,
+      totalApiCostCents: workAgg._sum.apiCostCents || 0,
+    };
+  }
+
+  // ============================================
+  // Helpers
+  // ============================================
+
+  private async upsertContribution(
+    tx: any,
+    agentId: string,
+    townId: string,
+    arenaSpent: number,
+    apiCalls: number,
+    plotsBuilt: number,
+  ): Promise<void> {
+    const existing = await tx.townContribution.findUnique({
+      where: { agentId_townId: { agentId, townId } },
+    });
+
+    if (existing) {
+      await tx.townContribution.update({
+        where: { id: existing.id },
+        data: {
+          arenaSpent: { increment: arenaSpent },
+          apiCallsMade: { increment: apiCalls },
+          plotsBuilt: { increment: plotsBuilt },
+        },
+      });
+    } else {
+      await tx.townContribution.create({
+        data: { agentId, townId, arenaSpent, apiCallsMade: apiCalls, plotsBuilt },
+      });
+    }
+  }
+}
+
+export const townService = new TownService();

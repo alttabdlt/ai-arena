@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import path from 'path';
 import { createServer } from 'http';
 import { ApolloServer } from '@apollo/server';
 import { expressMiddleware } from '@apollo/server/express4';
@@ -154,6 +155,24 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+  // Serve building assets (legacy agent-sourced images)
+  app.use('/building-assets', express.static(path.resolve(__dirname, '../public/building-assets'), {
+    maxAge: '1d',
+    setHeaders: (res) => { res.setHeader('Access-Control-Allow-Origin', '*'); },
+  }));
+
+  // Serve pixel art building sprites (new pipeline)
+  app.use('/building-sprites', express.static(path.resolve(__dirname, '../public/building-sprites'), {
+    maxAge: '7d',
+    setHeaders: (res) => { res.setHeader('Access-Control-Allow-Origin', '*'); },
+  }));
+
+  // Serve sprite library (curated building sprites)
+  app.use('/sprite-library', express.static(path.resolve(__dirname, '../public/sprite-library'), {
+    maxAge: '7d',
+    setHeaders: (res) => { res.setHeader('Access-Control-Allow-Origin', '*'); },
+  }));
+
   const schema = makeExecutableSchema({
     typeDefs,
     resolvers,
@@ -243,6 +262,118 @@ async function startServer() {
   const arenaApiRouter = (await import('./routes/arena-api')).default;
   app.use('/api/v1', cors<cors.CorsRequest>({ origin: '*' }), arenaApiRouter);
   console.log('🏟️  Arena PvP API ready at /api/v1');
+
+  // ============================================
+  // AI Town REST API
+  // ============================================
+  const townApiRouter = (await import('./routes/town-api')).default;
+  app.use('/api/v1', cors<cors.CorsRequest>({ origin: '*' }), townApiRouter);
+  console.log('🏘️  AI Town API ready at /api/v1');
+
+  // ============================================
+  // Agent Loop REST API
+  // ============================================
+  const agentLoopRouter = (await import('./routes/agent-loop-api')).default;
+  app.use('/api/v1', cors<cors.CorsRequest>({ origin: '*' }), agentLoopRouter);
+  console.log('🤖 Agent Loop API ready at /api/v1');
+
+  // ============================================
+  // x402 Payable API (micropayments for AI services)
+  // ============================================
+  try {
+    const { paymentMiddleware } = await import('@x402/express');
+    const { x402ResourceServer, HTTPFacilitatorClient } = await import('@x402/core/server');
+    const { registerExactEvmScheme } = await import('@x402/evm/exact/server');
+
+    // Receiving wallet for x402 payments (same as deployer)
+    const x402PayTo = process.env.X402_PAY_TO || process.env.MONAD_DEPLOYER_KEY
+      ? '0xA5AE8A362A36c7f3242724AaF34FdEEF66A35b1f' // Our wallet
+      : '0x0000000000000000000000000000000000000000';
+
+    const facilitatorClient = new HTTPFacilitatorClient({
+      url: 'https://x402.org/facilitator',
+    });
+    const x402Server = new x402ResourceServer(facilitatorClient);
+    registerExactEvmScheme(x402Server);
+
+    // x402 routes (loaded first without payment requirement)
+    const x402Router = (await import('./routes/x402-api')).default;
+
+    // Apply payment middleware to x402 routes
+    app.use(
+      '/api/v1/x402',
+      cors<cors.CorsRequest>({ origin: '*' }),
+      paymentMiddleware(
+        {
+          'GET /building/:plotIndex/lore': {
+            accepts: [{
+              scheme: 'exact',
+              price: '$0.001',
+              network: 'eip155:84532', // Base Sepolia
+              payTo: x402PayTo,
+            }],
+            description: 'Read AI-generated building lore and construction history',
+            mimeType: 'application/json',
+          },
+          'GET /arena/spectate': {
+            accepts: [{
+              scheme: 'exact',
+              price: '$0.002',
+              network: 'eip155:84532',
+              payTo: x402PayTo,
+            }],
+            description: 'Spectate the latest AI vs AI arena match',
+            mimeType: 'application/json',
+          },
+          'GET /town/oracle': {
+            accepts: [{
+              scheme: 'exact',
+              price: '$0.001',
+              network: 'eip155:84532',
+              payTo: x402PayTo,
+            }],
+            description: 'Get an AI-generated town economic forecast',
+            mimeType: 'application/json',
+          },
+          'GET /agent/:agentId/interview': {
+            accepts: [{
+              scheme: 'exact',
+              price: '$0.005',
+              network: 'eip155:84532',
+              payTo: x402PayTo,
+            }],
+            description: 'Interview an AI agent (live inference)',
+            mimeType: 'application/json',
+          },
+        },
+        x402Server,
+      ),
+      x402Router,
+    );
+    console.log('💳 x402 Payable API ready at /api/v1/x402');
+  } catch (err: any) {
+    // x402 is optional — don't crash if it fails
+    console.warn(`⚠️  x402 setup failed: ${err.message}`);
+    // Still serve routes without payment requirement as fallback
+    try {
+      const x402Router = (await import('./routes/x402-api')).default;
+      app.use('/api/v1/x402', cors<cors.CorsRequest>({ origin: '*' }), x402Router);
+      console.log('💳 x402 API ready at /api/v1/x402 (FREE MODE — payment middleware failed)');
+    } catch {}
+  }
+
+  // ============================================
+  // Telegram Bot
+  // ============================================
+  if (process.env.TELEGRAM_BOT_TOKEN) {
+    const { telegramBotService } = await import('./services/telegramBotService');
+    await telegramBotService.start(
+      process.env.TELEGRAM_BOT_TOKEN,
+      process.env.TELEGRAM_CHAT_ID,
+    );
+  } else {
+    console.log('⚠️  No TELEGRAM_BOT_TOKEN — bot disabled');
+  }
 
   // Startup cleanup: reset stuck agents and stale matches
   try {

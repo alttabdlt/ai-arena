@@ -3,6 +3,9 @@ node_modules/
 .pnp
 .pnp.js
 
+# Legacy / removed
+ai-town-fork/
+
 # Testing
 coverage/
 *.lcov

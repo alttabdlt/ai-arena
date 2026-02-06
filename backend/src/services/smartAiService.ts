@@ -249,7 +249,7 @@ const MODEL_SPECS: Record<string, ModelSpec> = {
   'claude-3.5-haiku': { provider: 'anthropic', modelName: 'claude-3-5-haiku-20241022', costPer1kInput: 0.08, costPer1kOutput: 0.4, maxTokens: 300, supportsJsonMode: false },
   
   // DeepSeek
-  'deepseek-v3': { provider: 'deepseek', modelName: 'deepseek-chat', costPer1kInput: 0.014, costPer1kOutput: 0.028, maxTokens: 300, supportsJsonMode: true },
+  'deepseek-v3': { provider: 'deepseek', modelName: 'deepseek-chat', costPer1kInput: 0.014, costPer1kOutput: 0.028, maxTokens: 500, supportsJsonMode: true },
   'deepseek-r1': { provider: 'deepseek', modelName: 'deepseek-reasoner', costPer1kInput: 0.055, costPer1kOutput: 0.22, maxTokens: 500, supportsJsonMode: false },
 };
 
@@ -400,19 +400,20 @@ What should ${agent.name} do?`;
   // Unified Model Caller
   // ============================================
 
-  private async callModel(
+  async callModel(
     spec: ModelSpec,
     messages: Array<{ role: string; content: string }>,
-    temperature: number
+    temperature: number,
+    forceNoJsonMode: boolean = false,
   ): Promise<{ content: string; inputTokens: number; outputTokens: number }> {
     
     switch (spec.provider) {
       case 'openai':
-        return this.callOpenAI(spec, messages, temperature);
+        return this.callOpenAI(spec, messages, temperature, forceNoJsonMode);
       case 'anthropic':
         return this.callAnthropic(spec, messages, temperature);
       case 'deepseek':
-        return this.callDeepSeek(spec, messages, temperature);
+        return this.callDeepSeek(spec, messages, temperature, forceNoJsonMode);
       default:
         throw new Error(`Unknown provider: ${spec.provider}`);
     }
@@ -421,7 +422,8 @@ What should ${agent.name} do?`;
   private async callOpenAI(
     spec: ModelSpec,
     messages: Array<{ role: string; content: string }>,
-    temperature: number
+    temperature: number,
+    forceNoJsonMode: boolean = false,
   ): Promise<{ content: string; inputTokens: number; outputTokens: number }> {
     if (!this.openai) throw new Error('OpenAI not configured');
     
@@ -430,7 +432,7 @@ What should ${agent.name} do?`;
       messages: messages as any,
       temperature,
       max_tokens: spec.maxTokens,
-      ...(spec.supportsJsonMode ? { response_format: { type: 'json_object' } } : {}),
+      ...(spec.supportsJsonMode && !forceNoJsonMode ? { response_format: { type: 'json_object' } } : {}),
     });
     
     return {
@@ -470,7 +472,8 @@ What should ${agent.name} do?`;
   private async callDeepSeek(
     spec: ModelSpec,
     messages: Array<{ role: string; content: string }>,
-    temperature: number
+    temperature: number,
+    forceNoJsonMode: boolean = false,
   ): Promise<{ content: string; inputTokens: number; outputTokens: number }> {
     if (!this.deepseek) throw new Error('DeepSeek not configured');
     
@@ -479,7 +482,7 @@ What should ${agent.name} do?`;
       messages: messages as any,
       temperature,
       max_tokens: spec.maxTokens,
-      ...(spec.supportsJsonMode ? { response_format: { type: 'json_object' } } : {}),
+      ...(spec.supportsJsonMode && !forceNoJsonMode ? { response_format: { type: 'json_object' } } : {}),
     });
     
     return {
@@ -583,7 +586,7 @@ Respond ONLY with compact JSON (keep reasoning under 50 words):
   // Helpers
   // ============================================
 
-  private getModelSpec(modelId: string): ModelSpec {
+  getModelSpec(modelId: string): ModelSpec {
     const spec = MODEL_SPECS[modelId];
     if (!spec) {
       console.warn(`Unknown model ${modelId}, falling back to deepseek-v3`);
@@ -592,7 +595,7 @@ Respond ONLY with compact JSON (keep reasoning under 50 words):
     return spec;
   }
 
-  private getTemperature(archetype: AgentArchetype): number {
+  getTemperature(archetype: AgentArchetype): number {
     const temps: Record<AgentArchetype, number> = {
       SHARK: 0.85,
       ROCK: 0.3,
@@ -603,7 +606,7 @@ Respond ONLY with compact JSON (keep reasoning under 50 words):
     return temps[archetype] ?? 0.7;
   }
 
-  private calculateCost(spec: ModelSpec, inputTokens: number, outputTokens: number, latencyMs: number): AICost {
+  calculateCost(spec: ModelSpec, inputTokens: number, outputTokens: number, latencyMs: number): AICost {
     const costCents = Math.ceil(
       (inputTokens / 1000) * spec.costPer1kInput +
       (outputTokens / 1000) * spec.costPer1kOutput

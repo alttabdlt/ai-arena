@@ -1,0 +1,824 @@
+[
+  {
+    "id": "ait-cottage-roof",
+    "name": "Ait Cottage Roof",
+    "category": "residential",
+    "tags": [
+      "ait",
+      "cottage",
+      "roof"
+    ],
+    "size": 64,
+    "filename": "ait-cottage-roof-64px.png",
+    "path": "residential/ait-cottage-roof-64px.png",
+    "url": "/sprite-library/residential/ait-cottage-roof-64px.png"
+  },
+  {
+    "id": "cottage",
+    "name": "Cottage",
+    "category": "residential",
+    "tags": [
+      "cottage"
+    ],
+    "size": 64,
+    "filename": "cottage-64px.png",
+    "path": "residential/cottage-64px.png",
+    "url": "/sprite-library/residential/cottage-64px.png"
+  },
+  {
+    "id": "house-blue",
+    "name": "House Blue",
+    "category": "residential",
+    "tags": [
+      "house",
+      "blue"
+    ],
+    "size": 64,
+    "filename": "house-blue-64px.png",
+    "path": "residential/house-blue-64px.png",
+    "url": "/sprite-library/residential/house-blue-64px.png"
+  },
+  {
+    "id": "house-brown",
+    "name": "House Brown",
+    "category": "residential",
+    "tags": [
+      "house",
+      "brown"
+    ],
+    "size": 64,
+    "filename": "house-brown-64px.png",
+    "path": "residential/house-brown-64px.png",
+    "url": "/sprite-library/residential/house-brown-64px.png"
+  },
+  {
+    "id": "house-green",
+    "name": "House Green",
+    "category": "residential",
+    "tags": [
+      "house",
+      "green"
+    ],
+    "size": 64,
+    "filename": "house-green-64px.png",
+    "path": "residential/house-green-64px.png",
+    "url": "/sprite-library/residential/house-green-64px.png"
+  },
+  {
+    "id": "house-red",
+    "name": "House Red",
+    "category": "residential",
+    "tags": [
+      "house",
+      "red"
+    ],
+    "size": 64,
+    "filename": "house-red-64px.png",
+    "path": "residential/house-red-64px.png",
+    "url": "/sprite-library/residential/house-red-64px.png"
+  },
+  {
+    "id": "lpc-blue-roof",
+    "name": "Lpc Blue Roof",
+    "category": "residential",
+    "tags": [
+      "lpc",
+      "blue",
+      "roof"
+    ],
+    "size": 64,
+    "filename": "lpc-blue-roof-64px.png",
+    "path": "residential/lpc-blue-roof-64px.png",
+    "url": "/sprite-library/residential/lpc-blue-roof-64px.png"
+  },
+  {
+    "id": "lpc-brick-house",
+    "name": "Lpc Brick House",
+    "category": "residential",
+    "tags": [
+      "lpc",
+      "brick",
+      "house"
+    ],
+    "size": 64,
+    "filename": "lpc-brick-house-64px.png",
+    "path": "residential/lpc-brick-house-64px.png",
+    "url": "/sprite-library/residential/lpc-brick-house-64px.png"
+  },
+  {
+    "id": "lpc-gray-roof",
+    "name": "Lpc Gray Roof",
+    "category": "residential",
+    "tags": [
+      "lpc",
+      "gray",
+      "roof"
+    ],
+    "size": 64,
+    "filename": "lpc-gray-roof-64px.png",
+    "path": "residential/lpc-gray-roof-64px.png",
+    "url": "/sprite-library/residential/lpc-gray-roof-64px.png"
+  },
+  {
+    "id": "lpc-manor",
+    "name": "Lpc Manor",
+    "category": "residential",
+    "tags": [
+      "lpc",
+      "manor"
+    ],
+    "size": 64,
+    "filename": "lpc-manor-64px.png",
+    "path": "residential/lpc-manor-64px.png",
+    "url": "/sprite-library/residential/lpc-manor-64px.png"
+  },
+  {
+    "id": "lpc-tudor-house",
+    "name": "Lpc Tudor House",
+    "category": "residential",
+    "tags": [
+      "lpc",
+      "tudor",
+      "house"
+    ],
+    "size": 64,
+    "filename": "lpc-tudor-house-64px.png",
+    "path": "residential/lpc-tudor-house-64px.png",
+    "url": "/sprite-library/residential/lpc-tudor-house-64px.png"
+  },
+  {
+    "id": "manor",
+    "name": "Manor",
+    "category": "residential",
+    "tags": [
+      "manor"
+    ],
+    "size": 64,
+    "filename": "manor-64px.png",
+    "path": "residential/manor-64px.png",
+    "url": "/sprite-library/residential/manor-64px.png"
+  },
+  {
+    "id": "ait-shop-front",
+    "name": "Ait Shop Front",
+    "category": "commercial",
+    "tags": [
+      "ait",
+      "shop",
+      "front"
+    ],
+    "size": 64,
+    "filename": "ait-shop-front-64px.png",
+    "path": "commercial/ait-shop-front-64px.png",
+    "url": "/sprite-library/commercial/ait-shop-front-64px.png"
+  },
+  {
+    "id": "lpc-inn-sign",
+    "name": "Lpc Inn Sign",
+    "category": "commercial",
+    "tags": [
+      "lpc",
+      "inn",
+      "sign"
+    ],
+    "size": 64,
+    "filename": "lpc-inn-sign-64px.png",
+    "path": "commercial/lpc-inn-sign-64px.png",
+    "url": "/sprite-library/commercial/lpc-inn-sign-64px.png"
+  },
+  {
+    "id": "lpc-market-stall",
+    "name": "Lpc Market Stall",
+    "category": "commercial",
+    "tags": [
+      "lpc",
+      "market",
+      "stall"
+    ],
+    "size": 64,
+    "filename": "lpc-market-stall-64px.png",
+    "path": "commercial/lpc-market-stall-64px.png",
+    "url": "/sprite-library/commercial/lpc-market-stall-64px.png"
+  },
+  {
+    "id": "lpc-market-tent",
+    "name": "Lpc Market Tent",
+    "category": "commercial",
+    "tags": [
+      "lpc",
+      "market",
+      "tent"
+    ],
+    "size": 64,
+    "filename": "lpc-market-tent-64px.png",
+    "path": "commercial/lpc-market-tent-64px.png",
+    "url": "/sprite-library/commercial/lpc-market-tent-64px.png"
+  },
+  {
+    "id": "lpc-shop-shelf",
+    "name": "Lpc Shop Shelf",
+    "category": "commercial",
+    "tags": [
+      "lpc",
+      "shop",
+      "shelf"
+    ],
+    "size": 64,
+    "filename": "lpc-shop-shelf-64px.png",
+    "path": "commercial/lpc-shop-shelf-64px.png",
+    "url": "/sprite-library/commercial/lpc-shop-shelf-64px.png"
+  },
+  {
+    "id": "lpc-vending-machine",
+    "name": "Lpc Vending Machine",
+    "category": "commercial",
+    "tags": [
+      "lpc",
+      "vending",
+      "machine"
+    ],
+    "size": 64,
+    "filename": "lpc-vending-machine-64px.png",
+    "path": "commercial/lpc-vending-machine-64px.png",
+    "url": "/sprite-library/commercial/lpc-vending-machine-64px.png"
+  },
+  {
+    "id": "shop",
+    "name": "Shop",
+    "category": "commercial",
+    "tags": [
+      "shop"
+    ],
+    "size": 64,
+    "filename": "shop-64px.png",
+    "path": "commercial/shop-64px.png",
+    "url": "/sprite-library/commercial/shop-64px.png"
+  },
+  {
+    "id": "shop-stall",
+    "name": "Shop Stall",
+    "category": "commercial",
+    "tags": [
+      "shop",
+      "stall"
+    ],
+    "size": 64,
+    "filename": "shop-stall-64px.png",
+    "path": "commercial/shop-stall-64px.png",
+    "url": "/sprite-library/commercial/shop-stall-64px.png"
+  },
+  {
+    "id": "tavern",
+    "name": "Tavern",
+    "category": "commercial",
+    "tags": [
+      "tavern"
+    ],
+    "size": 64,
+    "filename": "tavern-64px.png",
+    "path": "commercial/tavern-64px.png",
+    "url": "/sprite-library/commercial/tavern-64px.png"
+  },
+  {
+    "id": "tavern-front",
+    "name": "Tavern Front",
+    "category": "commercial",
+    "tags": [
+      "tavern",
+      "front"
+    ],
+    "size": 64,
+    "filename": "tavern-front-64px.png",
+    "path": "commercial/tavern-front-64px.png",
+    "url": "/sprite-library/commercial/tavern-front-64px.png"
+  },
+  {
+    "id": "ait-cave-entrance",
+    "name": "Ait Cave Entrance",
+    "category": "industrial",
+    "tags": [
+      "ait",
+      "cave",
+      "entrance"
+    ],
+    "size": 64,
+    "filename": "ait-cave-entrance-64px.png",
+    "path": "industrial/ait-cave-entrance-64px.png",
+    "url": "/sprite-library/industrial/ait-cave-entrance-64px.png"
+  },
+  {
+    "id": "ait-windmill",
+    "name": "Ait Windmill",
+    "category": "industrial",
+    "tags": [
+      "ait",
+      "windmill"
+    ],
+    "size": 64,
+    "filename": "ait-windmill-64px.png",
+    "path": "industrial/ait-windmill-64px.png",
+    "url": "/sprite-library/industrial/ait-windmill-64px.png"
+  },
+  {
+    "id": "lpc-woodpile",
+    "name": "Lpc Woodpile",
+    "category": "industrial",
+    "tags": [
+      "lpc",
+      "woodpile"
+    ],
+    "size": 64,
+    "filename": "lpc-woodpile-64px.png",
+    "path": "industrial/lpc-woodpile-64px.png",
+    "url": "/sprite-library/industrial/lpc-woodpile-64px.png"
+  },
+  {
+    "id": "mine",
+    "name": "Mine",
+    "category": "industrial",
+    "tags": [
+      "mine"
+    ],
+    "size": 64,
+    "filename": "mine-64px.png",
+    "path": "industrial/mine-64px.png",
+    "url": "/sprite-library/industrial/mine-64px.png"
+  },
+  {
+    "id": "mine-entrance",
+    "name": "Mine Entrance",
+    "category": "industrial",
+    "tags": [
+      "mine",
+      "entrance"
+    ],
+    "size": 64,
+    "filename": "mine-entrance-64px.png",
+    "path": "industrial/mine-entrance-64px.png",
+    "url": "/sprite-library/industrial/mine-entrance-64px.png"
+  },
+  {
+    "id": "workshop",
+    "name": "Workshop",
+    "category": "industrial",
+    "tags": [
+      "workshop"
+    ],
+    "size": 64,
+    "filename": "workshop-64px.png",
+    "path": "industrial/workshop-64px.png",
+    "url": "/sprite-library/industrial/workshop-64px.png"
+  },
+  {
+    "id": "ait-arched-doorway",
+    "name": "Ait Arched Doorway",
+    "category": "civic",
+    "tags": [
+      "ait",
+      "arched",
+      "doorway"
+    ],
+    "size": 64,
+    "filename": "ait-arched-doorway-64px.png",
+    "path": "civic/ait-arched-doorway-64px.png",
+    "url": "/sprite-library/civic/ait-arched-doorway-64px.png"
+  },
+  {
+    "id": "library",
+    "name": "Library",
+    "category": "civic",
+    "tags": [
+      "library"
+    ],
+    "size": 64,
+    "filename": "library-64px.png",
+    "path": "civic/library-64px.png",
+    "url": "/sprite-library/civic/library-64px.png"
+  },
+  {
+    "id": "lpc-bridge-structure",
+    "name": "Lpc Bridge Structure",
+    "category": "civic",
+    "tags": [
+      "lpc",
+      "bridge",
+      "structure"
+    ],
+    "size": 64,
+    "filename": "lpc-bridge-structure-64px.png",
+    "path": "civic/lpc-bridge-structure-64px.png",
+    "url": "/sprite-library/civic/lpc-bridge-structure-64px.png"
+  },
+  {
+    "id": "lpc-castle-tower",
+    "name": "Lpc Castle Tower",
+    "category": "civic",
+    "tags": [
+      "lpc",
+      "castle",
+      "tower"
+    ],
+    "size": 64,
+    "filename": "lpc-castle-tower-64px.png",
+    "path": "civic/lpc-castle-tower-64px.png",
+    "url": "/sprite-library/civic/lpc-castle-tower-64px.png"
+  },
+  {
+    "id": "lpc-castle-wall",
+    "name": "Lpc Castle Wall",
+    "category": "civic",
+    "tags": [
+      "lpc",
+      "castle",
+      "wall"
+    ],
+    "size": 64,
+    "filename": "lpc-castle-wall-64px.png",
+    "path": "civic/lpc-castle-wall-64px.png",
+    "url": "/sprite-library/civic/lpc-castle-wall-64px.png"
+  },
+  {
+    "id": "lpc-gravestone",
+    "name": "Lpc Gravestone",
+    "category": "civic",
+    "tags": [
+      "lpc",
+      "gravestone"
+    ],
+    "size": 64,
+    "filename": "lpc-gravestone-64px.png",
+    "path": "civic/lpc-gravestone-64px.png",
+    "url": "/sprite-library/civic/lpc-gravestone-64px.png"
+  },
+  {
+    "id": "lpc-iron-gate",
+    "name": "Lpc Iron Gate",
+    "category": "civic",
+    "tags": [
+      "lpc",
+      "iron",
+      "gate"
+    ],
+    "size": 64,
+    "filename": "lpc-iron-gate-64px.png",
+    "path": "civic/lpc-iron-gate-64px.png",
+    "url": "/sprite-library/civic/lpc-iron-gate-64px.png"
+  },
+  {
+    "id": "lpc-shrine",
+    "name": "Lpc Shrine",
+    "category": "civic",
+    "tags": [
+      "lpc",
+      "shrine"
+    ],
+    "size": 64,
+    "filename": "lpc-shrine-64px.png",
+    "path": "civic/lpc-shrine-64px.png",
+    "url": "/sprite-library/civic/lpc-shrine-64px.png"
+  },
+  {
+    "id": "lpc-stone-tower",
+    "name": "Lpc Stone Tower",
+    "category": "civic",
+    "tags": [
+      "lpc",
+      "stone",
+      "tower"
+    ],
+    "size": 64,
+    "filename": "lpc-stone-tower-64px.png",
+    "path": "civic/lpc-stone-tower-64px.png",
+    "url": "/sprite-library/civic/lpc-stone-tower-64px.png"
+  },
+  {
+    "id": "lpc-torii-gate",
+    "name": "Lpc Torii Gate",
+    "category": "civic",
+    "tags": [
+      "lpc",
+      "torii",
+      "gate"
+    ],
+    "size": 64,
+    "filename": "lpc-torii-gate-64px.png",
+    "path": "civic/lpc-torii-gate-64px.png",
+    "url": "/sprite-library/civic/lpc-torii-gate-64px.png"
+  },
+  {
+    "id": "stone-building",
+    "name": "Stone Building",
+    "category": "civic",
+    "tags": [
+      "stone",
+      "building"
+    ],
+    "size": 64,
+    "filename": "stone-building-64px.png",
+    "path": "civic/stone-building-64px.png",
+    "url": "/sprite-library/civic/stone-building-64px.png"
+  },
+  {
+    "id": "temple",
+    "name": "Temple",
+    "category": "civic",
+    "tags": [
+      "temple"
+    ],
+    "size": 64,
+    "filename": "temple-64px.png",
+    "path": "civic/temple-64px.png",
+    "url": "/sprite-library/civic/temple-64px.png"
+  },
+  {
+    "id": "town-hall",
+    "name": "Town Hall",
+    "category": "civic",
+    "tags": [
+      "town",
+      "hall"
+    ],
+    "size": 64,
+    "filename": "town-hall-64px.png",
+    "path": "civic/town-hall-64px.png",
+    "url": "/sprite-library/civic/town-hall-64px.png"
+  },
+  {
+    "id": "ait-campfire",
+    "name": "Ait Campfire",
+    "category": "entertainment",
+    "tags": [
+      "ait",
+      "campfire"
+    ],
+    "size": 32,
+    "filename": "ait-campfire-32px.png",
+    "path": "entertainment/ait-campfire-32px.png",
+    "url": "/sprite-library/entertainment/ait-campfire-32px.png"
+  },
+  {
+    "id": "arena",
+    "name": "Arena",
+    "category": "entertainment",
+    "tags": [
+      "arena"
+    ],
+    "size": 64,
+    "filename": "arena-64px.png",
+    "path": "entertainment/arena-64px.png",
+    "url": "/sprite-library/entertainment/arena-64px.png"
+  },
+  {
+    "id": "casino",
+    "name": "Casino",
+    "category": "entertainment",
+    "tags": [
+      "casino"
+    ],
+    "size": 64,
+    "filename": "casino-64px.png",
+    "path": "entertainment/casino-64px.png",
+    "url": "/sprite-library/entertainment/casino-64px.png"
+  },
+  {
+    "id": "fountain",
+    "name": "Fountain",
+    "category": "entertainment",
+    "tags": [
+      "fountain"
+    ],
+    "size": 64,
+    "filename": "fountain-64px.png",
+    "path": "entertainment/fountain-64px.png",
+    "url": "/sprite-library/entertainment/fountain-64px.png"
+  },
+  {
+    "id": "lpc-fountain",
+    "name": "Lpc Fountain",
+    "category": "entertainment",
+    "tags": [
+      "lpc",
+      "fountain"
+    ],
+    "size": 64,
+    "filename": "lpc-fountain-64px.png",
+    "path": "entertainment/lpc-fountain-64px.png",
+    "url": "/sprite-library/entertainment/lpc-fountain-64px.png"
+  },
+  {
+    "id": "lpc-pavilion-roof",
+    "name": "Lpc Pavilion Roof",
+    "category": "entertainment",
+    "tags": [
+      "lpc",
+      "pavilion",
+      "roof"
+    ],
+    "size": 64,
+    "filename": "lpc-pavilion-roof-64px.png",
+    "path": "entertainment/lpc-pavilion-roof-64px.png",
+    "url": "/sprite-library/entertainment/lpc-pavilion-roof-64px.png"
+  },
+  {
+    "id": "ait-oak-tree",
+    "name": "Ait Oak Tree",
+    "category": "nature",
+    "tags": [
+      "ait",
+      "oak",
+      "tree"
+    ],
+    "size": 64,
+    "filename": "ait-oak-tree-64px.png",
+    "path": "nature/ait-oak-tree-64px.png",
+    "url": "/sprite-library/nature/ait-oak-tree-64px.png"
+  },
+  {
+    "id": "ait-waterfall",
+    "name": "Ait Waterfall",
+    "category": "nature",
+    "tags": [
+      "ait",
+      "waterfall"
+    ],
+    "size": 64,
+    "filename": "ait-waterfall-64px.png",
+    "path": "nature/ait-waterfall-64px.png",
+    "url": "/sprite-library/nature/ait-waterfall-64px.png"
+  },
+  {
+    "id": "farm",
+    "name": "Farm",
+    "category": "nature",
+    "tags": [
+      "farm"
+    ],
+    "size": 64,
+    "filename": "farm-64px.png",
+    "path": "nature/farm-64px.png",
+    "url": "/sprite-library/nature/farm-64px.png"
+  },
+  {
+    "id": "lpc-boat-large",
+    "name": "Lpc Boat Large",
+    "category": "nature",
+    "tags": [
+      "lpc",
+      "boat",
+      "large"
+    ],
+    "size": 64,
+    "filename": "lpc-boat-large-64px.png",
+    "path": "nature/lpc-boat-large-64px.png",
+    "url": "/sprite-library/nature/lpc-boat-large-64px.png"
+  },
+  {
+    "id": "lpc-boat-small",
+    "name": "Lpc Boat Small",
+    "category": "nature",
+    "tags": [
+      "lpc",
+      "boat",
+      "small"
+    ],
+    "size": 64,
+    "filename": "lpc-boat-small-64px.png",
+    "path": "nature/lpc-boat-small-64px.png",
+    "url": "/sprite-library/nature/lpc-boat-small-64px.png"
+  },
+  {
+    "id": "lpc-cherry-tree-1",
+    "name": "Lpc Cherry Tree 1",
+    "category": "nature",
+    "tags": [
+      "lpc",
+      "cherry",
+      "tree"
+    ],
+    "size": 64,
+    "filename": "lpc-cherry-tree-1-64px.png",
+    "path": "nature/lpc-cherry-tree-1-64px.png",
+    "url": "/sprite-library/nature/lpc-cherry-tree-1-64px.png"
+  },
+  {
+    "id": "lpc-cherry-tree-2",
+    "name": "Lpc Cherry Tree 2",
+    "category": "nature",
+    "tags": [
+      "lpc",
+      "cherry",
+      "tree"
+    ],
+    "size": 64,
+    "filename": "lpc-cherry-tree-2-64px.png",
+    "path": "nature/lpc-cherry-tree-2-64px.png",
+    "url": "/sprite-library/nature/lpc-cherry-tree-2-64px.png"
+  },
+  {
+    "id": "lpc-hay-wagon",
+    "name": "Lpc Hay Wagon",
+    "category": "nature",
+    "tags": [
+      "lpc",
+      "hay",
+      "wagon"
+    ],
+    "size": 64,
+    "filename": "lpc-hay-wagon-64px.png",
+    "path": "nature/lpc-hay-wagon-64px.png",
+    "url": "/sprite-library/nature/lpc-hay-wagon-64px.png"
+  },
+  {
+    "id": "lpc-log-stump",
+    "name": "Lpc Log Stump",
+    "category": "nature",
+    "tags": [
+      "lpc",
+      "log",
+      "stump"
+    ],
+    "size": 64,
+    "filename": "lpc-log-stump-64px.png",
+    "path": "nature/lpc-log-stump-64px.png",
+    "url": "/sprite-library/nature/lpc-log-stump-64px.png"
+  },
+  {
+    "id": "lpc-veggie-crates",
+    "name": "Lpc Veggie Crates",
+    "category": "nature",
+    "tags": [
+      "lpc",
+      "veggie",
+      "crates"
+    ],
+    "size": 64,
+    "filename": "lpc-veggie-crates-64px.png",
+    "path": "nature/lpc-veggie-crates-64px.png",
+    "url": "/sprite-library/nature/lpc-veggie-crates-64px.png"
+  },
+  {
+    "id": "lpc-wood-fence",
+    "name": "Lpc Wood Fence",
+    "category": "nature",
+    "tags": [
+      "lpc",
+      "wood",
+      "fence"
+    ],
+    "size": 64,
+    "filename": "lpc-wood-fence-64px.png",
+    "path": "nature/lpc-wood-fence-64px.png",
+    "url": "/sprite-library/nature/lpc-wood-fence-64px.png"
+  },
+  {
+    "id": "lpc-wooden-post",
+    "name": "Lpc Wooden Post",
+    "category": "nature",
+    "tags": [
+      "lpc",
+      "wooden",
+      "post"
+    ],
+    "size": 64,
+    "filename": "lpc-wooden-post-64px.png",
+    "path": "nature/lpc-wooden-post-64px.png",
+    "url": "/sprite-library/nature/lpc-wooden-post-64px.png"
+  },
+  {
+    "id": "park",
+    "name": "Park",
+    "category": "nature",
+    "tags": [
+      "park"
+    ],
+    "size": 64,
+    "filename": "park-64px.png",
+    "path": "nature/park-64px.png",
+    "url": "/sprite-library/nature/park-64px.png"
+  },
+  {
+    "id": "pond",
+    "name": "Pond",
+    "category": "nature",
+    "tags": [
+      "pond"
+    ],
+    "size": 64,
+    "filename": "pond-64px.png",
+    "path": "nature/pond-64px.png",
+    "url": "/sprite-library/nature/pond-64px.png"
+  },
+  {
+    "id": "tree-green",
+    "name": "Tree Green",
+    "category": "nature",
+    "tags": [
+      "tree",
+      "green"
+    ],
+    "size": 64,
+    "filename": "tree-green-64px.png",
+    "path": "nature/tree-green-64px.png",
+    "url": "/sprite-library/nature/tree-green-64px.png"
+  }
+]

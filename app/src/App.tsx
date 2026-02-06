@@ -4,6 +4,7 @@ import { TooltipProvider } from "@ui/tooltip";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Layout } from "@shared/components/layout/layout";
 import Arena from "./pages/Arena";
+import AiTownTerminal from "./pages/AiTownTerminal";
 import MatchPage from "./pages/Match";
 import NotFound from "./pages/NotFound";
 
@@ -18,8 +19,9 @@ const App = () => {
           v7_relativeSplatPath: true,
         }}
       >
-        <Layout>
-          <Routes>
+        <Routes>
+          <Route path="/terminal" element={<AiTownTerminal />} />
+          <Route element={<Layout />}>
             <Route path="/" element={<Arena />} />
             <Route path="/arena" element={<Arena />} />
             <Route path="/match/:matchId" element={<MatchPage />} />
@@ -29,8 +31,8 @@ const App = () => {
             <Route path="/dashboard" element={<Navigate to="/" replace />} />
             <Route path="/play/*" element={<Navigate to="/" replace />} />
             <Route path="*" element={<NotFound />} />
-          </Routes>
-        </Layout>
+          </Route>
+        </Routes>
       </BrowserRouter>
     </TooltipProvider>
   );

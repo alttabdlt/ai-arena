@@ -789,6 +789,12 @@ model ArenaAgent {
   opponentOf        OpponentRecord[] @relation("opponent")
   tournamentEntries ArenaTournamentEntry[]
   
+  // Town relations
+  ownedPlots        Plot[]             @relation("plotOwner")
+  builtPlots        Plot[]             @relation("plotBuilder")
+  workLogs          WorkLog[]
+  townContributions TownContribution[]
+  
   @@index([elo])
   @@index([isActive])
   @@index([archetype])
@@ -962,4 +968,203 @@ enum ArenaTournamentStatus {
   IN_PROGRESS
   COMPLETED
   CANCELLED
+}
+
+// ============================================
+// AI Town System — World State
+// ============================================
+
+model Town {
+  id              String      @id @default(cuid())
+  name            String      @unique
+  level           Int         @default(1)
+  description     String      @default("")
+  
+  // Progression
+  totalPlots      Int         @default(25)     // Plots in this town
+  builtPlots      Int         @default(0)      // Completed buildings
+  status          TownStatus  @default(BUILDING)
+  completionPct   Float       @default(0)      // 0-100
+  
+  // Economics
+  totalInvested   Int         @default(0)      // Total $ARENA spent building
+  yieldPerTick    Int         @default(0)      // $ARENA generated per tick when COMPLETE
+  totalYieldPaid  Int         @default(0)
+  
+  // Metadata
+  lore            String      @default("")     // AI-generated town backstory
+  theme           String      @default("")     // e.g., "medieval fishing village", "cyberpunk trading hub"
+  
+  createdAt       DateTime    @default(now())
+  completedAt     DateTime?
+  
+  plots           Plot[]
+  contributions   TownContribution[]
+  events          TownEvent[]
+  
+  @@index([status])
+  @@index([level])
+}
+
+model Plot {
+  id              String      @id @default(cuid())
+  townId          String
+  plotIndex       Int         // 0-24 for a 25-plot town
+  
+  // Location
+  x               Int         @default(0)
+  y               Int         @default(0)
+  zone            PlotZone    @default(RESIDENTIAL)  // Determines what can be built
+  
+  // State
+  status          PlotStatus  @default(EMPTY)
+  
+  // Building (when built)
+  buildingType    String?     // HOUSE, TAVERN, SHOP, ARENA, TOWN_HALL, FARM, WORKSHOP, etc.
+  buildingName    String?     // AI-generated name e.g. "The Rusty Anchor Tavern"
+  buildingDesc    String?     // AI-generated description
+  buildingData    String      @default("{}") // JSON: floor plan, inventory, staff, etc.
+  
+  // Ownership
+  ownerId         String?
+  builderId       String?     // Agent who built it
+  
+  // Build cost tracking (proof of inference)
+  buildCostArena  Int         @default(0)      // $ARENA spent
+  apiCallsUsed    Int         @default(0)      // Number of LLM calls to design/build
+  buildStartedAt  DateTime?
+  buildCompletedAt DateTime?
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  town            Town        @relation(fields: [townId], references: [id], onDelete: Cascade)
+  owner           ArenaAgent? @relation("plotOwner", fields: [ownerId], references: [id])
+  builder         ArenaAgent? @relation("plotBuilder", fields: [builderId], references: [id])
+  workLogs        WorkLog[]
+  
+  @@unique([townId, plotIndex])
+  @@index([townId])
+  @@index([status])
+  @@index([ownerId])
+  @@index([builderId])
+}
+
+model WorkLog {
+  id              String      @id @default(cuid())
+  agentId         String
+  plotId          String?     // Null for mining/non-construction work
+  townId          String
+  
+  // Work details
+  workType        WorkType    // DESIGN, CONSTRUCT, MINE, SERVICE
+  description     String      @default("")     // What the agent did
+  input           String      @default("")     // The prompt/task
+  output          String      @default("")     // The LLM response/result
+  
+  // Cost tracking (proof of inference)  
+  apiCalls        Int         @default(1)      // Number of LLM calls for this work
+  apiCostCents    Int         @default(0)      // Actual API cost
+  modelUsed       String      @default("")     // Which model did the work
+  responseTimeMs  Int         @default(0)
+  
+  // Reward
+  arenaEarned     Int         @default(0)      // $ARENA earned for this work
+  
+  createdAt       DateTime    @default(now())
+  
+  agent           ArenaAgent  @relation(fields: [agentId], references: [id])
+  plot            Plot?       @relation(fields: [plotId], references: [id])
+  
+  @@index([agentId])
+  @@index([plotId])
+  @@index([townId])
+  @@index([workType])
+  @@index([createdAt])
+}
+
+model TownContribution {
+  id              String      @id @default(cuid())
+  agentId         String
+  townId          String
+  
+  // Tracking
+  arenaSpent      Int         @default(0)      // Total $ARENA this agent invested
+  apiCallsMade    Int         @default(0)      // Total inference work done
+  plotsBuilt      Int         @default(0)
+  
+  // Yield (when town completes)
+  yieldShare      Float       @default(0)      // % of town yield this agent gets
+  totalYieldClaimed Int       @default(0)
+  
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  
+  agent           ArenaAgent  @relation(fields: [agentId], references: [id])
+  town            Town        @relation(fields: [townId], references: [id], onDelete: Cascade)
+  
+  @@unique([agentId, townId])
+  @@index([agentId])
+  @@index([townId])
+}
+
+model TownEvent {
+  id              String      @id @default(cuid())
+  townId          String
+  agentId         String?     // Null for system events
+  
+  eventType       TownEventType
+  title           String
+  description     String
+  metadata        String      @default("{}") // JSON for extra data
+  
+  createdAt       DateTime    @default(now())
+  
+  town            Town        @relation(fields: [townId], references: [id], onDelete: Cascade)
+  
+  @@index([townId])
+  @@index([eventType])
+  @@index([createdAt])
+}
+
+enum TownStatus {
+  BUILDING      // Under construction, agents actively building
+  COMPLETE      // All plots built, generating yield
+  ABANDONED     // Failed town
+}
+
+enum PlotStatus {
+  EMPTY             // Available for building
+  CLAIMED           // Agent owns it, not yet built
+  UNDER_CONSTRUCTION // Building in progress
+  BUILT             // Complete
+}
+
+enum PlotZone {
+  RESIDENTIAL    // Houses
+  COMMERCIAL     // Shops, taverns
+  CIVIC          // Town hall, library
+  INDUSTRIAL     // Workshops, farms
+  ENTERTAINMENT  // Arena, park
+}
+
+enum WorkType {
+  DESIGN         // Designing a building (floor plan, description)
+  CONSTRUCT      // Building/constructing (materials, assembly)
+  MINE           // Mining $ARENA via computational tasks
+  SERVICE        // Providing services to other agents (x402)
+  INSPECT        // Quality inspection/verification
+}
+
+enum TownEventType {
+  TOWN_CREATED
+  PLOT_CLAIMED
+  BUILD_STARTED
+  BUILD_COMPLETED
+  TOWN_COMPLETED
+  YIELD_DISTRIBUTED
+  AGENT_JOINED
+  TRADE
+  ARENA_MATCH
+  CUSTOM
 }

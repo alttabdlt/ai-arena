@@ -1,4 +1,4 @@
-import { Bot, Trophy, Swords, Github } from 'lucide-react';
+import { Bot, Trophy, Github } from 'lucide-react';
 import { Button } from '@ui/button';
 import { Badge } from '@ui/badge';
 import { Link, useLocation } from 'react-router-dom';
@@ -26,20 +26,20 @@ export function Header() {
             className="text-sm"
             asChild
           >
-            <Link to="/">
+            <Link to="/arena">
               <Trophy className="mr-1.5 h-3.5 w-3.5" />
-              Leaderboard
+              Arena
             </Link>
           </Button>
           <Button
-            variant={isActive('/matches') ? 'secondary' : 'ghost'}
+            variant={isActive('/town') ? 'secondary' : 'ghost'}
             size="sm"
             className="text-sm"
             asChild
           >
-            <Link to="/">
-              <Swords className="mr-1.5 h-3.5 w-3.5" />
-              Matches
+            <Link to="/town">
+              <Bot className="mr-1.5 h-3.5 w-3.5" />
+              Town
             </Link>
           </Button>
         </nav>

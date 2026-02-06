@@ -5,6 +5,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Layout } from "@shared/components/layout/layout";
 import Arena from "./pages/Arena";
 import AiTownTerminal from "./pages/AiTownTerminal";
+import Town3D from "./pages/Town3D";
 import MatchPage from "./pages/Match";
 import NotFound from "./pages/NotFound";
 
@@ -20,6 +21,7 @@ const App = () => {
         }}
       >
         <Routes>
+          <Route path="/town" element={<Town3D />} />
           <Route path="/terminal" element={<AiTownTerminal />} />
           <Route element={<Layout />}>
             <Route path="/" element={<Arena />} />
@@ -29,6 +31,7 @@ const App = () => {
             <Route path="/tournaments" element={<Navigate to="/" replace />} />
             <Route path="/bots" element={<Navigate to="/" replace />} />
             <Route path="/dashboard" element={<Navigate to="/" replace />} />
+            <Route path="/metaverse" element={<Navigate to="/town" replace />} />
             <Route path="/play/*" element={<Navigate to="/" replace />} />
             <Route path="*" element={<NotFound />} />
           </Route>

@@ -74,6 +74,18 @@ interface EconomyPoolSummary {
   updatedAt: string;
 }
 
+interface EconomySwapRow {
+  id: string;
+  createdAt: string;
+  agent: { id: string; name: string; archetype: string };
+  side: 'BUY_ARENA' | 'SELL_ARENA';
+  amountIn: number;
+  amountOut: number;
+  feeAmount: number;
+  priceBefore: number;
+  priceAfter: number;
+}
+
 async function apiFetch<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`);
   if (!res.ok) throw new Error(`API error (${res.status}): ${res.statusText}`);
@@ -248,6 +260,17 @@ function zoneMaterial(zone: PlotZone, selected: boolean) {
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
+}
+
+function timeAgo(ts: string) {
+  const t = new Date(ts).getTime();
+  if (!Number.isFinite(t)) return '';
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.round(m / 60);
+  return `${h}h`;
 }
 
 function buildHeight(plot: Plot) {
@@ -727,6 +750,7 @@ export default function Town3D() {
   const [town, setTown] = useState<Town | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [economy, setEconomy] = useState<EconomyPoolSummary | null>(null);
+  const [swaps, setSwaps] = useState<EconomySwapRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -831,9 +855,32 @@ export default function Town3D() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function loadSwaps() {
+      try {
+        const res = await apiFetch<{ swaps: EconomySwapRow[] }>('/economy/swaps?limit=30');
+        if (!cancelled) setSwaps(res.swaps);
+      } catch {
+        // ignore
+      }
+    }
+    void loadSwaps();
+    const t = setInterval(loadSwaps, 3500);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
+
   const selectedPlot = useMemo(() => town?.plots.find((p) => p.id === selectedPlotId) ?? null, [town, selectedPlotId]);
   const selectedAgent = useMemo(() => agents.find((a) => a.id === selectedAgentId) ?? null, [agents, selectedAgentId]);
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
+  const recentSwaps = useMemo(() => swaps.slice(0, 8), [swaps]);
+  const selectedAgentSwaps = useMemo(
+    () => (selectedAgent ? swaps.filter((s) => s.agent?.id === selectedAgent.id).slice(0, 5) : []),
+    [swaps, selectedAgent],
+  );
 
   if (loading) {
     return (
@@ -997,27 +1044,80 @@ export default function Town3D() {
           </Card>
         </div>
 
-        <div className="pointer-events-auto absolute left-3 bottom-3 w-[420px] max-w-[calc(100vw-24px)]">
-          <Card className="border-slate-800/70 bg-slate-950/70 backdrop-blur-md p-3">
-            <div className="flex flex-wrap gap-2 text-[11px] text-slate-300">
-              {(Object.keys(ZONE_COLORS) as PlotZone[]).map((z) => (
-                <span key={z} className="inline-flex items-center gap-1">
-                  <span className="inline-flex h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: ZONE_COLORS[z] }} />
-                  {z.slice(0, 3)}
-                </span>
-              ))}
-              <span className="text-slate-600">|</span>
-              {Object.keys(ARCHETYPE_GLYPH).map((k) => (
-                <span key={k} className="inline-flex items-center gap-1">
-                  <span className="font-mono" style={{ color: ARCHETYPE_COLORS[k] || '#cbd5e1' }}>
-                    {ARCHETYPE_GLYPH[k]}
-                  </span>
-                  {k.slice(0, 4)}
-                </span>
-              ))}
-            </div>
-          </Card>
-        </div>
+	        <div className="pointer-events-auto absolute left-3 bottom-3 w-[420px] max-w-[calc(100vw-24px)]">
+	          <Card className="border-slate-800/70 bg-slate-950/70 backdrop-blur-md p-3">
+	            <div className="flex flex-wrap gap-2 text-[11px] text-slate-300">
+	              {(Object.keys(ZONE_COLORS) as PlotZone[]).map((z) => (
+	                <span key={z} className="inline-flex items-center gap-1">
+	                  <span className="inline-flex h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: ZONE_COLORS[z] }} />
+	                  {z.slice(0, 3)}
+	                </span>
+	              ))}
+	              <span className="text-slate-600">|</span>
+	              {Object.keys(ARCHETYPE_GLYPH).map((k) => (
+	                <span key={k} className="inline-flex items-center gap-1">
+	                  <span className="font-mono" style={{ color: ARCHETYPE_COLORS[k] || '#cbd5e1' }}>
+	                    {ARCHETYPE_GLYPH[k]}
+	                  </span>
+	                  {k.slice(0, 4)}
+	                </span>
+	              ))}
+	            </div>
+
+	            {economy && (
+	              <div className="mt-3 border-t border-slate-800/60 pt-2 text-[11px] text-slate-300">
+	                <div className="flex flex-wrap items-center justify-between gap-2">
+	                  <div className="text-slate-400">Pool</div>
+	                  <div className="font-mono text-slate-200">
+	                    {Math.round(economy.reserveBalance).toLocaleString()} reserve ·{' '}
+	                    {Math.round(economy.arenaBalance).toLocaleString()} ARENA
+	                  </div>
+	                </div>
+	                <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+	                  <div className="text-slate-400">Treasury fees</div>
+	                  <div className="font-mono text-slate-200">
+	                    {Math.round(economy.cumulativeFeesReserve).toLocaleString()} reserve +{' '}
+	                    {Math.round(economy.cumulativeFeesArena).toLocaleString()} ARENA
+	                  </div>
+	                </div>
+	              </div>
+	            )}
+
+	            {recentSwaps.length > 0 && (
+	              <div className="mt-3 border-t border-slate-800/60 pt-2">
+	                <div className="flex items-center justify-between">
+	                  <div className="text-[11px] font-semibold text-slate-200">Economy Activity</div>
+	                  <div className="text-[11px] text-slate-500">{timeAgo(recentSwaps[0]?.createdAt || '')} ago</div>
+	                </div>
+	                <div className="mt-2 max-h-[140px] overflow-auto pr-1 space-y-1">
+	                  {recentSwaps.map((s) => {
+	                    const color = ARCHETYPE_COLORS[s.agent?.archetype] || '#93c5fd';
+	                    const glyph = ARCHETYPE_GLYPH[s.agent?.archetype] || '●';
+	                    const isBuy = s.side === 'BUY_ARENA';
+	                    const price = isBuy ? s.amountIn / Math.max(1, s.amountOut) : s.amountOut / Math.max(1, s.amountIn);
+	                    const amountArena = isBuy ? s.amountOut : s.amountIn;
+	                    return (
+	                      <div
+	                        key={s.id}
+	                        className="flex items-center justify-between gap-2 rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300"
+	                      >
+	                        <div className="min-w-0 truncate">
+	                          <span className="font-mono" style={{ color }}>
+	                            {glyph} {s.agent?.name || 'Unknown'}
+	                          </span>{' '}
+	                          <span className="text-slate-400">{isBuy ? 'bought' : 'sold'}</span>{' '}
+	                          <span className="font-mono text-slate-200">{Math.round(amountArena).toLocaleString()}</span>{' '}
+	                          <span className="text-slate-400">ARENA</span>
+	                        </div>
+	                        <div className="shrink-0 font-mono text-slate-500">@ {price.toFixed(3)}</div>
+	                      </div>
+	                    );
+	                  })}
+	                </div>
+	              </div>
+	            )}
+	          </Card>
+	        </div>
 
         {(selectedPlot || selectedAgent) && (
           <div className="pointer-events-auto absolute right-3 bottom-3 w-[420px] max-w-[calc(100vw-24px)]">
@@ -1083,11 +1183,11 @@ export default function Town3D() {
                       Close
 	                    </Button>
 	                  </div>
-	                  <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-300">
-	                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-2">
-	                      <div className="text-slate-500">$ARENA</div>
-	                      <div className="font-mono text-slate-100">{Math.round(selectedAgent.bankroll)}</div>
-	                    </div>
+		                  <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-300">
+		                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-2">
+		                      <div className="text-slate-500">$ARENA</div>
+		                      <div className="font-mono text-slate-100">{Math.round(selectedAgent.bankroll)}</div>
+		                    </div>
 	                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-2">
 	                      <div className="text-slate-500">Reserve</div>
 	                      <div className="font-mono text-slate-100">{Math.round(selectedAgent.reserveBalance)}</div>
@@ -1098,15 +1198,43 @@ export default function Town3D() {
 	                        {selectedAgent.wins}/{selectedAgent.losses}
 	                      </div>
 	                    </div>
-	                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-2">
-	                      <div className="text-slate-500">API $</div>
-	                      <div className="font-mono text-slate-100">
-	                        {((selectedAgent.apiCostCents || 0) / 100).toFixed(2)}
-	                      </div>
-	                    </div>
-	                  </div>
-	                </div>
-	              )}
+		                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-2">
+		                      <div className="text-slate-500">API $</div>
+		                      <div className="font-mono text-slate-100">
+		                        {((selectedAgent.apiCostCents || 0) / 100).toFixed(2)}
+		                      </div>
+		                    </div>
+		                  </div>
+
+		                  {selectedAgentSwaps.length > 0 && (
+		                    <div className="mt-3 border-t border-slate-800/60 pt-2">
+		                      <div className="text-[11px] font-semibold text-slate-200">Recent Trades</div>
+		                      <div className="mt-2 grid grid-cols-1 gap-1">
+		                        {selectedAgentSwaps.map((s) => {
+		                          const isBuy = s.side === 'BUY_ARENA';
+		                          const price = isBuy ? s.amountIn / Math.max(1, s.amountOut) : s.amountOut / Math.max(1, s.amountIn);
+		                          const amountArena = isBuy ? s.amountOut : s.amountIn;
+		                          return (
+		                            <div
+		                              key={s.id}
+		                              className="flex items-center justify-between gap-2 rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300"
+		                            >
+		                              <div className="min-w-0 truncate">
+		                                <span className="text-slate-400">{isBuy ? 'BUY' : 'SELL'}</span>{' '}
+		                                <span className="font-mono text-slate-200">{Math.round(amountArena).toLocaleString()}</span>{' '}
+		                                <span className="text-slate-400">ARENA</span>
+		                                <span className="text-slate-600"> · </span>
+		                                <span className="text-slate-500">{timeAgo(s.createdAt)} ago</span>
+		                              </div>
+		                              <div className="shrink-0 font-mono text-slate-500">@ {price.toFixed(3)}</div>
+		                            </div>
+		                          );
+		                        })}
+		                      </div>
+		                    </div>
+		                  )}
+		                </div>
+		              )}
             </Card>
           </div>
         )}

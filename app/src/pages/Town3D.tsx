@@ -597,7 +597,17 @@ function ConstructionAnimation({ position }: { position: [number, number, number
 }
 
 // Speech bubble for chatting agents
-function SpeechBubble({ text, position }: { text: string; position: [number, number, number] }) {
+function SpeechBubble({
+  text,
+  position,
+  bg = 'rgba(255, 255, 255, 0.95)',
+  fg = '#1e293b',
+}: {
+  text: string;
+  position: [number, number, number];
+  bg?: string;
+  fg?: string;
+}) {
   const { texture, width, height } = useMemo(() => {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
@@ -613,7 +623,7 @@ function SpeechBubble({ text, position }: { text: string; position: [number, num
     canvas.height = h;
 
     // Bubble background
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+    ctx.fillStyle = bg;
     ctx.beginPath();
     // roundRect isn't supported everywhere (or typed consistently), so keep a small fallback.
     type RoundRectCapable = CanvasRenderingContext2D & {
@@ -643,7 +653,7 @@ function SpeechBubble({ text, position }: { text: string; position: [number, num
     ctx.fill();
 
     // Text
-    ctx.fillStyle = '#1e293b';
+    ctx.fillStyle = fg;
     ctx.font = `${fontSize}px ui-monospace, monospace`;
     ctx.textBaseline = 'middle';
     ctx.fillText(displayText, 10, (h - 6) / 2);
@@ -651,7 +661,7 @@ function SpeechBubble({ text, position }: { text: string; position: [number, num
     const texture = new THREE.CanvasTexture(canvas);
     texture.needsUpdate = true;
     return { texture, width: w, height: h };
-  }, [text]);
+  }, [text, bg, fg]);
 
   const aspect = width / height;
   const worldHeight = 0.5;
@@ -1610,6 +1620,7 @@ function TownScene({
   simsRef,
   onChatStart,
   speechByAgentId,
+  tradeByAgentId,
   weather,
   economicState,
   coinBursts,
@@ -1629,6 +1640,7 @@ function TownScene({
   simsRef: React.MutableRefObject<Map<string, AgentSim>>;
   onChatStart?: (townId: string, agentAId: string, agentBId: string) => void;
   speechByAgentId: Record<string, { text: string; until: number }>;
+  tradeByAgentId: Record<string, { text: string; until: number; isBuy: boolean }>;
   weather: 'clear' | 'rain' | 'storm';
   economicState: { pollution: number; prosperity: number; sentiment: 'bull' | 'bear' | 'neutral' };
   coinBursts: { id: string; position: [number, number, number]; isBuy: boolean }[];
@@ -2224,13 +2236,21 @@ function TownScene({
 	                  setSelectedPlotId(null);
 	                }}
 	              />
-	              {speechByAgentId[a.id]?.text && (
-	                <SpeechBubble text={speechByAgentId[a.id].text} position={[0, 3.35, 0]} />
-	              )}
-	              <StateIndicator agentId={a.id} simsRef={simsRef} />
-	              <EconomicIndicator agent={a} />
-	              <HealthBar agentId={a.id} simsRef={simsRef} />
-	            </group>
+		              {speechByAgentId[a.id]?.text && (
+		                <SpeechBubble text={speechByAgentId[a.id].text} position={[0, 3.35, 0]} />
+		              )}
+		              {tradeByAgentId[a.id]?.text && (
+		                <SpeechBubble
+		                  text={tradeByAgentId[a.id].text}
+		                  position={[0, 4.05, 0]}
+		                  bg={tradeByAgentId[a.id].isBuy ? 'rgba(16, 185, 129, 0.92)' : 'rgba(244, 63, 94, 0.92)'}
+		                  fg={'#0b1220'}
+		                />
+		              )}
+		              <StateIndicator agentId={a.id} simsRef={simsRef} />
+		              <EconomicIndicator agent={a} />
+		              <HealthBar agentId={a.id} simsRef={simsRef} />
+		            </group>
 	          );
 	        })}
       </group>
@@ -2406,6 +2426,7 @@ function MiniMap({
 // Floating notification for swaps
 interface SwapNotification {
   id: string;
+  agentId: string;
   agentName: string;
   archetype: string;
   side: 'BUY_ARENA' | 'SELL_ARENA';
@@ -2438,6 +2459,7 @@ export default function Town3D() {
 
   // Short-lived speech bubbles (set on chat events)
   const [speechByAgentId, setSpeechByAgentId] = useState<Record<string, { text: string; until: number }>>({});
+  const [tradeByAgentId, setTradeByAgentId] = useState<Record<string, { text: string; until: number; isBuy: boolean }>>({});
   const lastChatRequestRef = useRef<Map<string, number>>(new Map());
 
   // x402 payable content states
@@ -2608,6 +2630,22 @@ export default function Town3D() {
         return next;
       });
     }, 6800);
+  }, []);
+
+  const pushTrade = useCallback((agentId: string, isBuy: boolean, amount: number) => {
+    const amt = Math.max(0, Math.round(Number(amount) || 0));
+    if (!agentId || amt <= 0) return;
+    const clean = `${isBuy ? 'BUY' : 'SELL'} ${amt.toLocaleString()} ARENA`;
+    const until = Date.now() + 2400;
+    setTradeByAgentId((prev) => ({ ...prev, [agentId]: { text: clean, until, isBuy } }));
+    window.setTimeout(() => {
+      setTradeByAgentId((prev) => {
+        if (prev[agentId]?.until !== until) return prev;
+        const next = { ...prev };
+        delete next[agentId];
+        return next;
+      });
+    }, 2700);
   }, []);
 
   const requestChat = useCallback(async (townId: string, agentAId: string, agentBId: string) => {
@@ -2789,56 +2827,57 @@ export default function Town3D() {
 
   useEffect(() => {
     let cancelled = false;
-    async function loadSwaps() {
-      try {
-        const res = await apiFetch<{ swaps: EconomySwapRow[] }>('/economy/swaps?limit=30');
+	    async function loadSwaps() {
+	      try {
+	        const res = await apiFetch<{ swaps: EconomySwapRow[] }>('/economy/swaps?limit=60');
         if (!cancelled) {
           // Detect new swaps for notifications
           const newNotifs: SwapNotification[] = [];
-          for (const s of res.swaps) {
-            if (!seenSwapIdsRef.current.has(s.id)) {
-              seenSwapIdsRef.current.add(s.id);
-              newNotifs.push({
-                id: s.id,
-                agentName: s.agent?.name || 'Unknown',
-                archetype: s.agent?.archetype || 'ROCK',
-                side: s.side,
-                amount: s.side === 'BUY_ARENA' ? s.amountOut : s.amountIn,
-                createdAt: Date.now(),
-              });
-            }
-          }
-          if (newNotifs.length > 0) {
-            setSwapNotifications(prev => [...newNotifs, ...prev].slice(0, 5));
-            // Play sound for new swaps
-            playSound('swap');
-            // Add coin burst effects (random position in town)
-            newNotifs.forEach(n => {
-              const pos: [number, number, number] = [
-                (Math.random() - 0.5) * 30,
-                2,
-                (Math.random() - 0.5) * 30
-              ];
-              setCoinBursts(prev => [...prev, { id: n.id, position: pos, isBuy: n.side === 'BUY_ARENA' }]);
-            });
-            // Auto-remove after 4 seconds
-            setTimeout(() => {
-              setSwapNotifications(prev => prev.filter(n => !newNotifs.some(nn => nn.id === n.id)));
-            }, 4000);
-          }
+	          for (const s of res.swaps) {
+	            if (!seenSwapIdsRef.current.has(s.id)) {
+	              seenSwapIdsRef.current.add(s.id);
+	              newNotifs.push({
+	                id: s.id,
+	                agentId: s.agent?.id || '',
+	                agentName: s.agent?.name || 'Unknown',
+	                archetype: s.agent?.archetype || 'ROCK',
+	                side: s.side,
+	                amount: s.side === 'BUY_ARENA' ? s.amountOut : s.amountIn,
+	                createdAt: Date.now(),
+	              });
+	            }
+	          }
+	          if (newNotifs.length > 0) {
+	            setSwapNotifications(prev => [...newNotifs, ...prev].slice(0, 5));
+	            // Play sound for new swaps
+	            playSound('swap');
+	            // Add coin burst effects (spawn around the agent so the swap feels "real")
+	            newNotifs.forEach(n => {
+	              const sim = n.agentId ? simsRef.current.get(n.agentId) : null;
+	              const pos: [number, number, number] = sim
+	                ? [sim.position.x, 2.1, sim.position.z]
+	                : [(Math.random() - 0.5) * 30, 2, (Math.random() - 0.5) * 30];
+	              setCoinBursts(prev => [...prev, { id: n.id, position: pos, isBuy: n.side === 'BUY_ARENA' }]);
+	              if (n.agentId) pushTrade(n.agentId, n.side === 'BUY_ARENA', n.amount);
+	            });
+	            // Auto-remove after 4 seconds
+	            setTimeout(() => {
+	              setSwapNotifications(prev => prev.filter(n => !newNotifs.some(nn => nn.id === n.id)));
+	            }, 4000);
+	          }
           setSwaps(res.swaps);
         }
       } catch {
         // ignore
       }
-    }
-    void loadSwaps();
-    const t = setInterval(loadSwaps, 3500);
-    return () => {
-      cancelled = true;
-      clearInterval(t);
-    };
-  }, []);
+	    }
+	    void loadSwaps();
+	    const t = setInterval(loadSwaps, 1500);
+	    return () => {
+	      cancelled = true;
+	      clearInterval(t);
+	    };
+	  }, [pushTrade]);
 
   // Fetch world events (claims, builds, completions)
   useEffect(() => {
@@ -2991,6 +3030,7 @@ export default function Town3D() {
           simsRef={simsRef}
           onChatStart={requestChat}
           speechByAgentId={speechByAgentId}
+          tradeByAgentId={tradeByAgentId}
           weather={weather}
           economicState={economicState}
           coinBursts={coinBursts}
@@ -3407,48 +3447,106 @@ export default function Town3D() {
 			                                     e.eventType === 'YIELD_DISTRIBUTED' ? '💎' : '📝';
 		
 			                        const chatSnippet = isChat && typeof lines[0]?.text === 'string' ? lines[0].text.slice(0, 70) : '';
-			                        const desc = isSkill
-			                          ? (e.description || `bought ${(skillName ?? '').toUpperCase()}`)
-			                          : isChat
-			                            ? (chatSnippet ? `chatted: "${chatSnippet}${chatSnippet.length >= 70 ? '…' : ''}"` : 'chatted')
-			                            : isRelChange
-			                              ? (e.title || (relTo === 'FRIEND' ? 'became friends' : relTo === 'RIVAL' ? 'became rivals' : 'changed relationship'))
-			                              : e.eventType === 'PLOT_CLAIMED' ? (e.title || 'claimed a plot')
-			                                : e.eventType === 'BUILD_STARTED' ? (e.title || 'started building')
-			                                  : e.eventType === 'BUILD_COMPLETED' ? (e.title || 'completed a build')
-			                                    : e.eventType === 'TOWN_COMPLETED' ? (e.title || 'Town completed!')
-			                                      : e.title || e.description || e.eventType;
+				                        const desc = isSkill
+				                          ? (e.description || `bought ${(skillName ?? '').toUpperCase()}`)
+				                          : isChat
+				                            ? (chatSnippet ? `chatted: "${chatSnippet}${chatSnippet.length >= 70 ? '…' : ''}"` : 'chatted')
+				                            : isRelChange
+				                              ? (e.title || (relTo === 'FRIEND' ? 'became friends' : relTo === 'RIVAL' ? 'became rivals' : 'changed relationship'))
+				                              : e.eventType === 'PLOT_CLAIMED' ? (e.title || 'claimed a plot')
+				                                : e.eventType === 'BUILD_STARTED' ? (e.title || 'started building')
+				                                  : e.eventType === 'BUILD_COMPLETED' ? (e.title || 'completed a build')
+				                                    : e.eventType === 'TOWN_COMPLETED' ? (e.title || 'Town completed!')
+				                                      : e.title || e.description || e.eventType;
 
-			                        const p0 = (isChat || isRelChange) && participants[0] ? agentById.get(participants[0]) : null;
-			                        const p1 = (isChat || isRelChange) && participants[1] ? agentById.get(participants[1]) : null;
-			                        return (
-			                          <div
-			                            key={e.id}
-			                            className="rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300"
-			                          >
-			                            <div className="min-w-0 truncate">
-			                              <span>{emoji}</span>{' '}
-			                              {(isChat || isRelChange) && p0 && p1 ? (
-			                                <>
-			                                  <span className="font-mono" style={{ color: ARCHETYPE_COLORS[p0.archetype] || '#93c5fd' }}>
-			                                    {(ARCHETYPE_GLYPH[p0.archetype] || '●')} {p0.name}
-			                                  </span>
-			                                  <span className="text-slate-600"> ↔ </span>
-			                                  <span className="font-mono" style={{ color: ARCHETYPE_COLORS[p1.archetype] || '#93c5fd' }}>
-			                                    {(ARCHETYPE_GLYPH[p1.archetype] || '●')} {p1.name}
-			                                  </span>{' '}
-			                                </>
-			                              ) : agent ? (
-			                                <span className="font-mono" style={{ color }}>
-			                                  {glyph} {agent.name}
-			                                </span>
-			                              ) : null}{' '}
-			                              <span className="text-slate-400">{desc}</span>
-			                            </div>
-			                          </div>
-			                        );
-		                      }
-		                    })}
+				                        const p0 = (isChat || isRelChange) && participants[0] ? agentById.get(participants[0]) : null;
+				                        const p1 = (isChat || isRelChange) && participants[1] ? agentById.get(participants[1]) : null;
+				                        const header = (
+				                          <div className="min-w-0 truncate">
+				                            <span>{emoji}</span>{' '}
+				                            {(isChat || isRelChange) && p0 && p1 ? (
+				                              <>
+				                                <span className="font-mono" style={{ color: ARCHETYPE_COLORS[p0.archetype] || '#93c5fd' }}>
+				                                  {(ARCHETYPE_GLYPH[p0.archetype] || '●')} {p0.name}
+				                                </span>
+				                                <span className="text-slate-600"> ↔ </span>
+				                                <span className="font-mono" style={{ color: ARCHETYPE_COLORS[p1.archetype] || '#93c5fd' }}>
+				                                  {(ARCHETYPE_GLYPH[p1.archetype] || '●')} {p1.name}
+				                                </span>{' '}
+				                              </>
+				                            ) : agent ? (
+				                              <span className="font-mono" style={{ color }}>
+				                                {glyph} {agent.name}
+				                              </span>
+				                            ) : null}{' '}
+				                            <span className="text-slate-400">{desc}</span>
+				                          </div>
+				                        );
+
+				                        if (isChat) {
+				                          const chatLines = lines
+				                            .map((l) => ({
+				                              agentId: typeof l.agentId === 'string' ? l.agentId : '',
+				                              text: typeof l.text === 'string' ? l.text : '',
+				                            }))
+				                            .filter((l) => l.agentId && l.text)
+				                            .slice(0, 4);
+
+				                          const relationship = metaObj?.relationship;
+				                          const relObj =
+				                            relationship && typeof relationship === 'object'
+				                              ? (relationship as Record<string, unknown>)
+				                              : null;
+				                          const relStatus = typeof relObj?.status === 'string' ? relObj.status : null;
+				                          const relScore = relObj?.score != null ? Number(relObj.score) : null;
+
+				                          return (
+				                            <details
+				                              key={e.id}
+				                              className="rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300"
+				                            >
+				                              <summary className="cursor-pointer select-none flex items-center justify-between gap-2">
+				                                {header}
+				                                <span className="shrink-0 text-slate-600">· {timeAgo(e.createdAt)}</span>
+				                              </summary>
+				                              <div className="mt-1 space-y-1">
+				                                {chatLines.map((l, idx) => {
+				                                  const a = agentById.get(l.agentId);
+				                                  const glyph = a ? (ARCHETYPE_GLYPH[a.archetype] || '●') : '●';
+				                                  const color = a ? (ARCHETYPE_COLORS[a.archetype] || '#93c5fd') : '#93c5fd';
+				                                  const name = a?.name || l.agentId.slice(0, 6);
+				                                  return (
+				                                    <div key={idx} className="font-mono text-[10px]">
+				                                      <span style={{ color }}>
+				                                        {glyph} {name}:
+				                                      </span>{' '}
+				                                      <span className="text-slate-300">"{l.text.slice(0, 140)}"</span>
+				                                    </div>
+				                                  );
+				                                })}
+				                                {relStatus && (
+				                                  <div className="text-[10px] text-slate-500">
+				                                    rel: {relStatus} · score {Number.isFinite(relScore) ? relScore : 0}
+				                                  </div>
+				                                )}
+				                              </div>
+				                            </details>
+				                          );
+				                        }
+
+				                        return (
+				                          <div
+				                            key={e.id}
+				                            className="rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300"
+				                          >
+				                            <div className="flex items-center justify-between gap-2">
+				                              {header}
+				                              <span className="shrink-0 text-slate-600">· {timeAgo(e.createdAt)}</span>
+				                            </div>
+				                          </div>
+				                        );
+			                      }
+			                    })}
 		                  </div>
 		                </div>
 		              )}

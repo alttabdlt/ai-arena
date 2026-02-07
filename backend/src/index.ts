@@ -285,6 +285,14 @@ async function startServer() {
   console.log('💱 Economy API ready at /api/v1');
 
   // ============================================
+  // Market Pulse (demo dopamine)
+  // ============================================
+  if (process.env.MARKET_PULSE_ENABLED !== 'false') {
+    const { marketPulseService } = await import('./services/marketPulseService');
+    marketPulseService.start();
+  }
+
+  // ============================================
   // x402 Payable API (micropayments for AI services)
   // ============================================
   try {

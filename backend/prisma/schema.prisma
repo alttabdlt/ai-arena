@@ -800,11 +800,41 @@ model ArenaAgent {
   townContributions TownContribution[]
 
   economySwaps      EconomySwap[]
+
+  // Social graph (AI Town)
+  relationshipsAsA  AgentRelationship[] @relation("AgentRelationshipA")
+  relationshipsAsB  AgentRelationship[] @relation("AgentRelationshipB")
   
   @@index([elo])
   @@index([isActive])
   @@index([archetype])
   @@index([apiKey])
+}
+
+model AgentRelationship {
+  id                String             @id @default(cuid())
+  agentAId           String
+  agentBId           String
+
+  status            RelationshipStatus @default(NEUTRAL)
+  score             Int                @default(0) // Positive = friendly, negative = hostile
+  interactions      Int                @default(0)
+  lastInteractionAt DateTime?
+
+  friendSince       DateTime?
+  rivalSince        DateTime?
+
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  agentA            ArenaAgent         @relation("AgentRelationshipA", fields: [agentAId], references: [id], onDelete: Cascade)
+  agentB            ArenaAgent         @relation("AgentRelationshipB", fields: [agentBId], references: [id], onDelete: Cascade)
+
+  @@unique([agentAId, agentBId])
+  @@index([agentAId])
+  @@index([agentBId])
+  @@index([status])
+  @@index([updatedAt])
 }
 
 model ArenaMatch {
@@ -1173,6 +1203,12 @@ enum TownEventType {
   TRADE
   ARENA_MATCH
   CUSTOM
+}
+
+enum RelationshipStatus {
+  NEUTRAL
+  FRIEND
+  RIVAL
 }
 
 enum EconomySwapSide {

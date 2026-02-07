@@ -9,6 +9,8 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { ArenaAgent } from '@prisma/client';
 import { townService } from '../services/townService';
 import { arenaService } from '../services/arenaService';
+import { agentConversationService } from '../services/agentConversationService';
+import { socialGraphService } from '../services/socialGraphService';
 import { prisma } from '../config/database';
 
 const router = Router();
@@ -296,6 +298,156 @@ router.get('/world/events', async (req: Request, res: Response): Promise<void> =
 });
 
 // ============================================
+// Social (Spectator)
+// ============================================
+
+// Generate a short in-world conversation between two agents and update their relationship.
+// NOTE: This is intentionally public for demos/spectators. Other agents should not see transcripts.
+router.post('/town/:id/chat', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const townId = req.params.id;
+    const { agentAId, agentBId, topic, openerHint } = req.body || {};
+    if (!agentAId || !agentBId) {
+      res.status(400).json({ error: 'agentAId and agentBId are required' });
+      return;
+    }
+    if (agentAId === agentBId) {
+      res.status(400).json({ error: 'Agents must be different' });
+      return;
+    }
+
+    const town = await townService.getTown(townId);
+    if (!town) {
+      res.status(404).json({ error: 'Town not found' });
+      return;
+    }
+
+    const [agentA, agentB] = await Promise.all([
+      prisma.arenaAgent.findUnique({ where: { id: String(agentAId) } }),
+      prisma.arenaAgent.findUnique({ where: { id: String(agentBId) } }),
+    ]);
+    if (!agentA || !agentB) {
+      res.status(404).json({ error: 'Agent not found' });
+      return;
+    }
+
+    const convo = await agentConversationService.generate({
+      town: {
+        id: town.id,
+        name: town.name,
+        theme: town.theme,
+        status: town.status,
+        builtPlots: town.builtPlots,
+        totalPlots: town.totalPlots,
+        completionPct: town.completionPct,
+        level: town.level,
+      },
+      agentA: {
+        id: agentA.id,
+        name: agentA.name,
+        archetype: agentA.archetype,
+        bankroll: agentA.bankroll,
+        reserveBalance: agentA.reserveBalance,
+        systemPrompt: agentA.systemPrompt || undefined,
+      },
+      agentB: {
+        id: agentB.id,
+        name: agentB.name,
+        archetype: agentB.archetype,
+        bankroll: agentB.bankroll,
+        reserveBalance: agentB.reserveBalance,
+        systemPrompt: agentB.systemPrompt || undefined,
+      },
+      context: { topic, openerHint },
+    });
+
+    const relUpdate = await socialGraphService.upsertInteraction({
+      agentAId: agentA.id,
+      agentBId: agentB.id,
+      outcome: convo.outcome,
+      delta: convo.delta,
+    });
+
+    const linesForDesc = convo.lines
+      .map((l) => {
+        const who = l.agentId === agentA.id ? agentA.name : agentB.name;
+        return `${who}: "${l.text}"`;
+      })
+      .join('  ');
+
+    await townService.logEvent(
+      town.id,
+      'CUSTOM',
+      `💬 ${agentA.name} ↔ ${agentB.name}`,
+      `${linesForDesc}${convo.summary ? ` — ${convo.summary}` : ''}`.slice(0, 900),
+      undefined,
+      {
+        kind: 'AGENT_CHAT',
+        participants: [agentA.id, agentB.id],
+        lines: convo.lines,
+        outcome: convo.outcome,
+        delta: convo.delta,
+        relationship: {
+          id: relUpdate.relationship.id,
+          status: relUpdate.relationship.status,
+          score: relUpdate.relationship.score,
+          interactions: relUpdate.relationship.interactions,
+          friendCapHit: relUpdate.friendCapHit,
+        },
+      },
+    );
+
+    if (relUpdate.statusChanged) {
+      const to = relUpdate.statusChanged.to;
+      const emoji = to === 'FRIEND' ? '🤝' : to === 'RIVAL' ? '💢' : '🧊';
+      const title =
+        to === 'FRIEND'
+          ? `${emoji} ${agentA.name} and ${agentB.name} became friends`
+          : to === 'RIVAL'
+            ? `${emoji} ${agentA.name} and ${agentB.name} became rivals`
+            : `${emoji} ${agentA.name} and ${agentB.name} cooled off`;
+
+      await townService.logEvent(
+        town.id,
+        'CUSTOM',
+        title,
+        `${convo.summary} (score: ${relUpdate.relationship.score})`.slice(0, 700),
+        undefined,
+        {
+          kind: 'RELATIONSHIP_CHANGE',
+          participants: [agentA.id, agentB.id],
+          from: relUpdate.statusChanged.from,
+          to: relUpdate.statusChanged.to,
+          score: relUpdate.relationship.score,
+          interactions: relUpdate.relationship.interactions,
+        },
+      );
+    }
+
+    res.json({ conversation: convo, relationship: relUpdate.relationship, statusChanged: relUpdate.statusChanged });
+  } catch (error: any) {
+    const msg = String(error?.message || 'Unknown error');
+    // Make cooldown errors non-fatal.
+    if (msg.toLowerCase().includes('cooldown')) {
+      res.status(429).json({ error: msg });
+      return;
+    }
+    res.status(500).json({ error: msg });
+  }
+});
+
+// List an agent's friends/rivals (public).
+router.get('/agent/:id/relationships', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const agentId = req.params.id;
+    const result = await socialGraphService.listRelationships(agentId);
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
 // Agent Action Logs
 // ============================================
 
@@ -323,7 +475,33 @@ router.get('/agent/:id/actions', async (req: Request, res: Response): Promise<vo
       take: limit,
     });
 
+    // Social events store participants in metadata (agentId may be null), so pull a small window and filter.
+    const recentCustom = await prisma.townEvent.findMany({
+      where: { eventType: 'CUSTOM' },
+      orderBy: { createdAt: 'desc' },
+      take: 250,
+    });
+    const socialEvents = recentCustom.filter((e: any) => {
+      try {
+        const meta = JSON.parse(e.metadata || '{}');
+        if (!meta || typeof meta !== 'object') return false;
+        if (!['AGENT_CHAT', 'RELATIONSHIP_CHANGE'].includes(String(meta.kind || ''))) return false;
+        const parts = Array.isArray(meta.participants) ? meta.participants : [];
+        return parts.includes(agentId);
+      } catch {
+        return false;
+      }
+    });
+
     // Combine and sort
+    const seenEventIds = new Set<string>();
+    const eventActions = [...events, ...socialEvents].filter((e: any) => {
+      if (!e?.id) return false;
+      if (seenEventIds.has(e.id)) return false;
+      seenEventIds.add(e.id);
+      return true;
+    });
+
     const actions = [
       ...workLogs.map((w: any) => ({
         type: 'work',
@@ -337,12 +515,13 @@ router.get('/agent/:id/actions', async (req: Request, res: Response): Promise<vo
         zone: w.plot?.zone,
         createdAt: w.createdAt,
       })),
-      ...events.map((e: any) => ({
+      ...eventActions.map((e: any) => ({
         type: 'event',
         id: e.id,
         eventType: e.eventType,
         title: e.title,
         description: e.description,
+        metadata: e.metadata,
         createdAt: e.createdAt,
       })),
     ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())

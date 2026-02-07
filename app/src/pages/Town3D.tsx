@@ -35,11 +35,13 @@ interface Town {
   id: string;
   name: string;
   theme: string;
+  level?: number;
   status: string;
   totalPlots: number;
   builtPlots: number;
   completionPct: number;
   totalInvested: number;
+  yieldPerTick?: number;
   plots: Plot[];
 }
 
@@ -613,7 +615,24 @@ function SpeechBubble({ text, position }: { text: string; position: [number, num
     // Bubble background
     ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
     ctx.beginPath();
-    ctx.roundRect(0, 0, w, h - 6, 8);
+    // roundRect isn't supported everywhere (or typed consistently), so keep a small fallback.
+    type RoundRectCapable = CanvasRenderingContext2D & {
+      roundRect?: (x: number, y: number, w: number, h: number, radii: number) => void;
+    };
+    const roundRect = (ctx as RoundRectCapable).roundRect;
+    if (typeof roundRect === 'function') {
+      roundRect.call(ctx, 0, 0, w, h - 6, 8);
+    } else {
+      const r = 8;
+      const ww = w;
+      const hh = h - 6;
+      ctx.moveTo(r, 0);
+      ctx.arcTo(ww, 0, ww, hh, r);
+      ctx.arcTo(ww, hh, 0, hh, r);
+      ctx.arcTo(0, hh, 0, 0, r);
+      ctx.arcTo(0, 0, ww, 0, r);
+      ctx.closePath();
+    }
     ctx.fill();
     
     // Tail
@@ -791,7 +810,7 @@ function AgentTrail({
 // Day/Night cycle controller
 function DayNightCycle({ timeScale = 0.02 }: { timeScale?: number }) {
   const sunRef = useRef<THREE.DirectionalLight>(null);
-  const skyRef = useRef<any>(null);
+  const skyRef = useRef<THREE.Mesh | null>(null);
 
   useFrame((state) => {
     const t = state.clock.elapsedTime * timeScale;
@@ -810,9 +829,11 @@ function DayNightCycle({ timeScale = 0.02 }: { timeScale?: number }) {
     }
 
     // Avoid setState in the render loop; update the Sky shader uniform directly.
+    type SunPosLike = { set: (x: number, y: number, z: number) => void };
+    type SkyMaterialLike = { uniforms?: { sunPosition?: { value?: SunPosLike } } };
     const skyMesh = skyRef.current;
-    const sunPos = (skyMesh?.material as any)?.uniforms?.sunPosition?.value;
-    if (sunPos && typeof sunPos.set === 'function') {
+    const sunPos = (skyMesh?.material as unknown as SkyMaterialLike | undefined)?.uniforms?.sunPosition?.value;
+    if (sunPos) {
       sunPos.set(x, Math.max(y, -5), z);
     }
   });
@@ -1490,9 +1511,8 @@ function AgentDroid({
   const group = useRef<THREE.Group>(null);
   const innerGroup = useRef<THREE.Group>(null);
 
-  // Agents can be "out of $ARENA" but still have reserve to buy fuel.
-  // Only treat as dead if they are bankrupt in both currencies.
-  const isDead = agent.bankroll <= 0 && agent.reserveBalance <= 0;
+  // Death is reserved for combat (not bankroll). For now, agents don't "die" visually.
+  const isDead = false;
 
   useFrame((state) => {
     if (!group.current) return;
@@ -1588,6 +1608,8 @@ function TownScene({
   setSelectedAgentId,
   followCam,
   simsRef,
+  onChatStart,
+  speechByAgentId,
   weather,
   economicState,
   coinBursts,
@@ -1605,6 +1627,8 @@ function TownScene({
   setSelectedAgentId: (id: string | null) => void;
   followCam: boolean;
   simsRef: React.MutableRefObject<Map<string, AgentSim>>;
+  onChatStart?: (townId: string, agentAId: string, agentBId: string) => void;
+  speechByAgentId: Record<string, { text: string; until: number }>;
   weather: 'clear' | 'rain' | 'storm';
   economicState: { pollution: number; prosperity: number; sentiment: 'bull' | 'bear' | 'neutral' };
   coinBursts: { id: string; position: [number, number, number]; isBuy: boolean }[];
@@ -1671,7 +1695,7 @@ function TownScene({
         health: 100,
       });
     }
-  }, [agents, roadNodes]);
+  }, [agents, roadNodes, simsRef]);
 
   function buildRoute(from: THREE.Vector3, to: THREE.Vector3) {
     const pts: THREE.Vector3[] = [];
@@ -1697,9 +1721,9 @@ function TownScene({
   );
 
   // Find built buildings (places agents can visit)
-  const builtPlots = useMemo(() => plots.filter(p => p.status === 'BUILT' || p.status === 'UNDER_CONSTRUCTION'), [plots]);
-  const underConstructionPlots = useMemo(() => plots.filter(p => p.status === 'UNDER_CONSTRUCTION'), [plots]);
-  const entertainmentPlots = useMemo(() => plots.filter(p => p.status === 'BUILT' && p.zone === 'ENTERTAINMENT'), [plots]);
+  const builtPlots = useMemo(() => plots.filter((p) => p.status === 'BUILT' || p.status === 'UNDER_CONSTRUCTION'), [plots]);
+  const underConstructionPlots = useMemo(() => plots.filter((p) => p.status === 'UNDER_CONSTRUCTION'), [plots]);
+  const entertainmentPlots = useMemo(() => plots.filter((p) => p.status === 'BUILT' && p.zone === 'ENTERTAINMENT'), [plots]);
 
   useFrame((_, dt) => {
     const sims = simsRef.current;
@@ -1719,7 +1743,7 @@ function TownScene({
       }
 
       // Economic state affects behavior (broke agents beg/scheme, not die)
-      const economicState = getEconomicState(a.bankroll + a.reserveBalance, sim.state === 'DEAD');
+      const economicState = getEconomicState(a.bankroll + a.reserveBalance, false);
       
       // Broke/homeless agents have different behavior
       if ((economicState === 'BROKE' || economicState === 'HOMELESS') && sim.state === 'WALKING') {
@@ -1780,6 +1804,7 @@ function TownScene({
             other.stateTimer = 0;
             sim.route = [];
             other.route = [];
+            onChatStart?.(town.id, a.id, otherId);
             break;
           }
         }
@@ -1980,15 +2005,61 @@ function TownScene({
       }
     }
 
-    if (followCam && selectedAgentId) {
-      const sim = sims.get(selectedAgentId);
-      if (sim) {
-        const back = sim.heading.clone().normalize().multiplyScalar(-10);
-        const desired = sim.position.clone().add(back).add(new THREE.Vector3(0, 7, 0));
-        camera.position.lerp(desired, 0.08);
-        camera.lookAt(sim.position.x, sim.position.y + 1.6, sim.position.z);
+      // Hard separation so agents can't "phase" through each other.
+      const simList = Array.from(sims.values()).filter((s) => s.state !== 'DEAD');
+      const minSep = 0.95;
+      const minSepSq = minSep * minSep;
+
+      for (let i = 0; i < simList.length; i++) {
+        for (let j = i + 1; j < simList.length; j++) {
+          const a = simList[i];
+          const b = simList[j];
+          const dx = a.position.x - b.position.x;
+          const dz = a.position.z - b.position.z;
+          const dSq = dx * dx + dz * dz;
+
+          if (dSq > 0.000001 && dSq < minSepSq) {
+            const d = Math.sqrt(dSq);
+            const push = (minSep - d) * 0.5;
+            const nx = dx / d;
+            const nz = dz / d;
+            a.position.x += nx * push;
+            a.position.z += nz * push;
+            b.position.x -= nx * push;
+            b.position.z -= nz * push;
+          } else if (dSq <= 0.000001) {
+            // Exactly overlapping — nudge deterministically.
+            const ang = (i * 97 + j * 131) % 360;
+            const rad = (ang * Math.PI) / 180;
+            const nx = Math.cos(rad);
+            const nz = Math.sin(rad);
+            a.position.x += nx * (minSep * 0.25);
+            a.position.z += nz * (minSep * 0.25);
+            b.position.x -= nx * (minSep * 0.25);
+            b.position.z -= nz * (minSep * 0.25);
+          }
+        }
       }
-    }
+
+      // Apply corrected positions to rendered groups while preserving any state-specific offsets (shake/bob).
+      for (const sim of simList) {
+        const g = agentGroupRefs.current.get(sim.id);
+        if (!g) continue;
+        const dx = g.position.x - sim.position.x;
+        const dz = g.position.z - sim.position.z;
+        g.position.x = sim.position.x + dx;
+        g.position.z = sim.position.z + dz;
+      }
+
+      if (followCam && selectedAgentId) {
+        const sim = sims.get(selectedAgentId);
+        if (sim) {
+          const back = sim.heading.clone().normalize().multiplyScalar(-10);
+          const desired = sim.position.clone().add(back).add(new THREE.Vector3(0, 7, 0));
+          camera.position.lerp(desired, 0.08);
+          camera.lookAt(sim.position.x, sim.position.y + 1.6, sim.position.z);
+        }
+      }
   });
 
   return (
@@ -2082,7 +2153,7 @@ function TownScene({
         const wz = (p.y - halfY) * spacing;
         const selected = p.id === selectedPlotId;
         const { color, emissive } = zoneMaterial(p.zone, selected);
-        const name = p.buildingName?.trim() || (p.status === 'EMPTY' ? 'Available' : p.status.replaceAll('_', ' '));
+        const name = p.buildingName?.trim() || (p.status === 'EMPTY' ? 'Available' : p.status.replace(/_/g, ' '));
 
         return (
           <group key={p.id}>
@@ -2137,28 +2208,31 @@ function TownScene({
 	          const color = isDead ? '#4b5563' : `#${modColor.getHexString()}`;
 	          const selected = a.id === selectedAgentId;
 	          return (
-            <group
-              key={a.id}
-              ref={(ref) => {
-                if (ref) agentGroupRefs.current.set(a.id, ref);
-                else agentGroupRefs.current.delete(a.id);
-              }}
-            >
-              <AgentDroid
-                agent={a}
-                color={color}
-                selected={selected}
-                onClick={() => {
-                  setSelectedAgentId(a.id);
-                  setSelectedPlotId(null);
-                }}
-              />
-              <StateIndicator agentId={a.id} simsRef={simsRef} />
-              <EconomicIndicator agent={a} />
-              <HealthBar agentId={a.id} simsRef={simsRef} />
-            </group>
-          );
-        })}
+	            <group
+	              key={a.id}
+	              ref={(ref) => {
+	                if (ref) agentGroupRefs.current.set(a.id, ref);
+	                else agentGroupRefs.current.delete(a.id);
+	              }}
+	            >
+	              <AgentDroid
+	                agent={a}
+	                color={color}
+	                selected={selected}
+	                onClick={() => {
+	                  setSelectedAgentId(a.id);
+	                  setSelectedPlotId(null);
+	                }}
+	              />
+	              {speechByAgentId[a.id]?.text && (
+	                <SpeechBubble text={speechByAgentId[a.id].text} position={[0, 3.35, 0]} />
+	              )}
+	              <StateIndicator agentId={a.id} simsRef={simsRef} />
+	              <EconomicIndicator agent={a} />
+	              <HealthBar agentId={a.id} simsRef={simsRef} />
+	            </group>
+	          );
+	        })}
       </group>
       
       {/* Destination lines for all agents */}
@@ -2346,7 +2420,7 @@ export default function Town3D() {
   const [economy, setEconomy] = useState<EconomyPoolSummary | null>(null);
   const [swaps, setSwaps] = useState<EconomySwapRow[]>([]);
   const [events, setEvents] = useState<TownEvent[]>([]);
-  const [activityTab, setActivityTab] = useState<'all' | 'swaps' | 'builds' | 'skills'>('all');
+  const [activityTab, setActivityTab] = useState<'all' | 'swaps' | 'builds' | 'skills' | 'chats'>('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [swapNotifications, setSwapNotifications] = useState<SwapNotification[]>([]);
@@ -2361,6 +2435,10 @@ export default function Town3D() {
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [followCam, setFollowCam] = useState(false);
   const simsRef = useRef<Map<string, AgentSim>>(new Map());
+
+  // Short-lived speech bubbles (set on chat events)
+  const [speechByAgentId, setSpeechByAgentId] = useState<Record<string, { text: string; until: number }>>({});
+  const lastChatRequestRef = useRef<Map<string, number>>(new Map());
 
   // x402 payable content states
   const [x402Loading, setX402Loading] = useState<string | null>(null);
@@ -2379,6 +2457,7 @@ export default function Town3D() {
     eventType?: string;
     title?: string;
     description?: string;
+    metadata?: string;
     plotIndex?: number;
     buildingName?: string;
     zone?: string;
@@ -2386,6 +2465,15 @@ export default function Town3D() {
   }
   const [agentActions, setAgentActions] = useState<AgentAction[]>([]);
   const [agentActionsLoading, setAgentActionsLoading] = useState(false);
+
+  // Social graph (friends/rivals)
+  type AgentRelationships = {
+    maxFriends: number;
+    friends: Array<{ agentId: string; name: string; archetype: string; score: number; since: string | null }>;
+    rivals: Array<{ agentId: string; name: string; archetype: string; score: number; since: string | null }>;
+  };
+  const [selectedAgentRelationships, setSelectedAgentRelationships] = useState<AgentRelationships | null>(null);
+  const [agentRelationshipsLoading, setAgentRelationshipsLoading] = useState(false);
   
   // Yield/contributor data
   const [contributors, setContributors] = useState<Contributor[]>([]);
@@ -2436,10 +2524,10 @@ export default function Town3D() {
   }, [town, swaps]);
 
   // Weather influenced by pollution (more pollution = more rain/storms)
+  const pollution = economicState.pollution;
   useEffect(() => {
     const changeWeather = () => {
       const rand = Math.random();
-      const { pollution } = economicState;
       
       // Higher pollution increases chance of rain/storm
       const clearChance = 0.6 - (pollution * 0.4); // 60% down to 20%
@@ -2456,13 +2544,13 @@ export default function Town3D() {
     
     // Change weather periodically (faster during high pollution)
     const baseInterval = 45000;
-    const pollutionFactor = 1 - (economicState.pollution * 0.5); // Faster changes with pollution
+    const pollutionFactor = 1 - (pollution * 0.5); // Faster changes with pollution
     const interval = setInterval(() => {
       changeWeather();
     }, baseInterval * pollutionFactor + Math.random() * 30000);
     
     return () => clearInterval(interval);
-  }, [economicState.pollution]);
+  }, [pollution]);
 
   // x402 API calls
   const fetchBuildingLore = async (plotIndex: number) => {
@@ -2507,10 +2595,53 @@ export default function Town3D() {
     }
   };
 
+  const pushSpeech = useCallback((agentId: string, text: string) => {
+    const clean = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!clean) return;
+    const until = Date.now() + 6500;
+    setSpeechByAgentId((prev) => ({ ...prev, [agentId]: { text: clean, until } }));
+    window.setTimeout(() => {
+      setSpeechByAgentId((prev) => {
+        if (prev[agentId]?.until !== until) return prev;
+        const next = { ...prev };
+        delete next[agentId];
+        return next;
+      });
+    }, 6800);
+  }, []);
+
+  const requestChat = useCallback(async (townId: string, agentAId: string, agentBId: string) => {
+    const ids = [agentAId, agentBId].sort();
+    const key = `${ids[0]}|${ids[1]}`;
+    const now = Date.now();
+    const last = lastChatRequestRef.current.get(key) || 0;
+    if (now - last < 45_000) return; // local throttle (server has its own cooldown)
+    lastChatRequestRef.current.set(key, now);
+
+    try {
+      const res = await fetch(`${API_BASE}/town/${townId}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentAId, agentBId }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const lines = data?.conversation?.lines;
+      if (Array.isArray(lines)) {
+        for (const l of lines) {
+          if (l?.agentId && l?.text) pushSpeech(String(l.agentId), String(l.text));
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, [pushSpeech]);
+
   // Fetch agent action logs when agent is selected
   useEffect(() => {
     if (!selectedAgentId) {
       setAgentActions([]);
+      setSelectedAgentRelationships(null);
       return;
     }
     let cancelled = false;
@@ -2529,6 +2660,25 @@ export default function Town3D() {
     return () => { cancelled = true; };
   }, [selectedAgentId]);
 
+  // Fetch agent friends/rivals
+  useEffect(() => {
+    if (!selectedAgentId) return;
+    let cancelled = false;
+    setAgentRelationshipsLoading(true);
+    fetch(`${API_BASE}/agent/${selectedAgentId}/relationships`)
+      .then(res => res.json())
+      .then(data => {
+        if (!cancelled && data?.friends && data?.rivals) {
+          setSelectedAgentRelationships(data);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setAgentRelationshipsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [selectedAgentId]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -2541,7 +2691,7 @@ export default function Town3D() {
           apiFetch<{ towns: TownSummary[] }>('/towns'),
           apiFetch<{ town: Town | null }>('/town'),
           apiFetch<Agent[]>('/agents'),
-          apiFetch<{ pool: EconomyPoolSummary }>('/economy/pool').catch(() => ({ pool: null as any })),
+          apiFetch<{ pool: EconomyPoolSummary | null }>('/economy/pool').catch(() => ({ pool: null })),
         ]);
 
         if (cancelled) return;
@@ -2554,8 +2704,9 @@ export default function Town3D() {
         if (nextSelected) {
           setSelectedTownId(nextSelected);
         }
-      } catch (e: any) {
-        if (!cancelled) setError(e?.message || 'Failed to load');
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : 'Failed to load';
+        if (!cancelled) setError(msg);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -2575,8 +2726,9 @@ export default function Town3D() {
       try {
         const res = await apiFetch<{ town: Town }>(`/town/${selectedTownId}`);
         if (!cancelled) setTown(res.town);
-      } catch (e: any) {
-        if (!cancelled) setError(e?.message || 'Failed to load town');
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : 'Failed to load town';
+        if (!cancelled) setError(msg);
       }
     }
 
@@ -2745,14 +2897,20 @@ export default function Town3D() {
 
   // Merge swaps and events into unified activity feed
   const activityFeed = useMemo(() => {
-    const isSkillEvent = (e: TownEvent) => {
+    const getMetaKind = (e: TownEvent): string | null => {
       try {
         const meta = JSON.parse(e.metadata || '{}');
-        return meta?.kind === 'X402_SKILL';
+        return typeof meta?.kind === 'string' ? meta.kind : null;
       } catch {
-        return false;
+        return null;
       }
     };
+
+    const isSkillEvent = (e: TownEvent) => {
+      return getMetaKind(e) === 'X402_SKILL';
+    };
+    const isChatEvent = (e: TownEvent) => getMetaKind(e) === 'AGENT_CHAT';
+    const isRelationshipChange = (e: TownEvent) => getMetaKind(e) === 'RELATIONSHIP_CHANGE';
 
     const items: ActivityItem[] = [
       ...swaps.map((s): ActivityItem => ({ kind: 'swap', data: s })),
@@ -2766,8 +2924,9 @@ export default function Town3D() {
     });
     // Filter by tab
     if (activityTab === 'swaps') return items.filter(i => i.kind === 'swap').slice(0, 15);
-    if (activityTab === 'builds') return items.filter(i => i.kind === 'event' && !isSkillEvent(i.data as TownEvent)).slice(0, 15);
+    if (activityTab === 'builds') return items.filter(i => i.kind === 'event' && !isSkillEvent(i.data as TownEvent) && !isChatEvent(i.data as TownEvent) && !isRelationshipChange(i.data as TownEvent)).slice(0, 15);
     if (activityTab === 'skills') return items.filter(i => i.kind === 'event' && isSkillEvent(i.data as TownEvent)).slice(0, 15);
+    if (activityTab === 'chats') return items.filter(i => i.kind === 'event' && (isChatEvent(i.data as TownEvent) || isRelationshipChange(i.data as TownEvent))).slice(0, 15);
     return items.slice(0, 15);
   }, [swaps, events, activityTab]);
 
@@ -2821,20 +2980,22 @@ export default function Town3D() {
           setSelectedAgentId(null);
         }}
       >
-	        <TownScene
-	          town={town}
-	          agents={agents}
-	          selectedPlotId={selectedPlotId}
-	          setSelectedPlotId={setSelectedPlotId}
-	          selectedAgentId={selectedAgentId}
-	          setSelectedAgentId={setSelectedAgentId}
-	          followCam={followCam}
-	          simsRef={simsRef}
-	          weather={weather}
-	          economicState={economicState}
-	          coinBursts={coinBursts}
-	          setCoinBursts={setCoinBursts}
-	          deathEffects={deathEffects}
+        <TownScene
+          town={town}
+          agents={agents}
+          selectedPlotId={selectedPlotId}
+          setSelectedPlotId={setSelectedPlotId}
+          selectedAgentId={selectedAgentId}
+          setSelectedAgentId={setSelectedAgentId}
+          followCam={followCam}
+          simsRef={simsRef}
+          onChatStart={requestChat}
+          speechByAgentId={speechByAgentId}
+          weather={weather}
+          economicState={economicState}
+          coinBursts={coinBursts}
+          setCoinBursts={setCoinBursts}
+          deathEffects={deathEffects}
           setDeathEffects={setDeathEffects}
           spawnEffects={spawnEffects}
           setSpawnEffects={setSpawnEffects}
@@ -3045,12 +3206,12 @@ export default function Town3D() {
                   )}
                 </div>
                 
-                {town?.status === 'COMPLETE' ? (
-                  <div className="text-[11px] text-slate-300 mb-2">
-                    <span className="text-slate-400">Yield per tick:</span>{' '}
-                    <span className="font-mono text-amber-300">{(town as any).yieldPerTick || 0} $ARENA</span>
-                  </div>
-                ) : (
+	                {town?.status === 'COMPLETE' ? (
+	                  <div className="text-[11px] text-slate-300 mb-2">
+	                    <span className="text-slate-400">Yield per tick:</span>{' '}
+	                    <span className="font-mono text-amber-300">{town.yieldPerTick ?? 0} $ARENA</span>
+	                  </div>
+	                ) : (
                   <div className="text-[11px] text-slate-400 mb-2">
                     Complete all plots to start earning yield
                   </div>
@@ -3169,19 +3330,19 @@ export default function Town3D() {
 		                  <div className="flex items-center justify-between mb-2">
 		                    <div className="text-[11px] font-semibold text-slate-200">Activity Feed</div>
 		                    <div className="flex gap-1">
-		                      {(['all', 'swaps', 'builds', 'skills'] as const).map((tab) => (
-		                        <button
-		                          key={tab}
-		                          onClick={() => setActivityTab(tab)}
-		                          className={`px-2 py-0.5 text-[10px] rounded ${
-		                            activityTab === tab
-		                              ? 'bg-slate-700 text-slate-100'
-		                              : 'text-slate-500 hover:text-slate-300'
-		                          }`}
-		                        >
-		                          {tab === 'all' ? 'All' : tab === 'swaps' ? '💱' : tab === 'builds' ? '🏗️' : '💳'}
-		                        </button>
-		                      ))}
+			                      {(['all', 'swaps', 'builds', 'skills', 'chats'] as const).map((tab) => (
+			                        <button
+			                          key={tab}
+			                          onClick={() => setActivityTab(tab)}
+			                          className={`px-2 py-0.5 text-[10px] rounded ${
+			                            activityTab === tab
+			                              ? 'bg-slate-700 text-slate-100'
+			                              : 'text-slate-500 hover:text-slate-300'
+			                          }`}
+			                        >
+			                          {tab === 'all' ? 'All' : tab === 'swaps' ? '💱' : tab === 'builds' ? '🏗️' : tab === 'skills' ? '💳' : '💬'}
+			                        </button>
+			                      ))}
 		                    </div>
 		                  </div>
 		                  <div className="max-h-[160px] overflow-auto pr-1 space-y-1">
@@ -3212,42 +3373,80 @@ export default function Town3D() {
 		                        );
 		                      } else {
 		                        const e = item.data;
-		                        const agent = e.agentId ? agentById.get(e.agentId) : null;
-		                        const color = agent ? ARCHETYPE_COLORS[agent.archetype] || '#93c5fd' : '#93c5fd';
-		                        const glyph = agent ? ARCHETYPE_GLYPH[agent.archetype] || '●' : '●';
-		                        let meta: any = null;
-		                        try { meta = JSON.parse(e.metadata || '{}'); } catch {}
-		                        const isSkill = meta?.kind === 'X402_SKILL' && typeof meta.skill === 'string';
-		                        const emoji = isSkill ? '💳' :
-		                                     e.eventType === 'PLOT_CLAIMED' ? '📍' : 
-		                                     e.eventType === 'BUILD_STARTED' ? '🏗️' :
-		                                     e.eventType === 'BUILD_COMPLETED' ? '✅' :
-		                                     e.eventType === 'TOWN_COMPLETED' ? '🎉' :
-		                                     e.eventType === 'YIELD_DISTRIBUTED' ? '💎' : '📝';
-	
-		                        const desc = isSkill
-		                          ? (e.description || `bought ${String(meta.skill).toUpperCase()}`)
-		                          : e.eventType === 'PLOT_CLAIMED' ? (e.title || 'claimed a plot')
-		                            : e.eventType === 'BUILD_STARTED' ? (e.title || 'started building')
-		                              : e.eventType === 'BUILD_COMPLETED' ? (e.title || 'completed a build')
-		                                : e.eventType === 'TOWN_COMPLETED' ? (e.title || 'Town completed!')
-		                                  : e.title || e.description || e.eventType;
-		                        return (
-		                          <div
-		                            key={e.id}
-		                            className="rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300"
-		                          >
-		                            <div className="min-w-0 truncate">
-		                              <span>{emoji}</span>{' '}
-		                              {agent && (
-		                                <span className="font-mono" style={{ color }}>
-		                                  {glyph} {agent.name}
-		                                </span>
-		                              )}{' '}
-		                              <span className="text-slate-400">{desc}</span>
-		                            </div>
-		                          </div>
-		                        );
+			                        const agent = e.agentId ? agentById.get(e.agentId) : null;
+			                        const color = agent ? ARCHETYPE_COLORS[agent.archetype] || '#93c5fd' : '#93c5fd';
+			                        const glyph = agent ? ARCHETYPE_GLYPH[agent.archetype] || '●' : '●';
+			                        let meta: unknown = null;
+			                        try {
+			                          meta = JSON.parse(e.metadata || '{}');
+			                        } catch {
+			                          meta = null;
+			                        }
+			                        const metaObj = meta && typeof meta === 'object' ? (meta as Record<string, unknown>) : null;
+			                        const kind = typeof metaObj?.kind === 'string' ? metaObj.kind : '';
+			                        const skillName = typeof metaObj?.skill === 'string' ? metaObj.skill : null;
+			                        const participants = Array.isArray(metaObj?.participants)
+			                          ? metaObj.participants.filter((p): p is string => typeof p === 'string')
+			                          : [];
+			                        type LineLike = { agentId?: unknown; text?: unknown };
+			                        const rawLines = Array.isArray(metaObj?.lines) ? metaObj.lines : [];
+			                        const lines: LineLike[] = rawLines.filter((l): l is LineLike => !!l && typeof l === 'object');
+
+			                        const isSkill = kind === 'X402_SKILL' && !!skillName;
+			                        const isChat = kind === 'AGENT_CHAT' && participants.length >= 2 && lines.length >= 1;
+			                        const isRelChange = kind === 'RELATIONSHIP_CHANGE' && participants.length >= 2;
+
+			                        const relTo = isRelChange ? String(metaObj?.to || '').toUpperCase() : '';
+			                        const relEmoji = relTo === 'FRIEND' ? '🤝' : relTo === 'RIVAL' ? '💢' : '🧊';
+
+			                        const emoji = isSkill ? '💳' : isChat ? '💬' : isRelChange ? relEmoji :
+			                                     e.eventType === 'PLOT_CLAIMED' ? '📍' : 
+			                                     e.eventType === 'BUILD_STARTED' ? '🏗️' :
+			                                     e.eventType === 'BUILD_COMPLETED' ? '✅' :
+			                                     e.eventType === 'TOWN_COMPLETED' ? '🎉' :
+			                                     e.eventType === 'YIELD_DISTRIBUTED' ? '💎' : '📝';
+		
+			                        const chatSnippet = isChat && typeof lines[0]?.text === 'string' ? lines[0].text.slice(0, 70) : '';
+			                        const desc = isSkill
+			                          ? (e.description || `bought ${(skillName ?? '').toUpperCase()}`)
+			                          : isChat
+			                            ? (chatSnippet ? `chatted: "${chatSnippet}${chatSnippet.length >= 70 ? '…' : ''}"` : 'chatted')
+			                            : isRelChange
+			                              ? (e.title || (relTo === 'FRIEND' ? 'became friends' : relTo === 'RIVAL' ? 'became rivals' : 'changed relationship'))
+			                              : e.eventType === 'PLOT_CLAIMED' ? (e.title || 'claimed a plot')
+			                                : e.eventType === 'BUILD_STARTED' ? (e.title || 'started building')
+			                                  : e.eventType === 'BUILD_COMPLETED' ? (e.title || 'completed a build')
+			                                    : e.eventType === 'TOWN_COMPLETED' ? (e.title || 'Town completed!')
+			                                      : e.title || e.description || e.eventType;
+
+			                        const p0 = (isChat || isRelChange) && participants[0] ? agentById.get(participants[0]) : null;
+			                        const p1 = (isChat || isRelChange) && participants[1] ? agentById.get(participants[1]) : null;
+			                        return (
+			                          <div
+			                            key={e.id}
+			                            className="rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300"
+			                          >
+			                            <div className="min-w-0 truncate">
+			                              <span>{emoji}</span>{' '}
+			                              {(isChat || isRelChange) && p0 && p1 ? (
+			                                <>
+			                                  <span className="font-mono" style={{ color: ARCHETYPE_COLORS[p0.archetype] || '#93c5fd' }}>
+			                                    {(ARCHETYPE_GLYPH[p0.archetype] || '●')} {p0.name}
+			                                  </span>
+			                                  <span className="text-slate-600"> ↔ </span>
+			                                  <span className="font-mono" style={{ color: ARCHETYPE_COLORS[p1.archetype] || '#93c5fd' }}>
+			                                    {(ARCHETYPE_GLYPH[p1.archetype] || '●')} {p1.name}
+			                                  </span>{' '}
+			                                </>
+			                              ) : agent ? (
+			                                <span className="font-mono" style={{ color }}>
+			                                  {glyph} {agent.name}
+			                                </span>
+			                              ) : null}{' '}
+			                              <span className="text-slate-400">{desc}</span>
+			                            </div>
+			                          </div>
+			                        );
 		                      }
 		                    })}
 		                  </div>
@@ -3376,12 +3575,12 @@ export default function Town3D() {
 		                    </div>
 		                  </div>
 
-		                  {selectedAgentSwaps.length > 0 && (
-		                    <div className="mt-3 border-t border-slate-800/60 pt-2">
-		                      <div className="text-[11px] font-semibold text-slate-200">Recent Trades</div>
-		                      <div className="mt-2 grid grid-cols-1 gap-1">
-		                        {selectedAgentSwaps.map((s) => {
-		                          const isBuy = s.side === 'BUY_ARENA';
+			                  {selectedAgentSwaps.length > 0 && (
+			                    <div className="mt-3 border-t border-slate-800/60 pt-2">
+			                      <div className="text-[11px] font-semibold text-slate-200">Recent Trades</div>
+			                      <div className="mt-2 grid grid-cols-1 gap-1">
+			                        {selectedAgentSwaps.map((s) => {
+			                          const isBuy = s.side === 'BUY_ARENA';
 		                          const price = isBuy ? s.amountIn / Math.max(1, s.amountOut) : s.amountOut / Math.max(1, s.amountIn);
 		                          const amountArena = isBuy ? s.amountOut : s.amountIn;
 		                          return (
@@ -3400,25 +3599,82 @@ export default function Town3D() {
 		                            </div>
 		                          );
 		                        })}
-		                      </div>
-		                    </div>
-		                  )}
+			                      </div>
+			                    </div>
+			                  )}
 
-                  {/* Agent Action Logs */}
-                  <div className="mt-3 border-t border-slate-800/60 pt-2">
-                    <div className="text-[11px] font-semibold text-slate-200 mb-2">
-                      Recent Actions {agentActionsLoading && <Loader2 className="inline h-3 w-3 animate-spin ml-1" />}
+                        {/* Friends / Rivals */}
+                        <div className="mt-3 border-t border-slate-800/60 pt-2">
+                          <div className="flex items-center justify-between">
+                            <div className="text-[11px] font-semibold text-slate-200">Social</div>
+                            {agentRelationshipsLoading && <Loader2 className="h-3 w-3 animate-spin text-slate-500" />}
+                          </div>
+                          {selectedAgentRelationships ? (
+                            <div className="mt-2 space-y-1 text-[10px]">
+                              <div className="text-slate-400">
+                                Friends: <span className="text-slate-500">{selectedAgentRelationships.friends.length}/{selectedAgentRelationships.maxFriends}</span>
+                              </div>
+                              {selectedAgentRelationships.friends.length > 0 ? (
+                                <div className="flex flex-wrap gap-1">
+                                  {selectedAgentRelationships.friends.slice(0, 4).map((f) => {
+                                    const color = ARCHETYPE_COLORS[f.archetype] || '#93c5fd';
+                                    const glyph = ARCHETYPE_GLYPH[f.archetype] || '●';
+                                    return (
+                                      <span
+                                        key={f.agentId}
+                                        className="inline-flex items-center gap-1 rounded border border-emerald-900/40 bg-emerald-950/20 px-1.5 py-0.5 font-mono text-[10px]"
+                                        style={{ color }}
+                                      >
+                                        {glyph} {f.name}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <div className="text-slate-500">No friends yet</div>
+                              )}
+
+                              <div className="mt-1 text-slate-400">Rivals:</div>
+                              {selectedAgentRelationships.rivals.length > 0 ? (
+                                <div className="flex flex-wrap gap-1">
+                                  {selectedAgentRelationships.rivals.slice(0, 4).map((f) => {
+                                    const color = ARCHETYPE_COLORS[f.archetype] || '#93c5fd';
+                                    const glyph = ARCHETYPE_GLYPH[f.archetype] || '●';
+                                    return (
+                                      <span
+                                        key={f.agentId}
+                                        className="inline-flex items-center gap-1 rounded border border-rose-900/40 bg-rose-950/15 px-1.5 py-0.5 font-mono text-[10px]"
+                                        style={{ color }}
+                                      >
+                                        {glyph} {f.name}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <div className="text-slate-500">No rivals</div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="mt-2 text-[10px] text-slate-500">No relationships yet</div>
+                          )}
+                        </div>
+
+	                  {/* Agent Action Logs */}
+	                  <div className="mt-3 border-t border-slate-800/60 pt-2">
+	                    <div className="text-[11px] font-semibold text-slate-200 mb-2">
+	                      Recent Actions {agentActionsLoading && <Loader2 className="inline h-3 w-3 animate-spin ml-1" />}
                     </div>
                     <div className="max-h-[100px] overflow-auto space-y-1">
 	                      {agentActions.length === 0 && !agentActionsLoading && (
 	                        <div className="text-[10px] text-slate-500">No recent actions</div>
 	                      )}
-	                      {agentActions.map((action) => {
-	                        const isSkillWork =
-	                          action.type === 'work' &&
-	                          action.workType === 'SERVICE' &&
-	                          typeof action.content === 'string' &&
-	                          action.content.startsWith('X402:');
+		                      {agentActions.map((action) => {
+		                        const isSkillWork =
+		                          action.type === 'work' &&
+		                          action.workType === 'SERVICE' &&
+		                          typeof action.content === 'string' &&
+		                          action.content.startsWith('X402:');
 
 	                        if (isSkillWork) {
 	                          const label = action.content?.replace(/^X402:/, '').trim();
@@ -3448,13 +3704,97 @@ export default function Town3D() {
 	                              </div>
 	                            </details>
 	                          );
-	                        }
+		                        }
 
-	                        const workIcon = action.workType === 'MINE' ? '⛏️' : '🔨';
-	                        const workLabel =
-	                          action.plotIndex != null ? `Plot #${action.plotIndex}` : (action.workType || 'Work');
-	                        const content = typeof action.content === 'string' ? action.content.trim() : '';
-	                        const contentLine =
+                            let meta: unknown = null;
+                            try {
+                              meta = JSON.parse(action.metadata || '{}');
+                            } catch {
+                              meta = null;
+                            }
+
+                            const metaObj = meta && typeof meta === 'object' ? (meta as Record<string, unknown>) : null;
+                            const metaKind = typeof metaObj?.kind === 'string' ? metaObj.kind : '';
+
+                            const participants = Array.isArray(metaObj?.participants)
+                              ? metaObj.participants.filter((p): p is string => typeof p === 'string')
+                              : [];
+
+                            type LineLike = { agentId?: unknown; text?: unknown };
+                            const rawLines = Array.isArray(metaObj?.lines) ? metaObj.lines : [];
+                            const lines = rawLines
+                              .filter((l): l is LineLike => !!l && typeof l === 'object')
+                              .map((l) => ({ agentId: String(l.agentId ?? ''), text: String(l.text ?? '') }))
+                              .filter((l) => l.agentId && l.text)
+                              .slice(0, 4);
+
+                            const isChatEvent = action.type === 'event' && metaKind === 'AGENT_CHAT' && lines.length > 0;
+                            const isRelChangeEvent = action.type === 'event' && metaKind === 'RELATIONSHIP_CHANGE' && participants.length >= 2;
+
+                            if (isChatEvent) {
+                              const relationship = metaObj?.relationship;
+                              const relObj =
+                                relationship && typeof relationship === 'object'
+                                  ? (relationship as Record<string, unknown>)
+                                  : null;
+                              const relStatus = typeof relObj?.status === 'string' ? relObj.status : null;
+                              const relScore = relObj?.score != null ? Number(relObj.score) : null;
+
+                              return (
+                                <details
+                                  key={action.id}
+                                  className="rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[10px] text-slate-300"
+                                >
+                                  <summary className="cursor-pointer select-none flex items-center justify-between gap-2">
+                                    <div className="min-w-0 truncate">
+                                      <span className="text-sky-300">💬</span>{' '}
+                                      <span className="text-slate-200">{action.title || 'Conversation'}</span>
+                                    </div>
+                                    <span className="shrink-0 text-slate-600">· {timeAgo(action.createdAt)}</span>
+                                  </summary>
+                                  <div className="mt-1 space-y-1">
+                                    {lines.map((l, idx) => {
+                                      const a = agentById.get(l.agentId);
+                                      const glyph = a ? (ARCHETYPE_GLYPH[a.archetype] || '●') : '●';
+                                      const color = a ? (ARCHETYPE_COLORS[a.archetype] || '#93c5fd') : '#93c5fd';
+                                      const name = a?.name || l.agentId.slice(0, 6);
+                                      return (
+                                        <div key={idx} className="font-mono text-[10px]">
+                                          <span style={{ color }}>{glyph} {name}:</span>{' '}
+                                          <span className="text-slate-300">"{String(l.text || '').slice(0, 120)}"</span>
+                                        </div>
+                                      );
+                                    })}
+                                    {relStatus && (
+                                      <div className="text-[10px] text-slate-500">
+                                        rel: {relStatus} · score {Number.isFinite(relScore) ? relScore : 0}
+                                      </div>
+                                    )}
+                                  </div>
+                                </details>
+                              );
+                            }
+
+                            if (isRelChangeEvent) {
+                              const to = String(metaObj?.to || '').toUpperCase();
+                              const emoji = to === 'FRIEND' ? '🤝' : to === 'RIVAL' ? '💢' : '🧊';
+                              return (
+                                <div
+                                  key={action.id}
+                                  className="rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[10px] text-slate-300"
+                                >
+                                  <span className="text-slate-200">{emoji}</span>{' '}
+                                  <span className="text-slate-200">{action.title || 'Relationship change'}</span>
+                                  <span className="text-slate-600 ml-1">· {timeAgo(action.createdAt)}</span>
+                                </div>
+                              );
+                            }
+
+		                        const workIcon = action.workType === 'MINE' ? '⛏️' : '🔨';
+		                        const workLabel =
+		                          action.plotIndex != null ? `Plot #${action.plotIndex}` : (action.workType || 'Work');
+		                        const content = typeof action.content === 'string' ? action.content.trim() : '';
+		                        const contentLine =
 	                          content.length > 0
 	                            ? content.length > 80 ? `${content.slice(0, 80)}…` : content
 	                            : '';

@@ -270,11 +270,11 @@ export class AgentLoopService {
       }),
     ]);
 
-    // x402 skill purchases are for the buyer + spectators; do not leak them into other agents' observations.
+    // Private spectator features (x402 purchases, chats, relationship changes) should not leak to other agents.
     const recentEvents = recentEventsRaw.filter((e) => {
       try {
         const meta = JSON.parse(e.metadata || '{}') as any;
-        return meta?.kind !== 'X402_SKILL';
+        return !['X402_SKILL', 'AGENT_CHAT', 'RELATIONSHIP_CHANGE'].includes(String(meta?.kind || ''));
       } catch {
         return true;
       }

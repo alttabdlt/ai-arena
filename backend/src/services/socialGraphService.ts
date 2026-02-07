@@ -11,10 +11,11 @@ import { RelationshipStatus } from '@prisma/client';
 import { prisma } from '../config/database';
 import type { ConversationOutcome } from './agentConversationService';
 
-const FRIEND_THRESHOLD = 14;
-const RIVAL_THRESHOLD = -14;
-const FRIEND_BREAK_THRESHOLD = 6;
-const RIVAL_BREAK_THRESHOLD = -6;
+// Calibrated for demos: friends/rivals should happen sometimes, but not for every pair.
+const FRIEND_THRESHOLD = 10;
+const RIVAL_THRESHOLD = -10;
+const FRIEND_BREAK_THRESHOLD = 4;
+const RIVAL_BREAK_THRESHOLD = -4;
 const MAX_FRIENDS_PER_AGENT = 2;
 
 // Pair cooldown: prevents spam chats between the same two agents.

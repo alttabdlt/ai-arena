@@ -48,65 +48,81 @@ export const agentConversationService = {
     const topic = safeTrim(opts.context?.topic, 32);
     const openerHint = safeTrim(opts.context?.openerHint, 120);
 
-    const response = await smartAiService.callModel(
-      spec,
-      [
-        {
-          role: 'system',
-          content:
-            `You write short in-world dialogue between TWO AI agents in a town simulation.\n` +
-            `Return STRICT JSON only (no markdown).\n` +
-            `Rules:\n` +
-            `- 2 to 4 lines total.\n` +
-            `- Each line <= 90 characters.\n` +
-            `- Keep it grounded in the town theme and their current situation.\n` +
-            `- Friendship is NOT a goal. Most outcomes should be NEUTRAL.\n` +
-            `- BOND is rare and only if there is real alignment/help offered.\n` +
-            `- BEEF happens sometimes if values clash.\n` +
-            `Output format:\n` +
-            `{\n` +
-            `  "lines": [{"speaker":"A"|"B","text":"..."}],\n` +
-            `  "outcome": "NEUTRAL"|"BOND"|"BEEF",\n` +
-            `  "delta": number, // integer -7..+7, usually -2..+2\n` +
-            `  "summary": "one sentence"\n` +
-            `}`,
-        },
-        {
-          role: 'user',
-          content:
-            `TOWN:\n` +
-            `- Name: ${opts.town.name}\n` +
-            `- Theme: ${opts.town.theme}\n` +
-            `- Status: ${opts.town.status}\n` +
-            `- Level: ${opts.town.level}\n` +
-            `- Progress: ${opts.town.builtPlots}/${opts.town.totalPlots} (${opts.town.completionPct.toFixed(1)}%)\n` +
-            `\n` +
-            `AGENT A:\n` +
-            `- id: ${opts.agentA.id}\n` +
-            `- name: ${opts.agentA.name}\n` +
-            `- archetype: ${opts.agentA.archetype}\n` +
-            `- balances: ${opts.agentA.bankroll} ARENA, ${opts.agentA.reserveBalance} reserve\n` +
-            `${opts.agentA.systemPrompt ? `- creator note: ${safeTrim(opts.agentA.systemPrompt, 160)}\n` : ''}` +
-            `\n` +
-            `AGENT B:\n` +
-            `- id: ${opts.agentB.id}\n` +
-            `- name: ${opts.agentB.name}\n` +
-            `- archetype: ${opts.agentB.archetype}\n` +
-            `- balances: ${opts.agentB.bankroll} ARENA, ${opts.agentB.reserveBalance} reserve\n` +
-            `${opts.agentB.systemPrompt ? `- creator note: ${safeTrim(opts.agentB.systemPrompt, 160)}\n` : ''}` +
-            `\n` +
-            `${topic ? `TOPIC: ${topic}\n` : ''}` +
-            `${openerHint ? `OPENER HINT (optional): ${openerHint}\n` : ''}` +
-            `\n` +
-            `Now generate the short dialogue.`,
-        },
-      ],
-      0.8,
-    );
+    let content = '';
+    try {
+      const response = await smartAiService.callModel(
+        spec,
+        [
+          {
+            role: 'system',
+            content:
+              `You write short in-world dialogue between TWO AI agents in a town simulation.\n` +
+              `Return STRICT JSON only (no markdown).\n` +
+              `Rules:\n` +
+              `- 2 to 4 lines total.\n` +
+              `- Each line <= 90 characters.\n` +
+              `- Keep it grounded in the town theme and their current situation.\n` +
+              `- Friendship is NOT a goal. Most outcomes should be NEUTRAL.\n` +
+              `- BOND is rare and only if there is real alignment/help offered.\n` +
+              `- BEEF happens sometimes if values clash.\n` +
+              `Output format:\n` +
+              `{\n` +
+              `  "lines": [{"speaker":"A"|"B","text":"..."}],\n` +
+              `  "outcome": "NEUTRAL"|"BOND"|"BEEF",\n` +
+              `  "delta": number, // integer -7..+7, usually -2..+2\n` +
+              `  "summary": "one sentence"\n` +
+              `}`,
+          },
+          {
+            role: 'user',
+            content:
+              `TOWN:\n` +
+              `- Name: ${opts.town.name}\n` +
+              `- Theme: ${opts.town.theme}\n` +
+              `- Status: ${opts.town.status}\n` +
+              `- Level: ${opts.town.level}\n` +
+              `- Progress: ${opts.town.builtPlots}/${opts.town.totalPlots} (${opts.town.completionPct.toFixed(1)}%)\n` +
+              `\n` +
+              `AGENT A:\n` +
+              `- id: ${opts.agentA.id}\n` +
+              `- name: ${opts.agentA.name}\n` +
+              `- archetype: ${opts.agentA.archetype}\n` +
+              `- balances: ${opts.agentA.bankroll} ARENA, ${opts.agentA.reserveBalance} reserve\n` +
+              `${opts.agentA.systemPrompt ? `- creator note: ${safeTrim(opts.agentA.systemPrompt, 160)}\n` : ''}` +
+              `\n` +
+              `AGENT B:\n` +
+              `- id: ${opts.agentB.id}\n` +
+              `- name: ${opts.agentB.name}\n` +
+              `- archetype: ${opts.agentB.archetype}\n` +
+              `- balances: ${opts.agentB.bankroll} ARENA, ${opts.agentB.reserveBalance} reserve\n` +
+              `${opts.agentB.systemPrompt ? `- creator note: ${safeTrim(opts.agentB.systemPrompt, 160)}\n` : ''}` +
+              `\n` +
+              `${topic ? `TOPIC: ${topic}\n` : ''}` +
+              `${openerHint ? `OPENER HINT (optional): ${openerHint}\n` : ''}` +
+              `\n` +
+              `Now generate the short dialogue.`,
+          },
+        ],
+        0.8,
+      );
+      content = response.content || '';
+    } catch {
+      // If the model call fails, still return a minimal neutral exchange so the sim doesn't go silent.
+      return {
+        lines: [
+          { agentId: opts.agentA.id, text: `You feel the vibe shift in ${safeTrim(opts.town.name, 28)}?` },
+          { agentId: opts.agentB.id, text: `Yeah. Everyone's building, trading, watching. It's tense.` },
+        ],
+        outcome: 'NEUTRAL',
+        delta: 0,
+        summary: 'Two agents exchanged a few words.',
+        modelUsed: spec.modelName,
+      };
+    }
 
     let parsed: any = null;
     try {
-      parsed = JSON.parse(response.content || '{}');
+      parsed = JSON.parse(content || '{}');
     } catch {
       parsed = null;
     }
@@ -149,4 +165,3 @@ export const agentConversationService = {
     };
   },
 };
-

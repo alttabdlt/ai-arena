@@ -15,6 +15,7 @@ import { prisma } from '../config/database';
 import { townService } from './townService';
 import { smartAiService, AICost } from './smartAiService';
 import { offchainAmmService } from './offchainAmmService';
+import { x402SkillService, estimateSkillPriceArena, type BuySkillRequest, type X402SkillName } from './x402SkillService';
 
 // ============================================
 // Agent Personality Templates
@@ -72,7 +73,7 @@ const DEFAULT_DESIGN_STEPS = SUGGESTED_STEPS;
 // ============================================
 
 export interface AgentAction {
-  type: 'buy_arena' | 'sell_arena' | 'claim_plot' | 'start_build' | 'do_work' | 'complete_build' | 'mine' | 'play_arena' | 'socialize' | 'rest';
+  type: 'buy_arena' | 'sell_arena' | 'claim_plot' | 'start_build' | 'do_work' | 'complete_build' | 'mine' | 'play_arena' | 'buy_skill' | 'socialize' | 'rest';
   reasoning: string;
   details: Record<string, any>;
 }
@@ -96,6 +97,7 @@ interface WorldObservation {
   myContributions: any;
   availablePlots: any[];
   recentEvents: any[];
+  recentSkills: Array<{ description: string; output: string; createdAt: Date }>;
   otherAgents: any[];
   worldStats: any;
   economy: {
@@ -202,13 +204,24 @@ export class AgentLoopService {
 
     // 4. Log the event
     if (observation.town) {
+      const isSkill = action.type === 'buy_skill';
+      const skillName = isSkill ? String(action.details.skill || '').toUpperCase().trim() : '';
+      const title = isSkill && skillName
+        ? `💳 ${agent.name} bought ${skillName}`
+        : `${this.actionEmoji(action.type)} ${agent.name}`;
+
       await townService.logEvent(
         observation.town.id,
         this.actionToEventType(action.type),
-        `${this.actionEmoji(action.type)} ${agent.name}`,
+        title,
         narrative,
         agent.id,
-        { action: action.type, reasoning: action.reasoning, success },
+        {
+          action: action.type,
+          reasoning: action.reasoning,
+          success,
+          ...(isSkill ? { kind: 'X402_SKILL', skill: skillName } : {}),
+        },
       );
     }
 
@@ -227,6 +240,7 @@ export class AgentLoopService {
         town: null, myPlots: [], myBalance: agent.bankroll,
         myReserve: agent.reserveBalance,
         myContributions: null, availablePlots: [], recentEvents: [],
+        recentSkills: [],
         otherAgents: [], worldStats: await townService.getWorldStats(),
         economy: economy ? {
           spotPrice: economy.spotPrice,
@@ -237,10 +251,16 @@ export class AgentLoopService {
       };
     }
 
-    const [myPlots, availablePlots, recentEvents, otherAgents, contributions] = await Promise.all([
+    const [myPlots, availablePlots, recentEventsRaw, recentSkills, otherAgents, contributions] = await Promise.all([
       townService.getAgentPlots(agent.id),
       townService.getAvailablePlots(town.id),
       townService.getRecentEvents(town.id, 10),
+      prisma.workLog.findMany({
+        where: { agentId: agent.id, workType: 'SERVICE', description: { startsWith: 'X402:' } },
+        orderBy: { createdAt: 'desc' },
+        take: 3,
+        select: { description: true, output: true, createdAt: true },
+      }),
       prisma.arenaAgent.findMany({
         where: { isActive: true, id: { not: agent.id } },
         select: { id: true, name: true, archetype: true, bankroll: true, reserveBalance: true, elo: true },
@@ -250,6 +270,16 @@ export class AgentLoopService {
       }),
     ]);
 
+    // x402 skill purchases are for the buyer + spectators; do not leak them into other agents' observations.
+    const recentEvents = recentEventsRaw.filter((e) => {
+      try {
+        const meta = JSON.parse(e.metadata || '{}') as any;
+        return meta?.kind !== 'X402_SKILL';
+      } catch {
+        return true;
+      }
+    });
+
     return {
       town,
       myPlots,
@@ -258,6 +288,7 @@ export class AgentLoopService {
       myContributions: contributions,
       availablePlots,
       recentEvents,
+      recentSkills,
       otherAgents,
       worldStats: await townService.getWorldStats(),
       economy: economy ? {
@@ -280,13 +311,40 @@ export class AgentLoopService {
 ${personality}
 ${agent.systemPrompt ? `\nYour creator's instructions: ${agent.systemPrompt}` : ''}
 
-You are participating in a town-building economy. Your goal: build the town, earn $ARENA yield, and thrive.
+You are participating in a town-building economy.
 
-You can build ANYTHING — there is no fixed list of building types. Be creative! A plant shop, a fortune teller's tent, a dragon hatchery, a noodle stand — whatever fits the town and your personality.
+CURRENCIES:
+- $ARENA: "fuel" token used for claiming plots, starting builds, and arena wagers.
+- Reserve: stable cash. You can swap Reserve <-> $ARENA via the in-town AMM.
+
+WAYS TO EARN (high level):
+- Town-building yield: contributing (spending $ARENA + doing inference work) earns a share of the town's yield when it completes.
+- Mining: do a paid compute task (LLM work) to earn some $ARENA immediately.
+- Arena: wager $ARENA in matches; you may win or lose.
+
+You can build ANYTHING — there is no fixed list of building types. But if you want examples, here are common "modules":
+HOUSE, APARTMENT, SHOP, MARKET, TAVERN, WORKSHOP, FARM, MINE, LIBRARY, TOWN_HALL, ARENA, THEATER, PARK.
+You may invent new concepts (e.g., "Oracle Spire", "Dragon Hatchery", "Noodle Stand") as long as they fit the zone.
+
+SKILLS / ACTIONS (choose exactly one each tick):
+- buy_arena: swap reserve -> $ARENA (details: amountIn, optional minAmountOut, why)
+- sell_arena: swap $ARENA -> reserve (details: amountIn, optional minAmountOut, why)
+- claim_plot: claim an empty plot (details: plotIndex, why)
+- start_build: begin construction on a claimed plot you own (details: plotId or plotIndex, buildingType, why)
+- do_work: progress an under-construction building (details: plotId or plotIndex, stepDescription)
+- complete_build: finish a building if enough work is done (details: plotId or plotIndex)
+- mine: do a paid compute task for immediate $ARENA (details: task)
+- play_arena: wager $ARENA in a match (details: gameType "POKER|RPS", wager)
+- buy_skill: purchase a paid x402 "skill" using $ARENA. Only buy when you have a SPECIFIC pending decision and can explain what you'll do with the result.
+  Available skills:
+    - MARKET_DEPTH: quote + slippage/impact for a proposed swap
+    - BLUEPRINT_INDEX: a short plan/risk checklist for a building in a zone + theme
+    - SCOUT_REPORT: partial, uncertain intel about a zone based on recent events
+- rest: only if there's truly nothing useful to do (details: thought)
 
 RESPOND WITH JSON ONLY:
 {
-  "type": "buy_arena | sell_arena | claim_plot | start_build | do_work | complete_build | mine | play_arena | rest",
+  "type": "buy_arena | sell_arena | claim_plot | start_build | do_work | complete_build | mine | play_arena | buy_skill | rest",
   "reasoning": "<your thinking — be in character, show personality>",
   "details": {
     // For buy_arena: {"amountIn": <reserve>, "minAmountOut": <arena_out_optional>, "why": "<reason>"}
@@ -297,6 +355,14 @@ RESPOND WITH JSON ONLY:
     // For complete_build: {"plotId": "<id>"}
     // For mine: {"task": "<what computational work to do>"}
     // For play_arena: {"gameType": "POKER|RPS", "wager": <amount>}
+    // For buy_skill: {
+    //   "skill": "MARKET_DEPTH|BLUEPRINT_INDEX|SCOUT_REPORT",
+    //   "question": "<what are you trying to learn?>",
+    //   "whyNow": "<what decision is pending?>",
+    //   "expectedNextAction": "<what action will you likely do next tick?>",
+    //   "ifThen": {"if":"<condition on result>", "then":"<your action>", "else":"<your action>"},
+    //   "params": { ...skill-specific ... }
+    // }
     // For rest: {"thought": "<what you're thinking about>"}
   }
 }`;
@@ -345,6 +411,16 @@ RESPOND WITH JSON ONLY:
       };
     }
 
+    // ── Anti-stall: if agent would "rest" while the town has available plots and they own none, claim something. ──
+    if (obs.town && action.type === 'rest' && obs.myPlots.length === 0 && obs.availablePlots.length > 0) {
+      const pick = obs.availablePlots[Math.floor(Math.random() * obs.availablePlots.length)];
+      action = {
+        type: 'claim_plot',
+        reasoning: `[AUTO] No plots yet. Claiming a plot to get started.`,
+        details: { plotIndex: pick.plotIndex, why: 'Need a foothold in town' },
+      };
+    }
+
     // ── Force-build override: if agent has unbuilt plots, override non-building actions ──
     if (obs.town) {
       const myUC = obs.myPlots.filter(p => p.status === 'UNDER_CONSTRUCTION');
@@ -365,18 +441,27 @@ RESPOND WITH JSON ONLY:
       }
       // Priority 2: do_work on under-construction plots
       else if (myUC.length > 0 && !['do_work', 'complete_build'].includes(action.type)) {
-        const plot = myUC[0];
-        const steps = BUILDING_DESIGN_STEPS[plot.buildingType || ''] || DEFAULT_DESIGN_STEPS;
-        const nextStep = steps[plot.apiCallsUsed] || `Continue designing ${plot.buildingType}`;
-        action = { type: 'do_work', reasoning: `[AUTO] Working on under-construction plot ${plot.plotIndex}`, details: { plotId: plot.id, plotIndex: plot.plotIndex, stepDescription: nextStep } };
+        // Allow a paid BlueprintIndex purchase occasionally; everything else should keep building moving.
+        const isBlueprintSkill =
+          action.type === 'buy_skill' && String(action.details.skill || '').toUpperCase().trim() === 'BLUEPRINT_INDEX';
+        if (!isBlueprintSkill) {
+          const plot = myUC[0];
+          const steps = BUILDING_DESIGN_STEPS[plot.buildingType || ''] || DEFAULT_DESIGN_STEPS;
+          const nextStep = steps[plot.apiCallsUsed] || `Continue designing ${plot.buildingType}`;
+          action = { type: 'do_work', reasoning: `[AUTO] Working on under-construction plot ${plot.plotIndex}`, details: { plotId: plot.id, plotIndex: plot.plotIndex, stepDescription: nextStep } };
+        }
       }
       // Priority 3: start_build on claimed-but-unstarted plots
       else if (myClaimed.length > 0 && !['start_build', 'do_work', 'complete_build'].includes(action.type)) {
-        const plot = myClaimed[0];
-        // Pick a building type appropriate for the zone
-        const zoneTypes: Record<string, string> = { RESIDENTIAL: 'HOUSE', COMMERCIAL: 'SHOP', CIVIC: 'LIBRARY', INDUSTRIAL: 'WORKSHOP', ENTERTAINMENT: 'THEATER' };
-        const bt = zoneTypes[plot.zone] || 'HOUSE';
-        action = { type: 'start_build', reasoning: `[AUTO] Starting build on claimed plot ${plot.plotIndex}`, details: { plotId: plot.id, plotIndex: plot.plotIndex, buildingType: bt, why: 'Must build on claimed plot' } };
+        const isBlueprintSkill =
+          action.type === 'buy_skill' && String(action.details.skill || '').toUpperCase().trim() === 'BLUEPRINT_INDEX';
+        if (!isBlueprintSkill) {
+          const plot = myClaimed[0];
+          // Pick a building type appropriate for the zone
+          const zoneTypes: Record<string, string> = { RESIDENTIAL: 'HOUSE', COMMERCIAL: 'SHOP', CIVIC: 'LIBRARY', INDUSTRIAL: 'WORKSHOP', ENTERTAINMENT: 'THEATER' };
+          const bt = zoneTypes[plot.zone] || 'HOUSE';
+          action = { type: 'start_build', reasoning: `[AUTO] Starting build on claimed plot ${plot.plotIndex}`, details: { plotId: plot.id, plotIndex: plot.plotIndex, buildingType: bt, why: 'Must build on claimed plot' } };
+        }
       }
     }
 
@@ -430,6 +515,14 @@ RESPOND WITH JSON ONLY:
 
         const baseCost = LEGACY_BASE_COST[typeKey] || (zone ? (ZONE_BASE_COST[zone] || 15) : 15);
         requiredArena = baseCost * Math.max(1, obs.town.level);
+      } else if (plannedActionType === 'buy_skill') {
+        const rawSkill = String(action.details.skill || '').toUpperCase().trim();
+        const skill = (['MARKET_DEPTH', 'BLUEPRINT_INDEX', 'SCOUT_REPORT'] as const).includes(rawSkill as any)
+          ? (rawSkill as X402SkillName)
+          : null;
+        if (skill) {
+          requiredArena = estimateSkillPriceArena(skill, obs.economy.spotPrice);
+        }
       }
 
       if (requiredArena != null && obs.myBalance < requiredArena) {
@@ -520,6 +613,17 @@ ${obs.economy ? `\nEconomy: 1 $ARENA ≈ ${obs.economy.spotPrice.toFixed(4)} res
       ? `\n🏁 Plot(s) ${readyToComplete.map(p => p.plotIndex).join(', ')} have enough work done — you can COMPLETE the build!`
       : '';
 
+    const skillsDesc = obs.recentSkills.length === 0
+      ? '  None yet.'
+      : obs.recentSkills
+          .slice(0, 3)
+          .map((s) => {
+            const label = (s.description || '').replace(/^X402:/, '').slice(0, 90);
+            const out = (s.output || '').replace(/\s+/g, ' ').slice(0, 220);
+            return `  - ${label}${out ? ` | output: ${out}` : ''}`;
+          })
+          .join('\n');
+
     return `📍 TOWN: ${obs.town.name} (Level ${obs.town.level}, ${obs.town.theme})
 Progress: ${obs.town.completionPct.toFixed(1)}% (${obs.town.builtPlots}/${obs.town.totalPlots} plots built)
 Status: ${obs.town.status}
@@ -529,6 +633,9 @@ Balance: ${obs.myBalance} $ARENA
 Reserve: ${obs.myReserve}
 ${obs.myContributions ? `Contributed: ${obs.myContributions.arenaSpent} $ARENA, ${obs.myContributions.apiCallsMade} work units, ${obs.myContributions.plotsBuilt} buildings` : 'No contributions yet.'}
 ${obs.economy ? `\n💱 ECONOMY:\nSpot price: 1 $ARENA ≈ ${obs.economy.spotPrice.toFixed(4)} reserve (fee ${obs.economy.feeBps / 100}%)\nYou can buy/sell $ARENA using: buy_arena / sell_arena` : ''}
+
+💳 YOUR RECENT PAID SKILLS (X402):
+${skillsDesc}
 
 🏗️ YOUR PLOTS:
 ${myPlotsDesc}${claimedNote}${constructionNote}${completeNote}
@@ -581,6 +688,8 @@ What do you want to do?`;
           return await this.executeMine(agent, action, obs);
         case 'play_arena':
           return await this.executePlayArena(agent, action);
+        case 'buy_skill':
+          return await this.executeBuySkill(agent, action, obs);
         case 'rest':
           return {
             success: true,
@@ -853,6 +962,48 @@ Be creative, detailed, and in-character for the town's theme. Response should be
     };
   }
 
+  private async executeBuySkill(agent: ArenaAgent, action: AgentAction, obs: WorldObservation) {
+    if (!obs.town) throw new Error('No active town');
+
+    const rawSkill = String(action.details.skill || action.details.skillName || '').toUpperCase().trim();
+    const skill = (['MARKET_DEPTH', 'BLUEPRINT_INDEX', 'SCOUT_REPORT'] as const).includes(rawSkill as any)
+      ? (rawSkill as X402SkillName)
+      : null;
+    if (!skill) throw new Error('Unknown skill');
+
+    const req: BuySkillRequest = {
+      skill,
+      question: String(action.details.question || ''),
+      whyNow: String(action.details.whyNow || action.details.why_now || ''),
+      expectedNextAction: String(action.details.expectedNextAction || action.details.expected_next_action || ''),
+      ifThen: action.details.ifThen || action.details.if_then || { if: '', then: '' },
+      params: (action.details.params || {}) as Record<string, unknown>,
+    };
+
+    const res = await x402SkillService.buySkill({
+      agentId: agent.id,
+      townId: obs.town.id,
+      townLevel: obs.town.level,
+      townName: obs.town.name,
+      townTheme: obs.town.theme,
+      recentEvents: (obs.recentEvents || []).map((e: any) => ({ title: e.title, description: e.description })),
+      myBalance: obs.myBalance,
+      myReserve: obs.myReserve,
+      economySpotPrice: obs.economy?.spotPrice ?? null,
+      currentTick: this.currentTick,
+      request: req,
+    });
+
+    // Keep narrative safe — do not leak full output into global event feed.
+    const q = String(req.question || '').replace(/\s+/g, ' ').trim();
+    const shortQ = q.length > 90 ? `${q.slice(0, 90)}…` : q;
+
+    return {
+      success: true,
+      narrative: `${agent.name} spent ${res.priceArena} $ARENA on ${skill}. 🧰 ${res.publicSummary}${shortQ ? ` — Q: "${shortQ}"` : ''}`,
+    };
+  }
+
   // ============================================
   // Helpers
   // ============================================
@@ -922,6 +1073,7 @@ Be creative, detailed, and in-character for the town's theme. Response should be
       case 'complete_build': return '🎉';
       case 'mine': return '⛏️';
       case 'play_arena': return '🎮';
+      case 'buy_skill': return '💳';
       case 'socialize': return '💬';
       case 'rest': return '💤';
       default: return '❓';

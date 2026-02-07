@@ -9,6 +9,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { ArenaAgent } from '@prisma/client';
 import { townService } from '../services/townService';
 import { arenaService } from '../services/arenaService';
+import { prisma } from '../config/database';
 
 const router = Router();
 
@@ -289,6 +290,65 @@ router.get('/world/events', async (req: Request, res: Response): Promise<void> =
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
     const events = await townService.getGlobalEvents(limit);
     res.json({ events });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// Agent Action Logs
+// ============================================
+
+router.get('/agent/:id/actions', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const agentId = req.params.id;
+    const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
+    
+    // Get work logs for this agent
+    const workLogs = await prisma.workLog.findMany({
+      where: { agentId },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      include: {
+        plot: {
+          select: { plotIndex: true, buildingName: true, zone: true },
+        },
+      },
+    });
+
+    // Get town events for this agent
+    const events = await prisma.townEvent.findMany({
+      where: { agentId },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+
+    // Combine and sort
+    const actions = [
+      ...workLogs.map((w: any) => ({
+        type: 'work',
+        id: w.id,
+        workType: w.workType,
+        content: w.description || w.input || '',
+        input: w.input,
+        output: w.output,
+        plotIndex: w.plot?.plotIndex,
+        buildingName: w.plot?.buildingName,
+        zone: w.plot?.zone,
+        createdAt: w.createdAt,
+      })),
+      ...events.map((e: any) => ({
+        type: 'event',
+        id: e.id,
+        eventType: e.eventType,
+        title: e.title,
+        description: e.description,
+        createdAt: e.createdAt,
+      })),
+    ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+     .slice(0, limit);
+
+    res.json({ actions });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

@@ -1,8 +1,10 @@
 import { Toaster } from "@ui/toaster";
 import { Toaster as Sonner } from "@ui/sonner";
 import { TooltipProvider } from "@ui/tooltip";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import Landing from "./pages/Landing";
 import Town3D from "./pages/Town3D";
+import Arena from "./pages/Arena";
 
 const App = () => {
   return (
@@ -16,9 +18,11 @@ const App = () => {
         }}
       >
         <Routes>
+          <Route path="/" element={<Landing />} />
           <Route path="/town" element={<Town3D />} />
-          {/* Everything else routes into the Town UI. */}
-          <Route path="*" element={<Navigate to="/town" replace />} />
+          <Route path="/arena" element={<Arena />} />
+          {/* Fallback to landing */}
+          <Route path="*" element={<Landing />} />
         </Routes>
       </BrowserRouter>
     </TooltipProvider>

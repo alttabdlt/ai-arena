@@ -12,6 +12,8 @@ import { GameEngineAdapter } from './gameEngineAdapter';
 import { ArenaPokerEngine } from './arenaPokerEngine';
 import { prisma } from '../config/database';
 import { monadService } from './monadService';
+import { degenStakingService } from './degenStakingService';
+import { predictionService } from './predictionService';
 
 // ============================================
 // Types
@@ -236,6 +238,9 @@ export class ArenaService {
 
       // Initialize game
       await this.initializeGame(match.id, input.gameType, input.agentId, input.opponentId);
+
+      // Degen mode: create prediction market for this match
+      predictionService.createMarket(match.id, input.agentId, input.opponentId).catch(() => {});
     }
 
     return match;
@@ -275,6 +280,9 @@ export class ArenaService {
 
     // Initialize game
     await this.initializeGame(matchId, match.gameType, match.player1Id, agentId);
+
+    // Degen mode: create prediction market for this match
+    predictionService.createMarket(matchId, match.player1Id, agentId).catch(() => {});
 
     return updated;
   }
@@ -621,6 +629,17 @@ export class ArenaService {
       }
     }
 
+    // Credit rake to pool treasury
+    if (rake > 0) {
+      const pool = await prisma.economyPool.findFirst();
+      if (pool) {
+        await prisma.economyPool.update({
+          where: { id: pool.id },
+          data: { cumulativeFeesArena: { increment: rake } },
+        });
+      }
+    }
+
     // Update opponent records
     await this.updateOpponentRecord(match.player1Id, match.player2Id, winnerId);
     await this.updateOpponentRecord(match.player2Id, match.player1Id, winnerId);
@@ -636,6 +655,15 @@ export class ArenaService {
         }
       }).catch(() => {}); // Don't block match resolution
     }
+
+    // Degen mode: distribute 30% of winner's payout to their backers
+    if (winnerId && payout > 0) {
+      const backerShare = Math.floor(payout * 0.3);
+      degenStakingService.distributeYieldToBackers(winnerId, backerShare).catch(() => {});
+    }
+
+    // Degen mode: resolve prediction market for this match
+    predictionService.resolve(matchId, winnerId).catch(() => {});
   }
 
   // ============================================

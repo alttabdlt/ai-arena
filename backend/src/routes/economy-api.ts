@@ -14,6 +14,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { ArenaAgent, EconomySwapSide } from '@prisma/client';
 import { offchainAmmService } from '../services/offchainAmmService';
 import { arenaService } from '../services/arenaService';
+import { priceSnapshotService } from '../services/priceSnapshotService';
 
 const router = Router();
 
@@ -75,6 +76,21 @@ router.get('/economy/swaps', async (req: Request, res: Response): Promise<void> 
     const limit = Number.parseInt(String(req.query.limit || '30'), 10);
     const swaps = await offchainAmmService.listRecentSwaps(limit);
     res.json({ swaps });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get('/economy/price-history', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const period = (req.query.period as string) || '1h';
+    const valid = ['1h', '6h', '24h', '7d'];
+    if (!valid.includes(period)) {
+      res.status(400).json({ error: `Invalid period. Use: ${valid.join(', ')}` });
+      return;
+    }
+    const snapshots = await priceSnapshotService.getHistory(period as any);
+    res.json({ snapshots });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

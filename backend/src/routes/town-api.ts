@@ -9,8 +9,9 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { ArenaAgent } from '@prisma/client';
 import { townService } from '../services/townService';
 import { arenaService } from '../services/arenaService';
-import { agentConversationService } from '../services/agentConversationService';
+import { agentConversationService, type RelationshipContext, type AgentActivity, type PairConversationMemory } from '../services/agentConversationService';
 import { socialGraphService } from '../services/socialGraphService';
+import { agentGoalService } from '../services/agentGoalService';
 import { prisma } from '../config/database';
 
 const router = Router();
@@ -39,6 +40,30 @@ async function authenticateAgent(req: AuthenticatedRequest, res: Response, next:
 
   req.agent = agent;
   next();
+}
+
+function requireSpectatorToken(req: Request, res: Response): boolean {
+  // Optional hardening: if set, require a token for spectator-triggered side-effects like chat.
+  const expected = process.env.TOWN_SPECTATOR_TOKEN;
+  if (!expected) return true;
+  const provided = String(req.headers['x-arena-spectator-token'] || '');
+  if (!provided || provided !== expected) {
+    res.status(401).json({ error: 'Missing or invalid spectator token' });
+    return false;
+  }
+  return true;
+}
+
+function safeTrim(s: unknown, maxLen: number): string {
+  return String(s ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen);
+}
+
+function pickRandom<T>(arr: T[]): T | null {
+  if (!Array.isArray(arr) || arr.length === 0) return null;
+  return arr[Math.floor(Math.random() * arr.length)] || null;
 }
 
 // ============================================
@@ -243,7 +268,7 @@ router.post('/town/:id/mine', authenticateAgent, async (req: AuthenticatedReques
       apiCalls || 1,
       apiCostCents || 0,
       modelUsed || 'unknown',
-      arenaEarned || 0,
+      Math.min(50, Math.max(0, arenaEarned || 0)),
       responseTimeMs || 0,
     );
     res.json({ workLog });
@@ -305,6 +330,8 @@ router.get('/world/events', async (req: Request, res: Response): Promise<void> =
 // NOTE: This is intentionally public for demos/spectators. Other agents should not see transcripts.
 router.post('/town/:id/chat', async (req: Request, res: Response): Promise<void> => {
   try {
+    if (!requireSpectatorToken(req, res)) return;
+
     const townId = req.params.id;
     const { agentAId, agentBId, topic, openerHint } = req.body || {};
     if (!agentAId || !agentBId) {
@@ -330,6 +357,85 @@ router.post('/town/:id/chat', async (req: Request, res: Response): Promise<void>
       res.status(404).json({ error: 'Agent not found' });
       return;
     }
+
+    // Early cooldown check (before paying for LLM call)
+    const pair = agentA.id < agentB.id ? { a: agentA.id, b: agentB.id } : { a: agentB.id, b: agentA.id };
+    const existingRel = await prisma.agentRelationship.findUnique({
+      where: { agentAId_agentBId: { agentAId: pair.a, agentBId: pair.b } },
+    });
+    if (existingRel?.lastInteractionAt) {
+      const ms = Date.now() - existingRel.lastInteractionAt.getTime();
+      if (ms < 45_000) {
+        res.status(429).json({ error: 'Pair chat cooldown' });
+        return;
+      }
+    }
+
+    // Pair memory: last 2 chat summaries between these agents (avoid repeating openers)
+    let pairMemory: PairConversationMemory | undefined = undefined;
+    try {
+      const recentCustom = await prisma.townEvent.findMany({
+        where: { townId: town.id, eventType: 'CUSTOM' },
+        orderBy: { createdAt: 'desc' },
+        take: 150,
+        select: { description: true, metadata: true },
+      });
+      const lastSummaries: string[] = [];
+      for (const e of recentCustom) {
+        if (lastSummaries.length >= 2) break;
+        let meta: any = null;
+        try {
+          meta = JSON.parse(e.metadata || '{}');
+        } catch {
+          meta = null;
+        }
+        if (!meta || typeof meta !== 'object') continue;
+        if (String(meta.kind || '') !== 'AGENT_CHAT') continue;
+        const participants = Array.isArray(meta.participants) ? meta.participants : [];
+        if (!participants.includes(pair.a) || !participants.includes(pair.b)) continue;
+
+        const summary = typeof meta.summary === 'string' ? meta.summary : '';
+        if (summary) {
+          lastSummaries.push(String(summary).slice(0, 180));
+          continue;
+        }
+        // Fallback: try to use a short snippet from the stored transcript or description.
+        const line0 = Array.isArray(meta.lines) && meta.lines[0] && typeof meta.lines[0].text === 'string' ? String(meta.lines[0].text) : '';
+        const fromDesc = typeof e.description === 'string' ? e.description : '';
+        const fallback = (line0 || fromDesc).trim().slice(0, 180);
+        if (fallback) lastSummaries.push(fallback);
+      }
+      if (lastSummaries.length > 0) pairMemory = { lastSummaries };
+    } catch {
+      pairMemory = undefined;
+    }
+
+    // Fetch context for richer prompts (parallel)
+    const [workA, workB, eventsA, eventsB] = await Promise.all([
+      prisma.workLog.findMany({ where: { agentId: agentA.id }, orderBy: { createdAt: 'desc' }, take: 2,
+        select: { description: true, workType: true } }),
+      prisma.workLog.findMany({ where: { agentId: agentB.id }, orderBy: { createdAt: 'desc' }, take: 2,
+        select: { description: true, workType: true } }),
+      prisma.townEvent.findMany({ where: { agentId: agentA.id }, orderBy: { createdAt: 'desc' }, take: 3,
+        select: { title: true } }),
+      prisma.townEvent.findMany({ where: { agentId: agentB.id }, orderBy: { createdAt: 'desc' }, take: 3,
+        select: { title: true } }),
+    ]);
+
+    const agentAActivity: AgentActivity = {
+      recentBuilds: workA.map(w => String(w.description || w.workType).slice(0, 120)),
+      recentEvents: eventsA.map(e => String(e.title || '').slice(0, 120)),
+    };
+    const agentBActivity: AgentActivity = {
+      recentBuilds: workB.map(w => String(w.description || w.workType).slice(0, 120)),
+      recentEvents: eventsB.map(e => String(e.title || '').slice(0, 120)),
+    };
+
+    const relationship: RelationshipContext | undefined = existingRel ? {
+      status: existingRel.status as RelationshipContext['status'],
+      score: existingRel.score,
+      interactions: existingRel.interactions,
+    } : undefined;
 
     const convo = await agentConversationService.generate({
       town: {
@@ -359,6 +465,10 @@ router.post('/town/:id/chat', async (req: Request, res: Response): Promise<void>
         systemPrompt: agentB.systemPrompt || undefined,
       },
       context: { topic, openerHint },
+      relationship,
+      agentAActivity,
+      agentBActivity,
+      pairMemory,
     });
 
     const relUpdate = await socialGraphService.upsertInteraction({
@@ -368,6 +478,47 @@ router.post('/town/:id/chat', async (req: Request, res: Response): Promise<void>
       delta: convo.delta,
     });
 
+    // --- Economic consequences of chat ---
+    let economicEffect: { type: string; amount: number; detail: string } | null = null;
+
+    if (convo.outcome === 'BOND') {
+      const richer = agentA.bankroll >= agentB.bankroll ? agentA : agentB;
+      const poorer = richer.id === agentA.id ? agentB : agentA;
+      const tip = Math.max(1, Math.min(50, Math.floor(poorer.bankroll * 0.04)));
+      if (richer.bankroll >= tip * 2) {
+        await prisma.arenaAgent.update({ where: { id: richer.id }, data: { bankroll: { decrement: tip } } });
+        await prisma.arenaAgent.update({ where: { id: poorer.id }, data: { bankroll: { increment: tip } } });
+        economicEffect = {
+          type: 'TIP',
+          amount: tip,
+          detail: `💰 ${richer.name} tipped ${tip} $ARENA to ${poorer.name}`,
+        };
+      }
+    } else if (convo.outcome === 'BEEF') {
+      const taxA = Math.max(1, Math.min(20, Math.floor(agentA.bankroll * 0.015)));
+      const taxB = Math.max(1, Math.min(20, Math.floor(agentB.bankroll * 0.015)));
+      if (agentA.bankroll >= taxA && agentB.bankroll >= taxB) {
+        await prisma.arenaAgent.update({ where: { id: agentA.id }, data: { bankroll: { decrement: taxA } } });
+        await prisma.arenaAgent.update({ where: { id: agentB.id }, data: { bankroll: { decrement: taxB } } });
+        economicEffect = {
+          type: 'BEEF_TAX',
+          amount: taxA + taxB,
+          detail: `🔥 Beef tax: ${agentA.name} -${taxA}, ${agentB.name} -${taxB} $ARENA`,
+        };
+      }
+    }
+
+    // Credit beef tax to pool treasury
+    if (economicEffect?.type === 'BEEF_TAX') {
+      const pool = await prisma.economyPool.findFirst();
+      if (pool) {
+        await prisma.economyPool.update({
+          where: { id: pool.id },
+          data: { cumulativeFeesArena: { increment: economicEffect.amount } },
+        });
+      }
+    }
+
     const linesForDesc = convo.lines
       .map((l) => {
         const who = l.agentId === agentA.id ? agentA.name : agentB.name;
@@ -375,18 +526,21 @@ router.post('/town/:id/chat', async (req: Request, res: Response): Promise<void>
       })
       .join('  ');
 
-    await townService.logEvent(
+    const chatEvent = await townService.logEvent(
       town.id,
       'CUSTOM',
       `💬 ${agentA.name} ↔ ${agentB.name}`,
-      `${linesForDesc}${convo.summary ? ` — ${convo.summary}` : ''}`.slice(0, 900),
+      `${linesForDesc}${convo.summary ? ` — ${convo.summary}` : ''}${economicEffect ? ` · ${economicEffect.detail}` : ''}`.slice(0, 900),
       undefined,
       {
         kind: 'AGENT_CHAT',
-        participants: [agentA.id, agentB.id],
+        participants: [pair.a, pair.b],
         lines: convo.lines,
         outcome: convo.outcome,
         delta: convo.delta,
+        economicIntent: convo.economicIntent,
+        summary: convo.summary,
+        economicEffect,
         relationship: {
           id: relUpdate.relationship.id,
           status: relUpdate.relationship.status,
@@ -397,6 +551,7 @@ router.post('/town/:id/chat', async (req: Request, res: Response): Promise<void>
       },
     );
 
+    let relationshipEventId: string | null = null;
     if (relUpdate.statusChanged) {
       const to = relUpdate.statusChanged.to;
       const emoji = to === 'FRIEND' ? '🤝' : to === 'RIVAL' ? '💢' : '🧊';
@@ -407,7 +562,7 @@ router.post('/town/:id/chat', async (req: Request, res: Response): Promise<void>
             ? `${emoji} ${agentA.name} and ${agentB.name} became rivals`
             : `${emoji} ${agentA.name} and ${agentB.name} cooled off`;
 
-      await townService.logEvent(
+      const relEvent = await townService.logEvent(
         town.id,
         'CUSTOM',
         title,
@@ -415,16 +570,157 @@ router.post('/town/:id/chat', async (req: Request, res: Response): Promise<void>
         undefined,
         {
           kind: 'RELATIONSHIP_CHANGE',
-          participants: [agentA.id, agentB.id],
+          participants: [pair.a, pair.b],
           from: relUpdate.statusChanged.from,
           to: relUpdate.statusChanged.to,
           score: relUpdate.relationship.score,
           interactions: relUpdate.relationship.interactions,
         },
       );
+      relationshipEventId = relEvent.id;
     }
 
-    res.json({ conversation: convo, relationship: relUpdate.relationship, statusChanged: relUpdate.statusChanged });
+    // ── Town objectives (stakes + follow-up) ──
+    // These create visible, time-bounded consequences so chats turn into action.
+    let objectiveEventId: string | null = null;
+    try {
+      if (convo.outcome === 'BEEF' || convo.outcome === 'BOND') {
+        const now = Date.now();
+        const emptyPlots = (town.plots || []).filter((p: any) => p && p.status === 'EMPTY');
+
+        // Avoid objective spam between the same pair.
+        const recentObjectives = await prisma.townEvent.findMany({
+          where: {
+            townId: town.id,
+            eventType: 'CUSTOM',
+            createdAt: { gte: new Date(now - 3 * 60_000) },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 120,
+          select: { metadata: true },
+        });
+        let hasRecentForPair = false;
+        for (const e of recentObjectives) {
+          let meta: any = null;
+          try {
+            meta = JSON.parse(e.metadata || '{}');
+          } catch {
+            meta = null;
+          }
+          if (!meta || typeof meta !== 'object') continue;
+          if (String(meta.kind || '') !== 'TOWN_OBJECTIVE') continue;
+          const participants = Array.isArray(meta.participants) ? meta.participants : [];
+          if (participants.includes(pair.a) && participants.includes(pair.b)) {
+            hasRecentForPair = true;
+            break;
+          }
+        }
+
+        if (!hasRecentForPair && emptyPlots.length > 0) {
+          const zonePriority = ['COMMERCIAL', 'ENTERTAINMENT', 'INDUSTRIAL', 'CIVIC', 'RESIDENTIAL'];
+          const emptiesByZone = new Map<string, any[]>();
+          for (const p of emptyPlots) {
+            const z = String(p.zone || '').toUpperCase();
+            if (!emptiesByZone.has(z)) emptiesByZone.set(z, []);
+            emptiesByZone.get(z)!.push(p);
+          }
+
+          if (convo.outcome === 'BEEF') {
+            // Plot race: both agents sprint to claim a single target plot.
+            let candidates: any[] = [];
+            for (const z of zonePriority) {
+              const c = emptiesByZone.get(z);
+              if (c && c.length > 0) { candidates = c; break; }
+            }
+            if (candidates.length === 0) candidates = emptyPlots;
+
+            const target = pickRandom(candidates);
+            const plotIndex = typeof (target as any)?.plotIndex === 'number' ? (target as any).plotIndex : null;
+            const zone = safeTrim((target as any)?.zone, 24).toUpperCase();
+            if (plotIndex != null) {
+              const stakeArena = 10; // loser pays winner on resolution (best-effort)
+              const expiresAtMs = now + 3 * 60_000;
+              const obj = await townService.logEvent(
+                town.id,
+                'CUSTOM',
+                `🏁 Rivalry Race: Claim plot ${plotIndex} (${zone})`,
+                `${agentA.name} and ${agentB.name} are beefing. First to claim plot ${plotIndex} wins. Loser pays ${stakeArena} $ARENA.`,
+                undefined,
+                {
+                  kind: 'TOWN_OBJECTIVE',
+                  objectiveType: 'RACE_CLAIM',
+                  participants: [pair.a, pair.b],
+                  plotIndex,
+                  zone,
+                  stakeArena,
+                  createdAtMs: now,
+                  expiresAtMs,
+                  triggeredBy: { chatEventId: chatEvent.id, outcome: convo.outcome, economicIntent: convo.economicIntent },
+                },
+              );
+              objectiveEventId = obj.id;
+            }
+          } else {
+            // Pact: assign each agent a plot to claim in the same zone (collab vibes).
+            const shouldCreate =
+              convo.economicIntent === 'COLLAB' || convo.economicIntent === 'TIP' || Math.random() < 0.6;
+            if (shouldCreate && emptyPlots.length >= 2) {
+              // Pick the most "available" zone with >= 2 empty plots.
+              let bestZone: string | null = null;
+              let bestCount = 0;
+              for (const [z, arr] of emptiesByZone.entries()) {
+                if (arr.length >= 2 && arr.length > bestCount) {
+                  bestZone = z;
+                  bestCount = arr.length;
+                }
+              }
+              const pool = bestZone ? (emptiesByZone.get(bestZone) || []) : emptyPlots;
+              const shuffled = [...pool].sort(() => Math.random() - 0.5);
+              const p0 = shuffled[0];
+              const p1 = shuffled.find((p: any) => p && p.plotIndex !== p0.plotIndex) || null;
+              if (p0 && p1) {
+                const aGetsFirst = Math.random() < 0.5;
+                const aPlot = aGetsFirst ? p0 : p1;
+                const bPlot = aGetsFirst ? p1 : p0;
+                const expiresAtMs = now + 5 * 60_000;
+                const zone = safeTrim((aPlot as any)?.zone, 24).toUpperCase() || safeTrim((bPlot as any)?.zone, 24).toUpperCase();
+                const obj = await townService.logEvent(
+                  town.id,
+                  'CUSTOM',
+                  `🤝 Pact: Split the ${zone} district`,
+                  `${agentA.name} claims plot ${aPlot.plotIndex}. ${agentB.name} claims plot ${bPlot.plotIndex}. Do it within 5 minutes.`,
+                  undefined,
+                  {
+                    kind: 'TOWN_OBJECTIVE',
+                    objectiveType: 'PACT_CLAIM',
+                    participants: [pair.a, pair.b],
+                    assignments: { [agentA.id]: aPlot.plotIndex, [agentB.id]: bPlot.plotIndex },
+                    zone,
+                    createdAtMs: now,
+                    expiresAtMs,
+                    triggeredBy: { chatEventId: chatEvent.id, outcome: convo.outcome, economicIntent: convo.economicIntent },
+                  },
+                );
+                objectiveEventId = obj.id;
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      objectiveEventId = null;
+    }
+
+    res.json({
+      conversation: convo,
+      relationship: relUpdate.relationship,
+      statusChanged: relUpdate.statusChanged,
+      economicEffect,
+      economicIntent: convo.economicIntent,
+      chatEventId: chatEvent.id,
+      relationshipEventId,
+      objectiveEventId,
+    });
   } catch (error: any) {
     const msg = String(error?.message || 'Unknown error');
     // Make cooldown errors non-fatal.
@@ -442,6 +738,60 @@ router.get('/agent/:id/relationships', async (req: Request, res: Response): Prom
     const agentId = req.params.id;
     const result = await socialGraphService.listRelationships(agentId);
     res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Batch endpoint: all non-neutral relationships in a town (for frontend navigation)
+router.get('/town/:id/relationships', async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const rels = await prisma.agentRelationship.findMany({
+      where: { status: { not: 'NEUTRAL' } },
+      select: { agentAId: true, agentBId: true, status: true, score: true },
+      take: 100,
+    });
+    res.json({ relationships: rels });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get('/town/:id/goals', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const town = await townService.getTown(req.params.id);
+    if (!town) {
+      res.status(404).json({ error: 'Town not found' });
+      return;
+    }
+
+    const agents = await prisma.arenaAgent.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true, archetype: true },
+    });
+
+    const townLite = {
+      id: town.id,
+      level: town.level,
+      theme: town.theme,
+      plots: town.plots.map((p) => ({
+        id: p.id,
+        plotIndex: p.plotIndex,
+        zone: p.zone,
+        status: p.status,
+        ownerId: p.ownerId,
+        builderId: p.builderId,
+        buildingType: p.buildingType,
+        apiCallsUsed: p.apiCallsUsed,
+      })),
+    };
+
+    const goals = agentGoalService.computeGoalsForTown({
+      town: townLite as any,
+      agents: agents.map((a) => ({ id: a.id, name: a.name, archetype: a.archetype })) as any,
+    });
+
+    res.json({ townId: town.id, goals });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

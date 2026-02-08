@@ -4,7 +4,7 @@
  * Each agent runs a decision loop:
  *   1. Observe world state (town, plots, balance, other agents)
  *   2. Reason about what to do (LLM inference)
- *   3. Execute chosen action (claim, build, mine, play, socialize)
+ *   3. Execute chosen action (claim, build, mine, play)
  *   4. Log everything (proof of inference + narrative events)
  *
  * The "work" IS the inference. Every LLM call is tracked as proof of inference.
@@ -16,6 +16,52 @@ import { townService } from './townService';
 import { smartAiService, AICost } from './smartAiService';
 import { offchainAmmService } from './offchainAmmService';
 import { x402SkillService, estimateSkillPriceArena, type BuySkillRequest, type X402SkillName } from './x402SkillService';
+import { socialGraphService } from './socialGraphService';
+import { agentGoalService, type AgentGoalView } from './agentGoalService';
+
+function safeTrim(s: unknown, maxLen: number): string {
+  return String(s ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen);
+}
+
+type LiveObjective =
+  | {
+      objectiveId: string;
+      objectiveType: 'RACE_CLAIM';
+      participants: string[];
+      plotIndex: number;
+      zone: string;
+      stakeArena: number;
+      expiresAtMs: number;
+    }
+  | {
+      objectiveId: string;
+      objectiveType: 'PACT_CLAIM';
+      participants: string[];
+      assignments: Record<string, number>;
+      zone: string;
+      expiresAtMs: number;
+    };
+
+function safeParseJsonObject(raw: unknown): Record<string, any> | null {
+  if (typeof raw !== 'string') return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, any>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function formatTimeLeft(ms: number): string {
+  const sec = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (m <= 0) return `${s}s`;
+  return `${m}m ${s}s`;
+}
 
 // ============================================
 // Agent Personality Templates
@@ -73,7 +119,7 @@ const DEFAULT_DESIGN_STEPS = SUGGESTED_STEPS;
 // ============================================
 
 export interface AgentAction {
-  type: 'buy_arena' | 'sell_arena' | 'claim_plot' | 'start_build' | 'do_work' | 'complete_build' | 'mine' | 'play_arena' | 'buy_skill' | 'socialize' | 'rest';
+  type: 'buy_arena' | 'sell_arena' | 'claim_plot' | 'start_build' | 'do_work' | 'complete_build' | 'mine' | 'play_arena' | 'buy_skill' | 'rest';
   reasoning: string;
   details: Record<string, any>;
 }
@@ -97,6 +143,11 @@ interface WorldObservation {
   myContributions: any;
   availablePlots: any[];
   recentEvents: any[];
+  relationships: {
+    maxFriends: number;
+    friends: Array<{ agentId: string; name: string; archetype: string; score: number; since: string | null }>;
+    rivals: Array<{ agentId: string; name: string; archetype: string; score: number; since: string | null }>;
+  } | null;
   recentSkills: Array<{ description: string; output: string; createdAt: Date }>;
   otherAgents: any[];
   worldStats: any;
@@ -115,8 +166,10 @@ interface WorldObservation {
 export class AgentLoopService {
   private running: boolean = false;
   private tickInterval: NodeJS.Timeout | null = null;
+  private tickInFlight: boolean = false;
   private currentTick: number = 0;
   public onTickResult?: (result: AgentTickResult) => void; // Hook for broadcasting
+  private lastTradeTickByAgentId: Map<string, number> = new Map();
 
   // ============================================
   // Lifecycle
@@ -126,9 +179,11 @@ export class AgentLoopService {
     if (this.running) return;
     this.running = true;
     console.log(`🤖 Agent loop started (tick every ${intervalMs / 1000}s)`);
-    this.tickInterval = setInterval(() => this.tick(), intervalMs);
+    this.tickInterval = setInterval(() => {
+      void this.tick().catch((err) => console.error('[AgentLoop] Tick failed:', err?.message || err));
+    }, intervalMs);
     // Run first tick immediately
-    this.tick();
+    void this.tick().catch((err) => console.error('[AgentLoop] Tick failed:', err?.message || err));
   }
 
   stop() {
@@ -142,44 +197,52 @@ export class AgentLoopService {
 
   // Process one agent tick (called by interval OR manually)
   async tick(): Promise<AgentTickResult[]> {
-    this.currentTick++;
-    const agents = await prisma.arenaAgent.findMany({
-      where: { isActive: true },
-      orderBy: { lastActiveAt: 'asc' }, // Oldest first (round-robin fairness)
-    });
+    if (!this.running) return [];
+    if (this.tickInFlight) return [];
+    this.tickInFlight = true;
 
-    if (agents.length === 0) return [];
+    try {
+      this.currentTick++;
+      const agents = await prisma.arenaAgent.findMany({
+        where: { isActive: true },
+        orderBy: { lastActiveAt: 'asc' }, // Oldest first (round-robin fairness)
+      });
 
-    const results: AgentTickResult[] = [];
-    for (const agent of agents) {
-      try {
-        const result = await this.processAgentTick(agent);
-        results.push(result);
-        // Broadcast to listeners (e.g. Telegram)
-        if (this.onTickResult) {
-          try { this.onTickResult(result); } catch {}
+      if (agents.length === 0) return [];
+
+      const results: AgentTickResult[] = [];
+      for (const agent of agents) {
+        try {
+          const result = await this.processAgentTick(agent);
+          results.push(result);
+          // Broadcast to listeners (e.g. Telegram)
+          if (this.onTickResult) {
+            try { this.onTickResult(result); } catch {}
+          }
+          // Update last active
+          await prisma.arenaAgent.update({
+            where: { id: agent.id },
+            data: { lastActiveAt: new Date() },
+          });
+        } catch (err: any) {
+          console.error(`[AgentLoop] Error for ${agent.name}:`, err.message);
+          results.push({
+            agentId: agent.id,
+            agentName: agent.name,
+            archetype: agent.archetype,
+            action: { type: 'rest', reasoning: 'Error occurred', details: {} },
+            success: false,
+            narrative: `${agent.name} encountered an error and is resting.`,
+            cost: null,
+            error: err.message,
+          });
         }
-        // Update last active
-        await prisma.arenaAgent.update({
-          where: { id: agent.id },
-          data: { lastActiveAt: new Date() },
-        });
-      } catch (err: any) {
-        console.error(`[AgentLoop] Error for ${agent.name}:`, err.message);
-        results.push({
-          agentId: agent.id,
-          agentName: agent.name,
-          archetype: agent.archetype,
-          action: { type: 'rest', reasoning: 'Error occurred', details: {} },
-          success: false,
-          narrative: `${agent.name} encountered an error and is resting.`,
-          cost: null,
-          error: err.message,
-        });
       }
-    }
 
-    return results;
+      return results;
+    } finally {
+      this.tickInFlight = false;
+    }
   }
 
   // Process a single agent manually
@@ -240,6 +303,7 @@ export class AgentLoopService {
         town: null, myPlots: [], myBalance: agent.bankroll,
         myReserve: agent.reserveBalance,
         myContributions: null, availablePlots: [], recentEvents: [],
+        relationships: null,
         recentSkills: [],
         otherAgents: [], worldStats: await townService.getWorldStats(),
         economy: economy ? {
@@ -251,10 +315,10 @@ export class AgentLoopService {
       };
     }
 
-    const [myPlots, availablePlots, recentEventsRaw, recentSkills, otherAgents, contributions] = await Promise.all([
+    const [myPlots, availablePlots, recentEventsRaw, recentSkills, otherAgents, contributions, relationships] = await Promise.all([
       townService.getAgentPlots(agent.id),
       townService.getAvailablePlots(town.id),
-      townService.getRecentEvents(town.id, 10),
+      townService.getRecentEvents(town.id, 25),
       prisma.workLog.findMany({
         where: { agentId: agent.id, workType: 'SERVICE', description: { startsWith: 'X402:' } },
         orderBy: { createdAt: 'desc' },
@@ -268,13 +332,14 @@ export class AgentLoopService {
       prisma.townContribution.findUnique({
         where: { agentId_townId: { agentId: agent.id, townId: town.id } },
       }),
+      socialGraphService.listRelationships(agent.id).catch(() => null),
     ]);
 
     // Private spectator features (x402 purchases, chats, relationship changes) should not leak to other agents.
     const recentEvents = recentEventsRaw.filter((e) => {
       try {
         const meta = JSON.parse(e.metadata || '{}') as any;
-        return !['X402_SKILL', 'AGENT_CHAT', 'RELATIONSHIP_CHANGE'].includes(String(meta?.kind || ''));
+        return !['X402_SKILL', 'AGENT_CHAT', 'RELATIONSHIP_CHANGE', 'AGENT_TRADE'].includes(String(meta?.kind || ''));
       } catch {
         return true;
       }
@@ -288,6 +353,7 @@ export class AgentLoopService {
       myContributions: contributions,
       availablePlots,
       recentEvents,
+      relationships,
       recentSkills,
       otherAgents,
       worldStats: await townService.getWorldStats(),
@@ -307,15 +373,37 @@ export class AgentLoopService {
   private async decide(agent: ArenaAgent, obs: WorldObservation): Promise<{ action: AgentAction; cost: AICost }> {
     const personality = TOWN_PERSONALITIES[agent.archetype] || TOWN_PERSONALITIES.CHAMELEON;
 
+    const goalView: AgentGoalView | null = obs.town
+      ? agentGoalService.computeGoalForAgent({
+          agent: { id: agent.id, name: agent.name, archetype: agent.archetype },
+          town: {
+            id: obs.town.id,
+            level: obs.town.level,
+            theme: obs.town.theme,
+            plots: Array.isArray((obs.town as any).plots) ? (obs.town as any).plots : [],
+          },
+          myPlots: Array.isArray(obs.myPlots) ? (obs.myPlots as any) : [],
+          availablePlots: Array.isArray(obs.availablePlots) ? (obs.availablePlots as any) : [],
+        } as any)
+      : null;
+
     const systemPrompt = `You are ${agent.name}, an AI agent living in a virtual town.
 ${personality}
 ${agent.systemPrompt ? `\nYour creator's instructions: ${agent.systemPrompt}` : ''}
 
 You are participating in a town-building economy.
 
-CURRENCIES:
-- $ARENA: "fuel" token used for claiming plots, starting builds, and arena wagers.
-- Reserve: stable cash. You can swap Reserve <-> $ARENA via the in-town AMM.
+	CURRENCIES:
+	- $ARENA: "fuel" token used for claiming plots, starting builds, and arena wagers.
+	- Reserve: stable cash. You can swap Reserve <-> $ARENA via the in-town AMM.
+	
+	TRADING RULES:
+	- buy_arena / sell_arena are SUPPORT actions to fund in-town moves, not the main gameplay loop.
+	- Auto-topup exists: if you choose a spend action (claim_plot/start_build/buy_skill) and are short, the system will buy fuel automatically.
+	- Therefore you should RARELY choose buy_arena directly. Prefer the actual in-town action you want to do.
+	- Only trade if you have a specific near-term use-case (e.g. claim/build/wager) or you are explicitly de-risking.
+	- If you trade, you MUST explain why and what you'll do next with the funds (details.why + details.nextAction).
+	- Avoid rapid back-and-forth trades.
 
 WAYS TO EARN (high level):
 - Town-building yield: contributing (spending $ARENA + doing inference work) earns a share of the town's yield when it completes.
@@ -326,9 +414,9 @@ You can build ANYTHING — there is no fixed list of building types. But if you 
 HOUSE, APARTMENT, SHOP, MARKET, TAVERN, WORKSHOP, FARM, MINE, LIBRARY, TOWN_HALL, ARENA, THEATER, PARK.
 You may invent new concepts (e.g., "Oracle Spire", "Dragon Hatchery", "Noodle Stand") as long as they fit the zone.
 
-SKILLS / ACTIONS (choose exactly one each tick):
-- buy_arena: swap reserve -> $ARENA (details: amountIn, optional minAmountOut, why)
-- sell_arena: swap $ARENA -> reserve (details: amountIn, optional minAmountOut, why)
+	SKILLS / ACTIONS (choose exactly one each tick):
+	- buy_arena: swap reserve -> $ARENA (details: amountIn, optional minAmountOut, why, nextAction)
+	- sell_arena: swap $ARENA -> reserve (details: amountIn, optional minAmountOut, why, nextAction)
 - claim_plot: claim an empty plot (details: plotIndex, why)
 - start_build: begin construction on a claimed plot you own (details: plotId or plotIndex, buildingType, why)
 - do_work: progress an under-construction building (details: plotId or plotIndex, stepDescription)
@@ -346,11 +434,11 @@ RESPOND WITH JSON ONLY:
 {
   "type": "buy_arena | sell_arena | claim_plot | start_build | do_work | complete_build | mine | play_arena | buy_skill | rest",
   "reasoning": "<your thinking — be in character, show personality>",
-  "details": {
-    // For buy_arena: {"amountIn": <reserve>, "minAmountOut": <arena_out_optional>, "why": "<reason>"}
-    // For sell_arena: {"amountIn": <arena>, "minAmountOut": <reserve_out_optional>, "why": "<reason>"}
-    // For claim_plot: {"plotIndex": <number>, "why": "<reason>"}
-    // For start_build: {"plotId": "<id>", "buildingType": "<your creative building concept>", "why": "<reason>"}
+	  "details": {
+	    // For buy_arena: {"amountIn": <reserve>, "minAmountOut": <arena_out_optional>, "why": "<reason>", "nextAction": "<what you'll do next>"}
+	    // For sell_arena: {"amountIn": <arena>, "minAmountOut": <reserve_out_optional>, "why": "<reason>", "nextAction": "<what you'll do next>"}
+	    // For claim_plot: {"plotIndex": <number>, "why": "<reason>"}
+	    // For start_build: {"plotId": "<id>", "buildingType": "<your creative building concept>", "why": "<reason>"}
     // For do_work: {"plotId": "<id>", "stepDescription": "<what aspect to design next — be specific>"}
     // For complete_build: {"plotId": "<id>"}
     // For mine: {"task": "<what computational work to do>"}
@@ -367,7 +455,8 @@ RESPOND WITH JSON ONLY:
   }
 }`;
 
-    const worldState = this.formatWorldState(obs);
+    const liveObjective = obs.town ? this.extractLiveObjective(agent.id, obs) : null;
+    const worldState = this.formatWorldState(agent, obs, goalView, liveObjective);
 
     const messages = [
       { role: 'system', content: systemPrompt },
@@ -401,23 +490,33 @@ RESPOND WITH JSON ONLY:
       };
     }
 
-    // ── Auto-liquidity: if agent is low on $ARENA but has reserve, buy fuel. ──
-    if (obs.economy && obs.myBalance < 50 && obs.myReserve >= 100 && !['buy_arena'].includes(action.type)) {
-      const spend = Math.min(1000, obs.myReserve);
-      action = {
-        type: 'buy_arena',
-        reasoning: `[AUTO] Low on $ARENA. Buying fuel at ~${obs.economy.spotPrice.toFixed(3)} reserve/ARENA`,
-        details: { amountIn: spend, why: 'Need $ARENA to claim/build/wager' },
-      };
+    // ── Anti-overtrade: discourage buy/sell unless there is a concrete plan. ──
+    // Note: we also have an automatic "top-up" mechanism later for funding spend actions.
+    const isTradeAction = action.type === 'buy_arena' || action.type === 'sell_arena';
+    if (isTradeAction) {
+      const lastTradeTick = this.lastTradeTickByAgentId.get(agent.id) ?? -1_000_000;
+      const tooSoon = this.currentTick - lastTradeTick < 3; // ~90s at default 30s ticks
+      const why = String((action.details as any)?.why || '').trim();
+      const nextAction = String((action.details as any)?.nextAction || (action.details as any)?.next_action || '').trim();
+
+      if (tooSoon || (!why && !nextAction)) {
+        action = {
+          type: 'rest',
+          reasoning: `[AUTO] Skipping overtrade — focus on town actions.`,
+          details: { thought: `No clear use-case for ${action.type}.` },
+        };
+      }
     }
 
     // ── Anti-stall: if agent would "rest" while the town has available plots and they own none, claim something. ──
     if (obs.town && action.type === 'rest' && obs.myPlots.length === 0 && obs.availablePlots.length > 0) {
-      const pick = obs.availablePlots[Math.floor(Math.random() * obs.availablePlots.length)];
+      const suggested = goalView?.suggest?.claimPlotIndex;
+      const preferred = suggested != null ? obs.availablePlots.find((p: any) => p.plotIndex === suggested) : null;
+      const pick = preferred || obs.availablePlots[Math.floor(Math.random() * obs.availablePlots.length)];
       action = {
         type: 'claim_plot',
         reasoning: `[AUTO] No plots yet. Claiming a plot to get started.`,
-        details: { plotIndex: pick.plotIndex, why: 'Need a foothold in town' },
+        details: { plotIndex: pick.plotIndex, why: goalView ? `Goal: ${goalView.goalTitle}` : 'Need a foothold in town' },
       };
     }
 
@@ -425,6 +524,27 @@ RESPOND WITH JSON ONLY:
     if (obs.town) {
       const myUC = obs.myPlots.filter(p => p.status === 'UNDER_CONSTRUCTION');
       const myClaimed = obs.myPlots.filter(p => p.status === 'CLAIMED');
+
+      const objectivePlotIndex =
+        liveObjective?.objectiveType === 'RACE_CLAIM'
+          ? liveObjective.plotIndex
+          : liveObjective?.objectiveType === 'PACT_CLAIM'
+            ? liveObjective.assignments[agent.id]
+            : null;
+
+      const objectivePlot =
+        objectivePlotIndex != null
+          ? obs.availablePlots.find((p) => p.plotIndex === objectivePlotIndex) || null
+          : null;
+
+      const claimCost = 10 + Math.max(0, (obs.town.level - 1)) * 5;
+      const canFundObjectiveClaim = obs.myBalance >= claimCost || (!!obs.economy && obs.myReserve > 0);
+
+      const isObjectiveClaim =
+        !!objectivePlot &&
+        action.type === 'claim_plot' &&
+        Number.isFinite(Number(action.details?.plotIndex)) &&
+        Number(action.details.plotIndex) === objectivePlotIndex;
 
       // Priority 1: complete builds that have enough work
       // Must match townService.completeBuild() logic: zone-based minimums
@@ -439,8 +559,23 @@ RESPOND WITH JSON ONLY:
         const plot = readyToComplete[0];
         action = { type: 'complete_build', reasoning: `[AUTO] Completing finished build on plot ${plot.plotIndex}`, details: { plotId: plot.id, plotIndex: plot.plotIndex } };
       }
+      // Priority 1.5: time-bounded objective plot claims (creates stakes + follow-up action)
+      else if (objectivePlot && canFundObjectiveClaim && !isObjectiveClaim && action.type !== 'complete_build') {
+        const otherId = liveObjective?.participants?.find((p) => p !== agent.id) || '';
+        const otherName = safeTrim(obs.otherAgents.find((a) => a.id === otherId)?.name || otherId.slice(0, 6), 24) || 'someone';
+        const why =
+          liveObjective?.objectiveType === 'RACE_CLAIM'
+            ? `Objective race vs ${otherName} — claim before the deadline.`
+            : `Objective pact with ${otherName} — claim your assigned plot before the deadline.`;
+
+        action = {
+          type: 'claim_plot',
+          reasoning: `[AUTO] Live objective — claim plot ${objectivePlot.plotIndex} (${objectivePlot.zone})`,
+          details: { plotIndex: objectivePlot.plotIndex, why },
+        };
+      }
       // Priority 2: do_work on under-construction plots
-      else if (myUC.length > 0 && !['do_work', 'complete_build'].includes(action.type)) {
+      else if (myUC.length > 0 && !isObjectiveClaim && !['do_work', 'complete_build'].includes(action.type)) {
         // Allow a paid BlueprintIndex purchase occasionally; everything else should keep building moving.
         const isBlueprintSkill =
           action.type === 'buy_skill' && String(action.details.skill || '').toUpperCase().trim() === 'BLUEPRINT_INDEX';
@@ -452,21 +587,26 @@ RESPOND WITH JSON ONLY:
         }
       }
       // Priority 3: start_build on claimed-but-unstarted plots
-      else if (myClaimed.length > 0 && !['start_build', 'do_work', 'complete_build'].includes(action.type)) {
+      else if (myClaimed.length > 0 && !isObjectiveClaim && !['start_build', 'do_work', 'complete_build'].includes(action.type)) {
         const isBlueprintSkill =
           action.type === 'buy_skill' && String(action.details.skill || '').toUpperCase().trim() === 'BLUEPRINT_INDEX';
         if (!isBlueprintSkill) {
-          const plot = myClaimed[0];
-          // Pick a building type appropriate for the zone
-          const zoneTypes: Record<string, string> = { RESIDENTIAL: 'HOUSE', COMMERCIAL: 'SHOP', CIVIC: 'LIBRARY', INDUSTRIAL: 'WORKSHOP', ENTERTAINMENT: 'THEATER' };
-          const bt = zoneTypes[plot.zone] || 'HOUSE';
+          const preferred = goalView?.focusZone ? myClaimed.find((p) => p.zone === goalView.focusZone) : null;
+          const plot = preferred || myClaimed[0];
+          const bt = agentGoalService.pickBuildingType({
+            agentId: agent.id,
+            archetype: agent.archetype,
+            townId: obs.town.id,
+            zone: plot.zone,
+            plotIndex: plot.plotIndex,
+          });
           action = { type: 'start_build', reasoning: `[AUTO] Starting build on claimed plot ${plot.plotIndex}`, details: { plotId: plot.id, plotIndex: plot.plotIndex, buildingType: bt, why: 'Must build on claimed plot' } };
         }
       }
     }
 
     // ── Pre-flight funding: if we are about to spend $ARENA but are short, buy fuel first. ──
-    if (obs.town && obs.economy && obs.myReserve >= 100 && action.type !== 'buy_arena') {
+    if (obs.town && obs.economy && obs.myReserve > 0 && action.type !== 'buy_arena') {
       const plannedActionType = action.type;
       let requiredArena: number | null = null;
 
@@ -528,11 +668,22 @@ RESPOND WITH JSON ONLY:
       if (requiredArena != null && obs.myBalance < requiredArena) {
         const deficit = requiredArena - obs.myBalance;
         const estimatedReserve = Math.ceil(deficit * obs.economy.spotPrice * 1.15);
-        const spend = Math.min(obs.myReserve, Math.max(100, Math.min(5000, estimatedReserve)));
+        const minSpend = 25; // avoid tiny swaps rounding to 0 output on large pools
+        const spend = Math.min(obs.myReserve, Math.max(minSpend, Math.min(2000, estimatedReserve)));
+
+        // Don't burn the whole tick on a standalone trade action. Instead, attach an auto top-up
+        // and continue with the original intended action.
         action = {
-          type: 'buy_arena',
-          reasoning: `[AUTO] Need ${requiredArena} $ARENA for ${plannedActionType}. Buying fuel first.`,
-          details: { amountIn: spend, why: `Top up for ${plannedActionType}` },
+          ...action,
+          details: {
+            ...action.details,
+            _autoTopUp: {
+              side: 'BUY_ARENA',
+              amountIn: spend,
+              nextAction: plannedActionType,
+              why: `Top up fuel for ${plannedActionType} (need ${requiredArena}, have ${obs.myBalance})`,
+            },
+          },
         };
       }
     }
@@ -556,7 +707,69 @@ RESPOND WITH JSON ONLY:
     return { action, cost };
   }
 
-  private formatWorldState(obs: WorldObservation): string {
+  private extractLiveObjective(agentId: string, obs: WorldObservation): LiveObjective | null {
+    const now = Date.now();
+    const resolvedIds = new Set<string>();
+
+    for (const e of obs.recentEvents || []) {
+      const meta = safeParseJsonObject((e as any)?.metadata);
+      if (!meta) continue;
+      if (String(meta.kind || '') !== 'TOWN_OBJECTIVE_RESOLVED') continue;
+      const objectiveId = typeof meta.objectiveId === 'string' ? meta.objectiveId : '';
+      if (objectiveId) resolvedIds.add(objectiveId);
+    }
+
+    for (const e of obs.recentEvents || []) {
+      const meta = safeParseJsonObject((e as any)?.metadata);
+      if (!meta) continue;
+      if (String(meta.kind || '') !== 'TOWN_OBJECTIVE') continue;
+
+      const objectiveId = typeof (e as any)?.id === 'string' ? String((e as any).id) : '';
+      if (!objectiveId || resolvedIds.has(objectiveId)) continue;
+
+      const participants = Array.isArray(meta.participants)
+        ? meta.participants.filter((p: any): p is string => typeof p === 'string')
+        : [];
+      if (!participants.includes(agentId)) continue;
+
+      const expiresAtMs = Number(meta.expiresAtMs || 0);
+      if (!Number.isFinite(expiresAtMs) || expiresAtMs <= now) continue;
+
+      const objectiveType = String(meta.objectiveType || '').toUpperCase();
+      if (objectiveType === 'RACE_CLAIM') {
+        const plotIndexRaw = Number(meta.plotIndex);
+        if (!Number.isFinite(plotIndexRaw)) continue;
+        const plotIndex = Math.trunc(plotIndexRaw);
+        const stakeRaw = Number(meta.stakeArena || 0);
+        const stakeArena = Number.isFinite(stakeRaw) ? Math.max(0, Math.min(50, Math.trunc(stakeRaw))) : 0;
+        const zone = safeTrim(meta.zone, 24).toUpperCase() || 'UNKNOWN';
+        return { objectiveId, objectiveType: 'RACE_CLAIM', participants, plotIndex, zone, stakeArena, expiresAtMs };
+      }
+
+      if (objectiveType === 'PACT_CLAIM') {
+        const zone = safeTrim(meta.zone, 24).toUpperCase() || 'UNKNOWN';
+        const rawAssignments = meta.assignments;
+        const assignmentsObj =
+          rawAssignments && typeof rawAssignments === 'object'
+            ? (rawAssignments as Record<string, unknown>)
+            : null;
+        if (!assignmentsObj) continue;
+
+        const assignments: Record<string, number> = {};
+        for (const [aid, idx] of Object.entries(assignmentsObj)) {
+          const n = Number(idx);
+          if (aid && Number.isFinite(n)) assignments[aid] = Math.trunc(n);
+        }
+
+        if (assignments[agentId] == null) continue;
+        return { objectiveId, objectiveType: 'PACT_CLAIM', participants, assignments, zone, expiresAtMs };
+      }
+    }
+
+    return null;
+  }
+
+  private formatWorldState(agent: ArenaAgent, obs: WorldObservation, goalView?: AgentGoalView | null, liveObjective?: LiveObjective | null): string {
     if (!obs.town) {
       return `No active town exists. You should rest and wait for a new town to be founded.
 Your balances:
@@ -590,6 +803,52 @@ ${obs.economy ? `\nEconomy: 1 $ARENA ≈ ${obs.economy.spotPrice.toFixed(4)} res
     const othersDesc = obs.otherAgents
       .map(a => `  - ${a.name} (${a.archetype}) — ${a.bankroll} $ARENA, ${a.reserveBalance} reserve, ELO ${a.elo}`)
       .join('\n');
+
+    const friendsDesc = obs.relationships?.friends?.slice(0, 2).map((f) => `${f.name} (${f.archetype}, score ${f.score})`).join(', ') || 'none';
+    const rivalsDesc = obs.relationships?.rivals?.slice(0, 2).map((r) => `${r.name} (${r.archetype}, score ${r.score})`).join(', ') || 'none';
+
+    const g = goalView || null;
+    const goalBlock = g
+      ? `\n🎯 GOAL (this town):\n` +
+        `  - ${safeTrim(g.goalTitle, 80)}\n` +
+        `  - Progress: ${safeTrim(g.progress.label, 80)}\n` +
+        `  - Next: ${safeTrim(g.next.detail, 120)}\n`
+      : '';
+
+    const obj = liveObjective || null;
+    const objectiveBlock = (() => {
+      if (!obj) return '';
+      const left = formatTimeLeft(obj.expiresAtMs - Date.now());
+      const otherId = obj.participants.find((p) => p !== agent.id) || '';
+      const other = otherId ? obs.otherAgents.find((a) => a.id === otherId) : null;
+      const otherName = other?.name || (otherId ? otherId.slice(0, 6) : 'someone');
+
+      if (obj.objectiveType === 'RACE_CLAIM') {
+        const targetOk = obs.availablePlots.some((p) => p.plotIndex === obj.plotIndex);
+        return (
+          `\n🔥 LIVE OBJECTIVE (expires in ${left}):\n` +
+          `  - RACE: claim plot ${obj.plotIndex} (${obj.zone}) vs ${otherName}\n` +
+          `${obj.stakeArena > 0 ? `  - Stakes: winner takes ${obj.stakeArena} $ARENA from loser (if they have it)\n` : ''}` +
+          `${targetOk ? '' : `  - Note: if plot ${obj.plotIndex} is already claimed, ignore this objective.\n`}`
+        );
+      }
+
+      const myPlot = Number(obj.assignments[agent.id]);
+      const otherPlot = otherId ? Number(obj.assignments[otherId]) : Number.NaN;
+      const myStatus = Number.isFinite(myPlot)
+        ? obs.myPlots.some((p) => p.plotIndex === myPlot)
+          ? 'CLAIMED'
+          : obs.availablePlots.some((p) => p.plotIndex === myPlot)
+            ? 'EMPTY'
+            : 'TAKEN'
+        : 'UNKNOWN';
+
+      return (
+        `\n🔥 LIVE OBJECTIVE (expires in ${left}):\n` +
+        `  - PACT: you claim plot ${Number.isFinite(myPlot) ? myPlot : '?'} (${obj.zone}) — status ${myStatus}\n` +
+        `${Number.isFinite(otherPlot) ? `  - Partner ${otherName} claims plot ${otherPlot}\n` : `  - Partner ${otherName} has an assigned plot\n`}`
+      );
+    })();
 
     // Check for claimed plots that need start_build
     const myClaimed = obs.myPlots.filter(p => p.status === 'CLAIMED');
@@ -631,11 +890,16 @@ Status: ${obs.town.status}
 💰 YOUR STATUS:
 Balance: ${obs.myBalance} $ARENA
 Reserve: ${obs.myReserve}
-${obs.myContributions ? `Contributed: ${obs.myContributions.arenaSpent} $ARENA, ${obs.myContributions.apiCallsMade} work units, ${obs.myContributions.plotsBuilt} buildings` : 'No contributions yet.'}
-${obs.economy ? `\n💱 ECONOMY:\nSpot price: 1 $ARENA ≈ ${obs.economy.spotPrice.toFixed(4)} reserve (fee ${obs.economy.feeBps / 100}%)\nYou can buy/sell $ARENA using: buy_arena / sell_arena` : ''}
+	${obs.myContributions ? `Contributed: ${obs.myContributions.arenaSpent} $ARENA, ${obs.myContributions.apiCallsMade} work units, ${obs.myContributions.plotsBuilt} buildings` : 'No contributions yet.'}
+	${obs.economy ? `\n💱 ECONOMY:\nSpot price: 1 $ARENA ≈ ${obs.economy.spotPrice.toFixed(4)} reserve (fee ${obs.economy.feeBps / 100}%)\nTrade sparingly: buy_arena / sell_arena are mostly for funding specific actions.` : ''}
 
 💳 YOUR RECENT PAID SKILLS (X402):
 ${skillsDesc}
+
+🤝 RELATIONSHIPS:
+Friends: ${friendsDesc}
+Rivals: ${rivalsDesc}
+${goalBlock}${objectiveBlock}
 
 🏗️ YOUR PLOTS:
 ${myPlotsDesc}${claimedNote}${constructionNote}${completeNote}
@@ -671,15 +935,78 @@ What do you want to do?`;
     obs: WorldObservation,
   ): Promise<{ success: boolean; narrative: string; error?: string }> {
     try {
+      // If the agent is about to spend $ARENA but is short, we may have attached an automatic top-up.
+      // Execute it here so the visible action remains the in-world action (claim/build/etc), not "buy_arena".
+      let autoTopUpNarrative = '';
+      const autoTopUp = (action.details as any)?._autoTopUp;
+      if (autoTopUp && obs.economy) {
+        const side = String(autoTopUp.side || '').toUpperCase();
+        if (side === 'BUY_ARENA') {
+          const amountIn = Number.parseInt(String(autoTopUp.amountIn || '0'), 10);
+          const minAmountOut =
+            autoTopUp.minAmountOut != null ? Number.parseInt(String(autoTopUp.minAmountOut), 10) : undefined;
+
+          if (Number.isFinite(amountIn) && amountIn > 0) {
+            const swapRes = await offchainAmmService.swap(agent.id, 'BUY_ARENA', amountIn, { minAmountOut });
+            const price = swapRes.swap.amountOut > 0 ? swapRes.swap.amountIn / swapRes.swap.amountOut : null;
+            const why = String(autoTopUp.why || '').replace(/\s+/g, ' ').trim();
+            const nextAction = safeTrim(autoTopUp.nextAction, 32);
+
+            autoTopUpNarrative =
+              `Auto-topup: bought ${swapRes.swap.amountOut} $ARENA for ${swapRes.swap.amountIn} reserve (fee ${swapRes.swap.feeAmount}).` +
+              `${price ? ` ~${price.toFixed(3)} reserve/ARENA.` : ''}` +
+              `${why ? ` Purpose: ${why}` : ''}`;
+
+            if (obs.town) {
+              try {
+                await townService.logEvent(
+                  obs.town.id,
+                  'TRADE',
+                  `💱 ${agent.name} fueled up`,
+                  `${agent.name} bought ${swapRes.swap.amountOut} $ARENA for ${swapRes.swap.amountIn} reserve.` +
+                    `${why ? ` ${safeTrim(why, 180)}` : ''}` +
+                    `${nextAction ? ` Next: ${nextAction}.` : ''}`,
+                  agent.id,
+                  {
+                    kind: 'AGENT_TRADE',
+                    source: 'AUTO_TOPUP',
+                    swapId: swapRes.swap.id,
+                    side: swapRes.swap.side,
+                    amountIn: swapRes.swap.amountIn,
+                    amountOut: swapRes.swap.amountOut,
+                    feeAmount: swapRes.swap.feeAmount,
+                    amountArena: swapRes.swap.amountOut,
+                    purpose: safeTrim(why, 180),
+                    nextAction: nextAction || undefined,
+                  },
+                );
+              } catch {
+                // non-fatal
+              }
+            }
+
+            this.lastTradeTickByAgentId.set(agent.id, this.currentTick);
+          }
+        }
+      }
+
       switch (action.type) {
         case 'buy_arena':
           return await this.executeBuyArena(agent, action, obs);
         case 'sell_arena':
           return await this.executeSellArena(agent, action, obs);
         case 'claim_plot':
-          return await this.executeClaim(agent, action, obs);
+          {
+            const res = await this.executeClaim(agent, action, obs);
+            if (autoTopUpNarrative) res.narrative = `${autoTopUpNarrative} ${res.narrative}`;
+            return res;
+          }
         case 'start_build':
-          return await this.executeStartBuild(agent, action, obs);
+          {
+            const res = await this.executeStartBuild(agent, action, obs);
+            if (autoTopUpNarrative) res.narrative = `${autoTopUpNarrative} ${res.narrative}`;
+            return res;
+          }
         case 'do_work':
           return await this.executeDoWork(agent, action, obs);
         case 'complete_build':
@@ -689,7 +1016,11 @@ What do you want to do?`;
         case 'play_arena':
           return await this.executePlayArena(agent, action);
         case 'buy_skill':
-          return await this.executeBuySkill(agent, action, obs);
+          {
+            const res = await this.executeBuySkill(agent, action, obs);
+            if (autoTopUpNarrative) res.narrative = `${autoTopUpNarrative} ${res.narrative}`;
+            return res;
+          }
         case 'rest':
           return {
             success: true,
@@ -715,7 +1046,7 @@ What do you want to do?`;
     };
   }
 
-  private async executeBuyArena(agent: ArenaAgent, action: AgentAction, _obs: WorldObservation) {
+  private async executeBuyArena(agent: ArenaAgent, action: AgentAction, obs: WorldObservation) {
     const amountIn = Number.parseInt(String(action.details.amountIn || '0'), 10);
     if (!Number.isFinite(amountIn) || amountIn <= 0) throw new Error('No amountIn specified');
     const minAmountOut =
@@ -724,14 +1055,49 @@ What do you want to do?`;
     const result = await offchainAmmService.swap(agent.id, 'BUY_ARENA', amountIn, { minAmountOut });
     const price = result.swap.amountOut > 0 ? result.swap.amountIn / result.swap.amountOut : null;
 
+    this.lastTradeTickByAgentId.set(agent.id, this.currentTick);
+
+    const why = String((action.details as any)?.why || '').replace(/\s+/g, ' ').trim();
+    const nextAction = String((action.details as any)?.nextAction || (action.details as any)?.next_action || '').replace(/\s+/g, ' ').trim();
+
+    if (obs.town) {
+      try {
+        await townService.logEvent(
+          obs.town.id,
+          'TRADE',
+          `💱 ${agent.name} bought fuel`,
+          `${agent.name} bought ${result.swap.amountOut} $ARENA for ${result.swap.amountIn} reserve (fee ${result.swap.feeAmount}).` +
+            `${why ? ` Purpose: ${safeTrim(why, 180)}.` : ''}` +
+            `${nextAction ? ` Next: ${safeTrim(nextAction, 48)}.` : ''}`,
+          agent.id,
+          {
+            kind: 'AGENT_TRADE',
+            source: 'DECISION',
+            swapId: result.swap.id,
+            side: result.swap.side,
+            amountIn: result.swap.amountIn,
+            amountOut: result.swap.amountOut,
+            feeAmount: result.swap.feeAmount,
+            amountArena: result.swap.amountOut,
+            purpose: safeTrim(why, 180),
+            nextAction: safeTrim(nextAction, 48) || undefined,
+          },
+        );
+      } catch {
+        // non-fatal
+      }
+    }
+
     return {
       success: true,
       narrative: `${agent.name} bought ${result.swap.amountOut} $ARENA for ${result.swap.amountIn} reserve (fee ${result.swap.feeAmount}).` +
-        `${price ? ` ~${price.toFixed(3)} reserve/ARENA.` : ''}`,
+        `${price ? ` ~${price.toFixed(3)} reserve/ARENA.` : ''}` +
+        `${why ? ` Purpose: ${why}.` : ''}` +
+        `${nextAction ? ` Next: ${nextAction}.` : ''}`,
     };
   }
 
-  private async executeSellArena(agent: ArenaAgent, action: AgentAction, _obs: WorldObservation) {
+  private async executeSellArena(agent: ArenaAgent, action: AgentAction, obs: WorldObservation) {
     const amountIn = Number.parseInt(String(action.details.amountIn || '0'), 10);
     if (!Number.isFinite(amountIn) || amountIn <= 0) throw new Error('No amountIn specified');
     const minAmountOut =
@@ -740,10 +1106,45 @@ What do you want to do?`;
     const result = await offchainAmmService.swap(agent.id, 'SELL_ARENA', amountIn, { minAmountOut });
     const price = result.swap.amountOut > 0 ? result.swap.amountOut / result.swap.amountIn : null;
 
+    this.lastTradeTickByAgentId.set(agent.id, this.currentTick);
+
+    const why = String((action.details as any)?.why || '').replace(/\s+/g, ' ').trim();
+    const nextAction = String((action.details as any)?.nextAction || (action.details as any)?.next_action || '').replace(/\s+/g, ' ').trim();
+
+    if (obs.town) {
+      try {
+        await townService.logEvent(
+          obs.town.id,
+          'TRADE',
+          `💱 ${agent.name} sold $ARENA`,
+          `${agent.name} sold ${result.swap.amountIn} $ARENA for ${result.swap.amountOut} reserve (fee ${result.swap.feeAmount}).` +
+            `${why ? ` Purpose: ${safeTrim(why, 180)}.` : ''}` +
+            `${nextAction ? ` Next: ${safeTrim(nextAction, 48)}.` : ''}`,
+          agent.id,
+          {
+            kind: 'AGENT_TRADE',
+            source: 'DECISION',
+            swapId: result.swap.id,
+            side: result.swap.side,
+            amountIn: result.swap.amountIn,
+            amountOut: result.swap.amountOut,
+            feeAmount: result.swap.feeAmount,
+            amountArena: result.swap.amountIn,
+            purpose: safeTrim(why, 180),
+            nextAction: safeTrim(nextAction, 48) || undefined,
+          },
+        );
+      } catch {
+        // non-fatal
+      }
+    }
+
     return {
       success: true,
       narrative: `${agent.name} sold ${result.swap.amountIn} $ARENA for ${result.swap.amountOut} reserve (fee ${result.swap.feeAmount}).` +
-        `${price ? ` ~${price.toFixed(3)} reserve/ARENA.` : ''}`,
+        `${price ? ` ~${price.toFixed(3)} reserve/ARENA.` : ''}` +
+        `${why ? ` Purpose: ${why}.` : ''}` +
+        `${nextAction ? ` Next: ${nextAction}.` : ''}`,
     };
   }
 
@@ -1074,7 +1475,6 @@ Be creative, detailed, and in-character for the town's theme. Response should be
       case 'mine': return '⛏️';
       case 'play_arena': return '🎮';
       case 'buy_skill': return '💳';
-      case 'socialize': return '💬';
       case 'rest': return '💤';
       default: return '❓';
     }

@@ -36,9 +36,10 @@ const ARENA_TOKEN = {
 
 interface WalletConnectProps {
   compact?: boolean;
+  onAddressChange?: (address: string | null) => void;
 }
 
-export function WalletConnect({ compact = false }: WalletConnectProps) {
+export function WalletConnect({ compact = false, onAddressChange }: WalletConnectProps) {
   const [address, setAddress] = useState<string | null>(null);
   const [chainId, setChainId] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -137,6 +138,11 @@ export function WalletConnect({ compact = false }: WalletConnectProps) {
     setAddress(null);
     setChainId(null);
   }, []);
+
+  // Notify parent of address changes
+  useEffect(() => {
+    onAddressChange?.(address);
+  }, [address, onAddressChange]);
 
   const isMonad = chainId === MONAD_TESTNET.chainId;
   const shortAddress = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : null;

@@ -1,13 +1,19 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls, Sky, Line } from '@react-three/drei';
+import { Sky, Line } from '@react-three/drei';
 import { Button } from '@ui/button';
-import { Badge } from '@ui/badge';
-import { Card } from '@ui/card';
 import { Loader2, Volume2, VolumeX } from 'lucide-react';
 import { WalletConnect } from '../components/WalletConnect';
 import { playSound, isSoundEnabled, setSoundEnabled } from '../utils/sounds';
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@ui/resizable';
+import { useDegenState } from '../hooks/useDegenState';
+import { DegenDashboard } from '../components/degen/DegenDashboard';
+import { PositionTracker } from '../components/degen/PositionTracker';
+import { SwapTicker } from '../components/degen/SwapTicker';
+import confetti from 'canvas-confetti';
+import { BuildingMesh } from '../components/buildings';
+import { AgentDroid } from '../components/agents/AgentDroid';
 
 const API_BASE = '/api/v1';
 const TOWN_SPACING = 8;
@@ -110,17 +116,20 @@ interface TownEvent {
   createdAt: string;
 }
 
-interface Contributor {
+interface AgentGoalView {
   agentId: string;
   agentName: string;
   archetype: string;
-  arenaSpent: number;
-  plotsBuilt: number;
-  yieldShare: number;
-  totalYieldClaimed: number;
+  goalId: string;
+  goalTitle: string;
+  goalDescription: string;
+  progress: { current: number; target: number; done: boolean; label: string };
+  focusZone?: string;
+  next: { title: string; detail: string };
+  suggest?: { claimPlotIndex?: number; startBuildingType?: string };
 }
 
-type ActivityItem = 
+type ActivityItem =
   | { kind: 'swap'; data: EconomySwapRow }
   | { kind: 'event'; data: TownEvent };
 
@@ -128,6 +137,21 @@ async function apiFetch<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`);
   if (!res.ok) throw new Error(`API error (${res.status}): ${res.statusText}`);
   return res.json() as Promise<T>;
+}
+
+function safeTrim(s: unknown, maxLen: number): string {
+  return String(s ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen);
+}
+
+function formatTimeLeft(ms: number): string {
+  const sec = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (m <= 0) return `${s}s`;
+  return `${m}m ${s}s`;
 }
 
 const ZONE_COLORS: Record<PlotZone, string> = {
@@ -153,6 +177,10 @@ const ARCHETYPE_GLYPH: Record<string, string> = {
   DEGEN: '★',
   GRINDER: '◎',
 };
+
+function easeOutCubic(t: number) {
+  return 1 - Math.pow(1 - t, 3);
+}
 
 function hashToSeed(input: string): number {
   let h = 2166136261;
@@ -237,7 +265,7 @@ function BillboardLabel({
 }) {
   const { texture, width, height } = useMemo(() => drawLabelTexture(text, { fg: color }), [text, color]);
   const aspect = width / height;
-  const worldHeight = 0.8;
+  const worldHeight = 0.35;
   const worldWidth = worldHeight * aspect;
 
   return (
@@ -330,7 +358,7 @@ function StateIndicator({
   const texture = getEmojiTexture(indicator.emoji);
 
   return (
-    <sprite ref={spriteRef} position={[0, 3.3, 0]} scale={[0.6, 0.6, 1]}>
+    <sprite ref={spriteRef} position={[0, 2.6, 0]} scale={[0.28, 0.28, 1]}>
       <spriteMaterial map={texture} transparent opacity={0.95} depthWrite={false} />
     </sprite>
   );
@@ -351,7 +379,7 @@ function EconomicIndicator({
   const texture = getEmojiTexture(indicator.emoji);
 
   return (
-    <sprite position={[0.5, 3.0, 0]} scale={[0.4, 0.4, 1]}>
+    <sprite position={[0.3, 2.5, 0]} scale={[0.18, 0.18, 1]}>
       <spriteMaterial map={texture} transparent opacity={0.85} depthWrite={false} />
     </sprite>
   );
@@ -378,7 +406,7 @@ function HealthBar({
     if (fillRef.current) {
       const pct = Math.max(0, Math.min(1, health / 100));
       fillRef.current.scale.x = pct;
-      fillRef.current.position.x = (pct - 1) * 0.4;
+      fillRef.current.position.x = (pct - 1) * 0.225;
     }
   });
 
@@ -388,46 +416,22 @@ function HealthBar({
   const healthColor = health > 60 ? '#22c55e' : health > 30 ? '#eab308' : '#ef4444';
 
   return (
-    <group ref={groupRef} position={[0, 2.5, 0]}>
+    <group ref={groupRef} position={[0, 2.2, 0]}>
       {/* Background bar */}
       <mesh position={[0, 0, 0]}>
-        <planeGeometry args={[0.9, 0.12]} />
+        <planeGeometry args={[0.5, 0.07]} />
         <meshBasicMaterial color="#1f2937" transparent opacity={0.8} />
       </mesh>
       {/* Health fill */}
       <mesh ref={fillRef} position={[0, 0, 0.01]}>
-        <planeGeometry args={[0.8, 0.08]} />
+        <planeGeometry args={[0.45, 0.05]} />
         <meshBasicMaterial color={healthColor} />
       </mesh>
     </group>
   );
 }
 
-// Progress bar for buildings under construction
-function BuildProgressBar({ progress, position }: { progress: number; position: [number, number, number] }) {
-  const pct = Math.max(0, Math.min(1, progress));
-  
-  return (
-    <group position={position}>
-      {/* Background */}
-      <mesh position={[0, 0, 0]}>
-        <planeGeometry args={[3.5, 0.25]} />
-        <meshBasicMaterial color="#1e293b" transparent opacity={0.9} />
-      </mesh>
-      {/* Fill */}
-      <mesh position={[(pct - 1) * 1.6, 0, 0.01]} scale={[pct, 1, 1]}>
-        <planeGeometry args={[3.2, 0.18]} />
-        <meshBasicMaterial color="#fbbf24" />
-      </mesh>
-      {/* Percentage text sprite */}
-      <BillboardLabel 
-        text={`${Math.round(pct * 100)}%`} 
-        position={[0, 0.4, 0]} 
-        color="#fbbf24" 
-      />
-    </group>
-  );
-}
+// BuildProgressBar moved to ../components/buildings/constructionStages.tsx
 
 // Particle system for effects
 function ParticleEffect({
@@ -553,48 +557,7 @@ function DestinationLine({
   );
 }
 
-// Animated construction crane/scaffolding
-function ConstructionAnimation({ position }: { position: [number, number, number] }) {
-  const craneRef = useRef<THREE.Group>(null);
-  const hookRef = useRef<THREE.Mesh>(null);
-
-  useFrame((state) => {
-    const t = state.clock.elapsedTime;
-    if (craneRef.current) {
-      craneRef.current.rotation.y = Math.sin(t * 0.3) * 0.4;
-    }
-    if (hookRef.current) {
-      hookRef.current.position.y = 2.5 + Math.sin(t * 1.5) * 0.5;
-    }
-  });
-
-  return (
-    <group position={position}>
-      {/* Crane base */}
-      <mesh position={[1.8, 1.5, 1.8]}>
-        <boxGeometry args={[0.3, 3, 0.3]} />
-        <meshStandardMaterial color="#fbbf24" />
-      </mesh>
-      {/* Crane arm */}
-      <group ref={craneRef} position={[1.8, 3, 1.8]}>
-        <mesh position={[-1, 0.15, 0]} rotation={[0, 0, Math.PI / 2]}>
-          <boxGeometry args={[0.2, 2.5, 0.2]} />
-          <meshStandardMaterial color="#fbbf24" />
-        </mesh>
-        {/* Hook */}
-        <mesh ref={hookRef} position={[-2, 2.5, 0]}>
-          <boxGeometry args={[0.15, 0.5, 0.15]} />
-          <meshStandardMaterial color="#94a3b8" />
-        </mesh>
-        {/* Cable */}
-        <mesh position={[-2, 2.8, 0]}>
-          <cylinderGeometry args={[0.02, 0.02, 0.8, 8]} />
-          <meshStandardMaterial color="#64748b" />
-        </mesh>
-      </group>
-    </group>
-  );
-}
+// ConstructionAnimation moved to ../components/buildings/effects.tsx
 
 // Speech bubble for chatting agents
 function SpeechBubble({
@@ -664,7 +627,7 @@ function SpeechBubble({
   }, [text, bg, fg]);
 
   const aspect = width / height;
-  const worldHeight = 0.5;
+  const worldHeight = 0.22;
   const worldWidth = worldHeight * aspect;
 
   return (
@@ -700,38 +663,7 @@ function ClaimedMarker({ position, color }: { position: [number, number, number]
   );
 }
 
-// Building windows (glowing at night)
-function BuildingWindows({ height, zone }: { height: number; zone: PlotZone }) {
-  const windowColor = ZONE_COLORS[zone];
-  const rows = Math.max(1, Math.floor(height / 1.2));
-  const cols = 2;
-  
-  return (
-    <group>
-      {Array.from({ length: rows }).map((_, row) => (
-        Array.from({ length: cols }).map((_, col) => {
-          const x = (col - 0.5) * 0.8;
-          const y = 0.8 + row * 1.0;
-          const z = 1.45;
-          // Randomly lit windows
-          const isLit = Math.random() > 0.3;
-          return (
-            <mesh key={`${row}-${col}`} position={[x, y, z]}>
-              <planeGeometry args={[0.4, 0.5]} />
-              <meshStandardMaterial 
-                color={isLit ? windowColor : '#1e293b'} 
-                emissive={isLit ? windowColor : '#000'} 
-                emissiveIntensity={isLit ? 0.5 : 0}
-                transparent
-                opacity={0.9}
-              />
-            </mesh>
-          );
-        })
-      )).flat()}
-    </group>
-  );
-}
+// BuildingWindows moved to ../components/buildings/shared.tsx
 
 // Ambient floating particles
 function AmbientParticles({ count = 50 }: { count?: number }) {
@@ -1130,52 +1062,7 @@ function HoverTooltip({
   );
 }
 
-// Industrial smoke from factories
-function IndustrialSmoke({ position, intensity = 1 }: { position: [number, number, number]; intensity?: number }) {
-  const smokesRef = useRef<THREE.Points>(null);
-  const count = Math.floor(20 * intensity);
-  
-  const positions = useMemo(() => {
-    const arr = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) {
-      arr[i * 3] = (Math.random() - 0.5) * 0.5;
-      arr[i * 3 + 1] = Math.random() * 3;
-      arr[i * 3 + 2] = (Math.random() - 0.5) * 0.5;
-    }
-    return arr;
-  }, [count]);
-
-  useFrame((state) => {
-    if (!smokesRef.current) return;
-    const pos = smokesRef.current.geometry.attributes.position.array as Float32Array;
-    const t = state.clock.elapsedTime;
-    for (let i = 0; i < count; i++) {
-      pos[i * 3 + 1] += 0.02; // Rise
-      pos[i * 3] += Math.sin(t + i) * 0.005; // Drift
-      pos[i * 3 + 2] += Math.cos(t * 0.7 + i) * 0.005;
-      if (pos[i * 3 + 1] > 5) {
-        pos[i * 3 + 1] = 0;
-        pos[i * 3] = (Math.random() - 0.5) * 0.5;
-        pos[i * 3 + 2] = (Math.random() - 0.5) * 0.5;
-      }
-    }
-    smokesRef.current.geometry.attributes.position.needsUpdate = true;
-  });
-
-  return (
-    <points ref={smokesRef} position={position}>
-      <bufferGeometry>
-        <bufferAttribute
-          attach="attributes-position"
-          array={positions}
-          count={count}
-          itemSize={3}
-        />
-      </bufferGeometry>
-      <pointsMaterial color="#4b5563" size={0.4} transparent opacity={0.5} sizeAttenuation />
-    </points>
-  );
-}
+// IndustrialSmoke moved to ../components/buildings/effects.tsx
 
 // Smog layer for polluted towns
 function SmogLayer({ pollution }: { pollution: number }) {
@@ -1291,10 +1178,6 @@ function zoneMaterial(zone: PlotZone, selected: boolean) {
   return { color, emissive };
 }
 
-function clamp(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n));
-}
-
 function timeAgo(ts: string) {
   const t = new Date(ts).getTime();
   if (!Number.isFinite(t)) return '';
@@ -1315,159 +1198,7 @@ function prettyJson(raw: string | undefined, maxLen: number = 2200): string {
   }
 }
 
-function buildHeight(plot: Plot) {
-  // Use proof-of-inference signals to make the city feel "earned".
-  const api = clamp(plot.apiCallsUsed || 0, 0, 20);
-  const arena = clamp(plot.buildCostArena || 0, 0, 500);
-  return 1.2 + api * 0.08 + Math.log10(1 + arena) * 0.9;
-}
-
-function BuildingMesh({
-  plot,
-  position,
-  selected,
-}: {
-  plot: Plot;
-  position: [number, number, number];
-  selected: boolean;
-}) {
-  const h = buildHeight(plot);
-  const zone = plot.zone;
-  const tint = new THREE.Color(ZONE_COLORS[zone]);
-  const main = tint.clone().multiplyScalar(0.55);
-  const accent = tint.clone().multiplyScalar(0.9);
-
-  if (plot.status !== 'BUILT') {
-    // Calculate progress based on API calls (assume 10 calls = complete)
-    const maxCalls = 10;
-    const progress = Math.min(1, (plot.apiCallsUsed || 0) / maxCalls);
-    const partialHeight = 0.8 + progress * (h - 0.8);
-    
-    // Under construction scaffold with progress bar and crane
-    return (
-      <group position={position}>
-        {/* Partial building rising */}
-        <mesh position={[0, partialHeight / 2, 0]}>
-          <boxGeometry args={[3.6, partialHeight, 3.6]} />
-          <meshStandardMaterial 
-            color={'#0b1220'} 
-            emissive={tint.clone().multiplyScalar(selected ? 0.35 : 0.1)} 
-          />
-        </mesh>
-        {/* Construction platform */}
-        <mesh position={[0, partialHeight + 0.05, 0]}>
-          <boxGeometry args={[3.9, 0.1, 3.9]} />
-          <meshStandardMaterial color={accent} emissive={accent.clone().multiplyScalar(0.3)} />
-        </mesh>
-        {/* Wireframe outline of final building */}
-        <mesh position={[0, h / 2, 0]}>
-          <boxGeometry args={[4.0, h, 4.0]} />
-          <meshStandardMaterial color={'#93c5fd'} transparent opacity={0.08} wireframe />
-        </mesh>
-        {/* Scaffolding poles */}
-        {[[-1.9, 1.9], [1.9, 1.9], [-1.9, -1.9], [1.9, -1.9]].map(([x, z], i) => (
-          <mesh key={i} position={[x, h / 2, z]}>
-            <cylinderGeometry args={[0.08, 0.08, h, 8]} />
-            <meshStandardMaterial color="#64748b" />
-          </mesh>
-        ))}
-        {/* Progress bar */}
-        <BuildProgressBar progress={progress} position={[0, h + 0.8, 0]} />
-        {/* Animated crane */}
-        {plot.status === 'UNDER_CONSTRUCTION' && <ConstructionAnimation position={[0, 0, 0]} />}
-      </group>
-    );
-  }
-
-  // Simple stylized silhouettes by zone.
-  if (zone === 'RESIDENTIAL') {
-    return (
-      <group position={position}>
-        <mesh castShadow receiveShadow position={[0, h / 2, 0]}>
-          <boxGeometry args={[3.2, h, 2.8]} />
-          <meshStandardMaterial color={main} emissive={selected ? accent.clone().multiplyScalar(0.28) : undefined} />
-        </mesh>
-        <mesh castShadow position={[0, h + 0.55, 0]}>
-          <coneGeometry args={[2.2, 1.2, 4]} />
-          <meshStandardMaterial color={accent} />
-        </mesh>
-        {/* Windows */}
-        <BuildingWindows height={h} zone={zone} />
-      </group>
-    );
-  }
-
-  if (zone === 'INDUSTRIAL') {
-    return (
-      <group position={position}>
-        <mesh castShadow receiveShadow position={[-0.3, h / 2, 0]}>
-          <boxGeometry args={[3.4, h, 3.2]} />
-          <meshStandardMaterial color={main} emissive={selected ? accent.clone().multiplyScalar(0.25) : undefined} />
-        </mesh>
-        {/* Smokestack */}
-        <mesh castShadow position={[1.4, h * 0.62, -0.6]}>
-          <cylinderGeometry args={[0.32, 0.4, h * 0.9, 10]} />
-          <meshStandardMaterial color={'#64748b'} />
-        </mesh>
-        <mesh castShadow position={[1.4, h * 1.05, -0.6]}>
-          <sphereGeometry args={[0.35, 10, 10]} />
-          <meshStandardMaterial color={accent} emissive={accent.clone().multiplyScalar(0.2)} />
-        </mesh>
-        {/* Factory smoke */}
-        <IndustrialSmoke position={[1.4, h * 1.2, -0.6]} intensity={1.2} />
-      </group>
-    );
-  }
-
-  if (zone === 'ENTERTAINMENT') {
-    return (
-      <group position={position}>
-        <mesh castShadow receiveShadow position={[0, h / 2, 0]}>
-          <boxGeometry args={[3.6, h, 3.0]} />
-          <meshStandardMaterial color={main} emissive={selected ? accent.clone().multiplyScalar(0.3) : undefined} />
-        </mesh>
-        <mesh castShadow position={[0, h + 0.35, 0]}>
-          <torusGeometry args={[1.4, 0.18, 12, 28]} />
-          <meshStandardMaterial color={accent} emissive={accent.clone().multiplyScalar(0.35)} />
-        </mesh>
-        <BuildingWindows height={h} zone={zone} />
-      </group>
-    );
-  }
-
-  if (zone === 'CIVIC') {
-    return (
-      <group position={position}>
-        <mesh castShadow receiveShadow position={[0, h / 2, 0]}>
-          <boxGeometry args={[3.8, h, 3.4]} />
-          <meshStandardMaterial color={main} emissive={selected ? accent.clone().multiplyScalar(0.25) : undefined} />
-        </mesh>
-        <mesh castShadow position={[-1.3, h * 0.45, 1.3]}>
-          <cylinderGeometry args={[0.2, 0.2, h * 0.9, 10]} />
-          <meshStandardMaterial color={'#cbd5e1'} />
-        </mesh>
-        <mesh castShadow position={[1.3, h * 0.45, 1.3]}>
-          <cylinderGeometry args={[0.2, 0.2, h * 0.9, 10]} />
-          <meshStandardMaterial color={'#cbd5e1'} />
-        </mesh>
-      </group>
-    );
-  }
-
-  // COMMERCIAL default.
-  return (
-    <group position={position}>
-      <mesh castShadow receiveShadow position={[0, h / 2, 0]}>
-        <boxGeometry args={[3.4, h, 3.4]} />
-        <meshStandardMaterial color={main} emissive={selected ? accent.clone().multiplyScalar(0.25) : undefined} />
-      </mesh>
-      <mesh castShadow position={[0, h * 0.65, 1.8]}>
-        <boxGeometry args={[2.2, 0.5, 0.15]} />
-        <meshStandardMaterial color={accent} emissive={accent.clone().multiplyScalar(0.35)} />
-      </mesh>
-    </group>
-  );
-}
+// buildHeight + BuildingMesh moved to ../components/buildings/
 
 // Agent activity states
 type AgentActivity = 'WALKING' | 'IDLE' | 'SHOPPING' | 'CHATTING' | 'BUILDING' | 'MINING' | 'PLAYING' | 'BEGGING' | 'SCHEMING';
@@ -1497,115 +1228,177 @@ type AgentSim = {
   walk: number;
   state: AgentState;
   stateTimer: number; // Time spent in current state
+  stateEndsAt: number; // stateTimer value when state should end (for fixed-duration states)
   targetPlotId: string | null; // Building they're heading to
   chatPartnerId: string | null; // Agent they're chatting with
+  chatEndsAt: number; // stateTimer value when chat should end
   health: number; // 0-100, dies at 0
 };
 
-function AgentDroid({
-  agent,
-  color,
-  selected,
-  onClick,
+// AgentDroid moved to ../components/agents/AgentDroid.tsx
+
+function Minimap({
+  plots,
+  agents,
+  simsRef,
+  selectedAgentId,
+  spacing,
+  onSelectAgent,
+  className,
 }: {
-  agent: Agent;
-  color: string;
-  selected: boolean;
-  onClick: () => void;
+  plots: Plot[];
+  agents: Agent[];
+  simsRef: React.MutableRefObject<Map<string, AgentSim>>;
+  selectedAgentId: string | null;
+  spacing: number;
+  onSelectAgent: (id: string) => void;
+  className?: string;
 }) {
-  const body = useRef<THREE.Mesh>(null);
-  const legL = useRef<THREE.Mesh>(null);
-  const legR = useRef<THREE.Mesh>(null);
-  const armL = useRef<THREE.Mesh>(null);
-  const armR = useRef<THREE.Mesh>(null);
-  const group = useRef<THREE.Group>(null);
-  const innerGroup = useRef<THREE.Group>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const size = 160;
 
-  // Death is reserved for combat (not bankroll). For now, agents don't "die" visually.
-  const isDead = false;
-
-  useFrame((state) => {
-    if (!group.current) return;
-
-    // Dead agents fall over and stop animating
-    if (isDead) {
-      if (innerGroup.current) {
-        // Smoothly fall over to the side
-        innerGroup.current.rotation.z = THREE.MathUtils.lerp(
-          innerGroup.current.rotation.z,
-          Math.PI / 2,
-          0.05
-        );
-        innerGroup.current.position.y = THREE.MathUtils.lerp(
-          innerGroup.current.position.y,
-          -0.8,
-          0.05
-        );
-      }
-      return;
+  const bounds = useMemo(() => {
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const p of plots) {
+      minX = Math.min(minX, p.x);
+      maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y);
+      maxY = Math.max(maxY, p.y);
     }
+    if (!Number.isFinite(minX) || !Number.isFinite(maxX) || !Number.isFinite(minY) || !Number.isFinite(maxY)) {
+      minX = 0; maxX = 0; minY = 0; maxY = 0;
+    }
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    return { minX, maxX, minY, maxY, centerX, centerY };
+  }, [plots]);
 
-    const t = state.clock.elapsedTime;
-    const swing = Math.sin(t * 6) * 0.55;
-    if (legL.current) legL.current.rotation.x = swing;
-    if (legR.current) legR.current.rotation.x = -swing;
-    if (armL.current) armL.current.rotation.x = -swing * 0.6;
-    if (armR.current) armR.current.rotation.x = swing * 0.6;
-    if (body.current) body.current.position.y = 1.05 + Math.sin(t * 6) * 0.06;
-  });
+  useEffect(() => {
+    const draw = () => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
 
-  const glyph = ARCHETYPE_GLYPH[agent.archetype] || '●';
-  const label = isDead ? `💀${agent.name.slice(0, 5)}` : `${glyph}${agent.name.slice(0, 6)}`;
-  const labelColor = isDead ? '#6b7280' : (selected ? '#e2e8f0' : '#cbd5e1');
+      ctx.clearRect(0, 0, size, size);
+
+      // Background
+      ctx.fillStyle = 'rgba(5, 9, 20, 0.9)';
+      ctx.fillRect(0, 0, size, size);
+
+      // Calculate world bounds for mapping
+      const worldW = (bounds.maxX - bounds.minX + 3) * spacing;
+      const worldH = (bounds.maxY - bounds.minY + 3) * spacing;
+      const worldRange = Math.max(worldW, worldH);
+      const scale = (size - 16) / worldRange;
+      const cx = size / 2;
+      const cy = size / 2;
+
+      // Draw plots
+      for (const p of plots) {
+        const wx = (p.x - bounds.centerX) * spacing;
+        const wz = (p.y - bounds.centerY) * spacing;
+        const sx = cx + wx * scale;
+        const sy = cy + wz * scale;
+        const plotSize = Math.max(4, spacing * scale * 0.7);
+
+        ctx.fillStyle = p.status === 'BUILT'
+          ? ZONE_COLORS[p.zone]
+          : p.status === 'UNDER_CONSTRUCTION'
+            ? ZONE_COLORS[p.zone] + '80'
+            : 'rgba(30, 41, 59, 0.6)';
+        ctx.fillRect(sx - plotSize / 2, sy - plotSize / 2, plotSize, plotSize);
+      }
+
+      // Draw agents
+      const sims = simsRef.current;
+      for (const a of agents) {
+        const sim = sims.get(a.id);
+        if (!sim || sim.state === 'DEAD') continue;
+        const sx = cx + sim.position.x * scale;
+        const sy = cy + sim.position.z * scale;
+        const color = ARCHETYPE_COLORS[a.archetype] || '#93c5fd';
+        const isSelected = a.id === selectedAgentId;
+
+        // Ring for followed agent
+        if (isSelected) {
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(sx, sy, 5, 0, Math.PI * 2);
+          ctx.stroke();
+
+          // FOV cone
+          const heading = sim.heading.clone().normalize();
+          const angle = Math.atan2(heading.z, heading.x);
+          const fovHalf = 0.4;
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+          ctx.beginPath();
+          ctx.moveTo(sx, sy);
+          ctx.lineTo(sx + Math.cos(angle - fovHalf) * 20, sy + Math.sin(angle - fovHalf) * 20);
+          ctx.lineTo(sx + Math.cos(angle + fovHalf) * 20, sy + Math.sin(angle + fovHalf) * 20);
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        // Agent dot
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(sx, sy, isSelected ? 3 : 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    };
+
+    draw();
+    const interval = setInterval(draw, 200);
+    return () => clearInterval(interval);
+  }, [plots, agents, simsRef, selectedAgentId, bounds, spacing]);
+
+  const handleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = (e.clientX - rect.left) * (size / rect.width);
+    const my = (e.clientY - rect.top) * (size / rect.height);
+
+    const worldW = (bounds.maxX - bounds.minX + 3) * spacing;
+    const worldH = (bounds.maxY - bounds.minY + 3) * spacing;
+    const worldRange = Math.max(worldW, worldH);
+    const scale = (size - 16) / worldRange;
+    const cx = size / 2;
+    const cy = size / 2;
+
+    // Find closest agent
+    let bestDist = 12;
+    let bestId: string | null = null;
+    const sims = simsRef.current;
+    for (const a of agents) {
+      const sim = sims.get(a.id);
+      if (!sim || sim.state === 'DEAD') continue;
+      const sx = cx + sim.position.x * scale;
+      const sy = cy + sim.position.z * scale;
+      const d = Math.hypot(mx - sx, my - sy);
+      if (d < bestDist) {
+        bestDist = d;
+        bestId = a.id;
+      }
+    }
+    if (bestId) onSelectAgent(bestId);
+  };
 
   return (
-    <group ref={group} onPointerDown={(e) => (e.stopPropagation(), onClick())}>
-      <group ref={innerGroup}>
-      <mesh ref={legL} castShadow position={[-0.25, 0.35, 0]}>
-        <boxGeometry args={[0.28, 0.7, 0.28]} />
-        <meshStandardMaterial color={'#0b1220'} />
-      </mesh>
-      <mesh ref={legR} castShadow position={[0.25, 0.35, 0]}>
-        <boxGeometry args={[0.28, 0.7, 0.28]} />
-        <meshStandardMaterial color={'#0b1220'} />
-      </mesh>
-
-      <mesh ref={armL} castShadow position={[-0.55, 1.05, 0]}>
-        <boxGeometry args={[0.22, 0.65, 0.22]} />
-        <meshStandardMaterial color={'#1f2937'} />
-      </mesh>
-      <mesh ref={armR} castShadow position={[0.55, 1.05, 0]}>
-        <boxGeometry args={[0.22, 0.65, 0.22]} />
-        <meshStandardMaterial color={'#1f2937'} />
-      </mesh>
-
-      <mesh ref={body} castShadow position={[0, 1.05, 0]}>
-        <capsuleGeometry args={[0.55, 0.9, 8, 16]} />
-        <meshStandardMaterial
-          color={color}
-          emissive={selected ? new THREE.Color(color).multiplyScalar(0.4) : new THREE.Color('#000')}
-          emissiveIntensity={0.9}
-          roughness={0.35}
-          metalness={0.08}
-        />
-      </mesh>
-
-      <mesh castShadow position={[0, 1.9, 0.05]}>
-        <sphereGeometry args={[0.38, 16, 16]} />
-        <meshStandardMaterial color={'#e2e8f0'} roughness={0.15} />
-      </mesh>
-      <mesh position={[-0.14, 1.95, 0.36]}>
-        <sphereGeometry args={[0.06, 12, 12]} />
-        <meshStandardMaterial color={'#0b1220'} emissive={selected ? new THREE.Color('#93c5fd') : undefined} />
-      </mesh>
-      <mesh position={[0.14, 1.95, 0.36]}>
-        <sphereGeometry args={[0.06, 12, 12]} />
-        <meshStandardMaterial color={'#0b1220'} emissive={selected ? new THREE.Color('#93c5fd') : undefined} />
-      </mesh>
-      </group>
-
-      <BillboardLabel text={label} position={[0, 2.75, 0]} color={labelColor} />
-    </group>
+    <canvas
+      ref={canvasRef}
+      width={size}
+      height={size}
+      onClick={handleClick}
+      className={`block rounded-lg cursor-crosshair ${
+        className ?? 'border border-slate-700/50 bg-slate-950/80 backdrop-blur-sm'
+      }`}
+    />
   );
 }
 
@@ -1616,10 +1409,9 @@ function TownScene({
   setSelectedPlotId,
   selectedAgentId,
   setSelectedAgentId,
-  followCam,
+  introRef,
   simsRef,
   onChatStart,
-  speechByAgentId,
   tradeByAgentId,
   weather,
   economicState,
@@ -1629,6 +1421,7 @@ function TownScene({
   setDeathEffects,
   spawnEffects,
   setSpawnEffects,
+  relationshipsRef,
 }: {
   town: Town;
   agents: Agent[];
@@ -1636,10 +1429,9 @@ function TownScene({
   setSelectedPlotId: (id: string | null) => void;
   selectedAgentId: string | null;
   setSelectedAgentId: (id: string | null) => void;
-  followCam: boolean;
+  introRef: React.MutableRefObject<{ active: boolean; t: number }>;
   simsRef: React.MutableRefObject<Map<string, AgentSim>>;
   onChatStart?: (townId: string, agentAId: string, agentBId: string) => void;
-  speechByAgentId: Record<string, { text: string; until: number }>;
   tradeByAgentId: Record<string, { text: string; until: number; isBuy: boolean }>;
   weather: 'clear' | 'rain' | 'storm';
   economicState: { pollution: number; prosperity: number; sentiment: 'bull' | 'bear' | 'neutral' };
@@ -1649,34 +1441,48 @@ function TownScene({
   setDeathEffects: React.Dispatch<React.SetStateAction<{ id: string; position: [number, number, number] }[]>>;
   spawnEffects: { id: string; position: [number, number, number]; color: string }[];
   setSpawnEffects: React.Dispatch<React.SetStateAction<{ id: string; position: [number, number, number]; color: string }[]>>;
+  relationshipsRef: React.MutableRefObject<{ agentAId: string; agentBId: string; status: string; score: number }[]>;
 }) {
   const groundTex = useGroundTexture();
   const plots = town.plots;
 
-  const grid = useMemo(() => {
-    const maxX = plots.reduce((m, p) => Math.max(m, p.x), 0);
-    const maxY = plots.reduce((m, p) => Math.max(m, p.y), 0);
-    return { cols: maxX + 1, rows: maxY + 1 };
+  const bounds = useMemo(() => {
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const p of plots) {
+      minX = Math.min(minX, p.x);
+      maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y);
+      maxY = Math.max(maxY, p.y);
+    }
+    if (!Number.isFinite(minX) || !Number.isFinite(maxX) || !Number.isFinite(minY) || !Number.isFinite(maxY)) {
+      minX = 0; maxX = 0; minY = 0; maxY = 0;
+    }
+    const cols = maxX - minX + 1;
+    const rows = maxY - minY + 1;
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    return { minX, maxX, minY, maxY, cols, rows, centerX, centerY };
   }, [plots]);
 
   const spacing = TOWN_SPACING;
   const lotSize = 6;
   const roadW = Math.max(1.0, spacing - lotSize);
-  const halfX = (grid.cols - 1) / 2;
-  const halfY = (grid.rows - 1) / 2;
 
   const roadNodes = useMemo(() => {
     const nodes: THREE.Vector3[] = [];
     // Include a perimeter ring so agents have somewhere to walk even in tiny towns.
-    for (let ix = -1; ix <= grid.cols - 1; ix++) {
-      for (let iy = -1; iy <= grid.rows - 1; iy++) {
-        const wx = (ix + 0.5 - halfX) * spacing;
-        const wz = (iy + 0.5 - halfY) * spacing;
+    for (let ix = bounds.minX - 1; ix <= bounds.maxX; ix++) {
+      for (let iy = bounds.minY - 1; iy <= bounds.maxY; iy++) {
+        const wx = (ix + 0.5 - bounds.centerX) * spacing;
+        const wz = (iy + 0.5 - bounds.centerY) * spacing;
         nodes.push(new THREE.Vector3(wx, 0.02, wz));
       }
     }
     return nodes;
-  }, [grid.cols, grid.rows, halfX, halfY, spacing]);
+  }, [bounds.minX, bounds.maxX, bounds.minY, bounds.maxY, bounds.centerX, bounds.centerY, spacing]);
 
   const agentGroupRefs = useRef<Map<string, THREE.Group>>(new Map());
   const { camera } = useThree();
@@ -1702,29 +1508,47 @@ function TownScene({
         walk: rng() * 10,
         state: 'WALKING',
         stateTimer: 0,
+        stateEndsAt: 0,
         targetPlotId: null,
         chatPartnerId: null,
+        chatEndsAt: 0,
         health: 100,
       });
     }
   }, [agents, roadNodes, simsRef]);
 
+  const CHAT_DURATION: Record<string, [number, number]> = {
+    SHARK: [2, 3], DEGEN: [2, 3],
+    ROCK: [3, 4], GRINDER: [3, 4],
+    CHAMELEON: [4, 6],
+  };
+
   function buildRoute(from: THREE.Vector3, to: THREE.Vector3) {
-    const pts: THREE.Vector3[] = [];
-    const mid = new THREE.Vector3(to.x, to.y, from.z);
-    pts.push(mid, to);
-    return pts;
+    const dx = to.x - from.x;
+    const dz = to.z - from.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist < 1.0) return [to];
+
+    const mid = new THREE.Vector3((from.x + to.x) * 0.5, 0.02, (from.z + to.z) * 0.5);
+    // Perpendicular jitter for route variety
+    const perpX = -dz / dist;
+    const perpZ = dx / dist;
+    const seed = hashToSeed(`${from.x.toFixed(1)}:${from.z.toFixed(1)}:${to.x.toFixed(1)}:${to.z.toFixed(1)}`);
+    const offset = (mulberry32(seed)() - 0.5) * Math.min(dist * 0.35, 3.0);
+    mid.x += perpX * offset;
+    mid.z += perpZ * offset;
+    return [mid, to];
   }
 
   const plotWorldPosByIndex = useMemo(() => {
     const m = new Map<number, THREE.Vector3>();
     for (const p of plots) {
-      const wx = (p.x - halfX) * spacing;
-      const wz = (p.y - halfY) * spacing;
+      const wx = (p.x - bounds.centerX) * spacing;
+      const wz = (p.y - bounds.centerY) * spacing;
       m.set(p.plotIndex, new THREE.Vector3(wx, 0.02, wz));
     }
     return m;
-  }, [plots, halfX, halfY, spacing]);
+  }, [plots, bounds.centerX, bounds.centerY, spacing]);
 
   // Get plot world position (stable objects; do not mutate returned vectors)
   const getPlotWorldPos = useCallback(
@@ -1736,6 +1560,221 @@ function TownScene({
   const builtPlots = useMemo(() => plots.filter((p) => p.status === 'BUILT' || p.status === 'UNDER_CONSTRUCTION'), [plots]);
   const underConstructionPlots = useMemo(() => plots.filter((p) => p.status === 'UNDER_CONSTRUCTION'), [plots]);
   const entertainmentPlots = useMemo(() => plots.filter((p) => p.status === 'BUILT' && p.zone === 'ENTERTAINMENT'), [plots]);
+
+  const roadSegments = useMemo(() => {
+    type Seg = { id: string; kind: 'V' | 'H'; x: number; z: number; len: number; tone: 'ring' | 'arterial' | 'local' };
+    const segs: Seg[] = [];
+    const seen = new Set<string>();
+    const occ = new Set<string>();
+    for (const p of plots) occ.add(`${p.x}:${p.y}`);
+
+    const randForKey = (key: string) => mulberry32(hashToSeed(`${town.id}:roads:${key}`))();
+
+    const addV = (boundaryX: number, rowY: number, len: number, tone: Seg['tone']) => {
+      const id = `V:${boundaryX}:${rowY}:${len}:${tone}`;
+      if (seen.has(id)) return;
+      seen.add(id);
+      segs.push({
+        id,
+        kind: 'V',
+        x: (boundaryX - bounds.centerX) * spacing,
+        z: (rowY - bounds.centerY) * spacing,
+        len,
+        tone,
+      });
+    };
+
+    const addH = (colX: number, boundaryY: number, len: number, tone: Seg['tone']) => {
+      const id = `H:${colX}:${boundaryY}:${len}:${tone}`;
+      if (seen.has(id)) return;
+      seen.add(id);
+      segs.push({
+        id,
+        kind: 'H',
+        x: (colX - bounds.centerX) * spacing,
+        z: (boundaryY - bounds.centerY) * spacing,
+        len,
+        tone,
+      });
+    };
+
+    // Perimeter ring: 4 big roads that frame the town footprint.
+    const lenX = (bounds.cols + 1) * spacing;
+    const lenZ = (bounds.rows + 1) * spacing;
+    const ringV = [bounds.minX - 1, bounds.maxX];
+    const ringH = [bounds.minY - 1, bounds.maxY];
+    addV(ringV[0], (bounds.minY + bounds.maxY) / 2, lenZ, 'ring');
+    addV(ringV[1], (bounds.minY + bounds.maxY) / 2, lenZ, 'ring');
+    addH((bounds.minX + bounds.maxX) / 2, ringH[0], lenX, 'ring');
+    addH((bounds.minX + bounds.maxX) / 2, ringH[1], lenX, 'ring');
+
+    // A couple of seeded arterials to make the city feel less grid-locked.
+    const arterialRng = mulberry32(hashToSeed(`${town.id}:arterials:v1`));
+    const vBoundary = (bounds.minX - 1) + Math.floor(arterialRng() * (bounds.cols + 1));
+    const hBoundary = (bounds.minY - 1) + Math.floor(arterialRng() * (bounds.rows + 1));
+    addV(vBoundary, (bounds.minY + bounds.maxY) / 2, lenZ, 'arterial');
+    addH((bounds.minX + bounds.maxX) / 2, hBoundary, lenX, 'arterial');
+
+    const longV = new Set<number>([...ringV, vBoundary]);
+    const longH = new Set<number>([...ringH, hBoundary]);
+
+    // Local road tiles around plot edges (with sparse internal streets).
+    const internalChance = 0.25;
+    const localLen = spacing;
+    for (const p of plots) {
+      const x = p.x;
+      const y = p.y;
+
+      const edges: Array<{
+        key: string;
+        neighbor: string;
+        add: () => void;
+      }> = [
+        {
+          key: `V:${x - 1}:${y}`,
+          neighbor: `${x - 1}:${y}`,
+          add: () => addV(x - 1, y, localLen, 'local'),
+        },
+        {
+          key: `V:${x}:${y}`,
+          neighbor: `${x + 1}:${y}`,
+          add: () => addV(x, y, localLen, 'local'),
+        },
+        {
+          key: `H:${x}:${y - 1}`,
+          neighbor: `${x}:${y - 1}`,
+          add: () => addH(x, y - 1, localLen, 'local'),
+        },
+        {
+          key: `H:${x}:${y}`,
+          neighbor: `${x}:${y + 1}`,
+          add: () => addH(x, y, localLen, 'local'),
+        },
+      ];
+
+      for (const e of edges) {
+        // Avoid overlapping the long perimeter/arterial roads.
+        if (e.key.startsWith('V:')) {
+          const bx = Number(e.key.split(':')[1]);
+          if (Number.isFinite(bx) && longV.has(bx)) continue;
+        } else if (e.key.startsWith('H:')) {
+          const by = Number(e.key.split(':')[2]);
+          if (Number.isFinite(by) && longH.has(by)) continue;
+        }
+
+        // Each segment is shared by two plots; only add once.
+        const segKey = `${e.key}:${localLen}:local`;
+        if (seen.has(segKey)) continue;
+
+        const neighborOccupied = occ.has(e.neighbor);
+        if (!neighborOccupied || randForKey(e.key) < internalChance) {
+          e.add();
+        }
+      }
+    }
+
+    return segs;
+  }, [plots, bounds, spacing, town.id]);
+
+  const fogScale = useMemo(() => {
+    return Math.max(1, Math.min(2.8, Math.max(bounds.cols, bounds.rows) / 6));
+  }, [bounds.cols, bounds.rows]);
+
+  const groundSize = useMemo(() => {
+    return Math.max(500, Math.max(bounds.cols, bounds.rows) * spacing * 4);
+  }, [bounds.cols, bounds.rows, spacing]);
+
+  const groundTint = useMemo(() => {
+    const t = String(town.theme || '').toLowerCase();
+    if (t.includes('desert') || t.includes('oasis')) return '#1b1408';
+    if (t.includes('tropical') || t.includes('island') || t.includes('resort') || t.includes('harbor') || t.includes('cove')) return '#07131b';
+    if (t.includes('arctic') || t.includes('snow')) return '#0a1320';
+    if (t.includes('volcanic') || t.includes('forge')) return '#140a0a';
+    if (t.includes('forest') || t.includes('enchanted')) return '#07160f';
+    return '#0b1220';
+  }, [town.theme]);
+
+  const landmarks = useMemo(() => {
+    const theme = String(town.theme || '').toLowerCase();
+    const rng = mulberry32(hashToSeed(`${town.id}:landmarks:v1`));
+    const base = Math.max(bounds.cols, bounds.rows) * spacing * 0.5;
+    const outside = base + spacing * 4;
+
+    const hasWater = /island|cove|harbor|fishing|pirate|oasis|resort/.test(theme);
+    const hasForest = /forest|enchanted/.test(theme);
+    const hasMountain = /mountain|fortress|volcanic|arctic|cavern|crystal|underground/.test(theme);
+    const hasCyber = /cyberpunk|steampunk|trading hub/.test(theme);
+
+    const side = rng() < 0.5 ? 1 : -1;
+
+    const lake = hasWater
+      ? {
+          pos: [side * (outside + base * 0.25), 0.015, (rng() * 2 - 1) * base * 0.45] as [number, number, number],
+          r: Math.max(18, base * (0.38 + rng() * 0.16)),
+        }
+      : null;
+
+    let hill: { pos: [number, number, number]; r: number; h: number } | null = null;
+    if (hasMountain) {
+      const r = Math.max(10, base * (0.22 + rng() * 0.16));
+      const h = Math.max(8, base * (0.18 + rng() * 0.10));
+      hill = {
+        pos: [-side * (outside + base * 0.18), h / 2, (rng() * 2 - 1) * base * 0.55],
+        r,
+        h,
+      };
+    }
+
+    const neon: Array<{ pos: [number, number, number]; w: number; h: number; d: number; color: string }> = [];
+    if (hasCyber) {
+      const n = 3 + Math.floor(rng() * 4);
+      for (let i = 0; i < n; i++) {
+        neon.push({
+          pos: [
+            (rng() < 0.5 ? 1 : -1) * (outside + base * (0.05 + rng() * 0.25)),
+            1.2 + rng() * 0.8,
+            (rng() * 2 - 1) * base * 0.7,
+          ],
+          w: 1.2 + rng() * 1.8,
+          h: 1.4 + rng() * 2.8,
+          d: 0.25,
+          color: rng() < 0.5 ? '#22d3ee' : '#a78bfa',
+        });
+      }
+    }
+
+    const rocks: Array<{ pos: [number, number, number]; s: number; color: string }> = [];
+    const trees: Array<{ pos: [number, number, number]; s: number }> = [];
+
+    const ringN = 26 + Math.floor(rng() * 20);
+    for (let i = 0; i < ringN; i++) {
+      const ang = rng() * Math.PI * 2;
+      const r = outside + base * (0.25 + rng() * 0.45);
+      const x = Math.cos(ang) * r;
+      const z = Math.sin(ang) * r;
+      const s = 0.8 + rng() * 1.8;
+      rocks.push({
+        pos: [x, 0.04, z],
+        s,
+        color: hasMountain ? '#0f172a' : '#111827',
+      });
+    }
+
+    if (hasForest) {
+      const center: [number, number, number] = [side * (outside + base * 0.12), 0.02, -side * base * 0.55];
+      const treeN = 18 + Math.floor(rng() * 18);
+      for (let i = 0; i < treeN; i++) {
+        const dx = (rng() + rng() - 1) * base * 0.35;
+        const dz = (rng() + rng() - 1) * base * 0.35;
+        trees.push({
+          pos: [center[0] + dx, 0.02, center[2] + dz],
+          s: 0.8 + rng() * 1.6,
+        });
+      }
+    }
+
+    return { lake, hill, neon, rocks, trees };
+  }, [town.id, town.theme, bounds.cols, bounds.rows, spacing]);
 
   useFrame((_, dt) => {
     const sims = simsRef.current;
@@ -1763,20 +1802,24 @@ function TownScene({
         if (Math.random() < 0.05) {
           sim.state = 'BEGGING' as AgentState;
           sim.stateTimer = 0;
+          sim.stateEndsAt = 4 + Math.random() * 3;
           sim.route = [];
         }
         // 2% chance to start scheming when homeless
         if (economicState === 'HOMELESS' && Math.random() < 0.02) {
           sim.state = 'SCHEMING' as AgentState;
           sim.stateTimer = 0;
+          sim.stateEndsAt = 3 + Math.random() * 2;
           sim.route = [];
         }
       }
 
       // Handle BEGGING state
       if (sim.state === 'BEGGING') {
-        if (sim.stateTimer > 4 + Math.random() * 3) {
+        if (sim.stateEndsAt <= 0) sim.stateEndsAt = 4 + Math.random() * 3;
+        if (sim.stateTimer > sim.stateEndsAt) {
           sim.state = 'WALKING';
+          sim.stateEndsAt = 0;
         }
         const g = agentGroupRefs.current.get(a.id);
         if (g) {
@@ -1789,8 +1832,10 @@ function TownScene({
 
       // Handle SCHEMING state
       if (sim.state === 'SCHEMING') {
-        if (sim.stateTimer > 3 + Math.random() * 2) {
+        if (sim.stateEndsAt <= 0) sim.stateEndsAt = 3 + Math.random() * 2;
+        if (sim.stateTimer > sim.stateEndsAt) {
           sim.state = 'WALKING';
+          sim.stateEndsAt = 0;
         }
         const g = agentGroupRefs.current.get(a.id);
         if (g) {
@@ -1801,24 +1846,39 @@ function TownScene({
         continue;
       }
 
-      // Check for nearby agents to chat with
-      if (sim.state === 'WALKING') {
+      // Check for nearby agents to chat with (shuffled to avoid deterministic pairings)
+      if (sim.state === 'WALKING' && !sim.chatPartnerId) {
+        const candidates: [string, typeof sim][] = [];
         for (const [otherId, other] of sims) {
-          if (otherId === a.id || other.state === 'DEAD') continue;
-          const dist = sim.position.distanceTo(other.position);
-          if (dist < 1.5 && other.state === 'WALKING' && !sim.chatPartnerId && !other.chatPartnerId) {
-            // Start chatting!
-            sim.state = 'CHATTING';
-            sim.chatPartnerId = otherId;
-            sim.stateTimer = 0;
-            other.state = 'CHATTING';
-            other.chatPartnerId = a.id;
-            other.stateTimer = 0;
-            sim.route = [];
-            other.route = [];
-            onChatStart?.(town.id, a.id, otherId);
-            break;
+          if (otherId === a.id || other.state !== 'WALKING' || other.chatPartnerId) continue;
+          if (sim.position.distanceTo(other.position) < 1.5) {
+            candidates.push([otherId, other]);
           }
+        }
+        if (candidates.length > 0) {
+          // Fisher-Yates shuffle with seeded RNG
+          const chatRng = mulberry32(hashToSeed(`${a.id}:chat:${Math.floor(sim.walk)}`));
+          for (let i = candidates.length - 1; i > 0; i--) {
+            const j = Math.floor(chatRng() * (i + 1));
+            [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+          }
+          const [otherId, other] = candidates[0];
+          // Determine chat duration based on archetype
+          const archetype = agents.find(ag => ag.id === a.id)?.archetype ?? '';
+          const [minDur, maxDur] = CHAT_DURATION[archetype] ?? [3, 5];
+          const duration = minDur + Math.random() * (maxDur - minDur);
+          // Start chatting!
+          sim.state = 'CHATTING';
+          sim.chatPartnerId = otherId;
+          sim.stateTimer = 0;
+          sim.chatEndsAt = duration;
+          other.state = 'CHATTING';
+          other.chatPartnerId = a.id;
+          other.stateTimer = 0;
+          other.chatEndsAt = duration;
+          sim.route = [];
+          other.route = [];
+          onChatStart?.(town.id, a.id, otherId);
         }
       }
 
@@ -1831,6 +1891,7 @@ function TownScene({
             sim.state = 'SHOPPING';
             sim.targetPlotId = plot.id;
             sim.stateTimer = 0;
+            sim.stateEndsAt = 2 + Math.random() * 3;
             sim.route = [];
             break;
           }
@@ -1846,6 +1907,7 @@ function TownScene({
             sim.state = 'BUILDING';
             sim.targetPlotId = plot.id;
             sim.stateTimer = 0;
+            sim.stateEndsAt = 4 + Math.random() * 3;
             sim.route = [];
             break;
           }
@@ -1861,6 +1923,7 @@ function TownScene({
             sim.state = 'PLAYING';
             sim.targetPlotId = plot.id;
             sim.stateTimer = 0;
+            sim.stateEndsAt = 5 + Math.random() * 5;
             sim.route = [];
             break;
           }
@@ -1871,12 +1934,13 @@ function TownScene({
       if (sim.state === 'WALKING' && Math.random() < 0.001) {
         sim.state = 'MINING';
         sim.stateTimer = 0;
+        sim.stateEndsAt = 3 + Math.random() * 2;
         sim.route = [];
       }
 
       // Handle CHATTING state
       if (sim.state === 'CHATTING') {
-        if (sim.stateTimer > 3 + Math.random() * 2) { // Chat for 3-5 seconds
+        if (sim.stateTimer > sim.chatEndsAt) {
           sim.state = 'WALKING';
           const partner = sims.get(sim.chatPartnerId!);
           if (partner) {
@@ -1902,8 +1966,10 @@ function TownScene({
 
       // Handle SHOPPING state
       if (sim.state === 'SHOPPING') {
-        if (sim.stateTimer > 2 + Math.random() * 3) { // Shop for 2-5 seconds
+        if (sim.stateEndsAt <= 0) sim.stateEndsAt = 2 + Math.random() * 3;
+        if (sim.stateTimer > sim.stateEndsAt) { // Shop for 2-5 seconds
           sim.state = 'WALKING';
+          sim.stateEndsAt = 0;
           sim.targetPlotId = null;
         }
         // Stay still while shopping
@@ -1916,8 +1982,10 @@ function TownScene({
 
       // Handle BUILDING state
       if (sim.state === 'BUILDING') {
-        if (sim.stateTimer > 4 + Math.random() * 3) { // Build for 4-7 seconds
+        if (sim.stateEndsAt <= 0) sim.stateEndsAt = 4 + Math.random() * 3;
+        if (sim.stateTimer > sim.stateEndsAt) { // Build for 4-7 seconds
           sim.state = 'WALKING';
+          sim.stateEndsAt = 0;
           sim.targetPlotId = null;
         }
         // Stay still while building, bob up and down
@@ -1931,8 +1999,10 @@ function TownScene({
 
       // Handle MINING state
       if (sim.state === 'MINING') {
-        if (sim.stateTimer > 3 + Math.random() * 2) { // Mine for 3-5 seconds
+        if (sim.stateEndsAt <= 0) sim.stateEndsAt = 3 + Math.random() * 2;
+        if (sim.stateTimer > sim.stateEndsAt) { // Mine for 3-5 seconds
           sim.state = 'WALKING';
+          sim.stateEndsAt = 0;
         }
         // Stay still while mining with a shake effect
         const g = agentGroupRefs.current.get(a.id);
@@ -1945,8 +2015,10 @@ function TownScene({
 
       // Handle PLAYING state (arena games)
       if (sim.state === 'PLAYING') {
-        if (sim.stateTimer > 5 + Math.random() * 5) { // Play for 5-10 seconds
+        if (sim.stateEndsAt <= 0) sim.stateEndsAt = 5 + Math.random() * 5;
+        if (sim.stateTimer > sim.stateEndsAt) { // Play for 5-10 seconds
           sim.state = 'WALKING';
+          sim.stateEndsAt = 0;
         }
         // Spin in place while playing
         const g = agentGroupRefs.current.get(a.id);
@@ -1960,15 +2032,36 @@ function TownScene({
       // WALKING behavior - pick destination
       if (sim.route.length === 0) {
         const rng = mulberry32(hashToSeed(`${a.id}:${Math.floor(sim.walk)}`));
-        
-        // 40% chance to head to a building, 60% random walk
-        if (builtPlots.length > 0 && rng() < 0.4) {
+        const roll = rng();
+        const rels = relationshipsRef.current;
+        let pickedTarget = false;
+
+        // 15% chance: walk toward a friend/rival (if we have relationship data)
+        if (rels.length > 0 && roll < 0.15) {
+          const myRels = rels.filter(r => r.agentAId === a.id || r.agentBId === a.id);
+          if (myRels.length > 0) {
+            const rel = myRels[Math.floor(rng() * myRels.length)];
+            const targetId = rel.agentAId === a.id ? rel.agentBId : rel.agentAId;
+            const targetSim = sims.get(targetId);
+            if (targetSim && targetSim.state !== 'DEAD') {
+              sim.targetPlotId = null;
+              sim.route = buildRoute(sim.position, targetSim.position.clone());
+              pickedTarget = true;
+            }
+          }
+        }
+
+        // 25% chance: head to a building
+        if (!pickedTarget && builtPlots.length > 0 && roll < 0.40) {
           const targetPlot = builtPlots[Math.floor(rng() * builtPlots.length)];
           const target = getPlotWorldPos(targetPlot.plotIndex);
           sim.targetPlotId = targetPlot.id;
           sim.route = buildRoute(sim.position, target);
-        } else {
-          // Random walk
+          pickedTarget = true;
+        }
+
+        // 60% chance: random road node
+        if (!pickedTarget) {
           let attempts = 0;
           let target: THREE.Vector3;
           do {
@@ -1999,8 +2092,8 @@ function TownScene({
         if (otherId === a.id || other.state === 'DEAD') continue;
         const toOther = other.position.clone().sub(sim.position);
         const otherDist = toOther.length();
-        if (otherDist < 1.2 && otherDist > 0.01) {
-          avoidance.addScaledVector(toOther.normalize(), -0.5 * (1.2 - otherDist));
+        if (otherDist < 1.0 && otherDist > 0.01) {
+          avoidance.addScaledVector(toOther.normalize(), -0.5 * (1.0 - otherDist));
         }
       }
 
@@ -2063,13 +2156,34 @@ function TownScene({
         g.position.z = sim.position.z + dz;
       }
 
-      if (followCam && selectedAgentId) {
+      // Third-person camera locked behind followed agent
+      if (selectedAgentId) {
         const sim = sims.get(selectedAgentId);
         if (sim) {
-          const back = sim.heading.clone().normalize().multiplyScalar(-10);
-          const desired = sim.position.clone().add(back).add(new THREE.Vector3(0, 7, 0));
-          camera.position.lerp(desired, 0.08);
-          camera.lookAt(sim.position.x, sim.position.y + 1.6, sim.position.z);
+          const headingNorm = sim.heading.clone().normalize();
+          if (introRef.current.active) {
+            // Cinematic swoop from sky to behind agent
+            introRef.current.t = Math.min(1, introRef.current.t + dt * 0.5);
+            const e = easeOutCubic(introRef.current.t);
+            const skyPos = new THREE.Vector3(26, 28, 26);
+            const behind = headingNorm.clone().multiplyScalar(-6);
+            const target = sim.position.clone().add(behind).add(new THREE.Vector3(0, 3.5, 0));
+            camera.position.lerpVectors(skyPos, target, e);
+            const skyLook = new THREE.Vector3(0, 0, 0);
+            const agentLook = sim.position.clone().add(new THREE.Vector3(0, 1.5, 0))
+              .add(headingNorm.clone().multiplyScalar(2));
+            const lookTarget = skyLook.clone().lerp(agentLook, e);
+            camera.lookAt(lookTarget);
+            if (introRef.current.t >= 1) introRef.current.active = false;
+          } else {
+            // Normal third-person follow
+            const back = headingNorm.clone().multiplyScalar(-6);
+            const desired = sim.position.clone().add(back).add(new THREE.Vector3(0, 3.5, 0));
+            camera.position.lerp(desired, 0.06);
+            const lookAhead = sim.position.clone().add(new THREE.Vector3(0, 1.5, 0))
+              .add(headingNorm.clone().multiplyScalar(2));
+            camera.lookAt(lookAhead);
+          }
         }
       }
   });
@@ -2083,7 +2197,7 @@ function TownScene({
       <fog attach="fog" args={[
         weather === 'storm' ? '#0a1525' : weather === 'rain' ? '#080d18' : '#050914',
         weather === 'storm' ? 15 : weather === 'rain' ? 25 : 30,
-        weather === 'storm' ? 60 : weather === 'rain' ? 80 : 110
+        (weather === 'storm' ? 60 : weather === 'rain' ? 80 : 110) * fogScale
       ]} />
 
       {/* Ambient floating particles */}
@@ -2131,38 +2245,73 @@ function TownScene({
       <ambientLight intensity={weather === 'storm' ? 0.2 : weather === 'rain' ? 0.3 : 0.4} />
 
       <mesh receiveShadow rotation-x={-Math.PI / 2} position={[0, 0, 0]}>
-        <planeGeometry args={[500, 500]} />
-        <meshStandardMaterial color={'#0b1220'} map={groundTex ?? undefined} roughness={1} />
+        <planeGeometry args={[groundSize, groundSize]} />
+        <meshStandardMaterial color={groundTint} map={groundTex ?? undefined} roughness={1} />
       </mesh>
 
-      {/* Roads */}
+      {/* Roads / paths (procedural) */}
       <group position={[0, 0.01, 0]}>
-        {Array.from({ length: grid.cols + 1 }).map((_, i) => {
-          const x = (i - 1 - halfX) * spacing;
-          const len = (grid.rows + 1) * spacing;
+        {roadSegments.map((s) => {
           return (
-            <mesh key={`v-${i}`} position={[x, 0, 0]}>
-              <boxGeometry args={[roadW, 0.05, len]} />
-              <meshStandardMaterial color={'#0a0f1f'} roughness={0.95} />
-            </mesh>
-          );
-        })}
-        {Array.from({ length: grid.rows + 1 }).map((_, i) => {
-          const z = (i - 1 - halfY) * spacing;
-          const len = (grid.cols + 1) * spacing;
-          return (
-            <mesh key={`h-${i}`} position={[0, 0, z]}>
-              <boxGeometry args={[len, 0.05, roadW]} />
-              <meshStandardMaterial color={'#0a0f1f'} roughness={0.95} />
+            <mesh key={s.id} position={[s.x, 0, s.z]}>
+              <boxGeometry args={[
+                s.kind === 'H' ? s.len : roadW,
+                0.05,
+                s.kind === 'V' ? s.len : roadW
+              ]} />
+              <meshStandardMaterial
+                color={s.tone === 'arterial' ? '#0b1a35' : s.tone === 'ring' ? '#0a0f1f' : '#090d18'}
+                roughness={0.95}
+              />
             </mesh>
           );
         })}
       </group>
 
+      {/* Landmarks / outskirts (procedural) */}
+      <group>
+        {landmarks.lake && (
+          <mesh receiveShadow rotation-x={-Math.PI / 2} position={landmarks.lake.pos}>
+            <circleGeometry args={[landmarks.lake.r, 48]} />
+            <meshStandardMaterial color={'#0b3b70'} transparent opacity={0.55} roughness={0.2} metalness={0.05} />
+          </mesh>
+        )}
+        {landmarks.hill && (
+          <mesh receiveShadow position={landmarks.hill.pos}>
+            <coneGeometry args={[landmarks.hill.r, landmarks.hill.h, 14]} />
+            <meshStandardMaterial color={'#0f172a'} roughness={0.95} />
+          </mesh>
+        )}
+        {landmarks.neon.map((n, idx) => (
+          <mesh key={`neon-${idx}`} position={n.pos} castShadow>
+            <boxGeometry args={[n.w, n.h, n.d]} />
+            <meshStandardMaterial color={n.color} emissive={n.color} emissiveIntensity={0.9} roughness={0.3} />
+          </mesh>
+        ))}
+        {landmarks.rocks.map((r, idx) => (
+          <mesh key={`rock-${idx}`} position={r.pos} castShadow receiveShadow>
+            <dodecahedronGeometry args={[r.s, 0]} />
+            <meshStandardMaterial color={r.color} roughness={0.98} />
+          </mesh>
+        ))}
+        {landmarks.trees.map((t, idx) => (
+          <group key={`tree-${idx}`} position={t.pos} scale={t.s}>
+            <mesh castShadow receiveShadow position={[0, 1.0, 0]}>
+              <cylinderGeometry args={[0.22, 0.32, 2.0, 6]} />
+              <meshStandardMaterial color={'#3f2a1c'} roughness={0.95} />
+            </mesh>
+            <mesh castShadow receiveShadow position={[0, 2.8, 0]}>
+              <coneGeometry args={[1.15, 2.6, 7]} />
+              <meshStandardMaterial color={'#06351f'} roughness={0.9} />
+            </mesh>
+          </group>
+        ))}
+      </group>
+
       {/* Lots + Buildings */}
       {plots.map((p) => {
-        const wx = (p.x - halfX) * spacing;
-        const wz = (p.y - halfY) * spacing;
+        const wx = (p.x - bounds.centerX) * spacing;
+        const wz = (p.y - bounds.centerY) * spacing;
         const selected = p.id === selectedPlotId;
         const { color, emissive } = zoneMaterial(p.zone, selected);
         const name = p.buildingName?.trim() || (p.status === 'EMPTY' ? 'Available' : p.status.replace(/_/g, ' '));
@@ -2235,14 +2384,14 @@ function TownScene({
 	                  setSelectedAgentId(a.id);
 	                  setSelectedPlotId(null);
 	                }}
+	                simsRef={simsRef}
+	                economicState={economicState}
+	                BillboardLabel={BillboardLabel}
 	              />
-		              {speechByAgentId[a.id]?.text && (
-		                <SpeechBubble text={speechByAgentId[a.id].text} position={[0, 3.35, 0]} />
-		              )}
 		              {tradeByAgentId[a.id]?.text && (
 		                <SpeechBubble
 		                  text={tradeByAgentId[a.id].text}
-		                  position={[0, 4.05, 0]}
+		                  position={[0, 2.85, 0]}
 		                  bg={tradeByAgentId[a.id].isBuy ? 'rgba(16, 185, 129, 0.92)' : 'rgba(244, 63, 94, 0.92)'}
 		                  fg={'#0b1220'}
 		                />
@@ -2275,153 +2424,11 @@ function TownScene({
         />
       ))}
 
-      <OrbitControls
-        enabled={!followCam}
-        makeDefault
-        enableDamping
-        dampingFactor={0.08}
-        maxPolarAngle={Math.PI / 2.2}
-        minPolarAngle={0.35}
-        minDistance={12}
-        maxDistance={95}
-      />
     </group>
   );
 }
 
 // Mini-map component showing bird's eye view
-function MiniMap({
-  town,
-  agents,
-  selectedAgentId,
-  simsRef,
-}: {
-  town: Town;
-  agents: Agent[];
-  selectedAgentId: string | null;
-  simsRef: React.MutableRefObject<Map<string, AgentSim>>;
-}) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const size = 160;
-    canvas.width = size;
-    canvas.height = size;
-
-    // Calculate grid bounds
-    const plots = town.plots;
-    const maxX = plots.reduce((m, p) => Math.max(m, p.x), 0);
-    const maxY = plots.reduce((m, p) => Math.max(m, p.y), 0);
-    const cols = maxX + 1;
-    const rows = maxY + 1;
-    const cellW = size / (cols + 1);
-    const cellH = size / (rows + 1);
-    const halfX = (cols - 1) / 2;
-    const halfY = (rows - 1) / 2;
-
-    function draw() {
-      // Clear
-      ctx.fillStyle = '#0a0f1a';
-      ctx.fillRect(0, 0, size, size);
-
-      // Draw grid lines
-      ctx.strokeStyle = 'rgba(100, 116, 139, 0.2)';
-      ctx.lineWidth = 0.5;
-      for (let i = 0; i <= cols + 1; i++) {
-        ctx.beginPath();
-        ctx.moveTo(i * cellW, 0);
-        ctx.lineTo(i * cellW, size);
-        ctx.stroke();
-      }
-      for (let i = 0; i <= rows + 1; i++) {
-        ctx.beginPath();
-        ctx.moveTo(0, i * cellH);
-        ctx.lineTo(size, i * cellH);
-        ctx.stroke();
-      }
-
-      // Draw plots
-      for (const p of plots) {
-        const px = (p.x + 0.5) * cellW;
-        const py = (p.y + 0.5) * cellH;
-        const ps = Math.min(cellW, cellH) * 0.7;
-
-        let color = '#1e293b'; // Empty
-        if (p.status === 'CLAIMED') color = '#334155';
-        else if (p.status === 'UNDER_CONSTRUCTION') color = '#fbbf24';
-        else if (p.status === 'BUILT') color = ZONE_COLORS[p.zone];
-
-        ctx.fillStyle = color;
-        ctx.fillRect(px - ps / 2, py - ps / 2, ps, ps);
-      }
-
-      // Draw agents as dots (use real sim positions when available)
-      for (const a of agents) {
-        const sim = simsRef.current.get(a.id);
-        let ax: number;
-        let ay: number;
-        if (sim) {
-          // TownScene world->grid:
-          // worldX = (plotX - halfX) * spacing
-          // plotX = worldX / spacing + halfX
-          const plotX = sim.position.x / TOWN_SPACING + halfX;
-          const plotY = sim.position.z / TOWN_SPACING + halfY;
-          ax = (plotX + 0.5) * cellW;
-          ay = (plotY + 0.5) * cellH;
-        } else {
-          // Fallback scatter (should be rare, usually sim exists after a frame)
-          const seed = hashToSeed(a.id);
-          const rng = mulberry32(seed);
-          ax = rng() * size;
-          ay = rng() * size;
-        }
-
-        const isSelected = a.id === selectedAgentId;
-        ctx.beginPath();
-        ctx.arc(ax, ay, isSelected ? 5 : 3, 0, Math.PI * 2);
-        ctx.fillStyle = isSelected ? '#ffffff' : (ARCHETYPE_COLORS[a.archetype] || '#93c5fd');
-        ctx.fill();
-
-        if (isSelected) {
-          ctx.strokeStyle = ARCHETYPE_COLORS[a.archetype] || '#93c5fd';
-          ctx.lineWidth = 2;
-          ctx.stroke();
-        }
-      }
-    }
-
-    let raf = 0;
-    let alive = true;
-    let last = 0;
-    const loop = (t: number) => {
-      if (!alive) return;
-      // ~10fps is plenty for a tiny canvas.
-      if (t - last >= 100) {
-        draw();
-        last = t;
-      }
-      raf = requestAnimationFrame(loop);
-    };
-    raf = requestAnimationFrame(loop);
-    return () => {
-      alive = false;
-      cancelAnimationFrame(raf);
-    };
-  }, [town, agents, selectedAgentId, simsRef]);
-
-  return (
-    <canvas
-      ref={canvasRef}
-      className="w-full h-[140px] rounded border border-slate-800/50"
-      style={{ imageRendering: 'pixelated' }}
-    />
-  );
-}
 
 // Floating notification for swaps
 interface SwapNotification {
@@ -2441,32 +2448,106 @@ export default function Town3D() {
   const [economy, setEconomy] = useState<EconomyPoolSummary | null>(null);
   const [swaps, setSwaps] = useState<EconomySwapRow[]>([]);
   const [events, setEvents] = useState<TownEvent[]>([]);
-  const [activityTab, setActivityTab] = useState<'all' | 'swaps' | 'builds' | 'skills' | 'chats'>('all');
+  const [agentGoalsById, setAgentGoalsById] = useState<Record<string, AgentGoalView>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [swapNotifications, setSwapNotifications] = useState<SwapNotification[]>([]);
   const [eventNotifications, setEventNotifications] = useState<TownEvent[]>([]);
   const seenSwapIdsRef = useRef<Set<string>>(new Set());
+  const swapsPrimedRef = useRef(false);
   const seenEventIdsRef = useRef<Set<string>>(new Set());
+  const seenChatEventIdsRef = useRef<Set<string>>(new Set());
+  const seenTradeEventIdsRef = useRef<Set<string>>(new Set());
 
   const userSelectedTownIdRef = useRef<string | null>(null);
+  const activeTownIdRef = useRef<string | null>(null);
   const [selectedTownId, setSelectedTownId] = useState<string | null>(null);
 
   const [selectedPlotId, setSelectedPlotId] = useState<string | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-  const [followCam, setFollowCam] = useState(false);
+  const introRef = useRef({ active: true, t: 0 });
   const simsRef = useRef<Map<string, AgentSim>>(new Map());
 
-  // Short-lived speech bubbles (set on chat events)
-  const [speechByAgentId, setSpeechByAgentId] = useState<Record<string, { text: string; until: number }>>({});
+  // Auto-select first agent so camera has someone to follow
+  useEffect(() => {
+    if (!selectedAgentId && agents.length > 0) {
+      setSelectedAgentId(agents[0].id);
+    }
+  }, [agents, selectedAgentId]);
+
+  // Keep active town id in a ref for interval callbacks
+  useEffect(() => {
+    activeTownIdRef.current = town?.id ?? null;
+  }, [town?.id]);
+
+  // Relationship data for navigation (ref to avoid useFrame re-renders)
+  type RelEntry = { agentAId: string; agentBId: string; status: string; score: number };
+  const relationshipsRef = useRef<RelEntry[]>([]);
+  useEffect(() => {
+    if (!town) return;
+    let cancelled = false;
+    const fetchRels = () => {
+      fetch(`${API_BASE}/town/${town.id}/relationships`)
+        .then(r => r.json())
+        .then(data => { if (!cancelled && Array.isArray(data?.relationships)) relationshipsRef.current = data.relationships; })
+        .catch(() => {});
+    };
+    fetchRels();
+    const interval = setInterval(fetchRels, 30_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [town?.id]);
+
+  // Agent goals (season goal + next objective)
+  useEffect(() => {
+    if (!town) {
+      setAgentGoalsById({});
+      return;
+    }
+    let cancelled = false;
+    const fetchGoals = () => {
+      fetch(`${API_BASE}/town/${town.id}/goals`)
+        .then(r => r.json())
+        .then((data) => {
+          if (cancelled) return;
+          const arr: AgentGoalView[] = Array.isArray(data?.goals) ? data.goals : [];
+          const next: Record<string, AgentGoalView> = {};
+          for (const g of arr) {
+            if (g && typeof g.agentId === 'string') next[g.agentId] = g;
+          }
+          setAgentGoalsById(next);
+        })
+        .catch(() => {});
+    };
+    fetchGoals();
+    const interval = setInterval(fetchGoals, 10_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [town?.id]);
+
+  // Chat messages (accumulated log for sidebar panel)
+  interface ChatMessage {
+    id: string;
+    agentId: string;
+    agentName: string;
+    archetype: string;
+    text: string;
+    timestamp: number;
+    participants: string[];
+    outcome?: 'NEUTRAL' | 'BOND' | 'BEEF';
+    economicEffect?: { type: string; amount: number; detail: string };
+    economicIntent?: string;
+  }
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [tradeByAgentId, setTradeByAgentId] = useState<Record<string, { text: string; until: number; isBuy: boolean }>>({});
   const lastChatRequestRef = useRef<Map<string, number>>(new Map());
 
-  // x402 payable content states
-  const [x402Loading, setX402Loading] = useState<string | null>(null);
-  const [x402Lore, setX402Lore] = useState<{ plotIndex: number; content: string } | null>(null);
-  const [x402Interview, setX402Interview] = useState<{ agentId: string; content: string } | null>(null);
-  const [x402Oracle, setX402Oracle] = useState<string | null>(null);
+  // Clear chat log when switching towns
+  useEffect(() => {
+    seenChatEventIdsRef.current = new Set();
+    seenTradeEventIdsRef.current = new Set();
+    setChatMessages([]);
+    setTradeByAgentId({});
+  }, [town?.id]);
+
 
   // Agent action logs
   interface AgentAction {
@@ -2488,21 +2569,29 @@ export default function Town3D() {
   const [agentActions, setAgentActions] = useState<AgentAction[]>([]);
   const [agentActionsLoading, setAgentActionsLoading] = useState(false);
 
-  // Social graph (friends/rivals)
-  type AgentRelationships = {
-    maxFriends: number;
-    friends: Array<{ agentId: string; name: string; archetype: string; score: number; since: string | null }>;
-    rivals: Array<{ agentId: string; name: string; archetype: string; score: number; since: string | null }>;
-  };
-  const [selectedAgentRelationships, setSelectedAgentRelationships] = useState<AgentRelationships | null>(null);
-  const [agentRelationshipsLoading, setAgentRelationshipsLoading] = useState(false);
   
-  // Yield/contributor data
-  const [contributors, setContributors] = useState<Contributor[]>([]);
-  const [showYieldPanel, setShowYieldPanel] = useState(false);
   
   // Sound toggle
   const [soundOn, setSoundOn] = useState(true);
+
+  // Degen mode state
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const degen = useDegenState(walletAddress);
+  const prevPnLRef = useRef(0);
+
+  // Fire confetti + sound when PnL increases
+  useEffect(() => {
+    const prev = prevPnLRef.current;
+    const curr = degen.totalPnL;
+    if (curr > prev && prev !== 0) {
+      const gain = curr - prev;
+      playSound('kaChing');
+      if (gain > 500) {
+        confetti({ particleCount: 80, spread: 70, origin: { y: 0.7 } });
+      }
+    }
+    prevPnLRef.current = curr;
+  }, [degen.totalPnL]);
   
   // Visual effects (system-controlled)
   const [weather, setWeather] = useState<'clear' | 'rain' | 'storm'>('clear');
@@ -2574,68 +2663,9 @@ export default function Town3D() {
     return () => clearInterval(interval);
   }, [pollution]);
 
-  // x402 API calls
-  const fetchBuildingLore = async (plotIndex: number) => {
-    setX402Loading('lore');
-    try {
-      const res = await fetch(`${API_BASE}/x402/building/${plotIndex}/lore`);
-      if (!res.ok) throw new Error('Failed to fetch lore');
-      const data = await res.json();
-      setX402Lore({ plotIndex, content: data.lore || data.content || JSON.stringify(data) });
-    } catch (e) {
-      console.error('x402 lore error:', e);
-    } finally {
-      setX402Loading(null);
-    }
-  };
-
-  const fetchAgentInterview = async (agentId: string) => {
-    setX402Loading('interview');
-    try {
-      const res = await fetch(`${API_BASE}/x402/agent/${agentId}/interview`);
-      if (!res.ok) throw new Error('Failed to fetch interview');
-      const data = await res.json();
-      setX402Interview({ agentId, content: data.interview || data.content || JSON.stringify(data) });
-    } catch (e) {
-      console.error('x402 interview error:', e);
-    } finally {
-      setX402Loading(null);
-    }
-  };
-
-  const fetchTownOracle = async () => {
-    setX402Loading('oracle');
-    try {
-      const res = await fetch(`${API_BASE}/x402/town/oracle`);
-      if (!res.ok) throw new Error('Failed to fetch oracle');
-      const data = await res.json();
-      setX402Oracle(data.forecast || data.content || JSON.stringify(data));
-    } catch (e) {
-      console.error('x402 oracle error:', e);
-    } finally {
-      setX402Loading(null);
-    }
-  };
-
-  const pushSpeech = useCallback((agentId: string, text: string) => {
-    const clean = String(text || '').replace(/\s+/g, ' ').trim();
-    if (!clean) return;
-    const until = Date.now() + 6500;
-    setSpeechByAgentId((prev) => ({ ...prev, [agentId]: { text: clean, until } }));
-    window.setTimeout(() => {
-      setSpeechByAgentId((prev) => {
-        if (prev[agentId]?.until !== until) return prev;
-        const next = { ...prev };
-        delete next[agentId];
-        return next;
-      });
-    }, 6800);
-  }, []);
-
-  const pushTrade = useCallback((agentId: string, isBuy: boolean, amount: number) => {
-    const amt = Math.max(0, Math.round(Number(amount) || 0));
-    if (!agentId || amt <= 0) return;
-    const clean = `${isBuy ? 'BUY' : 'SELL'} ${amt.toLocaleString()} ARENA`;
+  const pushTradeText = useCallback((agentId: string, isBuy: boolean, text: string) => {
+    const clean = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 64);
+    if (!agentId || !clean) return;
     const until = Date.now() + 2400;
     setTradeByAgentId((prev) => ({ ...prev, [agentId]: { text: clean, until, isBuy } }));
     window.setTimeout(() => {
@@ -2647,6 +2677,18 @@ export default function Town3D() {
       });
     }, 2700);
   }, []);
+
+  const pushTradeAmount = useCallback((agentId: string, isBuy: boolean, amount: number) => {
+    const amt = Math.max(0, Math.round(Number(amount) || 0));
+    if (!agentId || amt <= 0) return;
+    pushTradeText(agentId, isBuy, `${isBuy ? 'BUY' : 'SELL'} ${amt.toLocaleString()} ARENA`);
+  }, [pushTradeText]);
+
+  const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
+  const agentByIdRef = useRef<Map<string, Agent>>(new Map());
+  useEffect(() => {
+    agentByIdRef.current = agentById;
+  }, [agentById]);
 
   const requestChat = useCallback(async (townId: string, agentAId: string, agentBId: string) => {
     const ids = [agentAId, agentBId].sort();
@@ -2665,21 +2707,51 @@ export default function Town3D() {
       if (!res.ok) return;
       const data = await res.json();
       const lines = data?.conversation?.lines;
+      const outcome = data?.conversation?.outcome as ChatMessage['outcome'];
+      const econ = data?.economicEffect as ChatMessage['economicEffect'];
+      const economicIntent = data?.economicIntent || data?.conversation?.economicIntent || 'NONE';
+      const chatEventId = typeof data?.chatEventId === 'string' ? data.chatEventId : '';
+      if (chatEventId) seenChatEventIdsRef.current.add(chatEventId);
       if (Array.isArray(lines)) {
-        for (const l of lines) {
-          if (l?.agentId && l?.text) pushSpeech(String(l.agentId), String(l.text));
+        const participants = [agentAId, agentBId];
+        const newMsgs: ChatMessage[] = lines
+          .filter((l: any) => l?.agentId && l?.text)
+          .map((l: any, idx: number) => ({
+            id: chatEventId ? `${chatEventId}:${idx}` : `${Date.now()}-${l.agentId}-${Math.random().toString(36).slice(2, 6)}`,
+            agentId: String(l.agentId),
+            agentName: agentById.get(String(l.agentId))?.name || 'Unknown',
+            archetype: agentById.get(String(l.agentId))?.archetype || 'ROCK',
+            text: String(l.text),
+            timestamp: Date.now(),
+            participants,
+            outcome,
+            economicIntent,
+          }));
+        if (econ) {
+          newMsgs.push({
+            id: chatEventId ? `${chatEventId}:econ` : `${Date.now()}-econ`,
+            agentId: '__system__',
+            agentName: '',
+            archetype: '',
+            text: econ.detail,
+            timestamp: Date.now(),
+            participants,
+            outcome,
+            economicEffect: econ,
+            economicIntent,
+          });
         }
+        setChatMessages(prev => [...newMsgs, ...prev].slice(0, 80));
       }
     } catch {
       // ignore
     }
-  }, [pushSpeech]);
+  }, [agentById]);
 
   // Fetch agent action logs when agent is selected
   useEffect(() => {
     if (!selectedAgentId) {
       setAgentActions([]);
-      setSelectedAgentRelationships(null);
       return;
     }
     let cancelled = false;
@@ -2698,24 +2770,7 @@ export default function Town3D() {
     return () => { cancelled = true; };
   }, [selectedAgentId]);
 
-  // Fetch agent friends/rivals
-  useEffect(() => {
-    if (!selectedAgentId) return;
-    let cancelled = false;
-    setAgentRelationshipsLoading(true);
-    fetch(`${API_BASE}/agent/${selectedAgentId}/relationships`)
-      .then(res => res.json())
-      .then(data => {
-        if (!cancelled && data?.friends && data?.rivals) {
-          setSelectedAgentRelationships(data);
-        }
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setAgentRelationshipsLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [selectedAgentId]);
+
 
   useEffect(() => {
     let cancelled = false;
@@ -2770,23 +2825,11 @@ export default function Town3D() {
       }
     }
 
-    async function loadContributors() {
-      try {
-        const res = await apiFetch<{ contributors: Contributor[] }>(`/town/${selectedTownId}/contributors`);
-        if (!cancelled) setContributors(res.contributors || []);
-      } catch {
-        // ignore
-      }
-    }
-
     void loadTown();
-    void loadContributors();
     const t = setInterval(loadTown, 2500);
-    const t2 = setInterval(loadContributors, 10000);
     return () => {
       cancelled = true;
       clearInterval(t);
-      clearInterval(t2);
     };
   }, [selectedTownId]);
 
@@ -2829,8 +2872,18 @@ export default function Town3D() {
     let cancelled = false;
 	    async function loadSwaps() {
 	      try {
-	        const res = await apiFetch<{ swaps: EconomySwapRow[] }>('/economy/swaps?limit=60');
+	        const res = await apiFetch<{ swaps: EconomySwapRow[] }>('/economy/swaps?limit=30');
         if (!cancelled) {
+          // Prime swap IDs on first fetch so we don't "replay" historical swaps as live notifications.
+          if (!swapsPrimedRef.current) {
+            swapsPrimedRef.current = true;
+            for (const s of res.swaps) {
+              if (s?.id) seenSwapIdsRef.current.add(s.id);
+            }
+            setSwaps(res.swaps);
+            return;
+          }
+
           // Detect new swaps for notifications
           const newNotifs: SwapNotification[] = [];
 	          for (const s of res.swaps) {
@@ -2848,7 +2901,7 @@ export default function Town3D() {
 	            }
 	          }
 	          if (newNotifs.length > 0) {
-	            setSwapNotifications(prev => [...newNotifs, ...prev].slice(0, 5));
+	            setSwapNotifications(prev => [...newNotifs, ...prev].slice(0, 3));
 	            // Play sound for new swaps
 	            playSound('swap');
 	            // Add coin burst effects (spawn around the agent so the swap feels "real")
@@ -2858,12 +2911,11 @@ export default function Town3D() {
 	                ? [sim.position.x, 2.1, sim.position.z]
 	                : [(Math.random() - 0.5) * 30, 2, (Math.random() - 0.5) * 30];
 	              setCoinBursts(prev => [...prev, { id: n.id, position: pos, isBuy: n.side === 'BUY_ARENA' }]);
-	              if (n.agentId) pushTrade(n.agentId, n.side === 'BUY_ARENA', n.amount);
 	            });
-	            // Auto-remove after 4 seconds
+	            // Auto-remove after 3 seconds
 	            setTimeout(() => {
 	              setSwapNotifications(prev => prev.filter(n => !newNotifs.some(nn => nn.id === n.id)));
-	            }, 4000);
+	            }, 3000);
 	          }
           setSwaps(res.swaps);
         }
@@ -2872,12 +2924,12 @@ export default function Town3D() {
       }
 	    }
 	    void loadSwaps();
-	    const t = setInterval(loadSwaps, 1500);
+	    const t = setInterval(loadSwaps, 5000);
 	    return () => {
 	      cancelled = true;
 	      clearInterval(t);
 	    };
-	  }, [pushTrade]);
+	  }, []);
 
   // Fetch world events (claims, builds, completions)
   useEffect(() => {
@@ -2911,6 +2963,128 @@ export default function Town3D() {
               setEventNotifications(prev => prev.filter(n => !newEvents.some(ne => ne.id === n.id)));
             }, 5000);
           }
+
+          // Also derive chat messages from authoritative TownEvents so all spectators see the same conversations.
+          const activeTownId = activeTownIdRef.current;
+          if (activeTownId) {
+            const byId = agentByIdRef.current;
+            const newChatMsgs: ChatMessage[] = [];
+            for (const e of res.events) {
+              if (e.townId !== activeTownId) continue;
+              if (seenChatEventIdsRef.current.has(e.id)) continue;
+              let meta: any = null;
+              try {
+                meta = JSON.parse(e.metadata || '{}');
+              } catch {
+                meta = null;
+              }
+              if (!meta || typeof meta !== 'object') continue;
+              if (String(meta.kind || '') !== 'AGENT_CHAT') continue;
+
+              const participants = Array.isArray(meta.participants)
+                ? meta.participants.filter((p: any) => typeof p === 'string')
+                : [];
+              const rawLines = Array.isArray(meta.lines) ? meta.lines : [];
+              const chatLines = rawLines
+                .filter((l: any) => l && typeof l === 'object')
+                .map((l: any) => ({
+                  agentId: typeof l.agentId === 'string' ? l.agentId : '',
+                  text: typeof l.text === 'string' ? l.text : '',
+                }))
+                .filter((l: any) => l.agentId && l.text);
+
+              if (participants.length < 2 || chatLines.length < 1) continue;
+
+              const outcome = (String(meta.outcome || 'NEUTRAL').toUpperCase() as ChatMessage['outcome']) || 'NEUTRAL';
+              const economicIntent = typeof meta.economicIntent === 'string' ? meta.economicIntent : 'NONE';
+              const econ = meta.economicEffect && typeof meta.economicEffect === 'object'
+                ? meta.economicEffect as ChatMessage['economicEffect']
+                : null;
+              const ts = new Date(e.createdAt).getTime();
+
+              for (let idx = 0; idx < chatLines.length; idx++) {
+                const l = chatLines[idx];
+                const ag = byId.get(l.agentId);
+                newChatMsgs.push({
+                  id: `${e.id}:${idx}`,
+                  agentId: l.agentId,
+                  agentName: ag?.name || 'Unknown',
+                  archetype: ag?.archetype || 'ROCK',
+                  text: l.text,
+                  timestamp: ts,
+                  participants,
+                  outcome,
+                  economicIntent,
+                });
+              }
+              if (econ?.detail) {
+                newChatMsgs.push({
+                  id: `${e.id}:econ`,
+                  agentId: '__system__',
+                  agentName: '',
+                  archetype: '',
+                  text: econ.detail,
+                  timestamp: ts,
+                  participants,
+                  outcome,
+                  economicEffect: econ,
+                  economicIntent,
+                });
+              }
+
+              seenChatEventIdsRef.current.add(e.id);
+            }
+            if (newChatMsgs.length > 0) {
+              setChatMessages(prev => [...newChatMsgs, ...prev].slice(0, 80));
+            }
+          }
+
+          // Trade speech bubbles from authoritative TownEvents (purpose-aware).
+          if (activeTownId) {
+            const tradeBubbles: Array<{ agentId: string; isBuy: boolean; text: string }> = [];
+            for (const e of res.events) {
+              if (e.townId !== activeTownId) continue;
+              if (seenTradeEventIdsRef.current.has(e.id)) continue;
+              if (e.eventType !== 'TRADE') continue;
+              if (!e.agentId) continue;
+
+              let meta: any = null;
+              try {
+                meta = JSON.parse(e.metadata || '{}');
+              } catch {
+                meta = null;
+              }
+              if (!meta || typeof meta !== 'object') continue;
+              if (String(meta.kind || '') !== 'AGENT_TRADE') continue;
+
+              const side = String(meta.side || '').toUpperCase();
+              if (side !== 'BUY_ARENA' && side !== 'SELL_ARENA') continue;
+              const isBuy = side === 'BUY_ARENA';
+              const nextAction = typeof meta.nextAction === 'string' ? meta.nextAction : '';
+              const purpose = typeof meta.purpose === 'string' ? meta.purpose : '';
+              const amountArena = Number(meta.amountArena || (isBuy ? meta.amountOut : meta.amountIn) || 0);
+
+              const label =
+                safeTrim(nextAction, 20)
+                  ? `${isBuy ? 'FUEL' : 'CASH'} → ${safeTrim(nextAction, 20)}`
+                  : safeTrim(purpose, 44)
+                    ? safeTrim(purpose, 44)
+                    : Number.isFinite(amountArena) && amountArena > 0
+                      ? `${isBuy ? 'BUY' : 'SELL'} ${Math.round(amountArena)} ARENA`
+                      : '';
+
+              if (label) {
+                tradeBubbles.push({ agentId: e.agentId, isBuy, text: label });
+              }
+              seenTradeEventIdsRef.current.add(e.id);
+            }
+
+            // Limit bursts per poll to avoid spam if history backfills.
+            tradeBubbles.slice(0, 6).forEach((b) => {
+              pushTradeText(b.agentId, b.isBuy, b.text);
+            });
+          }
+
           setEvents(res.events);
         }
       } catch {
@@ -2927,47 +3101,184 @@ export default function Town3D() {
 
   const selectedPlot = useMemo(() => town?.plots.find((p) => p.id === selectedPlotId) ?? null, [town, selectedPlotId]);
   const selectedAgent = useMemo(() => agents.find((a) => a.id === selectedAgentId) ?? null, [agents, selectedAgentId]);
-  const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
   const recentSwaps = useMemo(() => swaps.slice(0, 8), [swaps]);
   const selectedAgentSwaps = useMemo(
     () => (selectedAgent ? swaps.filter((s) => s.agent?.id === selectedAgent.id).slice(0, 5) : []),
     [swaps, selectedAgent],
   );
 
+  const selectedAgentObjective = useMemo(() => {
+    const townId = town?.id || '';
+    const agentId = selectedAgent?.id || '';
+    if (!townId || !agentId) return null;
+
+    const now = Date.now();
+    const resolved = new Set<string>();
+
+    for (const e of events) {
+      if (e.townId !== townId) continue;
+      if (e.eventType !== 'CUSTOM') continue;
+      let meta: any = null;
+      try {
+        meta = JSON.parse(e.metadata || '{}');
+      } catch {
+        meta = null;
+      }
+      if (!meta || typeof meta !== 'object') continue;
+      if (String(meta.kind || '') !== 'TOWN_OBJECTIVE_RESOLVED') continue;
+      if (typeof meta.objectiveId === 'string') resolved.add(meta.objectiveId);
+    }
+
+    let best: { title: string; detail: string; expiresAtMs: number } | null = null;
+    let bestTs = 0;
+
+    for (const e of events) {
+      if (e.townId !== townId) continue;
+      if (e.eventType !== 'CUSTOM') continue;
+      let meta: any = null;
+      try {
+        meta = JSON.parse(e.metadata || '{}');
+      } catch {
+        meta = null;
+      }
+      if (!meta || typeof meta !== 'object') continue;
+      if (String(meta.kind || '') !== 'TOWN_OBJECTIVE') continue;
+      if (resolved.has(e.id)) continue;
+
+      const participants = Array.isArray(meta.participants)
+        ? meta.participants.filter((p: any) => typeof p === 'string')
+        : [];
+      if (!participants.includes(agentId)) continue;
+
+      const expiresAtMs = Number(meta.expiresAtMs || 0);
+      if (!Number.isFinite(expiresAtMs) || expiresAtMs <= now) continue;
+
+      const objectiveType = String(meta.objectiveType || '').toUpperCase();
+      const otherId = participants.find((p: string) => p !== agentId) || '';
+      const other = otherId ? agentById.get(otherId) : null;
+      const otherName = other?.name || (otherId ? otherId.slice(0, 6) : 'someone');
+
+      let title = '';
+      let detail = '';
+
+      if (objectiveType === 'RACE_CLAIM') {
+        const plotIndexRaw = Number(meta.plotIndex);
+        const plotIndex = Number.isFinite(plotIndexRaw) ? Math.trunc(plotIndexRaw) : null;
+        const zone = safeTrim(meta.zone, 24).toUpperCase() || 'UNKNOWN';
+        const stakeRaw = Number(meta.stakeArena || 0);
+        const stake = Number.isFinite(stakeRaw) ? Math.trunc(stakeRaw) : 0;
+        title = `🏁 Race: plot ${plotIndex ?? '?'} (${zone})`;
+        detail = `vs ${otherName}${stake > 0 ? ` · ${stake} ARENA stake` : ''}`;
+      } else if (objectiveType === 'PACT_CLAIM') {
+        const zone = safeTrim(meta.zone, 24).toUpperCase() || 'UNKNOWN';
+        const assignmentsRaw = meta.assignments;
+        const assignments =
+          assignmentsRaw && typeof assignmentsRaw === 'object'
+            ? (assignmentsRaw as Record<string, unknown>)
+            : null;
+        const myPlot = assignments ? Number(assignments[agentId]) : Number.NaN;
+        const otherPlot = assignments && otherId ? Number(assignments[otherId]) : Number.NaN;
+        title = `🤝 Pact: ${zone}`;
+        detail = `you → plot ${Number.isFinite(myPlot) ? Math.trunc(myPlot) : '?'} · ${otherName} → plot ${Number.isFinite(otherPlot) ? Math.trunc(otherPlot) : '?'}`;
+      } else {
+        title = safeTrim(e.title || '🎯 Objective', 80);
+        detail = safeTrim(e.description || '', 120);
+      }
+
+      const ts = new Date(e.createdAt).getTime();
+      if (ts > bestTs) {
+        bestTs = ts;
+        best = { title, detail, expiresAtMs };
+      }
+    }
+
+    return best;
+  }, [events, town?.id, selectedAgent?.id, agentById]);
+
+  // Purpose-aware ticker derived from TRADE town events (not raw swaps).
+  const tradeTickerItems = useMemo(() => {
+    if (!town) return [];
+    const items: Array<{
+      id: string;
+      createdAt: string;
+      agent: { name: string; archetype: string };
+      side: 'BUY_ARENA' | 'SELL_ARENA';
+      amountArena: number;
+      note?: string;
+    }> = [];
+
+    for (const e of events) {
+      if (e.townId !== town.id) continue;
+      if (e.eventType !== 'TRADE') continue;
+      if (!e.agentId) continue;
+
+      let meta: any = null;
+      try {
+        meta = JSON.parse(e.metadata || '{}');
+      } catch {
+        meta = null;
+      }
+      if (!meta || typeof meta !== 'object') continue;
+      if (String(meta.kind || '') !== 'AGENT_TRADE') continue;
+
+      const side = String(meta.side || '').toUpperCase();
+      if (side !== 'BUY_ARENA' && side !== 'SELL_ARENA') continue;
+      const isBuy = side === 'BUY_ARENA';
+      const amountArena = Number(meta.amountArena || (isBuy ? meta.amountOut : meta.amountIn) || 0);
+      if (!Number.isFinite(amountArena) || amountArena <= 0) continue;
+
+      const ag = agentById.get(e.agentId);
+      const nextAction = safeTrim(meta.nextAction, 24);
+      const purpose = safeTrim(meta.purpose, 42);
+      items.push({
+        id: e.id,
+        createdAt: e.createdAt,
+        agent: { name: ag?.name || 'Unknown', archetype: ag?.archetype || 'ROCK' },
+        side: side === 'BUY_ARENA' ? 'BUY_ARENA' : 'SELL_ARENA',
+        amountArena: Math.round(amountArena),
+        note: nextAction ? `→ ${nextAction}` : purpose ? `— ${purpose}` : undefined,
+      });
+    }
+
+    items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return items.slice(0, 16);
+  }, [events, town?.id, agentById]);
+
   // Merge swaps and events into unified activity feed
   const activityFeed = useMemo(() => {
-    const getMetaKind = (e: TownEvent): string | null => {
+    // If a swap is mirrored as a TRADE town event (with purpose), show the event and hide the raw swap row.
+    const tradeSwapIds = new Set<string>();
+    for (const e of events) {
+      if (e.eventType !== 'TRADE') continue;
       try {
-        const meta = JSON.parse(e.metadata || '{}');
-        return typeof meta?.kind === 'string' ? meta.kind : null;
+        const meta = JSON.parse(e.metadata || '{}') as any;
+        if (meta && typeof meta === 'object' && String(meta.kind || '') === 'AGENT_TRADE' && typeof meta.swapId === 'string') {
+          tradeSwapIds.add(meta.swapId);
+        }
       } catch {
-        return null;
+        // ignore
       }
-    };
+    }
 
-    const isSkillEvent = (e: TownEvent) => {
-      return getMetaKind(e) === 'X402_SKILL';
-    };
-    const isChatEvent = (e: TownEvent) => getMetaKind(e) === 'AGENT_CHAT';
-    const isRelationshipChange = (e: TownEvent) => getMetaKind(e) === 'RELATIONSHIP_CHANGE';
+    const swapItems = swaps
+      .filter((s) => !tradeSwapIds.has(s.id))
+      .map((s): ActivityItem => ({ kind: 'swap', data: s }));
+    const eventItems = events.map((e): ActivityItem => ({ kind: 'event', data: e }));
 
-    const items: ActivityItem[] = [
-      ...swaps.map((s): ActivityItem => ({ kind: 'swap', data: s })),
-      ...events.map((e): ActivityItem => ({ kind: 'event', data: e })),
-    ];
-    // Sort by createdAt descending
-    items.sort((a, b) => {
-      const aTime = a.kind === 'swap' ? a.data.createdAt : a.data.createdAt;
-      const bTime = b.kind === 'swap' ? b.data.createdAt : b.data.createdAt;
+    // Reserve slots for events so swaps don't crowd them out
+    const sortByTime = (a: ActivityItem, b: ActivityItem) => {
+      const aTime = a.data.createdAt;
+      const bTime = b.data.createdAt;
       return new Date(bTime).getTime() - new Date(aTime).getTime();
-    });
-    // Filter by tab
-    if (activityTab === 'swaps') return items.filter(i => i.kind === 'swap').slice(0, 15);
-    if (activityTab === 'builds') return items.filter(i => i.kind === 'event' && !isSkillEvent(i.data as TownEvent) && !isChatEvent(i.data as TownEvent) && !isRelationshipChange(i.data as TownEvent)).slice(0, 15);
-    if (activityTab === 'skills') return items.filter(i => i.kind === 'event' && isSkillEvent(i.data as TownEvent)).slice(0, 15);
-    if (activityTab === 'chats') return items.filter(i => i.kind === 'event' && (isChatEvent(i.data as TownEvent) || isRelationshipChange(i.data as TownEvent))).slice(0, 15);
-    return items.slice(0, 15);
-  }, [swaps, events, activityTab]);
+    };
+
+    const recentEvents = eventItems.sort(sortByTime).slice(0, 8);
+    const recentSwaps = swapItems.sort(sortByTime).slice(0, 15 - recentEvents.length);
+
+    const combined = [...recentEvents, ...recentSwaps];
+    combined.sort(sortByTime);
+    return combined;
+  }, [swaps, events]);
 
   if (loading) {
     return (
@@ -3008,7 +3319,31 @@ export default function Town3D() {
   }
 
   return (
-    <div className="relative h-[100svh] w-full overflow-hidden bg-[#050914]">
+    <div className="flex flex-col h-[100svh] w-full overflow-hidden bg-[#050914]">
+      {/* Top Bar: Degen Stats */}
+      <div className="shrink-0 flex items-center justify-between px-4 py-1.5 bg-slate-950/90 border-b border-slate-800/40 z-50">
+        <div className="flex items-center gap-3">
+          <span className="text-xs font-bold text-amber-400">AI TOWN</span>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 border-slate-700/60 bg-slate-950/40 text-[10px] text-slate-200"
+            onClick={() => (window.location.href = '/town/pixel')}
+          >
+            Pixel
+          </Button>
+          {economy && Number.isFinite(economy.spotPrice) && (
+            <span className="text-[10px] text-slate-500 font-mono">$ARENA {economy.spotPrice.toFixed(4)}</span>
+          )}
+        </div>
+        <PositionTracker balance={degen.balance} totalPnL={degen.totalPnL} spotPrice={economy?.spotPrice ?? null} />
+        <WalletConnect compact onAddressChange={setWalletAddress} />
+      </div>
+
+      {/* Main content: 3D + Dashboard split */}
+      <ResizablePanelGroup direction="horizontal" className="flex-1 min-h-0">
+        <ResizablePanel defaultSize={65} minSize={40}>
+          <div className="relative h-full w-full overflow-hidden">
       {/* 3D Canvas */}
       <Canvas
         shadows
@@ -3016,7 +3351,6 @@ export default function Town3D() {
         camera={{ position: [26, 28, 26], fov: 50, near: 0.1, far: 500 }}
         onPointerMissed={() => {
           setSelectedPlotId(null);
-          setSelectedAgentId(null);
         }}
       >
         <TownScene
@@ -3026,10 +3360,9 @@ export default function Town3D() {
           setSelectedPlotId={setSelectedPlotId}
           selectedAgentId={selectedAgentId}
           setSelectedAgentId={setSelectedAgentId}
-          followCam={followCam}
+          introRef={introRef}
           simsRef={simsRef}
           onChatStart={requestChat}
-          speechByAgentId={speechByAgentId}
           tradeByAgentId={tradeByAgentId}
           weather={weather}
           economicState={economicState}
@@ -3039,36 +3372,37 @@ export default function Town3D() {
           setDeathEffects={setDeathEffects}
           spawnEffects={spawnEffects}
           setSpawnEffects={setSpawnEffects}
+          relationshipsRef={relationshipsRef}
         />
       </Canvas>
 
-      {/* Swap Notifications - floating toasts */}
-      <div className="pointer-events-none absolute bottom-20 left-1/2 -translate-x-1/2 flex flex-col-reverse gap-2 z-50">
-        {swapNotifications.map((notif) => {
+      {/* Swap Notifications - floating toasts (top-right, compact) */}
+      <div className="pointer-events-none absolute top-16 right-4 flex flex-col gap-1.5 z-50">
+        {swapNotifications.slice(0, 3).map((notif) => {
           const isBuy = notif.side === 'BUY_ARENA';
           const color = ARCHETYPE_COLORS[notif.archetype] || '#93c5fd';
           const glyph = ARCHETYPE_GLYPH[notif.archetype] || '●';
           return (
             <div
               key={notif.id}
-              className="animate-in slide-in-from-bottom-4 fade-in duration-300 pointer-events-auto"
+              className="animate-in slide-in-from-right-4 fade-in duration-300 pointer-events-auto"
             >
-              <div className={`flex items-center gap-2 px-4 py-2 rounded-full border backdrop-blur-md shadow-lg ${
-                isBuy 
-                  ? 'bg-emerald-950/80 border-emerald-700/50 text-emerald-200' 
+              <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border backdrop-blur-md shadow-lg ${
+                isBuy
+                  ? 'bg-emerald-950/80 border-emerald-700/50 text-emerald-200'
                   : 'bg-rose-950/80 border-rose-700/50 text-rose-200'
               }`}>
-                <span className="text-lg">{isBuy ? '📈' : '📉'}</span>
-                <span style={{ color }} className="font-mono text-sm">
+                <span className="text-sm">{isBuy ? '📈' : '📉'}</span>
+                <span style={{ color }} className="font-mono text-xs">
                   {glyph} {notif.agentName}
                 </span>
-                <span className="text-xs opacity-80">
+                <span className="text-[10px] opacity-80">
                   {isBuy ? 'bought' : 'sold'}
                 </span>
-                <span className="font-mono font-semibold">
+                <span className="font-mono text-xs font-semibold">
                   {Math.round(notif.amount).toLocaleString()}
                 </span>
-                <span className="text-xs opacity-80">$ARENA</span>
+                <span className="text-[10px] opacity-80">$ARENA</span>
               </div>
             </div>
           );
@@ -3111,36 +3445,57 @@ export default function Town3D() {
 
       {/* Overlay UI */}
       <div className="pointer-events-none absolute inset-0">
+        <div className="absolute inset-0 hud-backplate" />
         <div className="pointer-events-auto absolute left-3 top-3 w-[360px] max-w-[calc(100vw-24px)]">
-          <Card className="border-slate-800/70 bg-slate-950/70 backdrop-blur-md p-3">
+          <div className="hud-panel p-3">
             <div className="flex items-start justify-between gap-3">
-              <div>
+              <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-slate-100">AI Town</span>
-                  <Badge variant="outline" className="border-slate-700/70 text-slate-300 text-[10px]">
-                    {town.status}
-                  </Badge>
+                  <span className="text-sm font-semibold bg-gradient-to-r from-slate-50 to-slate-300 bg-clip-text text-transparent">
+                    AI Town
+                  </span>
+                  <span className="hud-chip">{town.status}</span>
+                  {typeof town.level === 'number' && <span className="hud-chip">Lv {town.level}</span>}
                 </div>
                 <div className="mt-1 text-xs text-slate-300">
                   <span className="font-mono">{town.name}</span>
                   <span className="text-slate-500"> · </span>
                   <span className="text-slate-400">{town.theme || 'unthemed'}</span>
                 </div>
-	                <div className="mt-1 text-[11px] text-slate-500">
-	                  {town.builtPlots}/{town.totalPlots} plots built · {Math.round(town.completionPct)}%
-	                </div>
-	                {economy && Number.isFinite(economy.spotPrice) && (
-	                  <div className="mt-1 text-[11px] text-slate-500">
-	                    💱 1 $ARENA ≈ {economy.spotPrice.toFixed(3)} reserve · fee {(economy.feeBps / 100).toFixed(2)}%
-	                  </div>
-	                )}
-	              </div>
-	            </div>
+                <div className="mt-2">
+                  <div className="flex items-center justify-between text-[11px] text-slate-500">
+                    <span>
+                      {town.builtPlots}/{town.totalPlots} plots built
+                    </span>
+                    <span className="font-mono text-slate-200">{Math.round(town.completionPct)}%</span>
+                  </div>
+                  <div className="mt-1 h-1.5 rounded-full bg-slate-800/60 overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-primary to-primary-glow"
+                      style={{ width: `${Math.max(0, Math.min(100, town.completionPct))}%` }}
+                    />
+                  </div>
+                </div>
+                {town.yieldPerTick != null && Number.isFinite(town.yieldPerTick) && (
+                  <div className="mt-1 text-[11px] text-slate-500">
+                    ⛏️ yield/tick{' '}
+                    <span className="font-mono text-slate-200">{town.yieldPerTick.toFixed(2)}</span>
+                  </div>
+                )}
+                {economy && Number.isFinite(economy.spotPrice) && (
+                  <div className="mt-1 text-[11px] text-slate-500">
+                    💱 1 $ARENA ≈{' '}
+                    <span className="font-mono text-slate-200">{economy.spotPrice.toFixed(3)}</span> reserve · fee{' '}
+                    {(economy.feeBps / 100).toFixed(2)}%
+                  </div>
+                )}
+              </div>
+            </div>
 
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <label className="text-[11px] text-slate-400">Town</label>
+              <label className="hud-kicker">Town</label>
               <select
-                className="h-8 flex-1 min-w-[180px] rounded-md border border-slate-800 bg-slate-950/70 px-2 text-xs text-slate-200"
+                className="h-8 flex-1 min-w-[180px] rounded-md border border-slate-700/50 bg-slate-950/40 px-2 text-xs text-slate-100 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                 value={selectedTownId ?? ''}
                 onChange={(e) => {
                   const id = e.target.value || null;
@@ -3148,7 +3503,6 @@ export default function Town3D() {
                   setSelectedTownId(id);
                   setSelectedPlotId(null);
                   setSelectedAgentId(null);
-                  setFollowCam(false);
                 }}
               >
                 {towns.map((t) => (
@@ -3158,63 +3512,15 @@ export default function Town3D() {
                 ))}
               </select>
 
-              <Button
-                size="sm"
-                variant={followCam ? 'secondary' : 'outline'}
-                onClick={() => setFollowCam((v) => !v)}
-                disabled={!selectedAgentId}
-                title={selectedAgentId ? 'Follow selected agent' : 'Select an agent to follow'}
-              >
-                Follow
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="border-purple-700/50 text-purple-300 hover:bg-purple-950/30"
-                onClick={fetchTownOracle}
-                disabled={x402Loading === 'oracle'}
-                title="Get AI economic forecast ($0.001)"
-              >
-                {x402Loading === 'oracle' ? '...' : '🔮'}
-              </Button>
-              <Button
-                size="sm"
-                variant={showYieldPanel ? 'secondary' : 'outline'}
-                onClick={() => setShowYieldPanel(v => !v)}
-                title="Show yield & contributors"
-              >
-                💎
-              </Button>
             </div>
 
-            {/* Economic indicators + Weather + Sound */}
             <div className="mt-3 border-t border-slate-800/60 pt-3">
-              <div className="flex items-center justify-between text-[10px] mb-2">
-                <div className="flex items-center gap-3">
-                  <span title={`Pollution: ${Math.round(economicState.pollution * 100)}%`}>
-                    🏭 <span className={economicState.pollution > 0.5 ? 'text-red-400' : economicState.pollution > 0.3 ? 'text-amber-400' : 'text-green-400'}>
-                      {economicState.pollution > 0.5 ? 'High' : economicState.pollution > 0.3 ? 'Med' : 'Low'}
-                    </span>
-                  </span>
-                  <span title={`Prosperity: ${Math.round(economicState.prosperity * 100)}%`}>
-                    💰 <span className={economicState.prosperity > 0.6 ? 'text-green-400' : economicState.prosperity > 0.3 ? 'text-amber-400' : 'text-red-400'}>
-                      {economicState.prosperity > 0.6 ? 'High' : economicState.prosperity > 0.3 ? 'Med' : 'Low'}
-                    </span>
-                  </span>
-                  <span title={`Market: ${economicState.sentiment}`}>
-                    {economicState.sentiment === 'bull' ? '📈' : economicState.sentiment === 'bear' ? '📉' : '➡️'}
-                  </span>
-                </div>
-                <span className="text-sm" title={`Weather: ${weather}`}>
-                  {weather === 'clear' ? '☀️' : weather === 'rain' ? '🌧️' : '⛈️'}
-                </span>
-              </div>
               <div className="flex items-center justify-between">
-                <WalletConnect compact />
+                <WalletConnect compact onAddressChange={setWalletAddress} />
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="text-slate-400 hover:text-slate-200"
+                  className="h-8 w-8 p-0 text-slate-400 hover:text-slate-100 hover:bg-slate-900/40"
                   onClick={() => {
                     const newState = !soundOn;
                     setSoundOn(newState);
@@ -3227,165 +3533,194 @@ export default function Town3D() {
                 </Button>
               </div>
             </div>
-            {x402Oracle && (
-              <div className="mt-3 p-2 rounded bg-purple-950/30 border border-purple-800/30 text-xs text-slate-300 max-h-[100px] overflow-auto">
-                <div className="font-semibold text-purple-300 mb-1">🔮 Town Oracle</div>
-                {x402Oracle}
-              </div>
-            )}
+          </div>
+        </div>
 
-            {/* Yield Panel */}
-            {showYieldPanel && (
-              <div className="mt-3 border-t border-slate-800/60 pt-3">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-xs font-semibold text-amber-300">💎 Yield & Contributors</div>
-                  {town?.status === 'COMPLETE' && (
-                    <Badge variant="outline" className="border-green-600/50 text-green-400 text-[10px]">
-                      Yielding
-                    </Badge>
-                  )}
-                </div>
-                
-	                {town?.status === 'COMPLETE' ? (
-	                  <div className="text-[11px] text-slate-300 mb-2">
-	                    <span className="text-slate-400">Yield per tick:</span>{' '}
-	                    <span className="font-mono text-amber-300">{town.yieldPerTick ?? 0} $ARENA</span>
-	                  </div>
-	                ) : (
-                  <div className="text-[11px] text-slate-400 mb-2">
-                    Complete all plots to start earning yield
+        {/* Agent HUD — shows followed agent + switcher strip */}
+        <div className="pointer-events-auto absolute right-3 top-3 max-w-[340px]">
+          {selectedAgent && (
+            <div className="hud-panel p-3">
+              <div className="flex items-center gap-2">
+                <span
+                  className="inline-flex h-4 w-4 rounded-full shrink-0"
+                  style={{ backgroundColor: ARCHETYPE_COLORS[selectedAgent.archetype] || '#93c5fd' }}
+                />
+                <div className="min-w-0">
+                  <div className="font-mono text-sm font-semibold text-slate-100 truncate">
+                    {(ARCHETYPE_GLYPH[selectedAgent.archetype] || '●') + ' ' + selectedAgent.name}
                   </div>
-                )}
-
-                {contributors.length > 0 ? (
-                  <div className="space-y-1 max-h-[120px] overflow-auto">
-                    {contributors.slice(0, 8).map((c) => {
-                      const color = ARCHETYPE_COLORS[c.archetype] || '#93c5fd';
-                      const glyph = ARCHETYPE_GLYPH[c.archetype] || '●';
-                      const yieldPct = (c.yieldShare * 100).toFixed(1);
+                  <div className="text-[10px] text-slate-400">
+                    {selectedAgent.archetype}{' '}
+                    {(() => {
+                      const econ = getEconomicState(selectedAgent.bankroll + selectedAgent.reserveBalance, false);
+                      const indicator = ECONOMIC_INDICATORS[econ];
                       return (
-                        <div
-                          key={c.agentId}
-                          className="flex items-center justify-between rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[10px]"
-                        >
-                          <span className="font-mono" style={{ color }}>
-                            {glyph} {c.agentName}
+                        <>
+                          <span className="text-slate-600">·</span>{' '}
+                          <span style={{ color: indicator.color }}>
+                            {indicator.emoji} {econ.toLowerCase()}
                           </span>
-                          <span className="text-slate-400">
-                            {c.plotsBuilt} plots · <span className="text-amber-300">{yieldPct}%</span>
-                          </span>
-                        </div>
+                        </>
                       );
-                    })}
+                    })()}
                   </div>
-                ) : (
-                  <div className="text-[10px] text-slate-500">No contributors yet</div>
-                )}
-              </div>
-            )}
-          </Card>
-        </div>
-
-        <div className="pointer-events-auto absolute right-3 top-3 w-[320px] max-w-[calc(100vw-24px)]">
-          <Card className="border-slate-800/70 bg-slate-950/70 backdrop-blur-md p-3">
-            <div className="flex items-center justify-between">
-              <div className="text-xs font-semibold text-slate-100">Agents</div>
-              <div className="text-[11px] text-slate-500">{agents.length}</div>
-            </div>
-            <div className="mt-2 grid grid-cols-1 gap-1 max-h-[38svh] overflow-auto pr-1">
-              {agents.map((a) => {
-                const color = ARCHETYPE_COLORS[a.archetype] || '#93c5fd';
-                const glyph = ARCHETYPE_GLYPH[a.archetype] || '●';
-                const active = a.id === selectedAgentId;
-                return (
-                  <button
-                    key={a.id}
-                    type="button"
-                    className={`flex items-center justify-between rounded-md border px-2 py-1 text-left text-xs transition-colors ${
-                      active
-                        ? 'border-slate-600 bg-slate-900/60'
-                        : 'border-slate-800 bg-slate-950/40 hover:bg-slate-900/40'
-                    }`}
-                    onClick={() => {
-                      setSelectedAgentId(a.id);
-                      setSelectedPlotId(null);
-                    }}
-                  >
-                    <span className="flex items-center gap-2">
-                      <span className="inline-flex h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
-                      <span className="font-mono text-slate-200">
-                        {glyph} {a.name}
-                      </span>
+                </div>
+                {(() => {
+                  const sim = simsRef.current.get(selectedAgent.id);
+                  const state = sim?.state ?? 'WALKING';
+                  const indicator = STATE_INDICATORS[state];
+                  return (
+                    <span className="ml-auto shrink-0 hud-chip">
+                      {indicator?.emoji ?? ''} {state}
                     </span>
-                    <span className="text-[11px] text-slate-500">ELO {a.elo}</span>
-                  </button>
+                  );
+                })()}
+              </div>
+              <div className="mt-2 grid grid-cols-4 gap-2 text-[11px] text-slate-300">
+                <div className="rounded-md border border-slate-800 bg-slate-950/40 p-1.5 text-center">
+                  <div className="text-slate-500">$ARENA</div>
+                  <div className="font-mono text-slate-100">{Math.round(selectedAgent.bankroll)}</div>
+                </div>
+                <div className="rounded-md border border-slate-800 bg-slate-950/40 p-1.5 text-center">
+                  <div className="text-slate-500">reserve</div>
+                  <div className="font-mono text-slate-100">{Math.round(selectedAgent.reserveBalance)}</div>
+                </div>
+                <div className="rounded-md border border-slate-800 bg-slate-950/40 p-1.5 text-center">
+                  <div className="text-slate-500">W/L</div>
+                  <div className="font-mono text-slate-100">{selectedAgent.wins}/{selectedAgent.losses}</div>
+                </div>
+                <div className="rounded-md border border-slate-800 bg-slate-950/40 p-1.5 text-center">
+                  <div className="text-slate-500">ELO</div>
+                  <div className="font-mono text-slate-100">{selectedAgent.elo}</div>
+                </div>
+              </div>
+              {(() => {
+                const sim = simsRef.current.get(selectedAgent.id);
+                const health = sim?.health ?? 100;
+                if (!Number.isFinite(health)) return null;
+                const pct = Math.max(0, Math.min(100, health));
+                const barClass =
+                  pct < 25
+                    ? 'bg-gradient-to-r from-red-500 to-amber-500'
+                    : pct < 60
+                      ? 'bg-gradient-to-r from-amber-500 to-sky-500'
+                      : 'bg-gradient-to-r from-emerald-500 to-sky-500';
+                return (
+                  <div className="mt-2">
+                    <div className="flex items-center justify-between text-[10px] text-slate-500">
+                      <span>health</span>
+                      <span className="font-mono text-slate-300">{Math.round(pct)}%</span>
+                    </div>
+                    <div className="mt-1 h-1.5 rounded-full bg-slate-800/60 overflow-hidden">
+                      <div className={`h-full rounded-full ${barClass}`} style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
                 );
-              })}
+              })()}
+              {(() => {
+                const g = agentGoalsById[selectedAgent.id];
+                if (!g) return null;
+                const done = !!g.progress?.done;
+                return (
+                  <div
+                    className={`mt-2 rounded-md border px-2 py-1.5 ${
+                      done
+                        ? 'border-emerald-700/40 bg-emerald-950/15'
+                        : 'border-slate-800/70 bg-slate-950/30'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-[10px] text-slate-500">🎯 Goal</div>
+                      <div className={`text-[10px] font-mono ${done ? 'text-emerald-300' : 'text-slate-500'}`}>
+                        {safeTrim(g.progress?.label, 36)}
+                      </div>
+                    </div>
+                    <div className="text-[11px] text-slate-200 font-semibold truncate">{safeTrim(g.goalTitle, 80)}</div>
+                    <div className="text-[10px] text-slate-400 truncate">Next: {safeTrim(g.next?.detail, 120)}</div>
+                  </div>
+                );
+              })()}
+              {selectedAgentObjective && (
+                <div className="mt-2 rounded-md border border-amber-700/30 bg-amber-950/10 px-2 py-1.5 shadow-[0_0_0_1px_rgba(251,191,36,0.06)]">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[10px] text-amber-300/80">🔥 Objective</div>
+                    <div className="text-[10px] font-mono text-amber-200/70">
+                      {formatTimeLeft(selectedAgentObjective.expiresAtMs - Date.now())}
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-slate-200 font-semibold truncate">
+                    {safeTrim(selectedAgentObjective.title, 80)}
+                  </div>
+                  <div className="text-[10px] text-slate-400 truncate">
+                    {safeTrim(selectedAgentObjective.detail, 140)}
+                  </div>
+                </div>
+              )}
+              {/* Agent switcher row */}
+              <div className="mt-2 flex items-center gap-1.5 overflow-x-auto py-1">
+                {agents.map((a) => {
+                  const color = ARCHETYPE_COLORS[a.archetype] || '#93c5fd';
+                  const isActive = a.id === selectedAgentId;
+                  return (
+                    <button
+                      key={a.id}
+                      type="button"
+                      title={`${ARCHETYPE_GLYPH[a.archetype] || '●'} ${a.name}`}
+                      className={`shrink-0 rounded-full border-2 transition-all ${
+                        isActive ? 'border-white scale-125' : 'border-transparent hover:border-slate-500 opacity-70 hover:opacity-100'
+                      }`}
+                      style={{ width: 20, height: 20, backgroundColor: color }}
+                      onClick={() => {
+                        setSelectedAgentId(a.id);
+                        setSelectedPlotId(null);
+                      }}
+                    />
+                  );
+                })}
+              </div>
             </div>
-          </Card>
+          )}
         </div>
 
-		        <div className="pointer-events-auto absolute left-3 bottom-3 flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end max-w-[calc(100vw-24px)]">
-              <div className="w-[420px] max-w-[calc(100vw-24px)]">
-		            <Card className="border-slate-800/70 bg-slate-950/70 backdrop-blur-md p-3">
-		              <div className="flex flex-wrap gap-2 text-[11px] text-slate-300">
-		                {(Object.keys(ZONE_COLORS) as PlotZone[]).map((z) => (
-		                  <span key={z} className="inline-flex items-center gap-1">
-		                    <span className="inline-flex h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: ZONE_COLORS[z] }} />
-		                    {z.slice(0, 3)}
-		                  </span>
-		                ))}
-		                <span className="text-slate-600">|</span>
-		                {Object.keys(ARCHETYPE_GLYPH).map((k) => (
-		                  <span key={k} className="inline-flex items-center gap-1">
-		                    <span className="font-mono" style={{ color: ARCHETYPE_COLORS[k] || '#cbd5e1' }}>
-		                      {ARCHETYPE_GLYPH[k]}
-		                    </span>
-		                    {k.slice(0, 4)}
-		                  </span>
-		                ))}
-		              </div>
-	
-		              {economy && (
-		                <div className="mt-3 border-t border-slate-800/60 pt-2 text-[11px] text-slate-300">
-		                  <div className="flex flex-wrap items-center justify-between gap-2">
-		                    <div className="text-slate-400">Pool</div>
-		                    <div className="font-mono text-slate-200">
-		                      {Math.round(economy.reserveBalance).toLocaleString()} reserve ·{' '}
-		                      {Math.round(economy.arenaBalance).toLocaleString()} ARENA
-		                    </div>
-		                  </div>
-		                  <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
-		                    <div className="text-slate-400">Treasury fees</div>
-		                    <div className="font-mono text-slate-200">
-		                      {Math.round(economy.cumulativeFeesReserve).toLocaleString()} reserve +{' '}
-		                      {Math.round(economy.cumulativeFeesArena).toLocaleString()} ARENA
-		                    </div>
-		                  </div>
-		                </div>
-		              )}
-	
+        {/* Minimap */}
+        <div className="pointer-events-auto absolute left-3 bottom-3 z-10">
+          {town && (
+            <div className="hud-panel p-2">
+              <div className="flex items-center justify-between px-1 pb-1">
+                <div className="hud-title">Tactical Map</div>
+                <div className="hud-kicker">click agent</div>
+              </div>
+              <Minimap
+                plots={town.plots}
+                agents={agents}
+                simsRef={simsRef}
+                selectedAgentId={selectedAgentId}
+                spacing={TOWN_SPACING}
+                onSelectAgent={(id) => {
+                  setSelectedAgentId(id);
+                  setSelectedPlotId(null);
+                }}
+                className="border-0 bg-transparent shadow-inner"
+              />
+            </div>
+          )}
+        </div>
+
+        <div className="pointer-events-auto absolute left-[190px] bottom-3 flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end max-w-[calc(100vw-210px)]">
+          <div className="w-[420px] max-w-[calc(100vw-210px)]">
+            <div className="hud-panel p-3">
 		              {(activityFeed.length > 0 || recentSwaps.length > 0) && (
-		                <div className="mt-3 border-t border-slate-800/60 pt-2">
+		                <div>
 		                  <div className="flex items-center justify-between mb-2">
-		                    <div className="text-[11px] font-semibold text-slate-200">Activity Feed</div>
-		                    <div className="flex gap-1">
-			                      {(['all', 'swaps', 'builds', 'skills', 'chats'] as const).map((tab) => (
-			                        <button
-			                          key={tab}
-			                          onClick={() => setActivityTab(tab)}
-			                          className={`px-2 py-0.5 text-[10px] rounded ${
-			                            activityTab === tab
-			                              ? 'bg-slate-700 text-slate-100'
-			                              : 'text-slate-500 hover:text-slate-300'
-			                          }`}
-			                        >
-			                          {tab === 'all' ? 'All' : tab === 'swaps' ? '💱' : tab === 'builds' ? '🏗️' : tab === 'skills' ? '💳' : '💬'}
-			                        </button>
-			                      ))}
-		                    </div>
+                        <div className="flex items-center gap-2">
+                          <div className="hud-title">Activity Feed</div>
+                          <span className="hud-chip">{activityFeed.length}</span>
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          {recentSwaps.length > 0 ? `swaps ${recentSwaps.length}` : ''}
+                        </div>
 		                  </div>
-		                  <div className="max-h-[160px] overflow-auto pr-1 space-y-1">
+		                  <div className="max-h-[170px] overflow-auto pr-1 space-y-1 scrollbar-thin scrollbar-thumb-slate-700/60">
 		                    {activityFeed.map((item) => {
 		                      if (item.kind === 'swap') {
 		                        const s = item.data;
@@ -3397,7 +3732,7 @@ export default function Town3D() {
 		                        return (
 		                          <div
 		                            key={s.id}
-		                            className="flex items-center justify-between gap-2 rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300"
+		                            className="flex items-center justify-between gap-2 rounded-md border border-slate-800/50 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300 transition-colors hover:bg-slate-900/30"
 		                          >
 		                            <div className="min-w-0 truncate">
 		                              <span className="text-slate-500">💱</span>{' '}
@@ -3435,36 +3770,67 @@ export default function Town3D() {
 			                        const isSkill = kind === 'X402_SKILL' && !!skillName;
 			                        const isChat = kind === 'AGENT_CHAT' && participants.length >= 2 && lines.length >= 1;
 			                        const isRelChange = kind === 'RELATIONSHIP_CHANGE' && participants.length >= 2;
+                              const objectiveType = typeof metaObj?.objectiveType === 'string' ? String(metaObj.objectiveType).toUpperCase() : '';
+                              const isObjective = kind === 'TOWN_OBJECTIVE' && participants.length >= 2;
+                              const isObjectiveResolved = kind === 'TOWN_OBJECTIVE_RESOLVED' && participants.length >= 2;
+                              const resolution = isObjectiveResolved ? String(metaObj?.resolution || '').toUpperCase() : '';
 
 			                        const relTo = isRelChange ? String(metaObj?.to || '').toUpperCase() : '';
 			                        const relEmoji = relTo === 'FRIEND' ? '🤝' : relTo === 'RIVAL' ? '💢' : '🧊';
 
-			                        const emoji = isSkill ? '💳' : isChat ? '💬' : isRelChange ? relEmoji :
+                              const objEmoji = isObjective
+                                ? objectiveType === 'RACE_CLAIM'
+                                  ? '🏁'
+                                  : objectiveType === 'PACT_CLAIM'
+                                    ? '🤝'
+                                    : '🎯'
+                                : '';
+                              const objResolvedEmoji = isObjectiveResolved
+                                ? resolution === 'FULFILLED'
+                                  ? '✅'
+                                  : resolution === 'BROKEN'
+                                    ? '💔'
+                                    : resolution === 'SNIPED'
+                                      ? '🪓'
+                                      : resolution === 'CLAIMED'
+                                        ? '🏆'
+                                        : '🎯'
+                                : '';
+
+			                        const emoji = isSkill ? '💳' : isChat ? '💬' : isRelChange ? relEmoji : isObjective ? objEmoji : isObjectiveResolved ? objResolvedEmoji :
 			                                     e.eventType === 'PLOT_CLAIMED' ? '📍' : 
 			                                     e.eventType === 'BUILD_STARTED' ? '🏗️' :
 			                                     e.eventType === 'BUILD_COMPLETED' ? '✅' :
 			                                     e.eventType === 'TOWN_COMPLETED' ? '🎉' :
-			                                     e.eventType === 'YIELD_DISTRIBUTED' ? '💎' : '📝';
+			                                     e.eventType === 'YIELD_DISTRIBUTED' ? '💎' :
+			                                     e.eventType === 'TRADE' ? '💱' : '📝';
 		
 			                        const chatSnippet = isChat && typeof lines[0]?.text === 'string' ? lines[0].text.slice(0, 70) : '';
+                              const expiresAtMs = isObjective ? Number(metaObj?.expiresAtMs || 0) : Number.NaN;
+                              const leftMs = Number.isFinite(expiresAtMs) ? expiresAtMs - Date.now() : 0;
 				                        const desc = isSkill
 				                          ? (e.description || `bought ${(skillName ?? '').toUpperCase()}`)
 				                          : isChat
 				                            ? (chatSnippet ? `chatted: "${chatSnippet}${chatSnippet.length >= 70 ? '…' : ''}"` : 'chatted')
 				                            : isRelChange
 				                              ? (e.title || (relTo === 'FRIEND' ? 'became friends' : relTo === 'RIVAL' ? 'became rivals' : 'changed relationship'))
+                                  : isObjective
+                                    ? `${safeTrim(e.title || 'Objective', 120)}${leftMs > 0 ? ` · ${formatTimeLeft(leftMs)} left` : ''}`
+                                    : isObjectiveResolved
+                                      ? (e.title || 'Objective resolved')
 				                              : e.eventType === 'PLOT_CLAIMED' ? (e.title || 'claimed a plot')
 				                                : e.eventType === 'BUILD_STARTED' ? (e.title || 'started building')
 				                                  : e.eventType === 'BUILD_COMPLETED' ? (e.title || 'completed a build')
 				                                    : e.eventType === 'TOWN_COMPLETED' ? (e.title || 'Town completed!')
 				                                      : e.title || e.description || e.eventType;
 
-				                        const p0 = (isChat || isRelChange) && participants[0] ? agentById.get(participants[0]) : null;
-				                        const p1 = (isChat || isRelChange) && participants[1] ? agentById.get(participants[1]) : null;
+				                        const isPairEvent = (isChat || isRelChange || isObjective || isObjectiveResolved) && participants.length >= 2;
+				                        const p0 = isPairEvent && participants[0] ? agentById.get(participants[0]) : null;
+				                        const p1 = isPairEvent && participants[1] ? agentById.get(participants[1]) : null;
 				                        const header = (
 				                          <div className="min-w-0 truncate">
 				                            <span>{emoji}</span>{' '}
-				                            {(isChat || isRelChange) && p0 && p1 ? (
+				                            {isPairEvent && p0 && p1 ? (
 				                              <>
 				                                <span className="font-mono" style={{ color: ARCHETYPE_COLORS[p0.archetype] || '#93c5fd' }}>
 				                                  {(ARCHETYPE_GLYPH[p0.archetype] || '●')} {p0.name}
@@ -3489,8 +3855,7 @@ export default function Town3D() {
 				                              agentId: typeof l.agentId === 'string' ? l.agentId : '',
 				                              text: typeof l.text === 'string' ? l.text : '',
 				                            }))
-				                            .filter((l) => l.agentId && l.text)
-				                            .slice(0, 4);
+				                            .filter((l) => l.agentId && l.text);
 
 				                          const relationship = metaObj?.relationship;
 				                          const relObj =
@@ -3520,7 +3885,7 @@ export default function Town3D() {
 				                                      <span style={{ color }}>
 				                                        {glyph} {name}:
 				                                      </span>{' '}
-				                                      <span className="text-slate-300">"{l.text.slice(0, 140)}"</span>
+				                                      <span className="text-slate-300">"{l.text}"</span>
 				                                    </div>
 				                                  );
 				                                })}
@@ -3533,6 +3898,29 @@ export default function Town3D() {
 				                            </details>
 				                          );
 				                        }
+
+                              if (isObjective || isObjectiveResolved) {
+                                const extra =
+                                  isObjective && leftMs > 0
+                                    ? `expires in ${formatTimeLeft(leftMs)}`
+                                    : null;
+
+                                return (
+                                  <details
+                                    key={e.id}
+                                    className="rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300"
+                                  >
+                                    <summary className="cursor-pointer select-none flex items-center justify-between gap-2">
+                                      {header}
+                                      <span className="shrink-0 text-slate-600">· {timeAgo(e.createdAt)}</span>
+                                    </summary>
+                                    <div className="mt-1 space-y-1 text-[10px] text-slate-400">
+                                      {e.description && <div className="whitespace-pre-wrap">{safeTrim(e.description, 420)}</div>}
+                                      {extra && <div className="text-slate-500">{extra}</div>}
+                                    </div>
+                                  </details>
+                                );
+                              }
 
 				                        return (
 				                          <div
@@ -3550,43 +3938,41 @@ export default function Town3D() {
 		                  </div>
 		                </div>
 		              )}
-		            </Card>
-              </div>
-
-              {/* Mini-map */}
-              <div className="w-[180px]">
-                <Card className="border-slate-800/70 bg-slate-950/85 backdrop-blur-md p-2">
-                  <div className="text-[10px] font-semibold text-slate-400 mb-1.5">MINI-MAP</div>
-                  <MiniMap town={town} agents={agents} selectedAgentId={selectedAgentId} simsRef={simsRef} />
-                </Card>
-              </div>
-		        </div>
+            </div>
+          </div>
+        </div>
 
         {(selectedPlot || selectedAgent) && (
           <div className="pointer-events-auto absolute right-3 bottom-3 w-[420px] max-w-[calc(100vw-24px)]">
-            <Card className="border-slate-800/70 bg-slate-950/70 backdrop-blur-md p-3">
+            <div className="hud-panel p-3">
               {selectedPlot && (
                 <div>
                   <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-xs font-semibold text-slate-100">Plot #{selectedPlot.plotIndex}</div>
-                      <div className="mt-1 text-sm text-slate-200 font-mono">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <div className="hud-title">Plot #{selectedPlot.plotIndex}</div>
+                        <span className="hud-chip">{selectedPlot.zone}</span>
+                        <span className="hud-chip">{selectedPlot.status}</span>
+                      </div>
+                      <div className="mt-1 text-sm text-slate-200 font-mono truncate">
                         {selectedPlot.buildingName || 'Available'}
                       </div>
-                      <div className="mt-1 text-[11px] text-slate-400">
-                        {selectedPlot.zone} · {selectedPlot.status}
-                      </div>
                     </div>
-                    <Button size="sm" variant="outline" onClick={() => setSelectedPlotId(null)}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 px-2 text-slate-300 hover:text-slate-100 hover:bg-slate-900/40"
+                      onClick={() => setSelectedPlotId(null)}
+                    >
                       Close
                     </Button>
                   </div>
                   <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-300">
-                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-2">
+                    <div className="rounded-md border border-slate-800/70 bg-slate-950/35 p-2">
                       <div className="text-slate-500">API calls</div>
                       <div className="font-mono text-slate-100">{selectedPlot.apiCallsUsed ?? 0}</div>
                     </div>
-                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-2">
+                    <div className="rounded-md border border-slate-800/70 bg-slate-950/35 p-2">
                       <div className="text-slate-500">$ARENA</div>
                       <div className="font-mono text-slate-100">{selectedPlot.buildCostArena ?? 0}</div>
                     </div>
@@ -3610,68 +3996,51 @@ export default function Town3D() {
                     </div>
                   )}
                   
-                  {/* x402 Building Lore Button */}
-                  {selectedPlot.status === 'BUILT' && (
-                    <div className="mt-3 border-t border-slate-800/60 pt-3">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="w-full border-purple-700/50 text-purple-300 hover:bg-purple-950/30"
-                        onClick={() => fetchBuildingLore(selectedPlot.plotIndex)}
-                        disabled={x402Loading === 'lore'}
-                      >
-                        {x402Loading === 'lore' ? (
-                          <><Loader2 className="h-3 w-3 animate-spin mr-2" /> Loading...</>
-                        ) : (
-                          <>📖 Read Building Lore <span className="ml-2 text-[10px] opacity-60">$0.001</span></>
-                        )}
-                      </Button>
-                      {x402Lore?.plotIndex === selectedPlot.plotIndex && (
-                        <div className="mt-2 p-2 rounded bg-purple-950/30 border border-purple-800/30 text-xs text-slate-300 max-h-[120px] overflow-auto">
-                          {x402Lore.content}
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
               )}
 
 	              {selectedAgent && !selectedPlot && (
 	                <div>
 	                  <div className="flex items-start justify-between gap-3">
-	                    <div>
-                      <div className="text-xs font-semibold text-slate-100">Agent</div>
-                      <div className="mt-1 text-sm text-slate-200 font-mono">
-                        {(ARCHETYPE_GLYPH[selectedAgent.archetype] || '●') + ' ' + selectedAgent.name}
+	                    <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <div className="hud-title">Agent</div>
+                          <span className="hud-chip">{selectedAgent.archetype}</span>
+                          <span className="hud-chip">ELO {selectedAgent.elo}</span>
+                        </div>
+                        <div className="mt-1 text-sm text-slate-200 font-mono truncate">
+                          {(ARCHETYPE_GLYPH[selectedAgent.archetype] || '●') + ' ' + selectedAgent.name}
+                        </div>
                       </div>
-                      <div className="mt-1 text-[11px] text-slate-400">{selectedAgent.archetype} · ELO {selectedAgent.elo}</div>
-                    </div>
-                    <Button size="sm" variant="outline" onClick={() => setSelectedAgentId(null)}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-8 px-2 text-slate-300 hover:text-slate-100 hover:bg-slate-900/40"
+                      onClick={() => setSelectedAgentId(null)}
+                    >
                       Close
 	                    </Button>
 	                  </div>
-		                  <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-300">
-		                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-2">
-		                      <div className="text-slate-500">$ARENA</div>
-		                      <div className="font-mono text-slate-100">{Math.round(selectedAgent.bankroll)}</div>
-		                    </div>
-	                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-2">
-	                      <div className="text-slate-500">Reserve</div>
-	                      <div className="font-mono text-slate-100">{Math.round(selectedAgent.reserveBalance)}</div>
-	                    </div>
-	                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-2">
-	                      <div className="text-slate-500">W/L</div>
-	                      <div className="font-mono text-slate-100">
-	                        {selectedAgent.wins}/{selectedAgent.losses}
-	                      </div>
-	                    </div>
-		                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-2">
-		                      <div className="text-slate-500">API $</div>
-		                      <div className="font-mono text-slate-100">
-		                        {((selectedAgent.apiCostCents || 0) / 100).toFixed(2)}
-		                      </div>
-		                    </div>
-		                  </div>
+                    <div className="mt-2 grid grid-cols-4 gap-2 text-[11px] text-slate-300">
+                      <div className="rounded-md border border-slate-800/70 bg-slate-950/35 p-2 text-center">
+                        <div className="text-slate-500">$ARENA</div>
+                        <div className="font-mono text-slate-100">{Math.round(selectedAgent.bankroll)}</div>
+                      </div>
+                      <div className="rounded-md border border-slate-800/70 bg-slate-950/35 p-2 text-center">
+                        <div className="text-slate-500">reserve</div>
+                        <div className="font-mono text-slate-100">{Math.round(selectedAgent.reserveBalance)}</div>
+                      </div>
+                      <div className="rounded-md border border-slate-800/70 bg-slate-950/35 p-2 text-center">
+                        <div className="text-slate-500">W/L</div>
+                        <div className="font-mono text-slate-100">
+                          {selectedAgent.wins}/{selectedAgent.losses}
+                        </div>
+                      </div>
+                      <div className="rounded-md border border-slate-800/70 bg-slate-950/35 p-2 text-center">
+                        <div className="text-slate-500">ELO</div>
+                        <div className="font-mono text-slate-100">{selectedAgent.elo}</div>
+                      </div>
+                    </div>
 
 			                  {selectedAgentSwaps.length > 0 && (
 			                    <div className="mt-3 border-t border-slate-800/60 pt-2">
@@ -3684,7 +4053,7 @@ export default function Town3D() {
 		                          return (
 		                            <div
 		                              key={s.id}
-		                              className="flex items-center justify-between gap-2 rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300"
+		                              className="flex items-center justify-between gap-2 rounded-md border border-slate-800/50 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300 transition-colors hover:bg-slate-900/30"
 		                            >
 		                              <div className="min-w-0 truncate">
 		                                <span className="text-slate-400">{isBuy ? 'BUY' : 'SELL'}</span>{' '}
@@ -3701,69 +4070,12 @@ export default function Town3D() {
 			                    </div>
 			                  )}
 
-                        {/* Friends / Rivals */}
-                        <div className="mt-3 border-t border-slate-800/60 pt-2">
-                          <div className="flex items-center justify-between">
-                            <div className="text-[11px] font-semibold text-slate-200">Social</div>
-                            {agentRelationshipsLoading && <Loader2 className="h-3 w-3 animate-spin text-slate-500" />}
-                          </div>
-                          {selectedAgentRelationships ? (
-                            <div className="mt-2 space-y-1 text-[10px]">
-                              <div className="text-slate-400">
-                                Friends: <span className="text-slate-500">{selectedAgentRelationships.friends.length}/{selectedAgentRelationships.maxFriends}</span>
-                              </div>
-                              {selectedAgentRelationships.friends.length > 0 ? (
-                                <div className="flex flex-wrap gap-1">
-                                  {selectedAgentRelationships.friends.slice(0, 4).map((f) => {
-                                    const color = ARCHETYPE_COLORS[f.archetype] || '#93c5fd';
-                                    const glyph = ARCHETYPE_GLYPH[f.archetype] || '●';
-                                    return (
-                                      <span
-                                        key={f.agentId}
-                                        className="inline-flex items-center gap-1 rounded border border-emerald-900/40 bg-emerald-950/20 px-1.5 py-0.5 font-mono text-[10px]"
-                                        style={{ color }}
-                                      >
-                                        {glyph} {f.name}
-                                      </span>
-                                    );
-                                  })}
-                                </div>
-                              ) : (
-                                <div className="text-slate-500">No friends yet</div>
-                              )}
-
-                              <div className="mt-1 text-slate-400">Rivals:</div>
-                              {selectedAgentRelationships.rivals.length > 0 ? (
-                                <div className="flex flex-wrap gap-1">
-                                  {selectedAgentRelationships.rivals.slice(0, 4).map((f) => {
-                                    const color = ARCHETYPE_COLORS[f.archetype] || '#93c5fd';
-                                    const glyph = ARCHETYPE_GLYPH[f.archetype] || '●';
-                                    return (
-                                      <span
-                                        key={f.agentId}
-                                        className="inline-flex items-center gap-1 rounded border border-rose-900/40 bg-rose-950/15 px-1.5 py-0.5 font-mono text-[10px]"
-                                        style={{ color }}
-                                      >
-                                        {glyph} {f.name}
-                                      </span>
-                                    );
-                                  })}
-                                </div>
-                              ) : (
-                                <div className="text-slate-500">No rivals</div>
-                              )}
-                            </div>
-                          ) : (
-                            <div className="mt-2 text-[10px] text-slate-500">No relationships yet</div>
-                          )}
-                        </div>
-
 	                  {/* Agent Action Logs */}
 	                  <div className="mt-3 border-t border-slate-800/60 pt-2">
 	                    <div className="text-[11px] font-semibold text-slate-200 mb-2">
 	                      Recent Actions {agentActionsLoading && <Loader2 className="inline h-3 w-3 animate-spin ml-1" />}
                     </div>
-                    <div className="max-h-[100px] overflow-auto space-y-1">
+                    <div className="max-h-[200px] overflow-auto space-y-1 pr-1 scrollbar-thin scrollbar-thumb-slate-700/60">
 	                      {agentActions.length === 0 && !agentActionsLoading && (
 	                        <div className="text-[10px] text-slate-500">No recent actions</div>
 	                      )}
@@ -3823,8 +4135,7 @@ export default function Town3D() {
                             const lines = rawLines
                               .filter((l): l is LineLike => !!l && typeof l === 'object')
                               .map((l) => ({ agentId: String(l.agentId ?? ''), text: String(l.text ?? '') }))
-                              .filter((l) => l.agentId && l.text)
-                              .slice(0, 4);
+                              .filter((l) => l.agentId && l.text);
 
                             const isChatEvent = action.type === 'event' && metaKind === 'AGENT_CHAT' && lines.length > 0;
                             const isRelChangeEvent = action.type === 'event' && metaKind === 'RELATIONSHIP_CHANGE' && participants.length >= 2;
@@ -3859,7 +4170,7 @@ export default function Town3D() {
                                       return (
                                         <div key={idx} className="font-mono text-[10px]">
                                           <span style={{ color }}>{glyph} {name}:</span>{' '}
-                                          <span className="text-slate-300">"{String(l.text || '').slice(0, 120)}"</span>
+                                          <span className="text-slate-300">"{l.text}"</span>
                                         </div>
                                       );
                                     })}
@@ -3927,34 +4238,25 @@ export default function Town3D() {
 	                    </div>
 	                  </div>
 
-                  {/* x402 Agent Interview Button */}
-                  <div className="mt-3 border-t border-slate-800/60 pt-3">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="w-full border-purple-700/50 text-purple-300 hover:bg-purple-950/30"
-                      onClick={() => fetchAgentInterview(selectedAgent.id)}
-                      disabled={x402Loading === 'interview'}
-                    >
-                      {x402Loading === 'interview' ? (
-                        <><Loader2 className="h-3 w-3 animate-spin mr-2" /> Interviewing...</>
-                      ) : (
-                        <>🎤 Interview Agent <span className="ml-2 text-[10px] opacity-60">$0.005</span></>
-                      )}
-                    </Button>
-                    {x402Interview?.agentId === selectedAgent.id && (
-                      <div className="mt-2 p-2 rounded bg-purple-950/30 border border-purple-800/30 text-xs text-slate-300 max-h-[150px] overflow-auto whitespace-pre-wrap">
-                        {x402Interview.content}
-                      </div>
-                    )}
-                  </div>
 		                </div>
 		              )}
-            </Card>
+            </div>
           </div>
         )}
 
 	      </div>
-	    </div>
+          </div>
+        </ResizablePanel>
+
+        <ResizableHandle withHandle className="bg-slate-800/30" />
+
+        <ResizablePanel defaultSize={35} minSize={20} maxSize={50}>
+          <DegenDashboard degen={degen} agents={agents} walletAddress={walletAddress} chatMessages={chatMessages} selectedAgentId={selectedAgentId} />
+        </ResizablePanel>
+      </ResizablePanelGroup>
+
+      {/* Bottom Ticker */}
+      <SwapTicker trades={tradeTickerItems} />
+    </div>
 	  );
 	}

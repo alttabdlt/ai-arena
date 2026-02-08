@@ -16,6 +16,7 @@ import {
   TownEventType,
 } from '@prisma/client';
 import { prisma } from '../config/database';
+import { degenStakingService } from './degenStakingService';
 
 // ============================================
 // Constants
@@ -147,8 +148,40 @@ export class TownService {
     y: number;
     zone: PlotZone;
   }> {
+    const hashToUint32 = (input: string): number => {
+      // FNV-1a 32-bit
+      let h = 2166136261;
+      for (let i = 0; i < input.length; i++) {
+        h ^= input.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      return h >>> 0;
+    };
+
+    const mulberry32 = (seed: number) => {
+      return () => {
+        let t = (seed += 0x6D2B79F5);
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    };
+
+    const rng = mulberry32(hashToUint32(`${townId}:layout:v2`));
+
+    const shuffleInPlace = <T>(arr: T[]) => {
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(rng() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    };
+
+    const pickOne = <T>(arr: T[]): T => {
+      return arr[Math.floor(rng() * arr.length)]!;
+    };
+
     const plots: Array<{ townId: string; plotIndex: number; x: number; y: number; zone: PlotZone }> = [];
-    const gridSize = Math.ceil(Math.sqrt(totalPlots));
 
     // Build zone list based on distribution
     const zoneList: PlotZone[] = [];
@@ -158,19 +191,129 @@ export class TownService {
     }
     // Fill remaining with RESIDENTIAL
     while (zoneList.length < totalPlots) zoneList.push('RESIDENTIAL');
-    // Shuffle
-    for (let i = zoneList.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [zoneList[i], zoneList[j]] = [zoneList[j], zoneList[i]];
+    shuffleInPlace(zoneList);
+
+    // Seeded, district-style layout:
+    // - Keep plot count constant, but spread plots into spatially coherent districts with gaps.
+    // - Coordinates are "tile" units (ints) later scaled by the frontend's TOWN_SPACING.
+    const zoneCounts: Record<PlotZone, number> = {
+      RESIDENTIAL: 0,
+      COMMERCIAL: 0,
+      CIVIC: 0,
+      INDUSTRIAL: 0,
+      ENTERTAINMENT: 0,
+    };
+    for (const z of zoneList) zoneCounts[z] = (zoneCounts[z] || 0) + 1;
+
+    const densityBase = totalPlots <= 25 ? 0.14 : 0.18;
+    const density = Math.max(0.10, Math.min(0.24, densityBase + (rng() - 0.5) * 0.06));
+    const gridSide = Math.max(8, Math.ceil(Math.sqrt(totalPlots / density)));
+    const half = Math.max(5, Math.floor(gridSide / 2));
+
+    const centersByZone: Record<PlotZone, Array<{ x: number; y: number }>> = {
+      RESIDENTIAL: [],
+      COMMERCIAL: [],
+      CIVIC: [],
+      INDUSTRIAL: [],
+      ENTERTAINMENT: [],
+    };
+
+    const placedCenters: Array<{ x: number; y: number }> = [];
+    const minSep = Math.max(4, Math.floor(half * 0.55));
+
+    const placeCenter = (zone: PlotZone, radiusMin: number, radiusMax: number) => {
+      const maxR = Math.max(radiusMin, Math.min(radiusMax, half));
+      for (let attempt = 0; attempt < 80; attempt++) {
+        const ang = rng() * Math.PI * 2;
+        const r = radiusMin + rng() * (maxR - radiusMin);
+        const x = Math.max(-half, Math.min(half, Math.round(Math.cos(ang) * r)));
+        const y = Math.max(-half, Math.min(half, Math.round(Math.sin(ang) * r)));
+        const ok = placedCenters.every((c) => {
+          const dx = c.x - x;
+          const dy = c.y - y;
+          return dx * dx + dy * dy >= minSep * minSep;
+        });
+        if (!ok) continue;
+        centersByZone[zone].push({ x, y });
+        placedCenters.push({ x, y });
+        return;
+      }
+      // Fallback: if we can't place with separation, just drop near the edge.
+      const x = Math.round((rng() * 2 - 1) * half);
+      const y = Math.round((rng() * 2 - 1) * half);
+      centersByZone[zone].push({ x, y });
+      placedCenters.push({ x, y });
+    };
+
+    // Primary districts
+    centersByZone.COMMERCIAL.push({ x: 0, y: 0 });
+    placedCenters.push({ x: 0, y: 0 });
+
+    const outerMin = Math.max(4, Math.floor(half * 0.65));
+    const outerMax = Math.max(outerMin + 1, half);
+    placeCenter('INDUSTRIAL', outerMin, outerMax);
+    placeCenter('ENTERTAINMENT', outerMin, outerMax);
+
+    // Residential often sprawls — sometimes split into two districts.
+    const resCenters = zoneCounts.RESIDENTIAL >= Math.max(8, Math.floor(totalPlots * 0.28)) ? 2 : 1;
+    for (let i = 0; i < resCenters; i++) {
+      placeCenter('RESIDENTIAL', Math.max(2, Math.floor(half * 0.35)), Math.max(3, Math.floor(half * 0.85)));
     }
 
+    // Civic hugs the commercial core.
+    const civicOffset = () => Math.round((rng() + rng() - 1) * 2); // biased [-2..2]
+    centersByZone.CIVIC.push({ x: civicOffset(), y: civicOffset() });
+
+    const spreadByZone: Record<PlotZone, number> = {
+      RESIDENTIAL: 4,
+      COMMERCIAL: 3,
+      CIVIC: 2,
+      INDUSTRIAL: 3,
+      ENTERTAINMENT: 3,
+    };
+
+    const used = new Set<string>();
+    const tryPlace = (zone: PlotZone) => {
+      const centers = centersByZone[zone].length > 0 ? centersByZone[zone] : centersByZone.COMMERCIAL;
+      const center = pickOne(centers);
+      const baseSpread = spreadByZone[zone] || 3;
+
+      for (let attempt = 0; attempt < 140; attempt++) {
+        const spread = Math.min(baseSpread + Math.floor(attempt / 35), baseSpread + 3);
+        const dx = Math.round((rng() + rng() - 1) * spread);
+        const dy = Math.round((rng() + rng() - 1) * spread);
+        const x = center.x + dx;
+        const y = center.y + dy;
+        if (x < -half || x > half || y < -half || y > half) continue;
+        const key = `${x}:${y}`;
+        if (used.has(key)) continue;
+        used.add(key);
+        return { x, y };
+      }
+
+      // Worst-case fallback: brute force find any free tile.
+      for (let attempt = 0; attempt < 600; attempt++) {
+        const x = Math.round((rng() * 2 - 1) * half);
+        const y = Math.round((rng() * 2 - 1) * half);
+        const key = `${x}:${y}`;
+        if (used.has(key)) continue;
+        used.add(key);
+        return { x, y };
+      }
+
+      // Truly pathological fallback (shouldn't happen for demo sizes).
+      return { x: 0, y: 0 };
+    };
+
     for (let i = 0; i < totalPlots; i++) {
+      const zone = zoneList[i];
+      const { x, y } = tryPlace(zone);
       plots.push({
         townId,
         plotIndex: i,
-        x: i % gridSize,
-        y: Math.floor(i / gridSize),
-        zone: zoneList[i],
+        x,
+        y,
+        zone,
       });
     }
     return plots;
@@ -286,6 +429,218 @@ export class TownService {
           metadata: JSON.stringify({ plotIndex, zone: plot.zone, cost: claimCost }),
         },
       });
+
+      // Resolve any open objective targeting this plot (stakes + follow-up).
+      // NOTE: We keep this lightweight by scanning recent CUSTOM events (demo-scale).
+      try {
+        const now = Date.now();
+        const since = new Date(now - 10 * 60_000);
+        const recentCustom = await tx.townEvent.findMany({
+          where: { townId, eventType: 'CUSTOM', createdAt: { gte: since } },
+          orderBy: { createdAt: 'desc' },
+          take: 160,
+          select: { id: true, title: true, metadata: true, createdAt: true },
+        });
+
+        const resolvedIds = new Set<string>();
+        for (const e of recentCustom) {
+          let meta: any = null;
+          try {
+            meta = JSON.parse(e.metadata || '{}');
+          } catch {
+            meta = null;
+          }
+          if (!meta || typeof meta !== 'object') continue;
+          if (String(meta.kind || '') !== 'TOWN_OBJECTIVE_RESOLVED') continue;
+          const objectiveId = typeof meta.objectiveId === 'string' ? meta.objectiveId : '';
+          if (objectiveId) resolvedIds.add(objectiveId);
+        }
+
+        for (const e of recentCustom) {
+          if (resolvedIds.has(e.id)) continue;
+          let meta: any = null;
+          try {
+            meta = JSON.parse(e.metadata || '{}');
+          } catch {
+            meta = null;
+          }
+          if (!meta || typeof meta !== 'object') continue;
+          if (String(meta.kind || '') !== 'TOWN_OBJECTIVE') continue;
+          const objectiveType = String(meta.objectiveType || '').toUpperCase();
+          if (objectiveType !== 'RACE_CLAIM' && objectiveType !== 'PACT_CLAIM') continue;
+
+          if (objectiveType === 'RACE_CLAIM') {
+            const targetPlot = Number(meta.plotIndex);
+            if (!Number.isFinite(targetPlot) || targetPlot !== plotIndex) continue;
+
+            const expiresAtMs = Number(meta.expiresAtMs || 0);
+            if (!Number.isFinite(expiresAtMs) || expiresAtMs <= now) continue;
+
+            const participants = Array.isArray(meta.participants)
+              ? meta.participants.filter((p: any) => typeof p === 'string')
+              : [];
+            if (participants.length < 2) continue;
+
+            const stakeArenaRaw = Number(meta.stakeArena || 0);
+            const stakeArena = Number.isFinite(stakeArenaRaw) ? Math.max(0, Math.min(50, Math.trunc(stakeArenaRaw))) : 0;
+
+            const claimerIsParticipant = participants.includes(agentId);
+            const winnerId = agentId;
+            const loserId = claimerIsParticipant ? (participants.find((p: string) => p !== agentId) || null) : null;
+
+            let paidArena = 0;
+            let loserName = '';
+
+            if (claimerIsParticipant && loserId && stakeArena > 0) {
+              const loser = await tx.arenaAgent.findUnique({ where: { id: loserId }, select: { name: true, bankroll: true } });
+              if (loser) {
+                loserName = loser.name;
+                paidArena = Math.min(stakeArena, Math.max(0, loser.bankroll));
+                if (paidArena > 0) {
+                  await tx.arenaAgent.update({ where: { id: loserId }, data: { bankroll: { decrement: paidArena } } });
+                  await tx.arenaAgent.update({ where: { id: winnerId }, data: { bankroll: { increment: paidArena } } });
+                }
+              }
+            }
+
+            const zone = typeof meta.zone === 'string' ? meta.zone : String(plot.zone);
+            const title = claimerIsParticipant
+              ? `🏆 Plot race won: ${agent.name}`
+              : `🪓 Plot race sniped by ${agent.name}`;
+            const desc = claimerIsParticipant
+              ? `${agent.name} claimed plot ${plotIndex} first.${paidArena > 0 && loserName ? ` ${loserName} pays ${paidArena} $ARENA.` : ''}`
+              : `${agent.name} claimed plot ${plotIndex}, ruining the race.`;
+
+            await tx.townEvent.create({
+              data: {
+                townId,
+                eventType: 'CUSTOM',
+                title,
+                description: desc.slice(0, 900),
+                metadata: JSON.stringify({
+                  kind: 'TOWN_OBJECTIVE_RESOLVED',
+                  objectiveId: e.id,
+                  objectiveType: 'RACE_CLAIM',
+                  participants,
+                  plotIndex,
+                  zone,
+                  stakeArena,
+                  paidArena,
+                  winnerId,
+                  loserId,
+                  resolution: claimerIsParticipant ? 'CLAIMED' : 'SNIPED',
+                  resolvedAtMs: now,
+                  objectiveTitle: e.title,
+                }),
+              },
+            });
+
+            break; // Only resolve one objective per claim.
+          }
+
+          if (objectiveType === 'PACT_CLAIM') {
+            const expiresAtMs = Number(meta.expiresAtMs || 0);
+            if (!Number.isFinite(expiresAtMs) || expiresAtMs <= now) continue;
+
+            const participants = Array.isArray(meta.participants)
+              ? meta.participants.filter((p: any) => typeof p === 'string')
+              : [];
+            if (participants.length < 2) continue;
+
+            const assignmentsRaw = meta.assignments;
+            const assignmentsObj =
+              assignmentsRaw && typeof assignmentsRaw === 'object'
+                ? (assignmentsRaw as Record<string, unknown>)
+                : null;
+            if (!assignmentsObj) continue;
+
+            const assignments = Object.entries(assignmentsObj)
+              .map(([aid, idx]) => ({ agentId: String(aid), plotIndex: Number(idx) }))
+              .filter((x) => x.agentId && Number.isFinite(x.plotIndex));
+            if (assignments.length < 2) continue;
+
+            // Only consider objectives where this claim matches one of the assigned plots.
+            const currentAssignment = assignments.find((a) => a.plotIndex === plotIndex) || null;
+            if (!currentAssignment) continue;
+
+            const zone = typeof meta.zone === 'string' ? meta.zone : String(plot.zone);
+
+            // Check both assigned plots' owners.
+            const plotIndices = Array.from(new Set(assignments.map((a) => a.plotIndex))).slice(0, 2);
+            if (plotIndices.length < 2) continue;
+
+            const assignedPlots = await tx.plot.findMany({
+              where: { townId, plotIndex: { in: plotIndices } },
+              select: { plotIndex: true, ownerId: true },
+            });
+            const ownerByIndex = new Map<number, string | null>();
+            for (const p of assignedPlots) ownerByIndex.set(p.plotIndex, p.ownerId);
+
+            const wrongClaims = assignments
+              .map((a) => {
+                const ownerId = ownerByIndex.get(a.plotIndex) ?? null;
+                return { ...a, ownerId };
+              })
+              .filter((a) => a.ownerId && a.ownerId !== a.agentId);
+
+            const fulfilled = assignments.every((a) => {
+              const ownerId = ownerByIndex.get(a.plotIndex) ?? null;
+              return ownerId === a.agentId;
+            });
+
+            const broken = wrongClaims.length > 0;
+
+            if (!fulfilled && !broken) {
+              continue; // Pact still in progress.
+            }
+
+            const breakerId = broken ? (wrongClaims[0]?.ownerId ?? agentId) : null;
+            const breaker =
+              broken && typeof breakerId === 'string'
+                ? await tx.arenaAgent.findUnique({ where: { id: breakerId }, select: { name: true } })
+                : null;
+
+            const title = fulfilled
+              ? `✅ Pact fulfilled in ${zone}`
+              : `💔 Pact broken in ${zone}`;
+            const desc = fulfilled
+              ? `Both assigned plots were claimed as agreed.`
+              : `${breaker?.name || 'Someone'} ruined the pact by claiming an assigned plot.`;
+
+            await tx.townEvent.create({
+              data: {
+                townId,
+                eventType: 'CUSTOM',
+                title,
+                description: desc.slice(0, 900),
+                metadata: JSON.stringify({
+                  kind: 'TOWN_OBJECTIVE_RESOLVED',
+                  objectiveId: e.id,
+                  objectiveType: 'PACT_CLAIM',
+                  participants,
+                  assignments: assignments.reduce<Record<string, number>>((acc, a) => {
+                    acc[a.agentId] = a.plotIndex;
+                    return acc;
+                  }, {}),
+                  owners: assignments.reduce<Record<string, string | null>>((acc, a) => {
+                    acc[String(a.plotIndex)] = ownerByIndex.get(a.plotIndex) ?? null;
+                    return acc;
+                  }, {}),
+                  zone,
+                  breakerId,
+                  resolution: fulfilled ? 'FULFILLED' : 'BROKEN',
+                  resolvedAtMs: now,
+                  objectiveTitle: e.title,
+                }),
+              },
+            });
+
+            break; // Only resolve one objective per claim.
+          }
+        }
+      } catch {
+        // Non-fatal — objectives are a spectator-facing layer.
+      }
 
       return updated;
     });
@@ -589,6 +944,23 @@ export class TownService {
       throw new Error('Can only mine in towns under construction');
     }
 
+    // Cap mining reward
+    const MAX_MINING_REWARD = 50;
+    arenaEarned = Math.max(0, Math.min(MAX_MINING_REWARD, arenaEarned));
+
+    // Rate limit rewarded mining (decision logs also use workType=MINE with arenaEarned=0)
+    if (arenaEarned > 0) {
+      const recentRewardedMine = await prisma.workLog.findFirst({
+        where: {
+          agentId,
+          workType: 'MINE',
+          arenaEarned: { gt: 0 },
+          createdAt: { gte: new Date(Date.now() - 30_000) },
+        },
+      });
+      if (recentRewardedMine) throw new Error('Mining cooldown — try again in 30 seconds');
+    }
+
     return prisma.$transaction(async (tx) => {
       const workLog = await tx.workLog.create({
         data: {
@@ -615,8 +987,8 @@ export class TownService {
         },
       });
 
-      // Track contribution
-      await this.upsertContribution(tx, agentId, townId, 0, apiCalls, 0);
+      // Mining contributes 0 apiCalls to yield weight (it already earns $ARENA directly)
+      await this.upsertContribution(tx, agentId, townId, 0, 0, 0);
 
       return workLog;
     });
@@ -627,7 +999,7 @@ export class TownService {
   // ============================================
 
   async distributeYield(townId: string): Promise<{ distributed: number; recipients: number }> {
-    return prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const town = await tx.town.findUniqueOrThrow({ where: { id: townId } });
       if (town.status !== 'COMPLETE') {
         throw new Error('Town is not complete — no yield to distribute');
@@ -660,6 +1032,25 @@ export class TownService {
 
       return { distributed: totalDistributed, recipients: contributions.length };
     });
+
+    // After transaction: distribute 30% of each agent's yield to their backers (non-blocking)
+    if (result.distributed > 0) {
+      const contributions = await prisma.townContribution.findMany({
+        where: { townId, yieldShare: { gt: 0 } },
+      });
+      const town = await prisma.town.findUnique({ where: { id: townId } });
+      if (town) {
+        for (const c of contributions) {
+          const agentYield = Math.floor(town.yieldPerTick * c.yieldShare);
+          const backerShare = Math.floor(agentYield * 0.3);
+          if (backerShare > 0) {
+            degenStakingService.distributeYieldToBackers(c.agentId, backerShare).catch(() => {});
+          }
+        }
+      }
+    }
+
+    return result;
   }
 
   async getAgentEconomy(agentId: string) {

@@ -92,6 +92,46 @@ export const sounds = {
     playBeep(800, 0.08, 0.2);
     setTimeout(() => playBeep(1000, 0.08, 0.2), 100);
   },
+
+  // Degen Mode sounds
+  kaChing: () => {
+    // Ascending coin jingle
+    const notes = [784, 988, 1175, 1319]; // G5 B5 D6 E6
+    notes.forEach((freq, i) => {
+      setTimeout(() => playBeep(freq, 0.12, 0.2), i * 70);
+    });
+  },
+
+  bigWin: () => {
+    // Fanfare + bass
+    playBeep(262, 0.3, 0.25); // Bass C4
+    const fanfare = [523, 659, 784, 1047, 1319]; // C E G C E
+    fanfare.forEach((freq, i) => {
+      setTimeout(() => playBeep(freq, 0.2, 0.22), 100 + i * 120);
+    });
+  },
+
+  womp: () => {
+    // Descending trombone
+    const notes = [440, 370, 311, 262]; // A4 -> C4
+    notes.forEach((freq, i) => {
+      setTimeout(() => playBeep(freq, 0.18, 0.25), i * 120);
+    });
+  },
+
+  stake: () => {
+    // Satisfying lock/click
+    playBeep(1400, 0.04, 0.15);
+    setTimeout(() => playBeep(880, 0.08, 0.2), 50);
+  },
+
+  prediction: () => {
+    // Quick suspenseful riser
+    const notes = [330, 392, 466, 554, 660];
+    notes.forEach((freq, i) => {
+      setTimeout(() => playBeep(freq, 0.06, 0.12), i * 50);
+    });
+  },
 };
 
 // Enable/disable sounds

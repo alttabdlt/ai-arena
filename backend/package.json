@@ -11,7 +11,9 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "prisma:seed": "ts-node prisma/seed.ts",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "schema:check": "ts-node src/commands/schema-commands.ts check-schema-usage",
     "schema:storage": "ts-node src/commands/schema-commands.ts show-game-storage",
     "schema:validate": "ts-node src/commands/schema-commands.ts validate-game-state",
@@ -79,7 +81,9 @@
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/uuid": "^10.0.0",
+    "@vitest/coverage-v8": "^4.0.18",
     "graphql-request": "^7.2.0",
-    "node-fetch": "^2.7.0"
+    "node-fetch": "^2.7.0",
+    "vitest": "^4.0.18"
   }
 }

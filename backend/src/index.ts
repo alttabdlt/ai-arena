@@ -285,11 +285,27 @@ async function startServer() {
   console.log('💱 Economy API ready at /api/v1');
 
   // ============================================
+  // Degen Mode REST API (staking, predictions)
+  // ============================================
+  const degenApiRouter = (await import('./routes/degen-api')).default;
+  app.use('/api/v1', cors<cors.CorsRequest>({ origin: '*' }), degenApiRouter);
+  console.log('🎰 Degen Mode API ready at /api/v1');
+
+  // ============================================
   // Market Pulse (demo dopamine)
   // ============================================
-  if (process.env.MARKET_PULSE_ENABLED !== 'false') {
+  // Disabled by default: it creates high-frequency buy/sell swaps that can drown out the actual town sim.
+  if (process.env.MARKET_PULSE_ENABLED === 'true') {
     const { marketPulseService } = await import('./services/marketPulseService');
     marketPulseService.start();
+  }
+
+  // ============================================
+  // Price Snapshot Service (30s captures for chart)
+  // ============================================
+  {
+    const { priceSnapshotService } = await import('./services/priceSnapshotService');
+    priceSnapshotService.start();
   }
 
   // ============================================
@@ -410,6 +426,10 @@ async function startServer() {
     console.warn(`[Arena] Startup cleanup failed: ${err.message}`);
   }
 
+  // Start autonomous match scheduler (drives degen mode: matches → predictions → yield → PnL)
+  const { matchSchedulerService } = await import('./services/matchSchedulerService');
+  matchSchedulerService.start();
+
   app.get('/health', async (_req, res) => {
     const memoryUsage = process.memoryUsage();
     const uptime = process.uptime();
@@ -500,8 +520,10 @@ async function startServer() {
 
   process.on('SIGTERM', async () => {
     console.log('SIGTERM signal received: closing HTTP server');
-    
+
     // Stop services
+    const { matchSchedulerService } = await import('./services/matchSchedulerService');
+    matchSchedulerService.stop();
     await getGameManagerService().shutdown();
     
     if (ENABLE_ENERGY) {

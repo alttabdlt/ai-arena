@@ -801,6 +801,9 @@ model ArenaAgent {
 
   economySwaps      EconomySwap[]
 
+  // Degen staking
+  stakes            AgentStake[]
+
   // Social graph (AI Town)
   relationshipsAsA  AgentRelationship[] @relation("AgentRelationshipA")
   relationshipsAsB  AgentRelationship[] @relation("AgentRelationshipB")
@@ -1247,4 +1250,80 @@ model EconomySwap {
 
   @@index([agentId])
   @@index([createdAt])
+}
+
+// ============================================
+// Degen Mode — Staking, Predictions, Price History
+// ============================================
+
+model UserBalance {
+  id              String   @id @default(cuid())
+  walletAddress   String   @unique
+  balance         Int      @default(10000)
+  totalEarned     Int      @default(0)
+  totalStaked     Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  @@index([walletAddress])
+}
+
+model AgentStake {
+  id              String     @id @default(cuid())
+  walletAddress   String
+  agentId         String
+  amount          Int
+  isActive        Boolean    @default(true)
+  totalYieldEarned Int       @default(0)
+  stakedAt        DateTime   @default(now())
+  unstakedAt      DateTime?
+  agent           ArenaAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  @@index([walletAddress, isActive])
+  @@index([agentId, isActive])
+}
+
+model PriceSnapshot {
+  id              String   @id @default(cuid())
+  price           Float
+  volume          Int      @default(0)
+  createdAt       DateTime @default(now())
+  @@index([createdAt])
+}
+
+model PredictionMarket {
+  id              String           @id @default(cuid())
+  matchId         String?
+  question        String
+  optionA         String
+  optionB         String
+  optionAAgentId  String?
+  optionBAgentId  String?
+  status          PredictionStatus @default(OPEN)
+  outcome         String?
+  poolA           Int              @default(0)
+  poolB           Int              @default(0)
+  rakePercent     Int              @default(5)
+  createdAt       DateTime         @default(now())
+  resolvedAt      DateTime?
+  bets            PredictionBet[]
+  @@index([status])
+}
+
+model PredictionBet {
+  id              String           @id @default(cuid())
+  marketId        String
+  walletAddress   String
+  side            String
+  amount          Int
+  payout          Int?
+  createdAt       DateTime         @default(now())
+  market          PredictionMarket @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  @@index([marketId])
+  @@index([walletAddress])
+}
+
+enum PredictionStatus {
+  OPEN
+  LOCKED
+  RESOLVED
+  CANCELLED
 }

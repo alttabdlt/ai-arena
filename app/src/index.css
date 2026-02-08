@@ -190,19 +190,103 @@
     box-shadow: 0 0 0 2px hsl(var(--border)), 0 2px 0 0 rgba(0, 0, 0, 0.6);
   }
 
-  .pixel-title {
-    font-family: 'UpheavalPro', 'VCRMono', monospace;
-    letter-spacing: 1px;
-    text-shadow: 0 2px 0 rgba(0, 0, 0, 0.6), 0 0 12px rgba(255, 255, 255, 0.08);
-  }
+	  .pixel-title {
+	    font-family: 'UpheavalPro', 'VCRMono', monospace;
+	    letter-spacing: 1px;
+	    text-shadow: 0 2px 0 rgba(0, 0, 0, 0.6), 0 0 12px rgba(255, 255, 255, 0.08);
+	  }
 
-  .btn-accent {
-    @apply bg-gradient-to-r from-accent to-warning text-accent-foreground border-0 shadow-lg hover:shadow-[var(--glow-accent)] transition-[var(--transition-glow)] font-semibold;
-  }
+	  .pixel-panel {
+	    @apply relative overflow-hidden border border-slate-700/70 bg-slate-950/80;
+	    image-rendering: pixelated;
+	    border-radius: 0;
+	    box-shadow:
+	      0 0 0 1px rgba(0, 0, 0, 0.55),
+	      0 6px 0 rgba(0, 0, 0, 0.55);
+	  }
+
+	  .pixel-panel-title {
+	    @apply text-[11px] font-semibold uppercase tracking-wide text-slate-100;
+	    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+	  }
+
+	  .pixel-panel-kicker {
+	    @apply text-[10px] text-slate-500;
+	    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+	  }
+
+	  .btn-accent {
+	    @apply bg-gradient-to-r from-accent to-warning text-accent-foreground border-0 shadow-lg hover:shadow-[var(--glow-accent)] transition-[var(--transition-glow)] font-semibold;
+	  }
 
   /* Gaming Card Styles */
   .card-gaming {
     @apply bg-gradient-to-br from-card to-[hsl(222_20%_15%)] border-border shadow-[var(--shadow-card)] backdrop-blur-sm;
+  }
+
+  /* HUD / Overlay Panels (Town3D + Degen) */
+  .hud-backplate {
+    background:
+      radial-gradient(circle at 12% 18%, hsl(var(--primary) / 0.08) 0%, transparent 42%),
+      radial-gradient(circle at 88% 82%, hsl(var(--accent) / 0.06) 0%, transparent 46%),
+      linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.22) 100%);
+  }
+
+  .hud-panel {
+    @apply relative overflow-hidden rounded-xl border border-slate-800/60 backdrop-blur-md;
+    background:
+      linear-gradient(135deg, hsl(var(--card) / 0.92), hsl(var(--background) / 0.55));
+    box-shadow:
+      var(--shadow-card),
+      0 0 0 1px hsl(var(--primary) / 0.08);
+  }
+
+  .hud-panel::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -25%;
+    width: 150%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, hsl(var(--primary) / 0.9), transparent);
+    opacity: 0.35;
+    animation: hudShimmer 4s ease-in-out infinite;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .hud-panel::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(circle at 18% 18%, hsl(var(--primary) / 0.10) 0%, transparent 55%),
+      radial-gradient(circle at 85% 75%, hsl(var(--accent) / 0.08) 0%, transparent 60%);
+    opacity: 0.8;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .hud-panel > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .hud-title {
+    @apply text-[11px] font-semibold tracking-wide text-slate-100;
+  }
+
+  .hud-kicker {
+    @apply text-[10px] text-slate-500;
+  }
+
+  .hud-chip {
+    @apply inline-flex items-center gap-1 rounded-full border border-slate-700/60 bg-slate-900/30 px-2 py-0.5 text-[10px] text-slate-300;
+  }
+
+  @keyframes hudShimmer {
+    0%, 100% { transform: translateX(-6%); opacity: 0.22; }
+    50% { transform: translateX(6%); opacity: 0.55; }
   }
 
   /* Glow Effects */
@@ -1364,4 +1448,33 @@
 }
 .card-front {
   transform: rotateY(180deg);
+}
+
+/* Degen Mode — Marquee animation for swap ticker */
+@keyframes marquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.animate-marquee {
+  display: inline-block;
+  animation: marquee 30s linear infinite;
+}
+.animate-marquee-fast {
+  display: inline-block;
+  animation: marquee 20s linear infinite;
+}
+
+/* Degen Mode — Scrollbar styling */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 2px;
+}
+.scrollbar-thumb-slate-700::-webkit-scrollbar-thumb {
+  background: #334155;
 }

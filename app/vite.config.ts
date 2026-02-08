@@ -18,6 +18,19 @@ export default defineConfig(({ mode }) => ({
       '/api': {
         target: 'http://localhost:4000',
         changeOrigin: true
+      },
+      // Backend-served pixel art assets
+      '/sprite-library': {
+        target: 'http://localhost:4000',
+        changeOrigin: true
+      },
+      '/building-sprites': {
+        target: 'http://localhost:4000',
+        changeOrigin: true
+      },
+      '/building-assets': {
+        target: 'http://localhost:4000',
+        changeOrigin: true
       }
     }
   },

@@ -94,6 +94,14 @@ export default function Landing() {
               >
                 🏙️ Enter Town
               </Button>
+              <Button
+                size="lg"
+                variant="outline"
+                className="border-slate-600 hover:bg-slate-800 px-8"
+                onClick={() => navigate('/town/pixel')}
+              >
+                🟩 Pixel Town
+              </Button>
               <Button 
                 size="lg" 
                 variant="outline"

@@ -321,7 +321,10 @@ export class AgentLoopService {
     if (freshAgentState) agent = freshAgentState;
 
     // Health gate: dead agents can only rest
-    if ((agent as any).health <= 0) {
+    const agentHealth = agent.health ?? 100;
+    console.log(`[AgentLoop] ${agent.name} health check: ${agentHealth} (raw: ${agent.health})`);
+    if (agentHealth <= 0) {
+      console.log(`[AgentLoop] 💀 ${agent.name} is incapacitated (health=${agentHealth}). Skipping LLM call.`);
       return {
         agentId: agent.id,
         agentName: agent.name,

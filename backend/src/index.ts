@@ -308,6 +308,13 @@ async function startServer() {
   console.log('🎰 Degen Mode API ready at /api/v1');
 
   // ============================================
+  // Wheel of Fate REST API (PvP game cycle)
+  // ============================================
+  const wheelApiRouter = (await import('./routes/wheel-api')).default;
+  app.use('/api/v1', cors<cors.CorsRequest>({ origin: '*' }), wheelApiRouter);
+  console.log('🎡 Wheel of Fate API ready at /api/v1');
+
+  // ============================================
   // Market Pulse (demo dopamine)
   // ============================================
   // Disabled by default: it creates high-frequency buy/sell swaps that can drown out the actual town sim.
@@ -442,9 +449,9 @@ async function startServer() {
     console.warn(`[Arena] Startup cleanup failed: ${err.message}`);
   }
 
-  // Start autonomous match scheduler (drives degen mode: matches → predictions → yield → PnL)
-  const { matchSchedulerService } = await import('./services/matchSchedulerService');
-  matchSchedulerService.start();
+  // Start Wheel of Fate (PvP match scheduler — the core game mechanic)
+  const { wheelOfFateService } = await import('./services/wheelOfFateService');
+  wheelOfFateService.start();
 
   app.get('/health', async (_req, res) => {
     const memoryUsage = process.memoryUsage();

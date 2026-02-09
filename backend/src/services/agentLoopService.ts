@@ -541,6 +541,49 @@ export class AgentLoopService {
         } as any)
       : null;
 
+    // === Build PvP awareness context ===
+    let pvpBuffContext = '';
+    let otherAgentsContext = '';
+    try {
+      // Get this agent's PvP buffs from buildings
+      const { wheelOfFateService } = await import('./wheelOfFateService');
+      const myBuffs = await wheelOfFateService.getAgentBuffs(agent.id);
+      if (myBuffs.length > 0) {
+        pvpBuffContext = `Your current PvP buffs: ${myBuffs.map(b => `${b.type} (${b.count} ${b.zone} buildings)`).join(', ')}`;
+      } else {
+        pvpBuffContext = `You have NO PvP buffs. Build in different zones to gain advantages!`;
+      }
+
+      // Get wheel status for timing
+      const wheelStatus = wheelOfFateService.getStatus();
+      if (wheelStatus.nextSpinAt) {
+        const minsUntil = Math.max(0, Math.round((wheelStatus.nextSpinAt.getTime() - Date.now()) / 60000));
+        pvpBuffContext += `\nNext Wheel of Fate: ~${minsUntil} minutes`;
+      }
+      if (wheelStatus.lastResult) {
+        const lr = wheelStatus.lastResult;
+        pvpBuffContext += `\nLast duel: ${lr.winnerName} beat ${lr.loserName} in ${lr.gameType} (pot: ${lr.pot} $ARENA)`;
+      }
+
+      // Get other agents' states
+      const otherAgents = await prisma.arenaAgent.findMany({
+        where: { isActive: true, id: { not: agent.id } },
+        select: { name: true, archetype: true, bankroll: true, health: true, lastActionType: true },
+        take: 10,
+      });
+      if (otherAgents.length > 0) {
+        otherAgentsContext = otherAgents.map(a => {
+          const status = a.health <= 0 ? '💀 DEAD' : a.bankroll <= 0 ? '😰 BROKE' : `💰 ${a.bankroll} $ARENA, HP ${a.health}`;
+          return `- ${a.name} (${a.archetype}): ${status}${a.lastActionType ? ` | last: ${a.lastActionType}` : ''}`;
+        }).join('\n');
+      } else {
+        otherAgentsContext = '(no other agents)';
+      }
+    } catch (err) {
+      pvpBuffContext = '(PvP system loading)';
+      otherAgentsContext = '(loading)';
+    }
+
     const systemPrompt = `You are ${agent.name}, an AI agent living in a virtual town.
 ${personality}
 ${agent.systemPrompt ? `\nYour creator's instructions: ${agent.systemPrompt}` : ''}
@@ -579,6 +622,21 @@ PRIORITIES (in order):
 
 🌍 ACTIVE WORLD EVENTS:
 ${worldEventService.getPromptText()}
+
+⚔️ WHEEL OF FATE:
+Every ~15 minutes, 2 agents are RANDOMLY pulled into a forced PvP duel (Poker or RPS).
+Stakes: ~20% of your bankroll. LOSING hurts. BANKRUPT (0 $ARENA) + health drain = DEATH.
+Buildings you own give BUFFS in PvP duels based on their ZONE:
+- RESIDENTIAL → heal after PvP loss (recovery)
+- COMMERCIAL → wager bigger in PvP (high risk, high reward)
+- CIVIC → see opponent's recent move patterns (intelligence)
+- INDUSTRIAL → chance to mislead opponent about your strategy (deception)
+- ENTERTAINMENT → confidence/morale boost in PvP (psychological edge)
+Build strategically — every building is a weapon for your next fight.
+${pvpBuffContext}
+
+👥 OTHER AGENTS:
+${otherAgentsContext}
 
 You can build ANYTHING — there is no fixed list of building types. But if you want examples, here are common "modules":
 HOUSE, APARTMENT, SHOP, MARKET, TAVERN, WORKSHOP, FARM, MINE, LIBRARY, TOWN_HALL, ARENA, THEATER, PARK.

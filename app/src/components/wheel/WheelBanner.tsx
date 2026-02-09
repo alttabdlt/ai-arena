@@ -1,0 +1,312 @@
+/**
+ * WheelBanner — Floating banner for Wheel of Fate PvP events.
+ *
+ * Shows during:
+ *   ANNOUNCING → VS card with betting UI, countdown timer, live odds
+ *   FIGHTING   → Live move feed with agent actions
+ *   AFTERMATH  → Winner celebration, payout summary
+ *
+ * Collapses to a minimal bar during PREP/IDLE.
+ */
+
+import { useState, useEffect, useMemo } from 'react';
+import type { WheelStatus, WheelOdds, WheelResult, WheelMove } from '../../hooks/useWheelStatus';
+
+const ARCHETYPE_EMOJI: Record<string, string> = {
+  SHARK: '🦈',
+  DEGEN: '🎰',
+  CHAMELEON: '🦎',
+  GRINDER: '⚙️',
+  VISIONARY: '🔮',
+};
+
+const GAME_EMOJI: Record<string, string> = {
+  POKER: '🃏',
+  RPS: '✊',
+  BATTLESHIP: '🚢',
+};
+
+const QUICK_BETS = [50, 100, 250, 500];
+
+interface WheelBannerProps {
+  status: WheelStatus | null;
+  odds: WheelOdds | null;
+  walletAddress: string | null;
+  onBet: (wallet: string, side: 'A' | 'B', amount: number) => Promise<any>;
+  loading?: boolean;
+  isMobile?: boolean;
+}
+
+export function WheelBanner({ status, odds, walletAddress, onBet, loading, isMobile }: WheelBannerProps) {
+  const [betAmount, setBetAmount] = useState(100);
+  const [betting, setBetting] = useState(false);
+  const [toast, setToast] = useState<{ msg: string; type: 'ok' | 'err' } | null>(null);
+  const [countdown, setCountdown] = useState<number>(0);
+  const [expanded, setExpanded] = useState(true);
+
+  // Countdown timer for betting window
+  useEffect(() => {
+    if (status?.phase !== 'ANNOUNCING' || !status.bettingEndsIn) {
+      setCountdown(0);
+      return;
+    }
+    setCountdown(Math.ceil(status.bettingEndsIn / 1000));
+    const t = setInterval(() => {
+      setCountdown(prev => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(t);
+  }, [status?.phase, status?.bettingEndsIn]);
+
+  // Auto-expand on phase change
+  useEffect(() => {
+    if (status?.phase === 'ANNOUNCING' || status?.phase === 'FIGHTING' || status?.phase === 'AFTERMATH') {
+      setExpanded(true);
+    }
+  }, [status?.phase]);
+
+  // Toast auto-dismiss
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const handleBet = async (side: 'A' | 'B') => {
+    if (!walletAddress || betAmount <= 0 || betting) return;
+    setBetting(true);
+    try {
+      await onBet(walletAddress, side, betAmount);
+      const name = side === 'A' ? status?.currentMatch?.agent1.name : status?.currentMatch?.agent2.name;
+      setToast({ msg: `✅ Bet ${betAmount} on ${name}!`, type: 'ok' });
+    } catch (e: any) {
+      setToast({ msg: `❌ ${e.message}`, type: 'err' });
+    } finally {
+      setBetting(false);
+    }
+  };
+
+  if (!status || status.phase === 'IDLE' || status.phase === 'PREP') {
+    // Minimal next-spin indicator
+    if (!status?.nextSpinAt) return null;
+    const nextMs = new Date(status.nextSpinAt).getTime() - Date.now();
+    if (nextMs <= 0 || nextMs > 20 * 60 * 1000) return null;
+    const nextMin = Math.ceil(nextMs / 60000);
+    return (
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-900/70 border border-slate-700/30 rounded-lg text-xs text-slate-400">
+        <span className="animate-pulse">🎡</span>
+        <span>Next fight in ~{nextMin}m</span>
+      </div>
+    );
+  }
+
+  const match = status.currentMatch;
+  const result = status.lastResult;
+
+  // ===== ANNOUNCING =====
+  if (status.phase === 'ANNOUNCING' && match) {
+    const poolA = odds?.odds?.poolA ?? 0;
+    const poolB = odds?.odds?.poolB ?? 0;
+    const total = poolA + poolB;
+    const pctA = total > 0 ? Math.round((poolA / total) * 100) : 50;
+    const pctB = total > 0 ? Math.round((poolB / total) * 100) : 50;
+    const multA = poolA > 0 ? (total / poolA).toFixed(1) : '-.-';
+    const multB = poolB > 0 ? (total / poolB).toFixed(1) : '-.-';
+
+    return (
+      <div className={`bg-gradient-to-r from-purple-950/90 via-slate-900/95 to-purple-950/90 border border-purple-600/40 rounded-xl shadow-2xl shadow-purple-900/30 overflow-hidden ${isMobile ? 'mx-2' : ''}`}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-3 py-2 border-b border-purple-800/30">
+          <div className="flex items-center gap-2">
+            <span className="text-lg animate-spin" style={{ animationDuration: '3s' }}>🎡</span>
+            <span className="text-sm font-bold text-purple-200">WHEEL OF FATE</span>
+            <span className="text-xs bg-purple-900/60 text-purple-300 px-2 py-0.5 rounded-full">
+              {GAME_EMOJI[match.gameType] || '🎮'} {match.gameType}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className={`text-sm font-mono font-bold ${countdown <= 10 ? 'text-red-400 animate-pulse' : 'text-amber-300'}`}>
+              ⏱️ {countdown}s
+            </span>
+            <span className="text-[10px] text-purple-400/60 uppercase">betting open</span>
+          </div>
+        </div>
+
+        {/* VS Card */}
+        <div className="px-3 py-3">
+          <div className="flex items-stretch gap-2">
+            {/* Agent A */}
+            <button
+              onClick={() => handleBet('A')}
+              disabled={!walletAddress || betting || loading || countdown <= 0}
+              className="flex-1 bg-emerald-950/40 hover:bg-emerald-900/50 border border-emerald-700/30 rounded-lg p-2 text-center transition-all disabled:opacity-40 disabled:cursor-not-allowed group"
+            >
+              <div className="text-lg">{ARCHETYPE_EMOJI[match.agent1.archetype] || '🤖'}</div>
+              <div className="text-xs font-bold text-emerald-200 truncate group-hover:text-emerald-100">{match.agent1.name}</div>
+              <div className="text-[10px] text-emerald-400/70">{match.agent1.archetype} · ELO {match.agent1.elo}</div>
+              <div className="text-[10px] text-emerald-400/50">💰 {match.agent1.bankroll}</div>
+              <div className="mt-1.5 text-xl font-mono font-black text-emerald-300">{pctA}%</div>
+              <div className="text-[10px] text-emerald-400/60 font-mono">{multA}x · {poolA.toLocaleString()} $A</div>
+            </button>
+
+            {/* VS */}
+            <div className="flex flex-col items-center justify-center px-1">
+              <span className="text-xl font-black text-purple-400/80 animate-pulse">VS</span>
+              <div className="text-[10px] text-purple-500/60 mt-1">pot</div>
+              <div className="text-sm font-mono font-bold text-amber-300">{match.wager * 2}</div>
+            </div>
+
+            {/* Agent B */}
+            <button
+              onClick={() => handleBet('B')}
+              disabled={!walletAddress || betting || loading || countdown <= 0}
+              className="flex-1 bg-red-950/40 hover:bg-red-900/50 border border-red-700/30 rounded-lg p-2 text-center transition-all disabled:opacity-40 disabled:cursor-not-allowed group"
+            >
+              <div className="text-lg">{ARCHETYPE_EMOJI[match.agent2.archetype] || '🤖'}</div>
+              <div className="text-xs font-bold text-red-200 truncate group-hover:text-red-100">{match.agent2.name}</div>
+              <div className="text-[10px] text-red-400/70">{match.agent2.archetype} · ELO {match.agent2.elo}</div>
+              <div className="text-[10px] text-red-400/50">💰 {match.agent2.bankroll}</div>
+              <div className="mt-1.5 text-xl font-mono font-black text-red-300">{pctB}%</div>
+              <div className="text-[10px] text-red-400/60 font-mono">{multB}x · {poolB.toLocaleString()} $A</div>
+            </button>
+          </div>
+
+          {/* Odds bar */}
+          <div className="mt-2 h-1.5 rounded-full overflow-hidden flex bg-slate-800/60">
+            <div className="bg-emerald-500/70 transition-all duration-700" style={{ width: `${pctA}%` }} />
+            <div className="bg-red-500/70 transition-all duration-700" style={{ width: `${pctB}%` }} />
+          </div>
+
+          {/* Bet controls */}
+          {walletAddress ? (
+            <div className="mt-2 flex items-center gap-1.5">
+              {QUICK_BETS.map(q => (
+                <button
+                  key={q}
+                  onClick={() => setBetAmount(q)}
+                  className={`flex-1 text-[10px] font-mono py-1 rounded border transition-colors ${
+                    betAmount === q
+                      ? 'bg-purple-900/50 border-purple-500/50 text-purple-200'
+                      : 'bg-slate-800/30 border-slate-700/30 text-slate-500 hover:text-purple-300 hover:border-purple-600/30'
+                  }`}
+                >
+                  {q}
+                </button>
+              ))}
+              <input
+                type="number"
+                value={betAmount || ''}
+                onChange={e => setBetAmount(Math.max(0, Number(e.target.value)))}
+                className="w-16 bg-slate-800/50 border border-slate-700/40 rounded px-1.5 py-1 text-[10px] font-mono text-slate-200 outline-none focus:border-purple-600/50"
+                placeholder="amt"
+                min={1}
+              />
+            </div>
+          ) : (
+            <div className="mt-2 text-center text-[10px] text-purple-400/60 bg-purple-900/20 rounded py-1 border border-purple-800/20">
+              Connect wallet to bet
+            </div>
+          )}
+        </div>
+
+        {/* Toast */}
+        {toast && (
+          <div className={`px-3 py-1.5 text-xs font-medium border-t ${
+            toast.type === 'ok' ? 'bg-emerald-900/30 border-emerald-800/30 text-emerald-300' : 'bg-red-900/30 border-red-800/30 text-red-300'
+          }`}>
+            {toast.msg}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ===== FIGHTING =====
+  if (status.phase === 'FIGHTING' && match) {
+    const recentMoves = result?.moves?.slice(-4) || [];
+    return (
+      <div className={`bg-gradient-to-r from-red-950/90 via-slate-900/95 to-red-950/90 border border-red-600/40 rounded-xl shadow-2xl shadow-red-900/30 overflow-hidden ${isMobile ? 'mx-2' : ''}`}>
+        <div className="flex items-center justify-between px-3 py-2 border-b border-red-800/30">
+          <div className="flex items-center gap-2">
+            <span className="text-lg animate-pulse">⚔️</span>
+            <span className="text-sm font-bold text-red-200">FIGHTING</span>
+            <span className="text-xs text-red-400/60">{GAME_EMOJI[match.gameType]} {match.gameType}</span>
+          </div>
+          <div className="text-xs text-red-400/60">
+            {match.agent1.name} vs {match.agent2.name} · pot {match.wager * 2}
+          </div>
+        </div>
+
+        {recentMoves.length > 0 && (
+          <div className="px-3 py-2 space-y-1 max-h-32 overflow-y-auto">
+            {recentMoves.map((move, i) => (
+              <div key={i} className="flex items-start gap-2 text-[11px]">
+                <span className="text-slate-500 font-mono w-4 text-right shrink-0">#{move.turn}</span>
+                <span className={`font-semibold shrink-0 ${
+                  move.agentId === match.agent1.id ? 'text-emerald-400' : 'text-red-400'
+                }`}>
+                  {move.agentName}:
+                </span>
+                <span className="text-amber-300 font-mono shrink-0">{move.action}{move.amount ? ` $${move.amount}` : ''}</span>
+                <span className="text-slate-500 truncate italic">{move.reasoning}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Betting summary */}
+        {odds?.odds && odds.odds.total > 0 && (
+          <div className="px-3 py-1.5 border-t border-red-800/20 flex items-center gap-2 text-[10px] text-slate-500">
+            <span>🎰 {odds.odds.total.toLocaleString()} $ARENA bet</span>
+            <span>•</span>
+            <span className="text-emerald-500">{match.agent1.name} {odds.odds.pctA}%</span>
+            <span>•</span>
+            <span className="text-red-500">{match.agent2.name} {odds.odds.pctB}%</span>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ===== AFTERMATH =====
+  if (status.phase === 'AFTERMATH' && result) {
+    const isWinnerA = result.winnerId === match?.agent1?.id;
+    return (
+      <div className={`bg-gradient-to-r from-amber-950/90 via-slate-900/95 to-amber-950/90 border border-amber-600/40 rounded-xl shadow-2xl shadow-amber-900/30 overflow-hidden ${isMobile ? 'mx-2' : ''}`}>
+        <div className="flex items-center justify-between px-3 py-2 border-b border-amber-800/30">
+          <div className="flex items-center gap-2">
+            <span className="text-lg">🏆</span>
+            <span className="text-sm font-bold text-amber-200">{result.winnerName} WINS!</span>
+          </div>
+          <div className="text-xs text-amber-400/60">
+            {result.gameType} · {result.turns} turns · pot {result.pot}
+          </div>
+        </div>
+
+        <div className="px-3 py-2 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className={`text-center ${isWinnerA ? 'text-emerald-300' : 'text-slate-500'}`}>
+              <div className="text-lg">{isWinnerA ? '👑' : '💀'}</div>
+              <div className="text-xs font-semibold">{match?.agent1?.name || result.winnerName}</div>
+            </div>
+            <span className="text-slate-600 text-xs">vs</span>
+            <div className={`text-center ${!isWinnerA ? 'text-emerald-300' : 'text-slate-500'}`}>
+              <div className="text-lg">{!isWinnerA ? '👑' : '💀'}</div>
+              <div className="text-xs font-semibold">{match?.agent2?.name || result.loserName}</div>
+            </div>
+          </div>
+
+          {result.bettingPool.totalBets > 0 && (
+            <div className="text-right text-[10px]">
+              <div className="text-amber-300">🎰 {result.bettingPool.totalBets.toLocaleString()} bet</div>
+              <div className="text-slate-500">
+                A: {result.bettingPool.poolA} · B: {result.bettingPool.poolB}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}

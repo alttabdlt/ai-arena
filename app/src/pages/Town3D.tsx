@@ -12,6 +12,8 @@ import { useDegenState } from '../hooks/useDegenState';
 import { DegenDashboard } from '../components/degen/DegenDashboard';
 import { PositionTracker } from '../components/degen/PositionTracker';
 import { SwapTicker } from '../components/degen/SwapTicker';
+import { useWheelStatus } from '../hooks/useWheelStatus';
+import { WheelBanner } from '../components/wheel/WheelBanner';
 import confetti from 'canvas-confetti';
 import { BuildingMesh, preloadBuildingModels } from '../components/buildings';
 import { AgentDroid } from '../components/agents/AgentDroid';
@@ -2875,6 +2877,7 @@ export default function Town3D() {
     } catch { return null; }
   }, [walletAddress]);
   const degen = useDegenState(walletAddress);
+  const wheel = useWheelStatus();
   const prevPnLRef = useRef(0);
 
   // Fire confetti + sound when PnL increases
@@ -3658,6 +3661,12 @@ export default function Town3D() {
           <span className="text-[10px]">
             {economicState.sentiment === 'bull' ? '📈' : economicState.sentiment === 'bear' ? '📉' : '➡️'}
           </span>
+          {wheel.status?.phase === 'ANNOUNCING' && (
+            <span className="text-[10px] animate-pulse text-purple-400" title="Betting open!">🎰</span>
+          )}
+          {wheel.status?.phase === 'FIGHTING' && (
+            <span className="text-[10px] animate-pulse text-red-400" title="Fight in progress">⚔️</span>
+          )}
         </div>
       </div>
 
@@ -3753,6 +3762,20 @@ export default function Town3D() {
             })}
           </div>
         </div>
+
+        {/* Wheel of Fate banner (mobile) */}
+        {wheel.status && wheel.status.phase !== 'IDLE' && wheel.status.phase !== 'PREP' && (
+          <div className="pointer-events-auto absolute bottom-14 left-0 right-0 z-50">
+            <WheelBanner
+              status={wheel.status}
+              odds={wheel.odds}
+              walletAddress={walletAddress}
+              onBet={wheel.placeBet}
+              loading={wheel.loading}
+              isMobile
+            />
+          </div>
+        )}
 
         {/* Mobile bottom nav buttons */}
         <div className="pointer-events-auto absolute bottom-2 left-2 right-2 z-50 flex items-center justify-between">
@@ -4030,6 +4053,15 @@ export default function Town3D() {
           </Button>
           {economy && Number.isFinite(economy.spotPrice) && (
             <span className="text-[10px] text-slate-500 font-mono">$ARENA {economy.spotPrice.toFixed(4)}</span>
+          )}
+          {wheel.status?.phase === 'ANNOUNCING' && (
+            <span className="text-[10px] bg-purple-900/60 text-purple-300 px-2 py-0.5 rounded-full animate-pulse">🎰 Betting Open</span>
+          )}
+          {wheel.status?.phase === 'FIGHTING' && (
+            <span className="text-[10px] bg-red-900/60 text-red-300 px-2 py-0.5 rounded-full animate-pulse">⚔️ Fight!</span>
+          )}
+          {wheel.status?.phase === 'AFTERMATH' && (
+            <span className="text-[10px] bg-amber-900/60 text-amber-300 px-2 py-0.5 rounded-full">🏆 Result</span>
           )}
         </div>
         <PositionTracker balance={degen.balance} totalPnL={degen.totalPnL} spotPrice={economy?.spotPrice ?? null} />
@@ -5053,7 +5085,23 @@ export default function Town3D() {
         <ResizableHandle withHandle className="bg-slate-800/30" />
 
         <ResizablePanel defaultSize={35} minSize={20} maxSize={50}>
+          <div className="flex flex-col h-full">
+          {/* Wheel of Fate Banner */}
+          {wheel.status && wheel.status.phase !== 'IDLE' && wheel.status.phase !== 'PREP' && (
+            <div className="p-2 shrink-0">
+              <WheelBanner
+                status={wheel.status}
+                odds={wheel.odds}
+                walletAddress={walletAddress}
+                onBet={wheel.placeBet}
+                loading={wheel.loading}
+              />
+            </div>
+          )}
+          <div className="flex-1 overflow-auto">
           <DegenDashboard degen={degen} agents={agents} walletAddress={walletAddress} chatMessages={chatMessages} selectedAgentId={selectedAgentId} />
+          </div>
+          </div>
         </ResizablePanel>
       </ResizablePanelGroup>
 

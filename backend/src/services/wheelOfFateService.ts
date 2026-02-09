@@ -6,33 +6,38 @@
  * Buildings owned by agents provide buffs that modify PvP outcomes.
  *
  * Phases:
- *   PREP      → agents build/trade (normal agent loop runs)
- *   SPINNING  → selecting agents + game type (~3s visual window)
- *   FIGHTING  → match plays out turn-by-turn
- *   AFTERMATH → results broadcast, memory updated (~10s)
+ *   PREP        → agents build/trade (normal agent loop runs)
+ *   ANNOUNCING  → pair selected, betting window opens (~45s)
+ *   FIGHTING    → match plays out turn-by-turn, bets locked
+ *   AFTERMATH   → results broadcast, payouts, memory (~15s)
  */
 
 import { prisma } from '../config/database';
 import { arenaService } from './arenaService';
+import { predictionService } from './predictionService';
 import { ArenaGameType } from '@prisma/client';
 
 // ============================================
 // Types
 // ============================================
 
-export type WheelPhase = 'PREP' | 'SPINNING' | 'FIGHTING' | 'AFTERMATH' | 'IDLE';
+export type WheelPhase = 'PREP' | 'ANNOUNCING' | 'FIGHTING' | 'AFTERMATH' | 'IDLE';
 
 export interface WheelMatch {
   matchId: string;
+  marketId: string | null;  // prediction market for betting
   gameType: string;
-  agent1: { id: string; name: string; archetype: string; bankroll: number };
-  agent2: { id: string; name: string; archetype: string; bankroll: number };
+  agent1: { id: string; name: string; archetype: string; bankroll: number; elo: number };
+  agent2: { id: string; name: string; archetype: string; bankroll: number; elo: number };
   wager: number;
   buffs: { agent1: PvPBuff[]; agent2: PvPBuff[] };
+  announcedAt: number;      // timestamp when betting opened
+  fightStartsAt: number;    // timestamp when fight begins (betting closes)
 }
 
 export interface WheelResult {
   matchId: string;
+  marketId: string | null;
   gameType: string;
   winnerId: string | null;
   winnerName: string;
@@ -42,6 +47,7 @@ export interface WheelResult {
   rake: number;
   turns: number;
   moves: WheelMove[];
+  bettingPool: { poolA: number; poolB: number; totalBets: number };
   timestamp: Date;
 }
 
@@ -67,10 +73,12 @@ export interface WheelStatus {
   currentMatch: WheelMatch | null;
   lastResult: WheelResult | null;
   cycleCount: number;
+  bettingEndsIn: number | null;  // ms until betting closes (null if not ANNOUNCING)
   config: {
     cycleMs: number;
     wagerPct: number;
     minBankroll: number;
+    bettingWindowMs: number;
   };
 }
 
@@ -93,12 +101,14 @@ const ZONE_BUFF_MAP: Record<string, { type: PvPBuff['type']; description: string
 class WheelOfFateService {
   private timer: ReturnType<typeof setInterval> | null = null;
   private spinTimeout: ReturnType<typeof setTimeout> | null = null;
+  private fightTimeout: ReturnType<typeof setTimeout> | null = null;
   private isRunning = false;
 
   // Config (can override via env)
   private CYCLE_MS = parseInt(process.env.WHEEL_CYCLE_MS || '') || 15 * 60 * 1000; // 15 min
   private WAGER_PCT = parseFloat(process.env.WHEEL_WAGER_PCT || '') || 0.20;        // 20% of smaller bankroll
   private MIN_BANKROLL = parseInt(process.env.WHEEL_MIN_BANKROLL || '') || 15;
+  private BETTING_WINDOW_MS = parseInt(process.env.WHEEL_BETTING_MS || '') || 45_000; // 45s betting window
   private MAX_TURNS = 30;
   private TURN_DELAY_MS = 500;
 
@@ -114,7 +124,7 @@ class WheelOfFateService {
 
   start() {
     if (this.timer) return;
-    console.log(`🎡 Wheel of Fate started (cycle: ${Math.round(this.CYCLE_MS / 1000)}s, wager: ${this.WAGER_PCT * 100}%, min bankroll: ${this.MIN_BANKROLL})`);
+    console.log(`🎡 Wheel of Fate started (cycle: ${Math.round(this.CYCLE_MS / 1000)}s, wager: ${this.WAGER_PCT * 100}%, min bankroll: ${this.MIN_BANKROLL}, betting: ${this.BETTING_WINDOW_MS / 1000}s)`);
 
     // First spin after a short delay
     this.nextSpinAt = new Date(Date.now() + this.CYCLE_MS);
@@ -133,21 +143,33 @@ class WheelOfFateService {
       clearTimeout(this.spinTimeout);
       this.spinTimeout = null;
     }
+    if (this.fightTimeout) {
+      clearTimeout(this.fightTimeout);
+      this.fightTimeout = null;
+    }
     this.phase = 'IDLE';
     console.log('🎡 Wheel of Fate stopped');
   }
 
   getStatus(): WheelStatus {
+    const now = Date.now();
+    let bettingEndsIn: number | null = null;
+    if (this.phase === 'ANNOUNCING' && this.currentMatch) {
+      bettingEndsIn = Math.max(0, this.currentMatch.fightStartsAt - now);
+    }
+
     return {
       phase: this.phase,
       nextSpinAt: this.nextSpinAt,
       currentMatch: this.currentMatch,
       lastResult: this.lastResult,
       cycleCount: this.cycleCount,
+      bettingEndsIn,
       config: {
         cycleMs: this.CYCLE_MS,
         wagerPct: this.WAGER_PCT,
         minBankroll: this.MIN_BANKROLL,
+        bettingWindowMs: this.BETTING_WINDOW_MS,
       },
     };
   }
@@ -156,19 +178,32 @@ class WheelOfFateService {
     return this.resultHistory.slice(-limit);
   }
 
+  /** Get the active prediction market for the current match (for quick betting) */
+  getActiveMarketId(): string | null {
+    if (this.phase === 'ANNOUNCING' && this.currentMatch?.marketId) {
+      return this.currentMatch.marketId;
+    }
+    return null;
+  }
+
   // ---- Core Spin Logic ----
 
-  async spinWheel(): Promise<WheelResult | null> {
+  /**
+   * spinWheel() now has two stages:
+   * 1. ANNOUNCING — select pair, create market, open betting window
+   * 2. After BETTING_WINDOW_MS, automatically transitions to fight()
+   */
+  async spinWheel(): Promise<void> {
     if (this.isRunning) {
       console.log('[Wheel] Skipping — previous spin still running');
-      return null;
+      return;
     }
     this.isRunning = true;
     this.cycleCount++;
 
     try {
-      // === PHASE 1: SPINNING — Select agents & game ===
-      this.phase = 'SPINNING';
+      // === PHASE 1: ANNOUNCING — Select agents, open betting ===
+      this.phase = 'ANNOUNCING';
       console.log(`\n🎡 ===== WHEEL OF FATE #${this.cycleCount} =====`);
 
       // Find eligible agents
@@ -189,10 +224,11 @@ class WheelOfFateService {
         console.log(`[Wheel] Only ${eligible.length} eligible agent(s) — skipping`);
         this.phase = 'PREP';
         this.nextSpinAt = new Date(Date.now() + this.CYCLE_MS);
-        return null;
+        this.isRunning = false;
+        return;
       }
 
-      // Select pair — prefer agents who haven't fought recently
+      // Select pair
       const [agent1, agent2] = await this.selectPair(eligible);
 
       // Pick game type
@@ -208,7 +244,6 @@ class WheelOfFateService {
 
       // Apply MARKET buff: increase wager for agents with commercial buildings
       const marketBuff1 = buffs1.find(b => b.type === 'MARKET');
-      const marketBuff2 = buffs2.find(b => b.type === 'MARKET');
       if (marketBuff1) {
         const multiplier = Math.min(2.0, 1.0 + marketBuff1.count * 0.25);
         wager = Math.floor(wager * multiplier);
@@ -217,28 +252,93 @@ class WheelOfFateService {
       // Cap wager to what both can afford
       wager = Math.min(wager, agent1.bankroll, agent2.bankroll);
 
-      // Apply FORTRESS buff: chance to dodge
-      for (const [agent, buffs, other] of [[agent1, buffs1, agent2], [agent2, buffs2, agent1]] as any[]) {
-        const fortressBuff = buffs.find((b: PvPBuff) => b.type === 'SHELTER');
-        // We don't use SHELTER for dodging, that's for healing. Skip dodge for now.
+      const now = Date.now();
+      const fightStartsAt = now + this.BETTING_WINDOW_MS;
+
+      // Create prediction market for spectator betting
+      let marketId: string | null = null;
+      try {
+        const market = await predictionService.createMarket(
+          `wheel-${this.cycleCount}`,  // Use wheel cycle as matchId placeholder
+          agent1.id,
+          agent2.id
+        );
+        marketId = market.id;
+        console.log(`🎰 Betting market opened: ${market.id} (${this.BETTING_WINDOW_MS / 1000}s window)`);
+      } catch (err: any) {
+        console.warn(`[Wheel] Failed to create betting market: ${err.message}`);
       }
 
       this.currentMatch = {
-        matchId: '', // Set after creation
+        matchId: '',  // Set when actual match is created
+        marketId,
         gameType,
-        agent1: { id: agent1.id, name: agent1.name, archetype: agent1.archetype, bankroll: agent1.bankroll },
-        agent2: { id: agent2.id, name: agent2.name, archetype: agent2.archetype, bankroll: agent2.bankroll },
+        agent1: { id: agent1.id, name: agent1.name, archetype: agent1.archetype, bankroll: agent1.bankroll, elo: agent1.elo },
+        agent2: { id: agent2.id, name: agent2.name, archetype: agent2.archetype, bankroll: agent2.bankroll, elo: agent2.elo },
         wager,
         buffs: { agent1: buffs1, agent2: buffs2 },
+        announcedAt: now,
+        fightStartsAt,
       };
 
-      console.log(`🎲 ${gameType}: ${agent1.name} (${agent1.archetype}, $${agent1.bankroll}) vs ${agent2.name} (${agent2.archetype}, $${agent2.bankroll})`);
+      console.log(`📢 ANNOUNCING: ${gameType} — ${agent1.name} (${agent1.archetype}, $${agent1.bankroll}, ELO ${agent1.elo}) vs ${agent2.name} (${agent2.archetype}, $${agent2.bankroll}, ELO ${agent2.elo})`);
       console.log(`💰 Wager: ${wager} $ARENA each (pot: ${wager * 2})`);
+      console.log(`🎰 Betting closes in ${this.BETTING_WINDOW_MS / 1000}s`);
       if (buffs1.length) console.log(`  ${agent1.name} buffs: ${buffs1.map(b => `${b.type}(${b.count})`).join(', ')}`);
       if (buffs2.length) console.log(`  ${agent2.name} buffs: ${buffs2.map(b => `${b.type}(${b.count})`).join(', ')}`);
 
-      // === PHASE 2: FIGHTING — Play the match ===
+      // Schedule fight after betting window
+      this.fightTimeout = setTimeout(() => {
+        this.executeFight().catch(err => {
+          console.error(`[Wheel] Fight execution error: ${err.message}`);
+          this.phase = 'PREP';
+          this.nextSpinAt = new Date(Date.now() + this.CYCLE_MS);
+          this.currentMatch = null;
+          this.isRunning = false;
+        });
+      }, this.BETTING_WINDOW_MS);
+
+    } catch (err: any) {
+      console.error(`[Wheel] Fatal error in announce: ${err.message}`);
+      this.phase = 'PREP';
+      this.nextSpinAt = new Date(Date.now() + this.CYCLE_MS);
+      this.currentMatch = null;
+      this.isRunning = false;
+    }
+    // NOTE: isRunning stays true until executeFight completes
+  }
+
+  /**
+   * executeFight() — called after betting window closes.
+   * Locks betting, creates the actual match, plays it, and resolves.
+   */
+  private async executeFight(): Promise<WheelResult | null> {
+    if (!this.currentMatch) {
+      this.isRunning = false;
+      return null;
+    }
+
+    const { agent1, agent2, gameType, wager, buffs, marketId } = this.currentMatch;
+
+    try {
+      // === Lock betting ===
+      if (marketId) {
+        try {
+          await prisma.predictionMarket.update({
+            where: { id: marketId },
+            data: { status: 'LOCKED' },
+          });
+          const market = await prisma.predictionMarket.findUnique({ where: { id: marketId } });
+          const totalBets = (market?.poolA || 0) + (market?.poolB || 0);
+          console.log(`🔒 Betting locked | Pool A: ${market?.poolA || 0} | Pool B: ${market?.poolB || 0} | Total: ${totalBets}`);
+        } catch (err: any) {
+          console.warn(`[Wheel] Failed to lock market: ${err.message}`);
+        }
+      }
+
+      // === PHASE 2: FIGHTING ===
       this.phase = 'FIGHTING';
+      console.log(`⚔️ FIGHT: ${agent1.name} vs ${agent2.name} (${gameType})`);
 
       let match;
       try {
@@ -247,9 +347,14 @@ class WheelOfFateService {
           opponentId: agent2.id,
           gameType: gameType as ArenaGameType,
           wagerAmount: wager,
+          skipPredictionMarket: true, // Wheel creates its own market during ANNOUNCING
         });
       } catch (err: any) {
         console.error(`[Wheel] Failed to create match: ${err.message}`);
+        // Cancel betting market and refund
+        if (marketId) {
+          try { await predictionService.cancelMarket(marketId); } catch {}
+        }
         this.phase = 'PREP';
         this.nextSpinAt = new Date(Date.now() + this.CYCLE_MS);
         this.currentMatch = null;
@@ -258,9 +363,20 @@ class WheelOfFateService {
 
       this.currentMatch.matchId = match.id;
 
+      // Update prediction market with real matchId
+      if (marketId) {
+        try {
+          await prisma.predictionMarket.update({
+            where: { id: marketId },
+            data: { matchId: match.id },
+          });
+        } catch {}
+      }
+
       // Play match to completion
       const moves: WheelMove[] = [];
       let turns = 0;
+      let errorCount = 0;
 
       while (turns < this.MAX_TURNS) {
         const currentMatch = await prisma.arenaMatch.findUnique({ where: { id: match.id } });
@@ -269,6 +385,7 @@ class WheelOfFateService {
         try {
           const result = await arenaService.playAITurn(match.id, currentMatch.currentTurnId);
           turns++;
+          errorCount = 0; // Reset on success
 
           // Record move for frontend
           const movingAgent = currentMatch.currentTurnId === agent1.id ? agent1 : agent2;
@@ -284,9 +401,10 @@ class WheelOfFateService {
           if (result.isComplete) break;
           await new Promise(r => setTimeout(r, this.TURN_DELAY_MS));
         } catch (err: any) {
-          console.error(`[Wheel] Turn ${turns} error: ${err.message}`);
+          console.error(`[Wheel] Turn ${turns + 1} error: ${err.message}`);
+          errorCount++;
           turns++;
-          if (turns >= 3) break; // Give up after 3 errors
+          if (errorCount >= 3) break;
           await new Promise(r => setTimeout(r, this.TURN_DELAY_MS));
         }
       }
@@ -295,13 +413,16 @@ class WheelOfFateService {
       if (turns >= this.MAX_TURNS) {
         console.warn(`[Wheel] Match exceeded ${this.MAX_TURNS} turns — cancelling`);
         try { await arenaService.cancelMatch(match.id, agent1.id); } catch {}
+        if (marketId) {
+          try { await predictionService.cancelMarket(marketId); } catch {}
+        }
         this.phase = 'PREP';
         this.nextSpinAt = new Date(Date.now() + this.CYCLE_MS);
         this.currentMatch = null;
         return null;
       }
 
-      // === PHASE 3: AFTERMATH — Process results ===
+      // === PHASE 3: AFTERMATH ===
       this.phase = 'AFTERMATH';
 
       const finalMatch = await prisma.arenaMatch.findUnique({
@@ -313,8 +434,26 @@ class WheelOfFateService {
       const winner = winnerId === agent1.id ? agent1 : winnerId === agent2.id ? agent2 : null;
       const loser = winner ? (winner.id === agent1.id ? agent2 : agent1) : null;
 
+      // Resolve betting market and distribute payouts
+      let bettingPool = { poolA: 0, poolB: 0, totalBets: 0 };
+      if (marketId) {
+        try {
+          const market = await prisma.predictionMarket.findUnique({ where: { id: marketId } });
+          if (market) {
+            bettingPool = { poolA: market.poolA, poolB: market.poolB, totalBets: market.poolA + market.poolB };
+          }
+          await predictionService.resolveById(marketId, winnerId);
+          if (bettingPool.totalBets > 0) {
+            console.log(`💰 Betting resolved: ${bettingPool.totalBets} $ARENA wagered by spectators`);
+          }
+        } catch (err: any) {
+          console.warn(`[Wheel] Failed to resolve betting: ${err.message}`);
+        }
+      }
+
       const result: WheelResult = {
         matchId: match.id,
+        marketId,
         gameType,
         winnerId: winner?.id || null,
         winnerName: winner?.name || 'DRAW',
@@ -324,6 +463,7 @@ class WheelOfFateService {
         rake: Math.floor(wager * 2 * 0.05),
         turns,
         moves,
+        bettingPool,
         timestamp: new Date(),
       };
 
@@ -331,11 +471,11 @@ class WheelOfFateService {
       this.resultHistory.push(result);
       if (this.resultHistory.length > 50) this.resultHistory.shift();
 
-      console.log(`🏆 Winner: ${result.winnerName} | Pot: ${result.pot} | Turns: ${turns}`);
+      console.log(`🏆 Winner: ${result.winnerName} | Pot: ${result.pot} | Turns: ${turns} | Spectator bets: ${bettingPool.totalBets}`);
 
       // Apply SHELTER buff: heal loser
       if (loser) {
-        const loserBuffs = loser.id === agent1.id ? buffs1 : buffs2;
+        const loserBuffs = loser.id === agent1.id ? buffs.agent1 : buffs.agent2;
         const shelterBuff = loserBuffs.find(b => b.type === 'SHELTER');
         if (shelterBuff) {
           const healAmount = shelterBuff.count * 10;
@@ -361,8 +501,8 @@ class WheelOfFateService {
               agentId: winnerId,
               eventType: 'ARENA_MATCH',
               title: `⚔️ ${gameType}: ${agent1.name} vs ${agent2.name}`,
-              description: `Winner: ${result.winnerName} | Pot: ${result.pot} $ARENA | ${turns} turns`,
-              metadata: JSON.stringify({ matchId: match.id, gameType, wager, winnerId, loserId: loser?.id }),
+              description: `Winner: ${result.winnerName} | Pot: ${result.pot} $ARENA | ${turns} turns${bettingPool.totalBets > 0 ? ` | ${bettingPool.totalBets} bet by spectators` : ''}`,
+              metadata: JSON.stringify({ matchId: match.id, gameType, wager, winnerId, loserId: loser?.id, bettingPool }),
             },
           });
         }
@@ -380,7 +520,7 @@ class WheelOfFateService {
       return result;
 
     } catch (err: any) {
-      console.error(`[Wheel] Fatal error: ${err.message}`);
+      console.error(`[Wheel] Fatal error in fight: ${err.message}`);
       this.phase = 'PREP';
       this.nextSpinAt = new Date(Date.now() + this.CYCLE_MS);
       this.currentMatch = null;
@@ -388,6 +528,23 @@ class WheelOfFateService {
     } finally {
       this.isRunning = false;
     }
+  }
+
+  /** Force-trigger a spin (admin/debug). Returns after full cycle completes. */
+  async forceSpin(): Promise<WheelResult | null> {
+    await this.spinWheel();
+    // spinWheel now returns void — the result comes from executeFight.
+    // Wait for fight to complete (poll)
+    return new Promise((resolve) => {
+      const check = setInterval(() => {
+        if (!this.isRunning) {
+          clearInterval(check);
+          resolve(this.lastResult);
+        }
+      }, 500);
+      // Safety timeout
+      setTimeout(() => { clearInterval(check); resolve(this.lastResult); }, 120_000);
+    });
   }
 
   // ---- Agent Selection ----

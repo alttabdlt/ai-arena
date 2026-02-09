@@ -77,8 +77,20 @@ class PredictionService {
    * Resolve a prediction market after match completion.
    */
   async resolve(matchId: string, winnerId: string | null) {
-    const market = await prisma.predictionMarket.findFirst({ where: { matchId } });
-    if (!market || market.status !== 'OPEN') return;
+    const market = await prisma.predictionMarket.findFirst({
+      where: { matchId, status: { in: ['OPEN', 'LOCKED'] } },
+    });
+    if (!market) return;
+    return this.resolveMarket(market, winnerId);
+  }
+
+  async resolveById(marketId: string, winnerId: string | null) {
+    const market = await prisma.predictionMarket.findUnique({ where: { id: marketId } });
+    if (!market || (market.status !== 'OPEN' && market.status !== 'LOCKED')) return;
+    return this.resolveMarket(market, winnerId);
+  }
+
+  private async resolveMarket(market: any, winnerId: string | null) {
 
     if (!winnerId) {
       // Draw — refund all bets

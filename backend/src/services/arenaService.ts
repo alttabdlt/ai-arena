@@ -34,6 +34,7 @@ export interface CreateMatchInput {
   gameType: ArenaGameType;
   wagerAmount: number;
   opponentId?: string; // If specified, direct challenge
+  skipPredictionMarket?: boolean; // Skip auto-creating prediction market (wheel creates its own)
 }
 
 export interface SubmitMoveInput {
@@ -239,8 +240,10 @@ export class ArenaService {
       // Initialize game
       await this.initializeGame(match.id, input.gameType, input.agentId, input.opponentId);
 
-      // Degen mode: create prediction market for this match
-      predictionService.createMarket(match.id, input.agentId, input.opponentId).catch(() => {});
+      // Degen mode: create prediction market for this match (skip if wheel already made one)
+      if (!input.skipPredictionMarket) {
+        predictionService.createMarket(match.id, input.agentId, input.opponentId).catch(() => {});
+      }
     }
 
     return match;

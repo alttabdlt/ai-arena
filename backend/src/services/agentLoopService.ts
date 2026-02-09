@@ -1688,7 +1688,7 @@ Be creative, detailed, and in-character for the town's theme. Response should be
     let qualityNote = '';
     try {
       const workLogs = await prisma.workLog.findMany({
-        where: { agentId: agent.id, plotId: plotId, workType: { in: ['BUILD', 'DESIGN'] } },
+        where: { agentId: agent.id, plotId: plotId, workType: { in: ['DESIGN', 'CONSTRUCT'] } },
         orderBy: { createdAt: 'asc' },
         select: { output: true },
       });
@@ -1741,7 +1741,7 @@ Be creative, detailed, and in-character for the town's theme. Response should be
         console.log(`[AgentLoop] Building quality: ${plot.buildingType} scored ${score}/10`);
       }
     } catch (err: any) {
-      console.error(`[AgentLoop] Quality eval failed: ${err.message}`);
+      console.error(`[AgentLoop] Quality eval failed for ${plot.buildingType}: ${err.message}`, err.stack?.split('\n')[1] || '');
     }
 
     // === BOUNTY CHECK: Did this completion claim a bounty? ===

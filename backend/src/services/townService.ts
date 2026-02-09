@@ -335,11 +335,25 @@ export class TownService {
   }
 
   async getActiveTown(): Promise<(Town & { plots: Plot[] }) | null> {
-    return prisma.town.findFirst({
+    // Prefer building towns that have empty plots (more opportunities for agents)
+    const buildingTowns = await prisma.town.findMany({
       where: { status: 'BUILDING' },
-      orderBy: { createdAt: 'desc' },
       include: { plots: { orderBy: { plotIndex: 'asc' } } },
+      orderBy: { createdAt: 'desc' },
     });
+    
+    if (buildingTowns.length === 0) return null;
+    
+    // Pick the town with the most empty plots (more opportunities)
+    const withEmpty = buildingTowns
+      .map(t => ({ town: t, emptyCount: t.plots.filter(p => p.status === 'EMPTY').length }))
+      .filter(t => t.emptyCount > 0)
+      .sort((a, b) => b.emptyCount - a.emptyCount);
+    
+    if (withEmpty.length > 0) return withEmpty[0].town;
+    
+    // Fallback: any building town (might have UC plots to work on)
+    return buildingTowns[0];
   }
 
   async getAllTowns(): Promise<Town[]> {

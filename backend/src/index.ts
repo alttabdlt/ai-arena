@@ -155,6 +155,20 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+  // ============================================
+  // Serve frontend static files in production
+  // ============================================
+  const frontendPath = path.resolve(__dirname, '../../app/dist');
+  if (process.env.NODE_ENV === 'production' || process.env.SERVE_FRONTEND === 'true') {
+    const fs = require('fs');
+    if (fs.existsSync(frontendPath)) {
+      app.use(express.static(frontendPath, { maxAge: '1d' }));
+      console.log(`📦 Serving frontend from ${frontendPath}`);
+    } else {
+      console.warn('⚠️  Frontend build not found at', frontendPath);
+    }
+  }
+
   // Serve building assets (legacy agent-sourced images)
   app.use('/building-assets', express.static(path.resolve(__dirname, '../public/building-assets'), {
     maxAge: '1d',
@@ -246,7 +260,9 @@ async function startServer() {
   app.use(
     '/graphql',
     cors<cors.CorsRequest>({
-      origin: ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'http://localhost:5176', 'http://localhost:8080', 'http://localhost:8081'],
+      origin: process.env.NODE_ENV === 'production' 
+        ? true  // Allow all origins in production (served from same domain)
+        : ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175', 'http://localhost:5176', 'http://localhost:8080', 'http://localhost:8081'],
       credentials: true,
       allowedHeaders: ['Content-Type', 'Authorization', 'x-wallet-address', 'x-bot-prompt'],
       exposedHeaders: ['Authorization'],
@@ -463,7 +479,19 @@ async function startServer() {
     });
   });
 
-  // Webhook routes
+  // ============================================
+  // SPA catch-all (must be LAST route)
+  // ============================================
+  if (process.env.NODE_ENV === 'production' || process.env.SERVE_FRONTEND === 'true') {
+    const fs = require('fs');
+    const indexHtml = path.resolve(frontendPath, 'index.html');
+    if (fs.existsSync(indexHtml)) {
+      app.get('*', (_req: any, res: any) => {
+        res.sendFile(indexHtml);
+      });
+    }
+  }
+
   // Webhook routes moved to metaverse backend
 
   let customWsServer: any = null;

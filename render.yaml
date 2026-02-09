@@ -1,0 +1,39 @@
+# Render Blueprint — AI Town
+# Deploy: render.com/new → Blueprint → connect this repo
+services:
+  - type: web
+    name: ai-town
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter  # $7/mo — needed for persistent disk + always-on
+    region: singapore
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "4000"
+      - key: FAST_STARTUP
+        value: "true"
+      - key: SERVE_FRONTEND
+        value: "true"
+      - key: DATABASE_URL
+        value: file:/data/ai-town.db
+      - key: DEEPSEEK_API_KEY
+        sync: false  # Set manually in dashboard
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: MONAD_RPC_URL
+        value: https://testnet-rpc.monad.xyz
+      - key: MONAD_CHAIN_ID
+        value: "10143"
+      - key: MONAD_DEPLOYER_KEY
+        sync: false
+    disk:
+      name: ai-town-data
+      mountPath: /data
+      sizeGB: 1

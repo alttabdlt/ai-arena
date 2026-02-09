@@ -14,6 +14,7 @@ import { PositionTracker } from '../components/degen/PositionTracker';
 import { SwapTicker } from '../components/degen/SwapTicker';
 import { useWheelStatus } from '../hooks/useWheelStatus';
 import { WheelBanner } from '../components/wheel/WheelBanner';
+import { WheelArena } from '../components/wheel/WheelArena';
 import confetti from 'canvas-confetti';
 import { BuildingMesh, preloadBuildingModels } from '../components/buildings';
 import { AgentDroid } from '../components/agents/AgentDroid';
@@ -2878,7 +2879,20 @@ export default function Town3D() {
   }, [walletAddress]);
   const degen = useDegenState(walletAddress);
   const wheel = useWheelStatus();
+  const [wheelArenaOpen, setWheelArenaOpen] = useState(false);
   const prevPnLRef = useRef(0);
+
+  // Auto-open WheelArena when a match starts (ANNOUNCING/FIGHTING/AFTERMATH)
+  useEffect(() => {
+    const p = wheel.status?.phase;
+    if (p === 'ANNOUNCING' || p === 'FIGHTING') {
+      setWheelArenaOpen(true);
+    } else if (p === 'PREP' || p === 'IDLE') {
+      // Auto-close after AFTERMATH fades
+      const t = setTimeout(() => setWheelArenaOpen(false), 1000);
+      return () => clearTimeout(t);
+    }
+  }, [wheel.status?.phase]);
 
   // Fire confetti + sound when PnL increases
   useEffect(() => {
@@ -3640,9 +3654,22 @@ export default function Town3D() {
     );
   }
 
+  // Shared: Wheel Arena overlay (renders on top of everything, both mobile & desktop)
+  const wheelArenaOverlay = wheelArenaOpen && wheel.status && (wheel.status.phase === 'ANNOUNCING' || wheel.status.phase === 'FIGHTING' || wheel.status.phase === 'AFTERMATH') ? (
+    <WheelArena
+      status={wheel.status}
+      odds={wheel.odds}
+      walletAddress={walletAddress}
+      onBet={wheel.placeBet}
+      loading={wheel.loading}
+      onClose={() => setWheelArenaOpen(false)}
+    />
+  ) : null;
+
   /* ────────────── MOBILE LAYOUT ────────────── */
   if (isMobile) return (
     <div className="flex flex-col h-[100svh] w-full overflow-hidden bg-[#050914]">
+      {wheelArenaOverlay}
       {/* Mobile top bar — compact */}
       <div className="shrink-0 flex items-center justify-between px-3 py-1 bg-slate-950/95 border-b border-slate-800/40 z-50">
         <span className="text-xs font-bold text-amber-400">AI TOWN</span>
@@ -4039,6 +4066,7 @@ export default function Town3D() {
   /* ────────────── DESKTOP LAYOUT ────────────── */
   return (
     <div className="flex flex-col h-[100svh] w-full overflow-hidden bg-[#050914]">
+      {wheelArenaOverlay}
       {/* Top Bar: Degen Stats */}
       <div className="shrink-0 flex items-center justify-between px-4 py-1.5 bg-slate-950/90 border-b border-slate-800/40 z-50">
         <div className="flex items-center gap-3">

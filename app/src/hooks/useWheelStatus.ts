@@ -67,6 +67,7 @@ export interface WheelStatus {
   phase: WheelPhase;
   nextSpinAt: string | null;
   currentMatch: WheelMatch | null;
+  currentMoves: WheelMove[];  // Live moves during FIGHTING
   lastResult: WheelResult | null;
   cycleCount: number;
   bettingEndsIn: number | null;

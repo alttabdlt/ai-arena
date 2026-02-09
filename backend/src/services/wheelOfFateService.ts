@@ -116,6 +116,7 @@ class WheelOfFateService {
   private phase: WheelPhase = 'IDLE';
   private nextSpinAt: Date | null = null;
   private currentMatch: WheelMatch | null = null;
+  private currentMoves: WheelMove[] = [];  // Live moves during FIGHTING
   private lastResult: WheelResult | null = null;
   private resultHistory: WheelResult[] = [];
   private cycleCount = 0;
@@ -162,6 +163,7 @@ class WheelOfFateService {
       phase: this.phase,
       nextSpinAt: this.nextSpinAt,
       currentMatch: this.currentMatch,
+      currentMoves: this.currentMoves,  // Live moves during FIGHTING
       lastResult: this.lastResult,
       cycleCount: this.cycleCount,
       bettingEndsIn,
@@ -375,6 +377,7 @@ class WheelOfFateService {
 
       // Play match to completion
       const moves: WheelMove[] = [];
+      this.currentMoves = [];  // Reset live moves
       let turns = 0;
       let errorCount = 0;
 
@@ -387,16 +390,18 @@ class WheelOfFateService {
           turns++;
           errorCount = 0; // Reset on success
 
-          // Record move for frontend
+          // Record move for frontend (both local array and live state)
           const movingAgent = currentMatch.currentTurnId === agent1.id ? agent1 : agent2;
-          moves.push({
+          const move: WheelMove = {
             agentId: movingAgent.id,
             agentName: movingAgent.name,
             turn: turns,
             action: result.move?.action || 'unknown',
             reasoning: (result.move?.reasoning || '').slice(0, 200),
             amount: result.move?.amount,
-          });
+          };
+          moves.push(move);
+          this.currentMoves = [...moves];  // Update live state for polling
 
           if (result.isComplete) break;
           await new Promise(r => setTimeout(r, this.TURN_DELAY_MS));

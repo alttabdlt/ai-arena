@@ -883,7 +883,7 @@ export class ArenaService {
         initialState = this.initPokerState(player1Id, player2Id);
         break;
       case 'RPS':
-        initialState = { round: 1, maxRounds: 5, scores: { [player1Id]: 0, [player2Id]: 0 }, moves: {}, history: [] };
+        initialState = { round: 1, maxRounds: 3, scores: { [player1Id]: 0, [player2Id]: 0 }, moves: {}, history: [], currentTurn: player1Id };
         break;
       case 'BATTLESHIP':
         initialState = this.initBattleshipState(player1Id, player2Id);
@@ -916,7 +916,7 @@ export class ArenaService {
       startingChips: 1000,
       smallBlind: 10,
       bigBlind: 20,
-      maxHands: 5,
+      maxHands: 3,  // 3 hands max — keep it fast for spectators
     });
   }
 
@@ -1124,8 +1124,8 @@ class RPSEngine implements GameEngineAdapter {
   }
 
   isGameComplete(state: any): boolean {
-    const winsNeeded = 3; // Best of 5: first to 3 wins
-    const maxTotalRounds = 9; // Safety cap (draws extend the game)
+    const winsNeeded = 2; // Best of 3: first to 2 wins
+    const maxTotalRounds = 5; // Safety cap (draws extend the game)
     const scores = Object.values(state.scores) as number[];
     if (scores.some(s => s >= winsNeeded)) return true;
     // Total rounds played (including draws) — safety cap to prevent infinite games

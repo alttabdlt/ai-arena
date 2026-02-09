@@ -775,8 +775,18 @@ model ArenaAgent {
   totalRake       Int             @default(0) // Total rake paid
   apiCostCents    Int             @default(0) // Cumulative LLM API cost in cents
   
+  // Memory & last action (for progressive thinking + frontend visualization)
+  scratchpad      String          @default("") // Agent's persistent memory/journal across ticks
+  lastActionType  String          @default("") // Last action for frontend state (claim_plot, do_work, etc.)
+  lastReasoning   String          @default("") // Last reasoning text for thought bubbles
+  lastNarrative   String          @default("") // Last human-readable outcome
+  lastTargetPlot  Int?            // Plot index the agent targeted (for 3D navigation)
+  lastTickAt      DateTime?       // When last tick completed
+
   // State
+  health          Int             @default(100)  // 0-100, decreases when can't pay upkeep
   isActive        Boolean         @default(true)
+  spawnedByUser   Boolean         @default(false) // true if created via wallet connect
   isInMatch       Boolean         @default(false)
   currentMatchId  String?
   lastActiveAt    DateTime        @default(now())
@@ -1076,6 +1086,13 @@ model Plot {
   
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
+  
+  // Quality evaluation (set on completion by LLM judge)
+  qualityScore    Int?        // 1-10
+  qualityReview   String?     // One-sentence review
+  
+  // Investment tracking
+  totalInvested   Int         @default(0)  // Total $ARENA invested in this plot
   
   town            Town        @relation(fields: [townId], references: [id], onDelete: Cascade)
   owner           ArenaAgent? @relation("plotOwner", fields: [ownerId], references: [id])

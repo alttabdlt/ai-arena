@@ -13,8 +13,8 @@
 import { EconomyPool, EconomySwap, EconomySwapSide } from '@prisma/client';
 import { prisma } from '../config/database';
 
-const INIT_RESERVE = Number.parseInt(process.env.ECONOMY_INIT_RESERVE || '1000000', 10);
-const INIT_ARENA = Number.parseInt(process.env.ECONOMY_INIT_ARENA || '1000000', 10);
+const INIT_RESERVE = Number.parseInt(process.env.ECONOMY_INIT_RESERVE || '10000', 10);
+const INIT_ARENA = Number.parseInt(process.env.ECONOMY_INIT_ARENA || '10000', 10);
 const DEFAULT_FEE_BPS = Number.parseInt(process.env.ECONOMY_FEE_BPS || '100', 10); // 1.00%
 
 function clampInt(n: number, min: number, max: number): number {
@@ -42,9 +42,23 @@ type Quote = {
 };
 
 export class OffchainAmmService {
+  private poolResetDone = false;
+
   private async getOrCreatePool(tx: any = prisma): Promise<EconomyPool> {
     const existing = await tx.economyPool.findFirst({ orderBy: { createdAt: 'desc' } });
-    if (existing) return existing;
+    if (existing) {
+      // One-time pool reset: shrink oversized pools (hackathon migration)
+      if (!this.poolResetDone && (existing.reserveBalance > 100_000 || existing.arenaBalance > 100_000)) {
+        this.poolResetDone = true;
+        console.log(`[AMM] Resizing oversized pool: ${existing.reserveBalance}/${existing.arenaBalance} → 10000/10000`);
+        return tx.economyPool.update({
+          where: { id: existing.id },
+          data: { reserveBalance: 10_000, arenaBalance: 10_000 },
+        });
+      }
+      this.poolResetDone = true;
+      return existing;
+    }
 
     const reserveBalance = clampInt(INIT_RESERVE, 1_000, 2_000_000_000);
     const arenaBalance = clampInt(INIT_ARENA, 1_000, 2_000_000_000);

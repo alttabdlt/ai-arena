@@ -5,6 +5,7 @@ import { Sky, Line } from '@react-three/drei';
 import { Button } from '@ui/button';
 import { Loader2, Volume2, VolumeX } from 'lucide-react';
 import { WalletConnect } from '../components/WalletConnect';
+import { SpawnAgent } from '../components/SpawnAgent';
 import { playSound, isSoundEnabled, setSoundEnabled } from '../utils/sounds';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@ui/resizable';
 import { useDegenState } from '../hooks/useDegenState';
@@ -12,11 +13,14 @@ import { DegenDashboard } from '../components/degen/DegenDashboard';
 import { PositionTracker } from '../components/degen/PositionTracker';
 import { SwapTicker } from '../components/degen/SwapTicker';
 import confetti from 'canvas-confetti';
-import { BuildingMesh } from '../components/buildings';
+import { BuildingMesh, preloadBuildingModels } from '../components/buildings';
 import { AgentDroid } from '../components/agents/AgentDroid';
+import { buildRoadGraph, findPath, type RoadGraph, type RoadSegInput } from '../world/roadGraph';
+import { WorldScene } from '../world/WorldScene';
+import { StreetLights, generateLightPositions } from '../world/StreetLight';
 
 const API_BASE = '/api/v1';
-const TOWN_SPACING = 8;
+const TOWN_SPACING = 20;
 
 type PlotZone = 'RESIDENTIAL' | 'COMMERCIAL' | 'CIVIC' | 'INDUSTRIAL' | 'ENTERTAINMENT';
 type PlotStatus = 'EMPTY' | 'CLAIMED' | 'UNDER_CONSTRUCTION' | 'BUILT';
@@ -72,6 +76,12 @@ interface Agent {
   elo: number;
   apiCostCents?: number;
   isInMatch?: boolean;
+  // Progressive thinking fields
+  lastActionType?: string;
+  lastReasoning?: string;
+  lastNarrative?: string;
+  lastTargetPlot?: number | null;
+  lastTickAt?: string | null;
 }
 
 interface EconomyPoolSummary {
@@ -286,6 +296,7 @@ const ACTIVITY_INDICATORS: Record<AgentActivity, { emoji: string; color: string 
   PLAYING: { emoji: '🎮', color: '#a855f7' },
   BEGGING: { emoji: '🙏', color: '#9ca3af' },
   SCHEMING: { emoji: '🤫', color: '#6366f1' },
+  TRAVELING: { emoji: '🚶', color: '#38bdf8' },
 };
 
 // Economic state indicators (shown as secondary badge)
@@ -637,6 +648,105 @@ function SpeechBubble({
   );
 }
 
+// Thought bubble — shows agent's last reasoning above their head
+function ThoughtBubble({
+  agent,
+  position,
+}: {
+  agent: Agent;
+  position: [number, number, number];
+}) {
+  const lastAction = agent.lastActionType;
+  const lastReasoning = agent.lastReasoning;
+  const lastTickAt = agent.lastTickAt;
+
+  // Show if the agent acted recently (within 90s — generous window for 30s tick interval)
+  const isRecent = lastTickAt
+    ? (Date.now() - new Date(lastTickAt).getTime()) < 90_000
+    : false;
+
+  if (!isRecent || !lastAction || !lastReasoning) return null;
+
+  // Clean up reasoning (remove [AUTO] prefix, trim)
+  const cleanReasoning = lastReasoning
+    .replace(/\[AUTO\]\s*/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  // Build display text: emoji + short action + reasoning snippet
+  const actionEmojis: Record<string, string> = {
+    claim_plot: '📍', start_build: '🔨', do_work: '🏗️', complete_build: '🎉',
+    buy_arena: '💱', sell_arena: '💱', mine: '⛏️', play_arena: '🎮',
+    buy_skill: '💳', rest: '💤',
+  };
+  const emoji = actionEmojis[lastAction] || '💭';
+  const maxLen = 50;
+  const text = cleanReasoning.length > maxLen
+    ? `${emoji} ${cleanReasoning.slice(0, maxLen)}…`
+    : `${emoji} ${cleanReasoning}`;
+
+  const { texture, width, height } = useMemo(() => {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return { texture: new THREE.Texture(), width: 1, height: 1 };
+
+    const fontSize = 16;
+    ctx.font = `${fontSize}px ui-monospace, monospace`;
+    const displayText = text.slice(0, 55);
+    const metrics = ctx.measureText(displayText);
+    const w = Math.max(80, metrics.width + 24);
+    const h = fontSize + 18;
+    canvas.width = w;
+    canvas.height = h;
+
+    // Thought bubble background (darker, translucent)
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+    ctx.beginPath();
+    type RoundRectCapable = CanvasRenderingContext2D & {
+      roundRect?: (x: number, y: number, w: number, h: number, radii: number) => void;
+    };
+    const roundRect = (ctx as RoundRectCapable).roundRect;
+    if (typeof roundRect === 'function') {
+      roundRect.call(ctx, 0, 0, w, h - 6, 6);
+    } else {
+      ctx.rect(0, 0, w, h - 6);
+    }
+    ctx.fill();
+
+    // Thin accent line at top
+    ctx.fillStyle = lastAction === 'rest' ? '#64748b' : '#38bdf8';
+    ctx.fillRect(0, 0, w, 2);
+
+    // Tail
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+    ctx.beginPath();
+    ctx.moveTo(w / 2 - 5, h - 6);
+    ctx.lineTo(w / 2, h);
+    ctx.lineTo(w / 2 + 5, h - 6);
+    ctx.fill();
+
+    // Text
+    ctx.fillStyle = '#e2e8f0';
+    ctx.font = `${fontSize}px ui-monospace, monospace`;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(displayText, 12, (h - 6) / 2);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+    return { texture, width: w, height: h };
+  }, [text, lastAction]);
+
+  const aspect = width / height;
+  const worldHeight = 1.2; // Much larger — visible above agents at metaverse scale
+  const worldWidth = worldHeight * aspect;
+
+  return (
+    <sprite position={position} scale={[worldWidth, worldHeight, 1]}>
+      <spriteMaterial map={texture} transparent depthWrite={false} opacity={0.92} />
+    </sprite>
+  );
+}
+
 // Claimed plot marker (flag/stake)
 function ClaimedMarker({ position, color }: { position: [number, number, number]; color: string }) {
   const flagRef = useRef<THREE.Mesh>(null);
@@ -672,9 +782,9 @@ function AmbientParticles({ count = 50 }: { count?: number }) {
   const positions = useMemo(() => {
     const arr = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
-      arr[i * 3] = (Math.random() - 0.5) * 80;
-      arr[i * 3 + 1] = Math.random() * 15 + 2;
-      arr[i * 3 + 2] = (Math.random() - 0.5) * 80;
+      arr[i * 3] = (Math.random() - 0.5) * 200;
+      arr[i * 3 + 1] = Math.random() * 30 + 3;
+      arr[i * 3 + 2] = (Math.random() - 0.5) * 200;
     }
     return arr;
   }, [count]);
@@ -759,9 +869,9 @@ function DayNightCycle({ timeScale = 0.02 }: { timeScale?: number }) {
     const angle = t % (Math.PI * 2);
     
     // Sun orbits around
-    const x = Math.cos(angle) * 50;
-    const y = Math.sin(angle) * 40 + 10; // Keep above horizon mostly
-    const z = Math.sin(angle * 0.5) * 30;
+    const x = Math.cos(angle) * 100;
+    const y = Math.sin(angle) * 80 + 20; // Keep above horizon mostly
+    const z = Math.sin(angle * 0.5) * 60;
     
     if (sunRef.current) {
       sunRef.current.position.set(x, Math.max(y, 5), z);
@@ -816,9 +926,9 @@ function RainEffect({ intensity = 200 }: { intensity?: number }) {
   const positions = useMemo(() => {
     const arr = new Float32Array(intensity * 3);
     for (let i = 0; i < intensity; i++) {
-      arr[i * 3] = (Math.random() - 0.5) * 100;
-      arr[i * 3 + 1] = Math.random() * 30 + 5;
-      arr[i * 3 + 2] = (Math.random() - 0.5) * 100;
+      arr[i * 3] = (Math.random() - 0.5) * 250;
+      arr[i * 3 + 1] = Math.random() * 50 + 10;
+      arr[i * 3 + 2] = (Math.random() - 0.5) * 250;
     }
     return arr;
   }, [intensity]);
@@ -827,11 +937,11 @@ function RainEffect({ intensity = 200 }: { intensity?: number }) {
     if (!rainRef.current) return;
     const pos = rainRef.current.geometry.attributes.position.array as Float32Array;
     for (let i = 0; i < intensity; i++) {
-      pos[i * 3 + 1] -= 0.5; // Fall speed
+      pos[i * 3 + 1] -= 0.8; // Fall speed
       if (pos[i * 3 + 1] < 0) {
-        pos[i * 3 + 1] = 30 + Math.random() * 10;
-        pos[i * 3] = (Math.random() - 0.5) * 100;
-        pos[i * 3 + 2] = (Math.random() - 0.5) * 100;
+        pos[i * 3 + 1] = 50 + Math.random() * 15;
+        pos[i * 3] = (Math.random() - 0.5) * 250;
+        pos[i * 3 + 2] = (Math.random() - 0.5) * 250;
       }
     }
     rainRef.current.geometry.attributes.position.needsUpdate = true;
@@ -1071,8 +1181,8 @@ function SmogLayer({ pollution }: { pollution: number }) {
   const opacity = (pollution - 0.3) * 0.4; // Max 0.28 opacity at full pollution
   
   return (
-    <mesh position={[0, 15, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-      <planeGeometry args={[200, 200]} />
+    <mesh position={[0, 35, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+      <planeGeometry args={[500, 500]} />
       <meshBasicMaterial color="#3d3825" transparent opacity={opacity} side={THREE.DoubleSide} />
     </mesh>
   );
@@ -1084,8 +1194,8 @@ function SentimentAmbience({ sentiment }: { sentiment: 'bull' | 'bear' | 'neutra
   const intensity = sentiment === 'neutral' ? 0 : 0.15;
   
   return (
-    <mesh position={[0, 50, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-      <planeGeometry args={[300, 300]} />
+    <mesh position={[0, 60, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+      <planeGeometry args={[600, 600]} />
       <meshBasicMaterial color={color} transparent opacity={intensity} side={THREE.DoubleSide} />
     </mesh>
   );
@@ -1099,9 +1209,9 @@ function ProsperitySparkles({ prosperity }: { prosperity: number }) {
   const positions = useMemo(() => {
     const arr = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
-      arr[i * 3] = (Math.random() - 0.5) * 60;
-      arr[i * 3 + 1] = Math.random() * 8 + 2;
-      arr[i * 3 + 2] = (Math.random() - 0.5) * 60;
+      arr[i * 3] = (Math.random() - 0.5) * 150;
+      arr[i * 3 + 1] = Math.random() * 20 + 3;
+      arr[i * 3 + 2] = (Math.random() - 0.5) * 150;
     }
     return arr;
   }, [count]);
@@ -1138,32 +1248,35 @@ function useGroundTexture() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
 
-    ctx.fillStyle = '#0b1220';
+    // Grass-green base
+    ctx.fillStyle = '#1a3a1a';
     ctx.fillRect(0, 0, size, size);
-    ctx.strokeStyle = 'rgba(148, 163, 184, 0.08)';
-    ctx.lineWidth = 2;
-    for (let i = 0; i <= size; i += 32) {
-      ctx.beginPath();
-      ctx.moveTo(i, 0);
-      ctx.lineTo(i, size);
-      ctx.stroke();
 
-      ctx.beginPath();
-      ctx.moveTo(0, i);
-      ctx.lineTo(size, i);
-      ctx.stroke();
+    // Grass variation — random patches of slightly different greens
+    for (let i = 0; i < 800; i++) {
+      const x = Math.random() * size;
+      const y = Math.random() * size;
+      const g = 30 + Math.floor(Math.random() * 40);
+      ctx.fillStyle = `rgba(${10 + Math.floor(Math.random() * 20)}, ${g + 20}, ${10 + Math.floor(Math.random() * 15)}, 0.3)`;
+      ctx.fillRect(x, y, 2 + Math.random() * 3, 1);
     }
 
-    // small noise specks
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
-    for (let i = 0; i < 1200; i++) {
-      ctx.fillRect(Math.random() * size, Math.random() * size, 1, 1);
+    // Subtle grass blade streaks
+    ctx.strokeStyle = 'rgba(40, 80, 30, 0.15)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 200; i++) {
+      const x = Math.random() * size;
+      const y = Math.random() * size;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + (Math.random() - 0.5) * 4, y + Math.random() * 6);
+      ctx.stroke();
     }
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
-    texture.repeat.set(10, 10);
+    texture.repeat.set(12, 12);
     texture.anisotropy = 8;
     texture.needsUpdate = true;
     return texture;
@@ -1171,10 +1284,10 @@ function useGroundTexture() {
 }
 
 function zoneMaterial(zone: PlotZone, selected: boolean) {
-  const base = new THREE.Color('#0f172a');
+  const base = new THREE.Color('#2a3328'); // earthy base (not pure black)
   const tint = new THREE.Color(ZONE_COLORS[zone]);
-  const color = base.lerp(tint, 0.22);
-  const emissive = selected ? tint.clone().multiplyScalar(0.35) : new THREE.Color('#000000');
+  const color = base.lerp(tint, 0.35);
+  const emissive = selected ? tint.clone().multiplyScalar(0.3) : new THREE.Color('#000000');
   return { color, emissive };
 }
 
@@ -1200,8 +1313,23 @@ function prettyJson(raw: string | undefined, maxLen: number = 2200): string {
 
 // buildHeight + BuildingMesh moved to ../components/buildings/
 
+// Mobile detection hook
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== 'undefined' ? window.innerWidth < breakpoint : false
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${breakpoint - 1}px)`);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    setIsMobile(mq.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, [breakpoint]);
+  return isMobile;
+}
+
 // Agent activity states
-type AgentActivity = 'WALKING' | 'IDLE' | 'SHOPPING' | 'CHATTING' | 'BUILDING' | 'MINING' | 'PLAYING' | 'BEGGING' | 'SCHEMING';
+type AgentActivity = 'WALKING' | 'IDLE' | 'SHOPPING' | 'CHATTING' | 'BUILDING' | 'MINING' | 'PLAYING' | 'BEGGING' | 'SCHEMING' | 'TRAVELING';
 
 // Agent economic states (based on bankroll)
 type AgentEconomicState = 'THRIVING' | 'COMFORTABLE' | 'STRUGGLING' | 'BROKE' | 'HOMELESS' | 'DEAD' | 'RECOVERING';
@@ -1468,8 +1596,8 @@ function TownScene({
   }, [plots]);
 
   const spacing = TOWN_SPACING;
-  const lotSize = 6;
-  const roadW = Math.max(1.0, spacing - lotSize);
+  const lotSize = 16;
+  const roadW = Math.max(2.0, spacing - lotSize);
 
   const roadNodes = useMemo(() => {
     const nodes: THREE.Vector3[] = [];
@@ -1498,7 +1626,7 @@ function TownScene({
       if (sims.has(a.id)) continue;
       const rng = mulberry32(hashToSeed(a.id));
       const start = roadNodes[Math.floor(rng() * roadNodes.length)]?.clone() ?? new THREE.Vector3(0, 0.02, 0);
-      const speed = 1.2 + rng() * 0.9;
+      const speed = 2.5 + rng() * 1.5;
       sims.set(a.id, {
         id: a.id,
         position: start,
@@ -1523,23 +1651,6 @@ function TownScene({
     CHAMELEON: [4, 6],
   };
 
-  function buildRoute(from: THREE.Vector3, to: THREE.Vector3) {
-    const dx = to.x - from.x;
-    const dz = to.z - from.z;
-    const dist = Math.sqrt(dx * dx + dz * dz);
-    if (dist < 1.0) return [to];
-
-    const mid = new THREE.Vector3((from.x + to.x) * 0.5, 0.02, (from.z + to.z) * 0.5);
-    // Perpendicular jitter for route variety
-    const perpX = -dz / dist;
-    const perpZ = dx / dist;
-    const seed = hashToSeed(`${from.x.toFixed(1)}:${from.z.toFixed(1)}:${to.x.toFixed(1)}:${to.z.toFixed(1)}`);
-    const offset = (mulberry32(seed)() - 0.5) * Math.min(dist * 0.35, 3.0);
-    mid.x += perpX * offset;
-    mid.z += perpZ * offset;
-    return [mid, to];
-  }
-
   const plotWorldPosByIndex = useMemo(() => {
     const m = new Map<number, THREE.Vector3>();
     for (const p of plots) {
@@ -1560,6 +1671,39 @@ function TownScene({
   const builtPlots = useMemo(() => plots.filter((p) => p.status === 'BUILT' || p.status === 'UNDER_CONSTRUCTION'), [plots]);
   const underConstructionPlots = useMemo(() => plots.filter((p) => p.status === 'UNDER_CONSTRUCTION'), [plots]);
   const entertainmentPlots = useMemo(() => plots.filter((p) => p.status === 'BUILT' && p.zone === 'ENTERTAINMENT'), [plots]);
+
+  // Building exclusion zones — AABB half-extent for collision
+  const BUILDING_HALF = 7.0; // buildings are ~12 units, half = 6 + margin
+  const BUILDING_APPROACH = 9.0; // agents stop this far from center (building edge + sidewalk)
+
+  // Precompute building AABBs for fast collision
+  const buildingAABBs = useMemo(() => {
+    return builtPlots.map((p) => {
+      const pos = getPlotWorldPos(p.plotIndex);
+      return {
+        id: p.id,
+        cx: pos.x,
+        cz: pos.z,
+        minX: pos.x - BUILDING_HALF,
+        maxX: pos.x + BUILDING_HALF,
+        minZ: pos.z - BUILDING_HALF,
+        maxZ: pos.z + BUILDING_HALF,
+      };
+    });
+  }, [builtPlots, getPlotWorldPos]);
+
+  // Get entrance point for a building (nearest edge toward center of town)
+  const getBuildingEntrance = useCallback((plotIndex: number): THREE.Vector3 => {
+    const pos = getPlotWorldPos(plotIndex);
+    // Push the target point outward from building center by BUILDING_APPROACH
+    const dirToCenter = new THREE.Vector3(-pos.x, 0, -pos.z).normalize();
+    if (dirToCenter.length() < 0.01) dirToCenter.set(1, 0, 0); // fallback
+    return new THREE.Vector3(
+      pos.x + dirToCenter.x * BUILDING_APPROACH,
+      0.02,
+      pos.z + dirToCenter.z * BUILDING_APPROACH,
+    );
+  }, [getPlotWorldPos]);
 
   const roadSegments = useMemo(() => {
     type Seg = { id: string; kind: 'V' | 'H'; x: number; z: number; len: number; tone: 'ring' | 'arterial' | 'local' };
@@ -1676,6 +1820,30 @@ function TownScene({
     return segs;
   }, [plots, bounds, spacing, town.id]);
 
+  // Build a navigable road graph from the procedural road segments (A* pathfinding).
+  const roadGraph = useMemo<RoadGraph>(() => {
+    const segInputs: RoadSegInput[] = roadSegments.map((s) => ({
+      id: s.id,
+      kind: s.kind,
+      x: s.x,
+      z: s.z,
+      len: s.len,
+      tone: s.tone,
+    }));
+    return buildRoadGraph(segInputs, plotWorldPosByIndex);
+  }, [roadSegments, plotWorldPosByIndex]);
+
+  /** Route an agent from A to B using A* on the road graph, with Catmull-Rom smoothing. */
+  function buildRoute(from: THREE.Vector3, to: THREE.Vector3) {
+    return findPath(roadGraph, from, to);
+  }
+
+  // Street light positions (placed every ~20 units along ring/arterial roads)
+  const streetLightPositions = useMemo(() => {
+    const mainRoads = roadSegments.filter((s) => s.tone === 'ring' || s.tone === 'arterial');
+    return generateLightPositions(mainRoads, 20);
+  }, [roadSegments]);
+
   const fogScale = useMemo(() => {
     return Math.max(1, Math.min(2.8, Math.max(bounds.cols, bounds.rows) / 6));
   }, [bounds.cols, bounds.rows]);
@@ -1686,12 +1854,12 @@ function TownScene({
 
   const groundTint = useMemo(() => {
     const t = String(town.theme || '').toLowerCase();
-    if (t.includes('desert') || t.includes('oasis')) return '#1b1408';
-    if (t.includes('tropical') || t.includes('island') || t.includes('resort') || t.includes('harbor') || t.includes('cove')) return '#07131b';
-    if (t.includes('arctic') || t.includes('snow')) return '#0a1320';
-    if (t.includes('volcanic') || t.includes('forge')) return '#140a0a';
-    if (t.includes('forest') || t.includes('enchanted')) return '#07160f';
-    return '#0b1220';
+    if (t.includes('desert') || t.includes('oasis')) return '#3d3520';
+    if (t.includes('tropical') || t.includes('island') || t.includes('resort') || t.includes('harbor') || t.includes('cove')) return '#1a3828';
+    if (t.includes('arctic') || t.includes('snow')) return '#c8d8e8';
+    if (t.includes('volcanic') || t.includes('forge')) return '#2a1a10';
+    if (t.includes('forest') || t.includes('enchanted')) return '#143820';
+    return '#1a3a1a'; // default: grass green
   }, [town.theme]);
 
   const landmarks = useMemo(() => {
@@ -1756,7 +1924,7 @@ function TownScene({
       rocks.push({
         pos: [x, 0.04, z],
         s,
-        color: hasMountain ? '#0f172a' : '#111827',
+        color: hasMountain ? '#6a6a60' : '#7a7a6a',
       });
     }
 
@@ -1771,6 +1939,17 @@ function TownScene({
           s: 0.8 + rng() * 1.6,
         });
       }
+    }
+
+    // Always scatter some trees around the perimeter for a natural look
+    const perimeterTrees = 12 + Math.floor(rng() * 16);
+    for (let i = 0; i < perimeterTrees; i++) {
+      const ang = rng() * Math.PI * 2;
+      const r = outside + base * (0.1 + rng() * 0.35);
+      trees.push({
+        pos: [Math.cos(ang) * r, 0.02, Math.sin(ang) * r],
+        s: 0.6 + rng() * 1.4,
+      });
     }
 
     return { lake, hill, neon, rocks, trees };
@@ -1882,12 +2061,72 @@ function TownScene({
         }
       }
 
+      // ── Backend-driven behavior: use agent's last real decision ──
+      // Check if agent has a recent backend action to drive their 3D state
+      const backendActionAge = a.lastTickAt
+        ? (Date.now() - new Date(a.lastTickAt).getTime())
+        : Infinity;
+      const hasRecentAction = backendActionAge < 35_000; // Within one tick cycle
+
+      if (sim.state === 'WALKING' && hasRecentAction && a.lastActionType) {
+        const actionType = a.lastActionType;
+        const targetPlotIdx = a.lastTargetPlot;
+
+        // If we have a target plot, route there first
+        if (targetPlotIdx != null && sim.route.length === 0) {
+          const targetPos = getPlotWorldPos(targetPlotIdx);
+          if (targetPos) {
+            const entrance = getBuildingEntrance(targetPlotIdx);
+            const dist = sim.position.distanceTo(entrance);
+            if (dist > 2.5) {
+              // Walk toward the target plot
+              sim.route = buildRoute(sim.position, entrance);
+            } else {
+              // Already at the plot — start the action animation
+              const stateMap: Record<string, AgentState> = {
+                claim_plot: 'BUILDING',
+                start_build: 'BUILDING',
+                do_work: 'BUILDING',
+                complete_build: 'BUILDING',
+                buy_skill: 'SHOPPING',
+                buy_arena: 'SHOPPING',
+                sell_arena: 'SHOPPING',
+                mine: 'MINING',
+                play_arena: 'PLAYING',
+              };
+              const newState = stateMap[actionType];
+              if (newState && sim.state === 'WALKING') {
+                sim.state = newState;
+                sim.targetPlotId = plots.find(p => p.plotIndex === targetPlotIdx)?.id || null;
+                sim.stateTimer = 0;
+                sim.stateEndsAt = 4 + Math.random() * 4;
+                sim.route = [];
+              }
+            }
+          }
+        } else if (!targetPlotIdx && sim.route.length === 0) {
+          // No target plot — actions like mine, rest happen in-place
+          const inPlaceActions: Record<string, AgentState> = {
+            mine: 'MINING',
+            rest: 'IDLE',
+          };
+          const newState = inPlaceActions[actionType];
+          if (newState) {
+            sim.state = newState as AgentState;
+            sim.stateTimer = 0;
+            sim.stateEndsAt = 3 + Math.random() * 3;
+            sim.route = [];
+          }
+        }
+      }
+
+      // ── Fallback ambient behaviors (lower chance, for when no backend action) ──
       // Check if near a building to shop
-      if (sim.state === 'WALKING' && builtPlots.length > 0) {
+      if (sim.state === 'WALKING' && !hasRecentAction && builtPlots.length > 0) {
         for (const plot of builtPlots) {
-          const plotPos = getPlotWorldPos(plot.plotIndex);
-          const dist = sim.position.distanceTo(plotPos);
-          if (dist < 3.5 && Math.random() < 0.005) { // Small chance to stop and shop
+          const entrance = getBuildingEntrance(plot.plotIndex);
+          const dist = sim.position.distanceTo(entrance);
+          if (dist < 3.0 && Math.random() < 0.003) {
             sim.state = 'SHOPPING';
             sim.targetPlotId = plot.id;
             sim.stateTimer = 0;
@@ -1899,11 +2138,11 @@ function TownScene({
       }
 
       // Check if near an under-construction plot to help build
-      if (sim.state === 'WALKING' && underConstructionPlots.length > 0) {
+      if (sim.state === 'WALKING' && !hasRecentAction && underConstructionPlots.length > 0) {
         for (const plot of underConstructionPlots) {
-          const plotPos = getPlotWorldPos(plot.plotIndex);
-          const dist = sim.position.distanceTo(plotPos);
-          if (dist < 3.5 && Math.random() < 0.008) { // Chance to start building
+          const entrance = getBuildingEntrance(plot.plotIndex);
+          const dist = sim.position.distanceTo(entrance);
+          if (dist < 3.0 && Math.random() < 0.005) {
             sim.state = 'BUILDING';
             sim.targetPlotId = plot.id;
             sim.stateTimer = 0;
@@ -1915,11 +2154,11 @@ function TownScene({
       }
 
       // Check if near entertainment to play games
-      if (sim.state === 'WALKING' && entertainmentPlots.length > 0) {
+      if (sim.state === 'WALKING' && !hasRecentAction && entertainmentPlots.length > 0) {
         for (const plot of entertainmentPlots) {
-          const plotPos = getPlotWorldPos(plot.plotIndex);
-          const dist = sim.position.distanceTo(plotPos);
-          if (dist < 3.5 && Math.random() < 0.006) { // Chance to play games
+          const entrance = getBuildingEntrance(plot.plotIndex);
+          const dist = sim.position.distanceTo(entrance);
+          if (dist < 3.0 && Math.random() < 0.004) {
             sim.state = 'PLAYING';
             sim.targetPlotId = plot.id;
             sim.stateTimer = 0;
@@ -1930,8 +2169,8 @@ function TownScene({
         }
       }
 
-      // Random chance to mine (anywhere)
-      if (sim.state === 'WALKING' && Math.random() < 0.001) {
+      // Random chance to mine (very rare fallback)
+      if (sim.state === 'WALKING' && !hasRecentAction && Math.random() < 0.0005) {
         sim.state = 'MINING';
         sim.stateTimer = 0;
         sim.stateEndsAt = 3 + Math.random() * 2;
@@ -2036,8 +2275,18 @@ function TownScene({
         const rels = relationshipsRef.current;
         let pickedTarget = false;
 
+        // Priority 1: Backend-driven target plot (agent decided to go somewhere specific)
+        if (!pickedTarget && hasRecentAction && a.lastTargetPlot != null) {
+          const entrance = getBuildingEntrance(a.lastTargetPlot);
+          if (entrance && sim.position.distanceTo(entrance) > 2.5) {
+            sim.targetPlotId = plots.find(p => p.plotIndex === a.lastTargetPlot)?.id || null;
+            sim.route = buildRoute(sim.position, entrance);
+            pickedTarget = true;
+          }
+        }
+
         // 15% chance: walk toward a friend/rival (if we have relationship data)
-        if (rels.length > 0 && roll < 0.15) {
+        if (!pickedTarget && rels.length > 0 && roll < 0.15) {
           const myRels = rels.filter(r => r.agentAId === a.id || r.agentBId === a.id);
           if (myRels.length > 0) {
             const rel = myRels[Math.floor(rng() * myRels.length)];
@@ -2051,12 +2300,12 @@ function TownScene({
           }
         }
 
-        // 25% chance: head to a building
+        // 25% chance: head to a building (entrance, not center)
         if (!pickedTarget && builtPlots.length > 0 && roll < 0.40) {
           const targetPlot = builtPlots[Math.floor(rng() * builtPlots.length)];
-          const target = getPlotWorldPos(targetPlot.plotIndex);
+          const entrance = getBuildingEntrance(targetPlot.plotIndex);
           sim.targetPlotId = targetPlot.id;
-          sim.route = buildRoute(sim.position, target);
+          sim.route = buildRoute(sim.position, entrance);
           pickedTarget = true;
         }
 
@@ -2102,6 +2351,30 @@ function TownScene({
       sim.heading.lerp(dir, 0.25);
       sim.position.addScaledVector(dir, sim.speed * dt);
       sim.walk += dt * sim.speed * 2.2;
+
+      // ── HARD AABB building exclusion ──
+      // After all movement, physically prevent agent from being inside any building.
+      // This is the hard guarantee — no soft push, just clamp out.
+      for (const bb of buildingAABBs) {
+        const px = sim.position.x;
+        const pz = sim.position.z;
+        // Check if agent is inside this building's AABB
+        if (px > bb.minX && px < bb.maxX && pz > bb.minZ && pz < bb.maxZ) {
+          // Find the nearest edge to push out through
+          const dLeft = px - bb.minX;
+          const dRight = bb.maxX - px;
+          const dTop = pz - bb.minZ;
+          const dBottom = bb.maxZ - pz;
+          const minD = Math.min(dLeft, dRight, dTop, dBottom);
+          const margin = 0.15; // small extra push so they clear the edge
+          if (minD === dLeft) sim.position.x = bb.minX - margin;
+          else if (minD === dRight) sim.position.x = bb.maxX + margin;
+          else if (minD === dTop) sim.position.z = bb.minZ - margin;
+          else sim.position.z = bb.maxZ + margin;
+          // Clear route since it was going through the building
+          if (sim.route.length > 0) sim.route = [];
+        }
+      }
 
       const g = agentGroupRefs.current.get(a.id);
       if (g) {
@@ -2165,23 +2438,23 @@ function TownScene({
             // Cinematic swoop from sky to behind agent
             introRef.current.t = Math.min(1, introRef.current.t + dt * 0.5);
             const e = easeOutCubic(introRef.current.t);
-            const skyPos = new THREE.Vector3(26, 28, 26);
-            const behind = headingNorm.clone().multiplyScalar(-6);
-            const target = sim.position.clone().add(behind).add(new THREE.Vector3(0, 3.5, 0));
+            const skyPos = new THREE.Vector3(50, 55, 50);
+            const behind = headingNorm.clone().multiplyScalar(-14);
+            const target = sim.position.clone().add(behind).add(new THREE.Vector3(0, 7, 0));
             camera.position.lerpVectors(skyPos, target, e);
             const skyLook = new THREE.Vector3(0, 0, 0);
-            const agentLook = sim.position.clone().add(new THREE.Vector3(0, 1.5, 0))
-              .add(headingNorm.clone().multiplyScalar(2));
+            const agentLook = sim.position.clone().add(new THREE.Vector3(0, 2.5, 0))
+              .add(headingNorm.clone().multiplyScalar(5));
             const lookTarget = skyLook.clone().lerp(agentLook, e);
             camera.lookAt(lookTarget);
             if (introRef.current.t >= 1) introRef.current.active = false;
           } else {
             // Normal third-person follow
-            const back = headingNorm.clone().multiplyScalar(-6);
-            const desired = sim.position.clone().add(back).add(new THREE.Vector3(0, 3.5, 0));
+            const back = headingNorm.clone().multiplyScalar(-14);
+            const desired = sim.position.clone().add(back).add(new THREE.Vector3(0, 7, 0));
             camera.position.lerp(desired, 0.06);
-            const lookAhead = sim.position.clone().add(new THREE.Vector3(0, 1.5, 0))
-              .add(headingNorm.clone().multiplyScalar(2));
+            const lookAhead = sim.position.clone().add(new THREE.Vector3(0, 2.5, 0))
+              .add(headingNorm.clone().multiplyScalar(5));
             camera.lookAt(lookAhead);
           }
         }
@@ -2193,11 +2466,11 @@ function TownScene({
       {/* Day/Night cycle with moving sun */}
       <DayNightCycle timeScale={0.015} />
 
-      {/* Fog - denser during rain/storm */}
+      {/* Fog - soft atmospheric */}
       <fog attach="fog" args={[
-        weather === 'storm' ? '#0a1525' : weather === 'rain' ? '#080d18' : '#050914',
-        weather === 'storm' ? 15 : weather === 'rain' ? 25 : 30,
-        (weather === 'storm' ? 60 : weather === 'rain' ? 80 : 110) * fogScale
+        weather === 'storm' ? '#2a3545' : weather === 'rain' ? '#3a4a5a' : '#7a9ab0',
+        weather === 'storm' ? 60 : weather === 'rain' ? 100 : 120,
+        (weather === 'storm' ? 250 : weather === 'rain' ? 350 : 500) * fogScale
       ]} />
 
       {/* Ambient floating particles */}
@@ -2241,8 +2514,10 @@ function TownScene({
         />
       ))}
 
-      {/* Ambient light - dimmer during bad weather */}
-      <ambientLight intensity={weather === 'storm' ? 0.2 : weather === 'rain' ? 0.3 : 0.4} />
+      {/* Ambient light */}
+      <ambientLight intensity={weather === 'storm' ? 0.5 : weather === 'rain' ? 0.7 : 1.0} />
+      {/* Warm directional sunlight */}
+      <directionalLight position={[80, 120, 50]} intensity={weather === 'storm' ? 0.3 : weather === 'rain' ? 0.5 : 1.2} color="#fff5e0" castShadow />
 
       <mesh receiveShadow rotation-x={-Math.PI / 2} position={[0, 0, 0]}>
         <planeGeometry args={[groundSize, groundSize]} />
@@ -2260,26 +2535,29 @@ function TownScene({
                 s.kind === 'V' ? s.len : roadW
               ]} />
               <meshStandardMaterial
-                color={s.tone === 'arterial' ? '#0b1a35' : s.tone === 'ring' ? '#0a0f1f' : '#090d18'}
-                roughness={0.95}
+                color={s.tone === 'arterial' ? '#5a5a5a' : s.tone === 'ring' ? '#4a4a4a' : '#3a3a3a'}
+                roughness={0.85}
               />
             </mesh>
           );
         })}
       </group>
 
+      {/* Street lights along main roads */}
+      {streetLightPositions.length > 0 && <StreetLights positions={streetLightPositions} />}
+
       {/* Landmarks / outskirts (procedural) */}
       <group>
         {landmarks.lake && (
           <mesh receiveShadow rotation-x={-Math.PI / 2} position={landmarks.lake.pos}>
             <circleGeometry args={[landmarks.lake.r, 48]} />
-            <meshStandardMaterial color={'#0b3b70'} transparent opacity={0.55} roughness={0.2} metalness={0.05} />
+            <meshStandardMaterial color={'#2277bb'} transparent opacity={0.7} roughness={0.15} metalness={0.1} />
           </mesh>
         )}
         {landmarks.hill && (
           <mesh receiveShadow position={landmarks.hill.pos}>
             <coneGeometry args={[landmarks.hill.r, landmarks.hill.h, 14]} />
-            <meshStandardMaterial color={'#0f172a'} roughness={0.95} />
+            <meshStandardMaterial color={'#3a5a3a'} roughness={0.9} />
           </mesh>
         )}
         {landmarks.neon.map((n, idx) => (
@@ -2291,18 +2569,18 @@ function TownScene({
         {landmarks.rocks.map((r, idx) => (
           <mesh key={`rock-${idx}`} position={r.pos} castShadow receiveShadow>
             <dodecahedronGeometry args={[r.s, 0]} />
-            <meshStandardMaterial color={r.color} roughness={0.98} />
+            <meshStandardMaterial color={'#6b6b60'} roughness={0.95} />
           </mesh>
         ))}
         {landmarks.trees.map((t, idx) => (
-          <group key={`tree-${idx}`} position={t.pos} scale={t.s}>
-            <mesh castShadow receiveShadow position={[0, 1.0, 0]}>
-              <cylinderGeometry args={[0.22, 0.32, 2.0, 6]} />
-              <meshStandardMaterial color={'#3f2a1c'} roughness={0.95} />
+          <group key={`tree-${idx}`} position={t.pos} scale={t.s * 2.5}>
+            <mesh castShadow receiveShadow position={[0, 1.5, 0]}>
+              <cylinderGeometry args={[0.3, 0.45, 3.0, 6]} />
+              <meshStandardMaterial color={'#5a3a20'} roughness={0.9} />
             </mesh>
-            <mesh castShadow receiveShadow position={[0, 2.8, 0]}>
-              <coneGeometry args={[1.15, 2.6, 7]} />
-              <meshStandardMaterial color={'#06351f'} roughness={0.9} />
+            <mesh castShadow receiveShadow position={[0, 4.0, 0]}>
+              <coneGeometry args={[1.6, 3.8, 7]} />
+              <meshStandardMaterial color={'#1a6830'} roughness={0.8} />
             </mesh>
           </group>
         ))}
@@ -2326,7 +2604,7 @@ function TownScene({
                 setSelectedPlotId(p.id);
               }}
             >
-              <boxGeometry args={[lotSize, 0.08, lotSize]} />
+              <boxGeometry args={[lotSize, 0.12, lotSize]} />
               <meshStandardMaterial
                 color={color}
                 emissive={emissive}
@@ -2336,7 +2614,7 @@ function TownScene({
 
             {/* Claimed marker for claimed but not yet building */}
             {p.status === 'CLAIMED' && (
-              <ClaimedMarker position={[wx + 2.2, 0, wz + 2.2]} color={ZONE_COLORS[p.zone]} />
+              <ClaimedMarker position={[wx + 6.5, 0, wz + 6.5]} color={ZONE_COLORS[p.zone]} />
             )}
 
             {(p.status === 'UNDER_CONSTRUCTION' || p.status === 'BUILT') && (
@@ -2397,6 +2675,7 @@ function TownScene({
 		                />
 		              )}
 		              <StateIndicator agentId={a.id} simsRef={simsRef} />
+		              {selected && <ThoughtBubble agent={a} position={[0, 4.5, 0]} />}
 		              <EconomicIndicator agent={a} />
 		              <HealthBar agentId={a.id} simsRef={simsRef} />
 		            </group>
@@ -2441,13 +2720,19 @@ interface SwapNotification {
   createdAt: number;
 }
 
+// Preload building GLB models as soon as module is imported
+preloadBuildingModels();
+
 export default function Town3D() {
+  const isMobile = useIsMobile();
+  const [mobilePanel, setMobilePanel] = useState<'none' | 'info' | 'feed' | 'chat' | 'agent' | 'spawn'>('none');
   const [towns, setTowns] = useState<TownSummary[]>([]);
   const [town, setTown] = useState<Town | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [economy, setEconomy] = useState<EconomyPoolSummary | null>(null);
   const [swaps, setSwaps] = useState<EconomySwapRow[]>([]);
   const [events, setEvents] = useState<TownEvent[]>([]);
+  const [worldEvents, setWorldEvents] = useState<{ emoji: string; name: string; description: string; type: string }[]>([]);
   const [agentGoalsById, setAgentGoalsById] = useState<Record<string, AgentGoalView>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -2576,6 +2861,19 @@ export default function Town3D() {
 
   // Degen mode state
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [showSpawnOverlay, setShowSpawnOverlay] = useState(false);
+
+  const connectWallet = useCallback(async (): Promise<string | null> => {
+    if (walletAddress) return walletAddress;
+    try {
+      const eth = (window as any).ethereum;
+      if (!eth) { alert('No wallet detected. Install MetaMask or Coinbase Wallet.'); return null; }
+      const accounts = await eth.request({ method: 'eth_requestAccounts' });
+      const addr = accounts?.[0] || null;
+      if (addr) setWalletAddress(addr);
+      return addr;
+    } catch { return null; }
+  }, [walletAddress]);
   const degen = useDegenState(walletAddress);
   const prevPnLRef = useRef(0);
 
@@ -2848,6 +3146,20 @@ export default function Town3D() {
       cancelled = true;
       clearInterval(t);
     };
+  }, []);
+
+  // Poll world events
+  useEffect(() => {
+    let cancelled = false;
+    async function loadWorldEvents() {
+      try {
+        const res = await apiFetch<{ events: { emoji: string; name: string; description: string; type: string }[] }>('/events/active');
+        if (!cancelled) setWorldEvents(res.events);
+      } catch {}
+    }
+    loadWorldEvents();
+    const t = setInterval(loadWorldEvents, 10000);
+    return () => { cancelled = true; clearInterval(t); };
   }, []);
 
   useEffect(() => {
@@ -3280,6 +3592,13 @@ export default function Town3D() {
     return combined;
   }, [swaps, events]);
 
+  const [feedTab, setFeedTab] = useState<'activity' | 'chat'>('activity');
+
+  // Auto-show agent panel on mobile when agent is selected
+  useEffect(() => {
+    if (isMobile && selectedAgentId) setMobilePanel('agent');
+  }, [isMobile, selectedAgentId]);
+
   if (loading) {
     return (
       <div className="h-[100svh] w-full grid place-items-center bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900">
@@ -3318,6 +3637,383 @@ export default function Town3D() {
     );
   }
 
+  /* ────────────── MOBILE LAYOUT ────────────── */
+  if (isMobile) return (
+    <div className="flex flex-col h-[100svh] w-full overflow-hidden bg-[#050914]">
+      {/* Mobile top bar — compact */}
+      <div className="shrink-0 flex items-center justify-between px-3 py-1 bg-slate-950/95 border-b border-slate-800/40 z-50">
+        <span className="text-xs font-bold text-amber-400">AI TOWN</span>
+        {economy && Number.isFinite(economy.spotPrice) && (
+          <span className="text-[10px] text-slate-500 font-mono">$ARENA {economy.spotPrice.toFixed(4)}</span>
+        )}
+        <div className="flex items-center gap-1">
+          {worldEvents.length > 0 && (
+            <span className="text-[10px] animate-pulse text-amber-400" title={worldEvents[0].name}>
+              {worldEvents[0].emoji}
+            </span>
+          )}
+          <span className="text-[10px]" title={`Weather: ${weather}`}>
+            {weather === 'clear' ? '☀️' : weather === 'rain' ? '🌧️' : '⛈️'}
+          </span>
+          <span className="text-[10px]">
+            {economicState.sentiment === 'bull' ? '📈' : economicState.sentiment === 'bear' ? '📉' : '➡️'}
+          </span>
+        </div>
+      </div>
+
+      {/* Fullscreen 3D Canvas */}
+      <div className="relative flex-1 min-h-0" style={{ touchAction: 'none' }}>
+        <Canvas
+          shadows={false}
+          dpr={1}
+          camera={{ position: [50, 55, 50], fov: 50, near: 0.5, far: 3000 }}
+          gl={{ antialias: false, powerPreference: 'low-power', alpha: false }}
+          onPointerMissed={() => { setSelectedPlotId(null); }}
+          fallback={<div className="h-full w-full grid place-items-center bg-slate-950 text-slate-300 text-sm">WebGL not supported</div>}
+        >
+          <TownScene
+            town={town}
+            agents={agents}
+            selectedPlotId={selectedPlotId}
+            setSelectedPlotId={setSelectedPlotId}
+            selectedAgentId={selectedAgentId}
+            setSelectedAgentId={setSelectedAgentId}
+            introRef={introRef}
+            simsRef={simsRef}
+            onChatStart={requestChat}
+            tradeByAgentId={tradeByAgentId}
+            weather={'clear'}
+            economicState={{ pollution: 0, prosperity: economicState.prosperity, sentiment: economicState.sentiment }}
+            coinBursts={coinBursts}
+            setCoinBursts={setCoinBursts}
+            deathEffects={deathEffects}
+            setDeathEffects={setDeathEffects}
+            spawnEffects={spawnEffects}
+            setSpawnEffects={setSpawnEffects}
+            relationshipsRef={relationshipsRef}
+          />
+          {towns.length > 1 && (
+            <WorldScene
+              townSummaries={towns.map(t => ({ id: t.id, name: t.name, level: t.level, status: t.status }))}
+              agentIds={agents.map(a => a.id)}
+              focusTownId={selectedTownId}
+              onTownSelect={(id) => { userSelectedTownIdRef.current = id; setSelectedTownId(id); }}
+            />
+          )}
+        </Canvas>
+
+        {/* Swap Notifications — compact mobile */}
+        <div className="pointer-events-none absolute top-2 right-2 flex flex-col gap-1 z-50">
+          {swapNotifications.slice(0, 2).map((notif) => {
+            const isBuy = notif.side === 'BUY_ARENA';
+            return (
+              <div key={notif.id} className="animate-in slide-in-from-right-4 fade-in duration-300">
+                <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] backdrop-blur-md ${
+                  isBuy ? 'bg-emerald-950/80 text-emerald-200' : 'bg-rose-950/80 text-rose-200'
+                }`}>
+                  <span>{isBuy ? '📈' : '📉'}</span>
+                  <span className="font-mono">{notif.agentName}</span>
+                  <span className="font-mono font-semibold">{Math.round(notif.amount)}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Town info — compact top-left */}
+        <div className="pointer-events-none absolute top-2 left-2 z-40">
+          <div className="pointer-events-auto backdrop-blur-md bg-slate-950/70 rounded-lg px-2.5 py-1.5 border border-slate-800/40">
+            <div className="flex items-center gap-2 text-[11px]">
+              <span className="font-mono font-semibold text-slate-100">{town.name}</span>
+              <span className="hud-chip text-[9px]">Lv{town.level}</span>
+              <span className="text-slate-400">{Math.round(town.completionPct)}%</span>
+            </div>
+            <div className="mt-1 h-1 rounded-full bg-slate-800/60 overflow-hidden w-32">
+              <div className="h-full rounded-full bg-gradient-to-r from-primary to-primary-glow" style={{ width: `${town.completionPct}%` }} />
+            </div>
+          </div>
+        </div>
+
+        {/* Agent switcher strip — bottom center */}
+        <div className="pointer-events-auto absolute bottom-16 left-1/2 -translate-x-1/2 z-40">
+          <div className="flex items-center gap-1.5 backdrop-blur-md bg-slate-950/70 rounded-full px-3 py-1.5 border border-slate-800/40">
+            {agents.map((a) => {
+              const color = ARCHETYPE_COLORS[a.archetype] || '#93c5fd';
+              const isActive = a.id === selectedAgentId;
+              return (
+                <button
+                  key={a.id}
+                  className={`shrink-0 rounded-full border-2 transition-all ${
+                    isActive ? 'border-white scale-125' : 'border-transparent opacity-60'
+                  }`}
+                  style={{ width: 22, height: 22, backgroundColor: color }}
+                  onClick={() => { setSelectedAgentId(a.id); setMobilePanel('agent'); }}
+                />
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Mobile bottom nav buttons */}
+        <div className="pointer-events-auto absolute bottom-2 left-2 right-2 z-50 flex items-center justify-between">
+          <div className="flex gap-1.5">
+            <button
+              className={`px-3 py-1.5 rounded-lg text-xs backdrop-blur-md border transition-all ${
+                mobilePanel === 'info' ? 'bg-primary/20 border-primary/50 text-primary' : 'bg-slate-950/70 border-slate-800/40 text-slate-300'
+              }`}
+              onClick={() => setMobilePanel(mobilePanel === 'info' ? 'none' : 'info')}
+            >
+              🧠 Thoughts
+            </button>
+            <button
+              className={`px-3 py-1.5 rounded-lg text-xs backdrop-blur-md border transition-all ${
+                mobilePanel === 'feed' ? 'bg-primary/20 border-primary/50 text-primary' : 'bg-slate-950/70 border-slate-800/40 text-slate-300'
+              }`}
+              onClick={() => setMobilePanel(mobilePanel === 'feed' ? 'none' : 'feed')}
+            >
+              📋 Feed
+            </button>
+            <button
+              className={`px-3 py-1.5 rounded-lg text-xs backdrop-blur-md border transition-all ${
+                mobilePanel === 'chat' ? 'bg-primary/20 border-primary/50 text-primary' : 'bg-slate-950/70 border-slate-800/40 text-slate-300'
+              }`}
+              onClick={() => setMobilePanel(mobilePanel === 'chat' ? 'none' : 'chat')}
+            >
+              💬 Chat {chatMessages.length > 0 && <span className="ml-1 text-[9px] opacity-70">{chatMessages.length}</span>}
+            </button>
+            <button
+              className={`px-3 py-1.5 rounded-lg text-xs backdrop-blur-md border transition-all ${
+                mobilePanel === 'spawn' ? 'bg-amber-500/20 border-amber-500/50 text-amber-300' : 'bg-slate-950/70 border-slate-800/40 text-slate-300'
+              }`}
+              onClick={() => setMobilePanel(mobilePanel === 'spawn' ? 'none' : 'spawn')}
+            >
+              🤖+
+            </button>
+          </div>
+          <select
+            className="h-7 rounded-lg border border-slate-700/50 bg-slate-950/70 backdrop-blur-md px-2 text-[10px] text-slate-200 outline-none"
+            value={selectedTownId ?? ''}
+            onChange={(e) => { userSelectedTownIdRef.current = e.target.value || null; setSelectedTownId(e.target.value || null); }}
+          >
+            {towns.map((t) => (
+              <option key={t.id} value={t.id}>L{t.level} · {t.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Mobile bottom sheet */}
+        {mobilePanel !== 'none' && (
+          <div className="absolute bottom-12 left-0 right-0 z-40 max-h-[50vh] overflow-auto">
+            <div className="mx-2 backdrop-blur-xl bg-slate-950/90 rounded-t-xl border border-slate-800/40 p-3">
+              {/* Close handle */}
+              <div className="flex justify-center mb-2">
+                <button
+                  className="w-10 h-1 rounded-full bg-slate-600"
+                  onClick={() => setMobilePanel('none')}
+                />
+              </div>
+
+              {mobilePanel === 'info' && (
+                <div className="space-y-2 max-h-[45vh] overflow-auto">
+                  <div className="text-xs font-semibold text-slate-200 mb-1">🧠 Agent Decisions</div>
+                  {agents.filter(a => a.lastActionType && a.lastTickAt).length === 0 && (
+                    <div className="text-[10px] text-slate-500 py-2">Waiting for agents to make decisions…</div>
+                  )}
+                  {agents
+                    .filter(a => a.lastActionType && a.lastTickAt)
+                    .sort((a, b) => new Date(b.lastTickAt || 0).getTime() - new Date(a.lastTickAt || 0).getTime())
+                    .map(a => {
+                      const actionEmojis: Record<string, string> = {
+                        claim_plot: '📍', start_build: '🔨', do_work: '🏗️', complete_build: '🎉',
+                        buy_arena: '💱', sell_arena: '💱', mine: '⛏️', play_arena: '🎮',
+                        buy_skill: '💳', rest: '💤',
+                      };
+                      const emoji = actionEmojis[a.lastActionType || ''] || '❓';
+                      const color = ARCHETYPE_COLORS[a.archetype] || '#93c5fd';
+                      const glyph = ARCHETYPE_GLYPH[a.archetype] || '●';
+                      const reasoning = (a.lastReasoning || '')
+                        .replace(/\[AUTO\]\s*/g, '')
+                        .replace(/\s+/g, ' ')
+                        .trim();
+                      const narrative = (a.lastNarrative || '').replace(/\s+/g, ' ').trim();
+                      const age = a.lastTickAt ? timeAgo(a.lastTickAt) : '';
+                      const isMyAgent = a.id === selectedAgentId;
+
+                      return (
+                        <div
+                          key={a.id}
+                          className="rounded-lg border border-slate-800/60 bg-slate-950/40 p-2 space-y-1"
+                          onClick={() => { setSelectedAgentId(a.id); setMobilePanel('agent'); }}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="text-sm">{emoji}</span>
+                              <span className="font-mono text-[11px] font-semibold" style={{ color }}>
+                                {glyph} {a.name}
+                              </span>
+                              <span className="text-[10px] text-slate-500 font-mono">{a.lastActionType}</span>
+                            </div>
+                            <span className="text-[9px] text-slate-600 shrink-0">{age}</span>
+                          </div>
+                          {narrative && (
+                            <div className="text-[10px] text-slate-300 leading-snug">
+                              {narrative.length > 120 ? narrative.slice(0, 120) + '…' : narrative}
+                            </div>
+                          )}
+                          {isMyAgent && reasoning && (
+                            <div className="text-[10px] text-slate-500 leading-snug">
+                              💭 {reasoning.length > 100 ? reasoning.slice(0, 100) + '…' : reasoning}
+                            </div>
+                          )}
+                          <div className="flex gap-2 text-[9px] text-slate-600 font-mono">
+                            <span>{a.bankroll} $ARENA</span>
+                            <span>{a.reserveBalance} reserve</span>
+                            {(a as any).health != null && (a as any).health < 100 && <span className="text-red-400">❤️{(a as any).health}%</span>}
+                            {a.lastTargetPlot != null && <span>→ Plot #{a.lastTargetPlot}</span>}
+                          </div>
+                        </div>
+                      );
+                    })
+                  }
+                </div>
+              )}
+
+              {mobilePanel === 'feed' && (
+                <div className="space-y-1 max-h-[40vh] overflow-auto">
+                  <div className="text-xs font-semibold text-slate-200 mb-1">Activity Feed</div>
+                  {activityFeed.slice(0, 15).map((item) => {
+                    if (item.kind === 'swap') {
+                      const s = item.data;
+                      const isBuy = s.side === 'BUY_ARENA';
+                      const amountArena = isBuy ? s.amountOut : s.amountIn;
+                      return (
+                        <div key={s.id} className="text-[10px] text-slate-300 py-0.5 border-b border-slate-800/30">
+                          💱 <span className="font-mono">{s.agent?.name || '?'}</span> {isBuy ? 'bought' : 'sold'}{' '}
+                          <span className="font-mono text-slate-200">{Math.round(amountArena)}</span> ARENA
+                        </div>
+                      );
+                    }
+                    const e = item.data;
+                    const emoji = e.eventType === 'PLOT_CLAIMED' ? '📍' : e.eventType === 'BUILD_STARTED' ? '🏗️' :
+                      e.eventType === 'BUILD_COMPLETED' ? '✅' : e.eventType === 'TOWN_COMPLETED' ? '🎉' : '📝';
+                    // Extract reasoning from event metadata — only show for selected agent
+                    const isMyEvent = e.agentId === selectedAgentId;
+                    let reasoning = '';
+                    if (isMyEvent) {
+                      try {
+                        const meta = JSON.parse(e.metadata || '{}');
+                        if (meta?.reasoning) reasoning = String(meta.reasoning).replace(/\[AUTO\]\s*/g, '').trim();
+                      } catch {}
+                    }
+                    return (
+                      <div key={e.id} className="text-[10px] text-slate-300 py-0.5 border-b border-slate-800/30">
+                        {emoji} {e.title || e.eventType}
+                        <span className="text-slate-600 ml-1">· {timeAgo(e.createdAt)}</span>
+                        {reasoning && (
+                          <div className="text-[9px] text-slate-500 mt-0.5 leading-snug truncate">
+                            💭 {reasoning.length > 80 ? reasoning.slice(0, 80) + '…' : reasoning}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {mobilePanel === 'chat' && (
+                <div className="space-y-1 max-h-[40vh] overflow-auto">
+                  <div className="text-xs font-semibold text-slate-200 mb-1">Agent Conversations</div>
+                  {chatMessages.length === 0 && (
+                    <div className="text-[10px] text-slate-500 py-2">No conversations yet — agents chat when they meet!</div>
+                  )}
+                  {chatMessages.slice(0, 30).map((msg) => {
+                    const color = ARCHETYPE_COLORS[msg.archetype] || '#93c5fd';
+                    const glyph = ARCHETYPE_GLYPH[msg.archetype] || '●';
+                    const outcomeEmoji = msg.outcome === 'BOND' ? '🤝' : msg.outcome === 'BEEF' ? '💢' : '';
+                    return (
+                      <div key={msg.id} className="py-1 border-b border-slate-800/30">
+                        <div className="flex items-center gap-1.5 text-[10px]">
+                          <span className="font-mono font-semibold" style={{ color }}>
+                            {glyph} {msg.agentName}
+                          </span>
+                          {outcomeEmoji && <span>{outcomeEmoji}</span>}
+                          <span className="text-slate-600 ml-auto">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+                        <div className="text-[11px] text-slate-300 mt-0.5 leading-snug">
+                          "{msg.text}"
+                        </div>
+                        {msg.economicEffect && (
+                          <div className="text-[9px] text-amber-400/70 mt-0.5">
+                            💰 {msg.economicEffect.type}: {msg.economicEffect.detail}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {mobilePanel === 'agent' && selectedAgent && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex h-4 w-4 rounded-full" style={{ backgroundColor: ARCHETYPE_COLORS[selectedAgent.archetype] || '#93c5fd' }} />
+                    <span className="font-mono text-sm text-slate-100">{selectedAgent.name}</span>
+                    <span className="hud-chip text-[9px]">{selectedAgent.archetype}</span>
+                    {(() => {
+                      const econ = getEconomicState(selectedAgent.bankroll + selectedAgent.reserveBalance, false);
+                      const ind = ECONOMIC_INDICATORS[econ];
+                      return <span style={{ color: ind.color }} className="text-[10px]">{ind.emoji} {econ.toLowerCase()}</span>;
+                    })()}
+                  </div>
+                  <div className="grid grid-cols-4 gap-1.5 text-[10px]">
+                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-1 text-center">
+                      <div className="text-slate-500">$ARENA</div>
+                      <div className="font-mono text-slate-100">{Math.round(selectedAgent.bankroll)}</div>
+                    </div>
+                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-1 text-center">
+                      <div className="text-slate-500">Reserve</div>
+                      <div className="font-mono text-slate-100">{Math.round(selectedAgent.reserveBalance)}</div>
+                    </div>
+                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-1 text-center">
+                      <div className="text-slate-500">W/L</div>
+                      <div className="font-mono text-slate-100">{selectedAgent.wins}/{selectedAgent.losses}</div>
+                    </div>
+                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-1 text-center">
+                      <div className="text-slate-500">ELO</div>
+                      <div className="font-mono text-slate-100">{selectedAgent.elo}</div>
+                    </div>
+                  </div>
+                  {(() => {
+                    const g = agentGoalsById[selectedAgent.id];
+                    if (!g) return null;
+                    return (
+                      <div className="text-[10px] text-slate-300 border border-slate-800/60 rounded-md p-1.5 bg-slate-950/30">
+                        🎯 <span className="text-slate-200 font-semibold">{safeTrim(g.goalTitle, 60)}</span>
+                        <div className="text-slate-400 truncate">Next: {safeTrim(g.next?.detail, 80)}</div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+              {mobilePanel === 'spawn' && (
+                <SpawnAgent
+                  walletAddress={walletAddress}
+                  onConnectWallet={connectWallet}
+                  onSpawned={() => { setTimeout(() => setMobilePanel('none'), 2000); }}
+                />
+              )}
+      </div>
+
+      {/* Mobile swap ticker */}
+      <SwapTicker trades={tradeTickerItems} />
+    </div>
+  );
+
+  /* ────────────── DESKTOP LAYOUT ────────────── */
   return (
     <div className="flex flex-col h-[100svh] w-full overflow-hidden bg-[#050914]">
       {/* Top Bar: Degen Stats */}
@@ -3338,7 +4034,30 @@ export default function Town3D() {
         </div>
         <PositionTracker balance={degen.balance} totalPnL={degen.totalPnL} spotPrice={economy?.spotPrice ?? null} />
         <WalletConnect compact onAddressChange={setWalletAddress} />
+        <button
+          onClick={() => setShowSpawnOverlay(true)}
+          className="px-3 py-1 bg-gradient-to-r from-amber-600/80 to-orange-600/80 text-white text-xs font-bold rounded hover:from-amber-500 hover:to-orange-500 transition-all"
+        >
+          🤖 Spawn Agent
+        </button>
       </div>
+
+      {/* Spawn Agent Overlay */}
+      {showSpawnOverlay && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="bg-slate-950 border border-slate-700/50 rounded-xl shadow-2xl w-[400px] max-w-[90vw] max-h-[80vh] overflow-auto">
+            <div className="flex items-center justify-between px-4 pt-3">
+              <span className="text-xs text-slate-500">New Agent</span>
+              <button onClick={() => setShowSpawnOverlay(false)} className="text-slate-500 hover:text-slate-300 text-lg">✕</button>
+            </div>
+            <SpawnAgent
+              walletAddress={walletAddress}
+              onConnectWallet={connectWallet}
+              onSpawned={() => { setTimeout(() => setShowSpawnOverlay(false), 2000); }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Main content: 3D + Dashboard split */}
       <ResizablePanelGroup direction="horizontal" className="flex-1 min-h-0">
@@ -3348,7 +4067,7 @@ export default function Town3D() {
       <Canvas
         shadows
         dpr={[1, 2]}
-        camera={{ position: [26, 28, 26], fov: 50, near: 0.1, far: 500 }}
+        camera={{ position: [50, 55, 50], fov: 45, near: 0.1, far: 3000 }}
         onPointerMissed={() => {
           setSelectedPlotId(null);
         }}
@@ -3374,6 +4093,17 @@ export default function Town3D() {
           setSpawnEffects={setSpawnEffects}
           relationshipsRef={relationshipsRef}
         />
+        {towns.length > 1 && (
+          <WorldScene
+            townSummaries={towns.map(t => ({ id: t.id, name: t.name, level: t.level, status: t.status }))}
+            agentIds={agents.map(a => a.id)}
+            focusTownId={selectedTownId}
+            onTownSelect={(id) => {
+              userSelectedTownIdRef.current = id;
+              setSelectedTownId(id);
+            }}
+          />
+        )}
       </Canvas>
 
       {/* Swap Notifications - floating toasts (top-right, compact) */}
@@ -3410,6 +4140,21 @@ export default function Town3D() {
       </div>
 
       {/* Build Completion Notifications - top center */}
+      {/* World Event Banner */}
+      {worldEvents.length > 0 && (
+        <div className="pointer-events-none absolute top-12 left-1/2 -translate-x-1/2 z-[60] flex flex-col gap-1">
+          {worldEvents.map((we, i) => (
+            <div
+              key={`we-${i}`}
+              className="pointer-events-auto animate-pulse bg-gradient-to-r from-amber-900/90 via-amber-800/90 to-amber-900/90 border border-amber-500/50 rounded-lg px-4 py-2 text-center shadow-lg shadow-amber-500/20 backdrop-blur-sm"
+            >
+              <div className="text-amber-200 font-bold text-sm">{we.emoji} {we.name}</div>
+              <div className="text-amber-300/80 text-xs">{we.description}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="pointer-events-none absolute top-20 left-1/2 -translate-x-1/2 flex flex-col gap-2 z-50">
         {eventNotifications.map((event) => {
           const agent = agents.find(a => a.id === event.agentId);
@@ -3709,17 +4454,62 @@ export default function Town3D() {
         <div className="pointer-events-auto absolute left-[190px] bottom-3 flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end max-w-[calc(100vw-210px)]">
           <div className="w-[420px] max-w-[calc(100vw-210px)]">
             <div className="hud-panel p-3">
-		              {(activityFeed.length > 0 || recentSwaps.length > 0) && (
+		              {(activityFeed.length > 0 || recentSwaps.length > 0 || chatMessages.length > 0) && (
 		                <div>
 		                  <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <div className="hud-title">Activity Feed</div>
-                          <span className="hud-chip">{activityFeed.length}</span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-colors ${
+                              feedTab === 'activity' ? 'bg-slate-800/60 text-slate-100' : 'text-slate-500 hover:text-slate-300'
+                            }`}
+                            onClick={() => setFeedTab('activity')}
+                          >
+                            Activity <span className="text-[9px] opacity-60">{activityFeed.length}</span>
+                          </button>
+                          <button
+                            className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-colors ${
+                              feedTab === 'chat' ? 'bg-slate-800/60 text-slate-100' : 'text-slate-500 hover:text-slate-300'
+                            }`}
+                            onClick={() => setFeedTab('chat')}
+                          >
+                            💬 Chat <span className="text-[9px] opacity-60">{chatMessages.length}</span>
+                          </button>
                         </div>
                         <div className="text-[10px] text-slate-500">
-                          {recentSwaps.length > 0 ? `swaps ${recentSwaps.length}` : ''}
+                          {feedTab === 'activity' && recentSwaps.length > 0 ? `swaps ${recentSwaps.length}` : ''}
                         </div>
 		                  </div>
+		                  {feedTab === 'chat' ? (
+		                    <div className="max-h-[170px] overflow-auto pr-1 space-y-1 scrollbar-thin scrollbar-thumb-slate-700/60">
+		                      {chatMessages.length === 0 && (
+		                        <div className="text-[10px] text-slate-500 py-2">No conversations yet</div>
+		                      )}
+		                      {chatMessages.slice(0, 30).map((msg) => {
+		                        const color = ARCHETYPE_COLORS[msg.archetype] || '#93c5fd';
+		                        const glyph = ARCHETYPE_GLYPH[msg.archetype] || '●';
+		                        const outcomeEmoji = msg.outcome === 'BOND' ? '🤝' : msg.outcome === 'BEEF' ? '💢' : '';
+		                        return (
+		                          <div key={msg.id} className="rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300">
+		                            <div className="flex items-center justify-between gap-2">
+		                              <div className="min-w-0 truncate">
+		                                <span className="font-mono" style={{ color }}>{glyph} {msg.agentName}</span>
+		                                {outcomeEmoji && <span className="ml-1">{outcomeEmoji}</span>}
+		                              </div>
+		                              <span className="shrink-0 text-slate-600">
+		                                {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+		                              </span>
+		                            </div>
+		                            <div className="text-[10px] text-slate-400 truncate mt-0.5">"{msg.text}"</div>
+		                            {msg.economicEffect && (
+		                              <div className="text-[9px] text-amber-400/70 mt-0.5">
+		                                💰 {msg.economicEffect.type}: {msg.economicEffect.detail}
+		                              </div>
+		                            )}
+		                          </div>
+		                        );
+		                      })}
+		                    </div>
+		                  ) : (
 		                  <div className="max-h-[170px] overflow-auto pr-1 space-y-1 scrollbar-thin scrollbar-thumb-slate-700/60">
 		                    {activityFeed.map((item) => {
 		                      if (item.kind === 'swap') {
@@ -3922,6 +4712,12 @@ export default function Town3D() {
                                 );
                               }
 
+				                        // Extract reasoning from metadata — only for selected agent
+				                        const isMyEvent = e.agentId === selectedAgentId;
+				                        const reasoning = (isMyEvent && typeof metaObj?.reasoning === 'string')
+				                          ? String(metaObj.reasoning).replace(/\[AUTO\]\s*/g, '').trim()
+				                          : '';
+
 				                        return (
 				                          <div
 				                            key={e.id}
@@ -3931,11 +4727,17 @@ export default function Town3D() {
 				                              {header}
 				                              <span className="shrink-0 text-slate-600">· {timeAgo(e.createdAt)}</span>
 				                            </div>
+				                            {reasoning && (
+				                              <div className="mt-0.5 text-[10px] text-slate-500 leading-snug truncate">
+				                                💭 {reasoning.length > 100 ? reasoning.slice(0, 100) + '…' : reasoning}
+				                              </div>
+				                            )}
 				                          </div>
 				                        );
 			                      }
 			                    })}
 		                  </div>
+		                  )}
 		                </div>
 		              )}
             </div>

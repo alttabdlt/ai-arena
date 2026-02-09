@@ -64,9 +64,9 @@ export function ConstructionRenderer({
 
   // Pre-compute beam base height
   const baseBeamH = 0.12;
-  const beamCorners: [number, number][] = [[-1.6, -1.6], [1.6, -1.6], [-1.6, 1.6], [1.6, 1.6]];
-  const scaffoldCorners: [number, number][] = [[-1.9, 1.9], [1.9, 1.9], [-1.9, -1.9], [1.9, -1.9]];
-  const stakeCorners: [number, number][] = [[-1.6, -1.6], [1.6, -1.6], [-1.6, 1.6], [1.6, 1.6]];
+  const beamCorners: [number, number][] = [[-4.5, -4.5], [4.5, -4.5], [-4.5, 4.5], [4.5, 4.5]];
+  const scaffoldCorners: [number, number][] = [[-5.2, 5.2], [5.2, 5.2], [-5.2, -5.2], [5.2, -5.2]];
+  const stakeCorners: [number, number][] = [[-4.5, -4.5], [4.5, -4.5], [-4.5, 4.5], [4.5, 4.5]];
 
   // Emissive color for walls
   const wallEmissive = useMemo(() => {
@@ -202,7 +202,7 @@ export function ConstructionRenderer({
     if (progressBarFillRef.current) {
       const pct = clamp01(p / 4.0);
       progressBarFillRef.current.scale.x = Math.max(0.001, pct);
-      progressBarFillRef.current.position.x = (pct - 1) * 1.6;
+      progressBarFillRef.current.position.x = (pct - 1) * 4.0;
     }
   });
 
@@ -210,20 +210,20 @@ export function ConstructionRenderer({
     <group>
       {/* Foundation slab */}
       <mesh ref={slabRef} receiveShadow position={[0, 0.06, 0]}>
-        <boxGeometry args={[3.8, 0.12, 3.8]} />
+        <boxGeometry args={[11, 0.2, 11]} />
         <meshStandardMaterial color="#334155" roughness={0.9} />
       </mesh>
 
       {/* Zone cross marker */}
-      <mesh ref={crossARef} position={[0, 0.13, 0]}>
-        <boxGeometry args={[2.5, 0.02, 0.3]} />
+      <mesh ref={crossARef} position={[0, 0.18, 0]}>
+        <boxGeometry args={[7, 0.04, 0.6]} />
         <meshStandardMaterial
           color={zoneColor} emissive={zoneColor} emissiveIntensity={0.3}
           transparent opacity={0.6}
         />
       </mesh>
-      <mesh ref={crossBRef} position={[0, 0.13, 0]}>
-        <boxGeometry args={[0.3, 0.02, 2.5]} />
+      <mesh ref={crossBRef} position={[0, 0.18, 0]}>
+        <boxGeometry args={[0.6, 0.04, 7]} />
         <meshStandardMaterial
           color={zoneColor} emissive={zoneColor} emissiveIntensity={0.3}
           transparent opacity={0.6}
@@ -232,8 +232,8 @@ export function ConstructionRenderer({
 
       {/* Corner stakes */}
       {stakeCorners.map(([x, z], i) => (
-        <mesh key={`stake${i}`} ref={stakeRefs[i]} position={[x, 0.4, z]}>
-          <cylinderGeometry args={[0.05, 0.07, 0.7, 6]} />
+        <mesh key={`stake${i}`} ref={stakeRefs[i]} position={[x, 0.6, z]}>
+          <cylinderGeometry args={[0.1, 0.15, 1.2, 6]} />
           <meshStandardMaterial color="#fbbf24" transparent />
         </mesh>
       ))}
@@ -241,42 +241,42 @@ export function ConstructionRenderer({
       {/* Frame beams (vertical) */}
       {beamCorners.map(([x, z], i) => (
         <mesh key={`beam${i}`} ref={beamRefs[i]} position={[x, 0, z]}>
-          <boxGeometry args={[0.12, baseBeamH, 0.12]} />
+          <boxGeometry args={[0.25, baseBeamH, 0.25]} />
           <meshStandardMaterial color="#64748b" metalness={0.4} roughness={0.6} transparent />
         </mesh>
       ))}
 
       {/* Floor plates */}
-      {[0.3, h * 0.3].map((y, i) => (
+      {[0.5, h * 0.3].map((y, i) => (
         <mesh key={`fp${i}`} ref={floorPlateRefs[i]} position={[0, y, 0]}>
-          <boxGeometry args={[3.4, 0.06, 3.4]} />
+          <boxGeometry args={[9.5, 0.1, 9.5]} />
           <meshStandardMaterial color="#475569" transparent opacity={0.7} />
         </mesh>
       ))}
 
       {/* Wireframe ghost */}
       <mesh ref={wireframeRef} position={[0, h / 2, 0]}>
-        <boxGeometry args={[4.0, h, 4.0]} />
+        <boxGeometry args={[11, h, 11]} />
         <meshStandardMaterial color="#93c5fd" transparent opacity={0.06} wireframe />
       </mesh>
 
       {/* Crane */}
       <group ref={craneGroupRef}>
-        <mesh position={[1.8, 1.5, 1.8]}>
-          <boxGeometry args={[0.3, 3, 0.3]} />
+        <mesh position={[4.5, 4, 4.5]}>
+          <boxGeometry args={[0.5, 8, 0.5]} />
           <meshStandardMaterial color="#fbbf24" />
         </mesh>
-        <group ref={craneArmRef} position={[1.8, 3, 1.8]}>
-          <mesh position={[-1, 0.15, 0]} rotation={[0, 0, Math.PI / 2]}>
-            <boxGeometry args={[0.2, 2.5, 0.2]} />
+        <group ref={craneArmRef} position={[4.5, 8, 4.5]}>
+          <mesh position={[-2.5, 0.25, 0]} rotation={[0, 0, Math.PI / 2]}>
+            <boxGeometry args={[0.35, 6, 0.35]} />
             <meshStandardMaterial color="#fbbf24" />
           </mesh>
-          <mesh ref={hookRef} position={[-2, 2.5, 0]}>
-            <boxGeometry args={[0.15, 0.5, 0.15]} />
+          <mesh ref={hookRef} position={[-5, 5, 0]}>
+            <boxGeometry args={[0.25, 1.0, 0.25]} />
             <meshStandardMaterial color="#94a3b8" />
           </mesh>
-          <mesh position={[-2, 2.8, 0]}>
-            <cylinderGeometry args={[0.02, 0.02, 0.8, 8]} />
+          <mesh position={[-5, 5.8, 0]}>
+            <cylinderGeometry args={[0.04, 0.04, 1.5, 8]} />
             <meshStandardMaterial color="#64748b" />
           </mesh>
         </group>
@@ -285,15 +285,15 @@ export function ConstructionRenderer({
       {/* Scaffolding poles */}
       {scaffoldCorners.map(([x, z], i) => (
         <mesh key={`scaff${i}`} ref={scaffoldRefs[i]} position={[x, h / 2, z]}>
-          <cylinderGeometry args={[0.08, 0.08, h, 8]} />
+          <cylinderGeometry args={[0.15, 0.15, h, 8]} />
           <meshStandardMaterial color="#64748b" transparent />
         </mesh>
       ))}
 
       {/* Walls (rising) */}
       <mesh ref={wallRef} castShadow receiveShadow position={[0, 0, 0]}>
-        <boxGeometry args={[3.6, h, 3.6]} />
-        <meshStandardMaterial ref={wallMatRef} color="#0b1220" />
+        <boxGeometry args={[10, h, 10]} />
+        <meshStandardMaterial ref={wallMatRef} color="#8a7e70" />
       </mesh>
 
       {/* Windows */}
@@ -303,14 +303,14 @@ export function ConstructionRenderer({
 
       {/* Zone accent */}
       {plot.zone === 'RESIDENTIAL' && (
-        <mesh ref={accentRef} position={[0, h + 0.4, 0]}>
-          <coneGeometry args={[2.2, 1.2, 4]} />
+        <mesh ref={accentRef} position={[0, h + 1.0, 0]}>
+          <coneGeometry args={[5.5, 3.0, 4]} />
           <meshStandardMaterial ref={accentMatRef} color={zoneColor} transparent opacity={0.3} />
         </mesh>
       )}
       {plot.zone === 'COMMERCIAL' && (
-        <mesh ref={accentRef} position={[0, h * 0.65, 1.8]}>
-          <boxGeometry args={[2.2, 0.5, 0.15]} />
+        <mesh ref={accentRef} position={[0, h * 0.65, 5.2]}>
+          <boxGeometry args={[6, 1.2, 0.3]} />
           <meshStandardMaterial
             ref={accentMatRef} color={zoneColor} transparent opacity={0.3}
             emissive={zoneColor} emissiveIntensity={0.15}
@@ -318,20 +318,20 @@ export function ConstructionRenderer({
         </mesh>
       )}
       {plot.zone === 'CIVIC' && (
-        <mesh ref={accentRef} position={[0, h + 0.3, 0]}>
-          <sphereGeometry args={[1.0, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2]} />
+        <mesh ref={accentRef} position={[0, h + 0.5, 0]}>
+          <sphereGeometry args={[2.5, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2]} />
           <meshStandardMaterial ref={accentMatRef} color={zoneColor} transparent opacity={0.25} />
         </mesh>
       )}
       {plot.zone === 'INDUSTRIAL' && (
-        <mesh ref={accentRef} position={[1.4, h * 0.5, -0.6]}>
-          <cylinderGeometry args={[0.32, 0.4, h * 0.8, 10]} />
+        <mesh ref={accentRef} position={[3.5, h * 0.5, -1.5]}>
+          <cylinderGeometry args={[0.8, 1.0, h * 0.8, 10]} />
           <meshStandardMaterial ref={accentMatRef} color="#64748b" transparent opacity={0.4} />
         </mesh>
       )}
       {plot.zone === 'ENTERTAINMENT' && (
-        <mesh ref={accentRef} position={[0, h + 0.3, 0]}>
-          <torusGeometry args={[1.4, 0.18, 12, 28]} />
+        <mesh ref={accentRef} position={[0, h + 0.5, 0]}>
+          <torusGeometry args={[3.5, 0.35, 12, 28]} />
           <meshStandardMaterial
             ref={accentMatRef} color={zoneColor} transparent opacity={0.3}
             emissive={zoneColor} emissiveIntensity={0.15}
@@ -340,13 +340,13 @@ export function ConstructionRenderer({
       )}
 
       {/* Progress bar */}
-      <group ref={progressBarGroupRef} position={[0, h + 0.8, 0]}>
+      <group ref={progressBarGroupRef} position={[0, h + 1.5, 0]}>
         <mesh>
-          <planeGeometry args={[3.5, 0.25]} />
+          <planeGeometry args={[8, 0.5]} />
           <meshBasicMaterial color="#1e293b" transparent opacity={0.9} />
         </mesh>
         <mesh ref={progressBarFillRef} position={[0, 0, 0.01]}>
-          <planeGeometry args={[3.2, 0.18]} />
+          <planeGeometry args={[7.5, 0.35]} />
           <meshBasicMaterial color="#fbbf24" />
         </mesh>
       </group>

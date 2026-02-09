@@ -90,7 +90,8 @@ export function getTargetProgress(plot: Plot): number {
 export function buildHeight(plot: Plot) {
   const api = clamp(plot.apiCallsUsed || 0, 0, 20);
   const arena = clamp(plot.buildCostArena || 0, 0, 500);
-  return 1.2 + api * 0.08 + Math.log10(1 + arena) * 0.9;
+  // Base 10.0 — buildings are 4-12x agent height (~2.2 units) for real metaverse scale
+  return 10.0 + api * 0.6 + Math.log10(1 + arena) * 3.0;
 }
 
 export function getConstructionStage(plot: Plot): number {
@@ -106,7 +107,12 @@ export function getConstructionStage(plot: Plot): number {
 export function getColors(plot: Plot, selected: boolean) {
   const tint = new THREE.Color(ZONE_COLORS[plot.zone]);
   const main = tint.clone().multiplyScalar(0.55);
-  const accent = tint.clone().multiplyScalar(0.9);
+  // Accent should be vivid — it's now the primary zone identifier on roofs
+  // Note: THREE.Color has no clampScalar — clamp components manually
+  const accent = tint.clone().multiplyScalar(1.1);
+  accent.r = Math.min(1, Math.max(0, accent.r));
+  accent.g = Math.min(1, Math.max(0, accent.g));
+  accent.b = Math.min(1, Math.max(0, accent.b));
   const emissive = selected ? accent.clone().multiplyScalar(0.28) : undefined;
   return { tint, main, accent, emissive };
 }
@@ -123,8 +129,8 @@ export function BuildingWindows({
   plotId: string;
 }) {
   const windowColor = ZONE_COLORS[zone];
-  const rows = Math.max(1, Math.floor(height / 1.2));
-  const cols = 2;
+  const rows = Math.max(2, Math.floor(height / 2.0));
+  const cols = 4;
 
   const litPattern = useMemo(() => {
     const rng = seededRandom(plotId, ':windows');
@@ -142,13 +148,13 @@ export function BuildingWindows({
     <group>
       {Array.from({ length: rows }).map((_, row) =>
         Array.from({ length: cols }).map((_, col) => {
-          const x = (col - 0.5) * 0.8;
-          const y = 0.8 + row * 1.0;
-          const z = 1.45;
+          const x = (col - 1.5) * 1.2;
+          const y = 1.5 + row * 2.0;
+          const z = 4.5;
           const isLit = litPattern[row]?.[col] ?? false;
           return (
             <mesh key={`${row}-${col}`} position={[x, y, z]}>
-              <planeGeometry args={[0.4, 0.5]} />
+              <planeGeometry args={[0.7, 0.9]} />
               <meshStandardMaterial
                 color={isLit ? windowColor : '#1e293b'}
                 emissive={isLit ? windowColor : '#000'}

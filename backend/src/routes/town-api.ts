@@ -94,6 +94,19 @@ router.get('/towns', async (_req: Request, res: Response): Promise<void> => {
   }
 });
 
+// Lightweight world overview — minimal town data for the multi-town world renderer
+router.get('/world/towns', async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const towns = await prisma.town.findMany({
+      select: { id: true, name: true, level: true, status: true, totalPlots: true },
+      orderBy: { id: 'asc' },
+    });
+    res.json(towns);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Get specific town by ID
 router.get('/town/:id', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -884,6 +897,33 @@ router.get('/agent/:id/actions', async (req: Request, res: Response): Promise<vo
 });
 
 // ============================================
+// Agent Scratchpad (memory/journal)
+// ============================================
+
+router.get('/agent/:id/scratchpad', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const agent = await prisma.arenaAgent.findUnique({
+      where: { id: req.params.id },
+      select: {
+        scratchpad: true,
+        lastActionType: true,
+        lastReasoning: true,
+        lastNarrative: true,
+        lastTargetPlot: true,
+        lastTickAt: true,
+      },
+    });
+    if (!agent) {
+      res.status(404).json({ error: 'Agent not found' });
+      return;
+    }
+    res.json(agent);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
 // Yield Distribution (admin/cron)
 // ============================================
 
@@ -1013,6 +1053,139 @@ ${result.sprites.map(s => `
     
     res.setHeader('Content-Type', 'text/html');
     res.send(html);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// Agent Spawning (user onboarding)
+// ============================================
+
+router.post('/agents/spawn', async (req: Request, res: Response) => {
+  try {
+    const { name, personality, walletAddress } = req.body;
+    
+    if (!name || typeof name !== 'string' || name.trim().length < 2 || name.trim().length > 20) {
+      return res.status(400).json({ error: 'Name must be 2-20 characters' });
+    }
+    if (!walletAddress || typeof walletAddress !== 'string' || !walletAddress.startsWith('0x')) {
+      return res.status(400).json({ error: 'Valid wallet address required' });
+    }
+    
+    // Check if wallet already has an agent
+    const existing = await prisma.arenaAgent.findFirst({ where: { walletAddress } });
+    if (existing) {
+      return res.status(409).json({ error: 'Wallet already has an agent', agent: { id: existing.id, name: existing.name } });
+    }
+    
+    // Check if name is taken
+    const nameTaken = await prisma.arenaAgent.findFirst({ where: { name: name.trim() } });
+    if (nameTaken) {
+      return res.status(409).json({ error: 'Agent name already taken' });
+    }
+    
+    const validPersonalities = ['SHARK', 'DEGEN', 'CHAMELEON', 'GRINDER', 'VISIONARY'];
+    const archetype = validPersonalities.includes(personality?.toUpperCase()) ? personality.toUpperCase() : 'CHAMELEON';
+    
+    // Find a building town to assign to
+    const buildingTown = await prisma.town.findFirst({ where: { status: 'BUILDING' }, orderBy: { level: 'asc' } });
+    
+    const agent = await prisma.arenaAgent.create({
+      data: {
+        name: name.trim(),
+        archetype: archetype as any,
+        modelId: 'deepseek-v3',
+        walletAddress,
+        apiKey: `spawn_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+        reserveBalance: 100,
+        bankroll: 50,
+        health: 100,
+        isActive: true,
+        spawnedByUser: true,
+        systemPrompt: '',
+        riskTolerance: archetype === 'DEGEN' ? 0.8 : archetype === 'SHARK' ? 0.3 : 0.5,
+        maxWagerPercent: 0.15,
+      },
+    });
+    
+    console.log(`[Spawn] New agent created: ${agent.name} (${archetype}) by wallet ${walletAddress}`);
+    res.json({ agent, assignedTown: buildingTown?.name || null });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get('/agents/me', async (req: Request, res: Response) => {
+  try {
+    const wallet = req.query.wallet as string;
+    if (!wallet) return res.status(400).json({ error: 'wallet query param required' });
+    
+    const agent = await prisma.arenaAgent.findFirst({
+      where: { walletAddress: wallet },
+      include: {
+        ownedPlots: { select: { id: true, plotIndex: true, zone: true, status: true, buildingType: true, qualityScore: true, totalInvested: true } },
+      },
+    });
+    if (!agent) return res.status(404).json({ error: 'No agent found for this wallet' });
+    
+    res.json({ agent });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// World Events API
+// ============================================
+
+import { worldEventService } from '../services/worldEventService';
+
+router.get('/events/active', async (_req: Request, res: Response) => {
+  try {
+    const events = worldEventService.getActiveEvents();
+    res.json({ events, multipliers: {
+      cost: worldEventService.getCostMultiplier(),
+      yield: worldEventService.getYieldMultiplier(),
+      upkeep: worldEventService.getUpkeepMultiplier(),
+    }});
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// Leaderboard
+// ============================================
+
+router.get('/town-leaderboard', async (_req: Request, res: Response) => {
+  try {
+    const agents = await prisma.arenaAgent.findMany({
+      where: { isActive: true },
+      select: {
+        id: true, name: true, archetype: true, bankroll: true, reserveBalance: true,
+        health: true, wins: true, losses: true, spawnedByUser: true, walletAddress: true,
+        ownedPlots: { where: { status: 'COMPLETE' }, select: { qualityScore: true, totalInvested: true } },
+      },
+      orderBy: { bankroll: 'desc' },
+    });
+    
+    const leaderboard = agents.map((a, i) => ({
+      rank: i + 1,
+      name: a.name,
+      archetype: a.archetype,
+      bankroll: a.bankroll,
+      reserve: a.reserveBalance,
+      health: a.health,
+      buildings: a.ownedPlots.length,
+      avgQuality: a.ownedPlots.length > 0 
+        ? Math.round(a.ownedPlots.reduce((sum, p) => sum + (p.qualityScore || 5), 0) / a.ownedPlots.length * 10) / 10
+        : null,
+      totalInvested: a.ownedPlots.reduce((sum, p) => sum + (p.totalInvested || 0), 0),
+      isUser: a.spawnedByUser,
+    }));
+    
+    res.json({ leaderboard });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

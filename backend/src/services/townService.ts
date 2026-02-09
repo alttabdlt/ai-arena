@@ -17,6 +17,8 @@ import {
 } from '@prisma/client';
 import { prisma } from '../config/database';
 import { degenStakingService } from './degenStakingService';
+import { offchainAmmService } from './offchainAmmService';
+import { worldEventService } from './worldEventService';
 
 // ============================================
 // Constants
@@ -389,7 +391,11 @@ export class TownService {
       if (!plot) throw new Error(`Plot ${plotIndex} does not exist`);
       if (plot.status !== 'EMPTY') throw new Error(`Plot ${plotIndex} is already ${plot.status.toLowerCase()}`);
 
-      const claimCost = BASE_PLOT_COST + (town.level - 1) * COST_PER_LEVEL;
+      // Fix 6: Scarcity multiplier on claim cost
+      const claimedCount = await tx.plot.count({ where: { townId, status: { not: 'EMPTY' } } });
+      const pctTaken = town.totalPlots > 0 ? claimedCount / town.totalPlots : 0;
+      const scarcityMultiplier = 1 + Math.floor(pctTaken * 3);
+      const claimCost = Math.round((BASE_PLOT_COST + (town.level - 1) * COST_PER_LEVEL) * scarcityMultiplier * worldEventService.getCostMultiplier());
 
       // Check agent balance
       const agent = await tx.arenaAgent.findUniqueOrThrow({ where: { id: agentId } });
@@ -402,6 +408,14 @@ export class TownService {
         where: { id: agentId },
         data: { bankroll: { decrement: claimCost } },
       });
+
+      // Fix 3: Recycle cost into AMM pool
+      try {
+        const pool = await tx.economyPool.findFirst({ orderBy: { createdAt: 'desc' } });
+        if (pool) {
+          await tx.economyPool.update({ where: { id: pool.id }, data: { arenaBalance: { increment: claimCost } } });
+        }
+      } catch {}
 
       // Update plot
       const updated = await tx.plot.update({
@@ -683,7 +697,7 @@ export class TownService {
       // Open-ended: any building type is allowed. Cost based on zone.
       const legacyReqs = BUILDING_REQUIREMENTS[bt];
       const baseCost = legacyReqs?.baseCost || ZONE_BASE_COST[plot.zone] || 15;
-      const buildCost = baseCost * plot.town.level;
+      const buildCost = Math.round(baseCost * plot.town.level * worldEventService.getCostMultiplier());
       const agent = await tx.arenaAgent.findUniqueOrThrow({ where: { id: agentId } });
       if (agent.bankroll < buildCost) {
         throw new Error(`Not enough $ARENA. Building ${bt} costs ${buildCost}, have ${agent.bankroll}`);
@@ -694,6 +708,14 @@ export class TownService {
         where: { id: agentId },
         data: { bankroll: { decrement: buildCost } },
       });
+
+      // Fix 3: Recycle build cost into AMM pool
+      try {
+        const pool = await tx.economyPool.findFirst({ orderBy: { createdAt: 'desc' } });
+        if (pool) {
+          await tx.economyPool.update({ where: { id: pool.id }, data: { arenaBalance: { increment: buildCost } } });
+        }
+      } catch {}
 
       // Update plot
       const updated = await tx.plot.update({
@@ -948,6 +970,16 @@ export class TownService {
     const MAX_MINING_REWARD = 50;
     arenaEarned = Math.max(0, Math.min(MAX_MINING_REWARD, arenaEarned));
 
+    // Fix 4: Halving schedule based on total mined
+    const totalMinedAgg = await prisma.workLog.aggregate({
+      where: { workType: 'MINE', arenaEarned: { gt: 0 } },
+      _sum: { arenaEarned: true },
+    });
+    const totalMined = totalMinedAgg._sum.arenaEarned || 0;
+    if (totalMined >= 20000) arenaEarned = Math.max(1, Math.floor(arenaEarned / 8));
+    else if (totalMined >= 10000) arenaEarned = Math.max(1, Math.floor(arenaEarned / 4));
+    else if (totalMined >= 5000) arenaEarned = Math.max(1, Math.floor(arenaEarned / 2));
+
     // Rate limit rewarded mining (decision logs also use workType=MINE with arenaEarned=0)
     if (arenaEarned > 0) {
       const recentRewardedMine = await prisma.workLog.findFirst({
@@ -962,6 +994,22 @@ export class TownService {
     }
 
     return prisma.$transaction(async (tx) => {
+      // Mining extracts $ARENA from the AMM pool — NOT from thin air
+      // This makes the economy zero-sum: mining withdraws, building deposits
+      const POOL_FLOOR = 1000; // never drain pool below this
+      if (arenaEarned > 0) {
+        const pool = await tx.economyPool.findFirst({ orderBy: { createdAt: 'desc' } });
+        if (pool && pool.arenaBalance - arenaEarned >= POOL_FLOOR) {
+          await tx.economyPool.update({
+            where: { id: pool.id },
+            data: { arenaBalance: { decrement: arenaEarned } },
+          });
+        } else {
+          // Pool too low — mining yields nothing
+          arenaEarned = 0;
+        }
+      }
+
       const workLog = await tx.workLog.create({
         data: {
           agentId,
@@ -978,14 +1026,22 @@ export class TownService {
         },
       });
 
-      // Credit agent
-      await tx.arenaAgent.update({
-        where: { id: agentId },
-        data: {
-          bankroll: { increment: arenaEarned },
-          apiCostCents: { increment: apiCostCents },
-        },
-      });
+      // Credit agent (only if pool had enough)
+      if (arenaEarned > 0) {
+        await tx.arenaAgent.update({
+          where: { id: agentId },
+          data: {
+            bankroll: { increment: arenaEarned },
+            apiCostCents: { increment: apiCostCents },
+          },
+        });
+      } else {
+        // Still track API cost even if no reward
+        await tx.arenaAgent.update({
+          where: { id: agentId },
+          data: { apiCostCents: { increment: apiCostCents } },
+        });
+      }
 
       // Mining contributes 0 apiCalls to yield weight (it already earns $ARENA directly)
       await this.upsertContribution(tx, agentId, townId, 0, 0, 0);
@@ -1005,13 +1061,22 @@ export class TownService {
         throw new Error('Town is not complete — no yield to distribute');
       }
 
+      // Fix 9: Yield comes from town treasury (totalInvested)
+      // Apply event multipliers (BOOM = 2x, FESTIVAL = 3x for entertainment)
+      const eventMult = worldEventService.getYieldMultiplier();
+      const baseYield = Math.min(town.yieldPerTick, Math.floor(town.totalInvested * 0.01));
+      const maxYield = Math.floor(baseYield * eventMult);
+      if (maxYield <= 0) {
+        return { distributed: 0, recipients: 0 };
+      }
+
       const contributions = await tx.townContribution.findMany({
         where: { townId, yieldShare: { gt: 0 } },
       });
 
       let totalDistributed = 0;
       for (const c of contributions) {
-        const amount = Math.floor(town.yieldPerTick * c.yieldShare);
+        const amount = Math.floor(maxYield * c.yieldShare);
         if (amount > 0) {
           await tx.arenaAgent.update({
             where: { id: c.agentId },
@@ -1027,7 +1092,10 @@ export class TownService {
 
       await tx.town.update({
         where: { id: townId },
-        data: { totalYieldPaid: { increment: totalDistributed } },
+        data: {
+          totalYieldPaid: { increment: totalDistributed },
+          totalInvested: { decrement: totalDistributed }, // Fix 9: deduct from treasury
+        },
       });
 
       return { distributed: totalDistributed, recipients: contributions.length };
@@ -1051,6 +1119,19 @@ export class TownService {
     }
 
     return result;
+  }
+
+  // Fix 7: Agent-to-agent transfer
+  async transferArena(fromId: string, toId: string, amount: number): Promise<{ from: string; to: string; amount: number }> {
+    if (amount <= 0) throw new Error('Transfer amount must be > 0');
+    if (fromId === toId) throw new Error('Cannot transfer to yourself');
+    return prisma.$transaction(async (tx) => {
+      const from = await tx.arenaAgent.findUniqueOrThrow({ where: { id: fromId } });
+      if (from.bankroll < amount) throw new Error(`Not enough $ARENA. Have ${from.bankroll}, need ${amount}`);
+      await tx.arenaAgent.update({ where: { id: fromId }, data: { bankroll: { decrement: amount } } });
+      await tx.arenaAgent.update({ where: { id: toId }, data: { bankroll: { increment: amount } } });
+      return { from: fromId, to: toId, amount };
+    });
   }
 
   async getAgentEconomy(agentId: string) {

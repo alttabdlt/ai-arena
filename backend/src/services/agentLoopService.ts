@@ -4,7 +4,7 @@
  * Each agent runs a decision loop:
  *   1. Observe world state (town, plots, balance, other agents)
  *   2. Reason about what to do (LLM inference)
- *   3. Execute chosen action (claim, build, mine, play)
+ *   3. Execute chosen action (claim, build, work, play)
  *   4. Log everything (proof of inference + narrative events)
  *
  * The "work" IS the inference. Every LLM call is tracked as proof of inference.
@@ -18,6 +18,7 @@ import { offchainAmmService } from './offchainAmmService';
 import { x402SkillService, estimateSkillPriceArena, type BuySkillRequest, type X402SkillName } from './x402SkillService';
 import { socialGraphService } from './socialGraphService';
 import { agentGoalService, type AgentGoalView } from './agentGoalService';
+import { worldEventService } from './worldEventService';
 
 function safeTrim(s: unknown, maxLen: number): string {
   return String(s ?? '')
@@ -119,7 +120,7 @@ const DEFAULT_DESIGN_STEPS = SUGGESTED_STEPS;
 // ============================================
 
 export interface AgentAction {
-  type: 'buy_arena' | 'sell_arena' | 'claim_plot' | 'start_build' | 'do_work' | 'complete_build' | 'mine' | 'play_arena' | 'buy_skill' | 'rest';
+  type: 'buy_arena' | 'sell_arena' | 'claim_plot' | 'start_build' | 'do_work' | 'complete_build' | 'mine' | 'play_arena' | 'buy_skill' | 'transfer_arena' | 'rest'; // mine kept for backward compat but removed from prompt
   reasoning: string;
   details: Record<string, any>;
 }
@@ -210,33 +211,92 @@ export class AgentLoopService {
 
       if (agents.length === 0) return [];
 
-      const results: AgentTickResult[] = [];
+      // === WORLD EVENTS: tick the event system ===
+      try {
+        const newEvent = await worldEventService.tick(this.currentTick);
+        if (newEvent) {
+          // Log event to all active towns
+          const eventTowns = newEvent.targetTownId
+            ? [{ id: newEvent.targetTownId }]
+            : await prisma.town.findMany({ where: { status: { in: ['BUILDING', 'COMPLETE'] } }, select: { id: true } });
+          for (const t of eventTowns) {
+            try {
+              await townService.logEvent(t.id, 'CUSTOM' as any, `${newEvent.emoji} ${newEvent.name}`, newEvent.description, undefined, { kind: 'WORLD_EVENT', eventType: newEvent.type, eventId: newEvent.id });
+            } catch {}
+          }
+        }
+      } catch (e: any) {
+        console.error(`[AgentLoop] World event tick failed: ${e.message}`);
+      }
+
+      // === UPKEEP: deduct survival cost from all agents ===
+      const upkeepCost = Math.max(1, Math.round(1 * worldEventService.getUpkeepMultiplier()));
       for (const agent of agents) {
         try {
-          const result = await this.processAgentTick(agent);
-          results.push(result);
-          // Broadcast to listeners (e.g. Telegram)
-          if (this.onTickResult) {
-            try { this.onTickResult(result); } catch {}
+          if (agent.bankroll >= upkeepCost) {
+            await prisma.arenaAgent.update({ where: { id: agent.id }, data: { bankroll: { decrement: upkeepCost } } });
+            // Upkeep goes to agent's town treasury (if assigned)
+            const agentTown = await prisma.town.findFirst({ where: { plots: { some: { ownerId: agent.id } } } });
+            if (agentTown) {
+              await prisma.town.update({ where: { id: agentTown.id }, data: { totalInvested: { increment: upkeepCost } } });
+            }
+          } else {
+            // Can't pay — lose health
+            const currentHealth = (agent as any).health ?? 100;
+            const newHealth = Math.max(0, currentHealth - 5);
+            await prisma.arenaAgent.update({ where: { id: agent.id }, data: { health: newHealth } as any });
+            console.log(`[AgentLoop] ${agent.name} can't pay upkeep (${agent.bankroll}/${upkeepCost}) — health: ${currentHealth} → ${newHealth}`);
           }
-          // Update last active
-          await prisma.arenaAgent.update({
-            where: { id: agent.id },
-            data: { lastActiveAt: new Date() },
-          });
-        } catch (err: any) {
-          console.error(`[AgentLoop] Error for ${agent.name}:`, err.message);
-          results.push({
-            agentId: agent.id,
-            agentName: agent.name,
-            archetype: agent.archetype,
-            action: { type: 'rest', reasoning: 'Error occurred', details: {} },
-            success: false,
-            narrative: `${agent.name} encountered an error and is resting.`,
-            cost: null,
-            error: err.message,
-          });
+        } catch (e: any) {
+          console.error(`[AgentLoop] Upkeep failed for ${agent.name}: ${e.message}`);
         }
+      }
+
+      // === YIELD: distribute for completed towns every 5th tick ===
+      if (this.currentTick % 5 === 0) {
+        try {
+          const allTowns = await prisma.town.findMany({ where: { status: 'COMPLETE' } });
+          for (const t of allTowns) {
+            try {
+              // Apply yield multiplier from events
+              const res = await townService.distributeYield(t.id);
+              if (res.distributed > 0) console.log(`[AgentLoop] Yield distributed for ${t.name}: ${res.distributed} $ARENA to ${res.recipients} recipients`);
+            } catch (e: any) {
+              console.error(`[AgentLoop] Yield distribution failed for ${t.name}: ${e.message}`);
+            }
+          }
+        } catch {}
+      }
+
+      // === AGENT TICKS: process all agents in parallel ===
+      const tickResults = await Promise.all(
+        agents.map(agent =>
+          this.processAgentTick(agent)
+            .catch(err => ({
+              agentId: agent.id,
+              agentName: agent.name,
+              archetype: agent.archetype,
+              action: { type: 'rest' as const, reasoning: `Error: ${err.message}`, details: {} },
+              success: false,
+              narrative: `${agent.name} encountered an error: ${err.message}`,
+              cost: { model: '', inputTokens: 0, outputTokens: 0, totalCost: 0 } as AICost,
+              error: err.message,
+            }))
+        )
+      );
+
+      const results: AgentTickResult[] = [];
+      for (const result of tickResults) {
+        results.push(result);
+        // Broadcast to listeners (e.g. Telegram)
+        if (this.onTickResult) {
+          try { this.onTickResult(result); } catch {}
+        }
+        // Update last active
+        await prisma.arenaAgent.update({
+          where: { id: result.agentId },
+          data: { lastActiveAt: new Date() },
+        });
       }
 
       return results;
@@ -256,6 +316,23 @@ export class AgentLoopService {
   // ============================================
 
   private async processAgentTick(agent: ArenaAgent): Promise<AgentTickResult> {
+    // Re-fetch agent to get post-upkeep state
+    const freshAgentState = await prisma.arenaAgent.findUnique({ where: { id: agent.id } });
+    if (freshAgentState) agent = freshAgentState;
+
+    // Health gate: dead agents can only rest
+    if ((agent as any).health <= 0) {
+      return {
+        agentId: agent.id,
+        agentName: agent.name,
+        archetype: agent.archetype,
+        action: { type: 'rest', reasoning: 'Health is 0 — incapacitated.', details: {} },
+        success: true,
+        narrative: `💀 ${agent.name} is incapacitated (0 health). Cannot act.`,
+        cost: { model: '', inputTokens: 0, outputTokens: 0, totalCost: 0 } as AICost,
+      };
+    }
+
     // 1. Observe the world
     const observation = await this.observe(agent);
 
@@ -263,32 +340,106 @@ export class AgentLoopService {
     const { action, cost } = await this.decide(agent, observation);
 
     // 3. Execute the action
-    const { success, narrative, error } = await this.execute(agent, action, observation);
+    const { success, narrative, error, actualAction } = await this.execute(agent, action, observation);
+
+    // Use the actual action (post-redirect) for logging/memory, but keep original for cost tracking
+    const effectiveAction = actualAction || action;
 
     // 4. Log the event
     if (observation.town) {
-      const isSkill = action.type === 'buy_skill';
-      const skillName = isSkill ? String(action.details.skill || '').toUpperCase().trim() : '';
+      const isSkill = effectiveAction.type === 'buy_skill';
+      const skillName = isSkill ? String(effectiveAction.details.skill || '').toUpperCase().trim() : '';
       const title = isSkill && skillName
         ? `💳 ${agent.name} bought ${skillName}`
-        : `${this.actionEmoji(action.type)} ${agent.name}`;
+        : `${this.actionEmoji(effectiveAction.type)} ${agent.name}`;
 
       await townService.logEvent(
         observation.town.id,
-        this.actionToEventType(action.type),
+        this.actionToEventType(effectiveAction.type),
         title,
         narrative,
         agent.id,
         {
-          action: action.type,
-          reasoning: action.reasoning,
+          action: effectiveAction.type,
+          reasoning: effectiveAction.reasoning,
           success,
           ...(isSkill ? { kind: 'X402_SKILL', skill: skillName } : {}),
         },
       );
     }
 
-    return { agentId: agent.id, agentName: agent.name, archetype: agent.archetype, action, success, narrative, cost, error };
+    // 5. Update agent memory (scratchpad) and last-action fields
+    await this.updateAgentMemory(agent, effectiveAction, observation, success, narrative);
+
+    return { agentId: agent.id, agentName: agent.name, archetype: agent.archetype, action: effectiveAction, success, narrative, cost, error };
+  }
+
+  // ============================================
+  // Agent Memory (Scratchpad)
+  // ============================================
+
+  private async updateAgentMemory(
+    agent: ArenaAgent,
+    action: AgentAction,
+    _obs: WorldObservation,
+    success: boolean,
+    narrative: string,
+  ) {
+    void _obs; // reserved for future memory features
+    // Refresh balance after execution
+    const updatedAgent = await prisma.arenaAgent.findUnique({ where: { id: agent.id }, select: { bankroll: true, reserveBalance: true } });
+    const bal = updatedAgent?.bankroll ?? agent.bankroll;
+    const reserve = updatedAgent?.reserveBalance ?? agent.reserveBalance;
+
+    // Build scratchpad entry
+    const tick = this.currentTick;
+    const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+    const emoji = this.actionEmoji(action.type);
+    const outcome = success ? '✅' : '❌';
+    const reasonShort = action.reasoning.replace(/\[AUTO\]\s*/g, '').replace(/\s+/g, ' ').trim().slice(0, 120);
+
+    // Extract calculations if present
+    const calc = action.details?.calculations;
+    const calcLine = calc ? `  CALC: ${JSON.stringify(calc).slice(0, 150)}` : '';
+
+    // Build target plot info
+    const plotInfo = action.details?.plotIndex != null
+      ? ` Plot#${action.details.plotIndex}`
+      : action.details?.plotId ? ` plot:${String(action.details.plotId).slice(0, 8)}` : '';
+    const buildInfo = action.details?.buildingType ? ` "${action.details.buildingType}"` : '';
+    const amountInfo = action.details?.amountIn != null ? ` amt:${action.details.amountIn}` : '';
+
+    const entry = `[T${tick} ${time}] ${emoji} ${action.type}${plotInfo}${buildInfo}${amountInfo} ${outcome} | BAL: ${bal} $ARENA + ${reserve} reserve\n  WHY: ${reasonShort}${calcLine ? '\n' + calcLine : ''}`;
+
+    // Append to scratchpad, keeping last 20 entries
+    const existingPad = agent.scratchpad || '';
+    const lines = existingPad.split('\n[T').filter(l => l.trim());
+    // Each entry starts with [T so the first one may not have the prefix after split
+    const entries = lines.length > 0
+      ? lines.map((l, i) => i === 0 && !l.startsWith('[T') ? '[T' + l : (l.startsWith('[T') ? l : '[T' + l))
+      : [];
+    entries.push(entry);
+    const trimmed = entries.slice(-20);
+    const newScratchpad = trimmed.join('\n');
+
+    // Determine target plot index for frontend 3D navigation
+    let targetPlot: number | null = null;
+    if (action.details?.plotIndex != null) {
+      targetPlot = Number(action.details.plotIndex);
+      if (!Number.isFinite(targetPlot)) targetPlot = null;
+    }
+
+    await prisma.arenaAgent.update({
+      where: { id: agent.id },
+      data: {
+        scratchpad: newScratchpad,
+        lastActionType: action.type,
+        lastReasoning: action.reasoning.slice(0, 500),
+        lastNarrative: narrative.slice(0, 500),
+        lastTargetPlot: targetPlot,
+        lastTickAt: new Date(),
+      },
+    });
   }
 
   // ============================================
@@ -391,66 +542,87 @@ export class AgentLoopService {
 ${personality}
 ${agent.systemPrompt ? `\nYour creator's instructions: ${agent.systemPrompt}` : ''}
 
-You are participating in a town-building economy.
+You are participating in a town-building economy. You have PERSISTENT MEMORY — your journal below contains your past decisions and their outcomes. Use it to learn, plan ahead, and avoid repeating mistakes.
 
-	CURRENCIES:
-	- $ARENA: "fuel" token used for claiming plots, starting builds, and arena wagers.
-	- Reserve: stable cash. You can swap Reserve <-> $ARENA via the in-town AMM.
-	
-	TRADING RULES:
-	- buy_arena / sell_arena are SUPPORT actions to fund in-town moves, not the main gameplay loop.
-	- Auto-topup exists: if you choose a spend action (claim_plot/start_build/buy_skill) and are short, the system will buy fuel automatically.
-	- Therefore you should RARELY choose buy_arena directly. Prefer the actual in-town action you want to do.
-	- Only trade if you have a specific near-term use-case (e.g. claim/build/wager) or you are explicitly de-risking.
-	- If you trade, you MUST explain why and what you'll do next with the funds (details.why + details.nextAction).
-	- Avoid rapid back-and-forth trades.
+CURRENCIES:
+- $ARENA: "fuel" token used for claiming plots, starting builds, and arena wagers.
+- Reserve: stable cash. You can swap Reserve <-> $ARENA via the in-town AMM.
 
-WAYS TO EARN (high level):
+TRADING RULES:
+- buy_arena / sell_arena are SUPPORT actions to fund in-town moves, not the main gameplay loop.
+- Only trade if you have a specific near-term use-case (e.g. claim/build/wager) or you are explicitly de-risking.
+- If you trade, you MUST explain why and what you'll do next with the funds (details.why + details.nextAction).
+- Avoid rapid back-and-forth trades.
+- If you need $ARENA urgently, sell reserve via buy_arena.
+
+⚠️ SURVIVAL:
+- You pay UPKEEP each tick (currently ${worldEventService.getUpkeepMultiplier()} $ARENA/tick). If you can't pay, you lose 5 health.
+- At 0 health, you become HOMELESS — your buildings stop yielding and you can barely function.
+- There is NO mining. Earn through: working on buildings (1 $ARENA/step), building yields, selling reserve, or receiving transfers.
+
+WAYS TO EARN:
 - Town-building yield: contributing (spending $ARENA + doing inference work) earns a share of the town's yield when it completes.
-- Mining: do a paid compute task (LLM work) to earn some $ARENA immediately.
+- Working (do_work): each build step earns 1 $ARENA — exactly covers basic upkeep. You must BUILD to grow.
 - Arena: wager $ARENA in matches; you may win or lose.
+- Transfers: ask other agents for help (beg, negotiate deals, form alliances).
+
+PRIORITIES (in order):
+1. PAY UPKEEP (automatic) — if you can't, sell reserve or beg.
+2. CLAIM & BUILD — this is the core gameplay. Building yields are how you grow.
+3. WORK on buildings — earns 1 $ARENA/step, keeps you alive.
+4. TRADE — only to fund building or survive.
+5. ARENA — risky entertainment, not a primary income source.
+6. REST — last resort only when nothing else is viable.
+
+🌍 ACTIVE WORLD EVENTS:
+${worldEventService.getPromptText()}
 
 You can build ANYTHING — there is no fixed list of building types. But if you want examples, here are common "modules":
 HOUSE, APARTMENT, SHOP, MARKET, TAVERN, WORKSHOP, FARM, MINE, LIBRARY, TOWN_HALL, ARENA, THEATER, PARK.
 You may invent new concepts (e.g., "Oracle Spire", "Dragon Hatchery", "Noodle Stand") as long as they fit the zone.
 
-	SKILLS / ACTIONS (choose exactly one each tick):
-	- buy_arena: swap reserve -> $ARENA (details: amountIn, optional minAmountOut, why, nextAction)
-	- sell_arena: swap $ARENA -> reserve (details: amountIn, optional minAmountOut, why, nextAction)
+SKILLS / ACTIONS (choose exactly one each tick):
+- buy_arena: swap reserve -> $ARENA (details: amountIn, optional minAmountOut, why, nextAction)
+- sell_arena: swap $ARENA -> reserve (details: amountIn, optional minAmountOut, why, nextAction)
 - claim_plot: claim an empty plot (details: plotIndex, why)
 - start_build: begin construction on a claimed plot you own (details: plotId or plotIndex, buildingType, why)
 - do_work: progress an under-construction building (details: plotId or plotIndex, stepDescription)
 - complete_build: finish a building if enough work is done (details: plotId or plotIndex)
-- mine: do a paid compute task for immediate $ARENA (details: task)
 - play_arena: wager $ARENA in a match (details: gameType "POKER|RPS", wager)
-- buy_skill: purchase a paid x402 "skill" using $ARENA. Only buy when you have a SPECIFIC pending decision and can explain what you'll do with the result.
+- transfer_arena: send $ARENA to another agent (details: targetAgentName, amount, reason). Use for deals, gifts, alliances.
+- buy_skill: purchase a paid x402 "skill" using $ARENA. Only buy when you have a SPECIFIC pending decision.
   Available skills:
     - MARKET_DEPTH: quote + slippage/impact for a proposed swap
     - BLUEPRINT_INDEX: a short plan/risk checklist for a building in a zone + theme
     - SCOUT_REPORT: partial, uncertain intel about a zone based on recent events
 - rest: only if there's truly nothing useful to do (details: thought)
 
+⚠️ SHOW YOUR WORK — every decision must include calculations:
+- Before spending: "I have X $ARENA. This costs Y. After this I'll have Z left. I need W more for my next planned action."
+- Before trading: "Current price is P. I need N $ARENA for [specific action]. Cost in reserve: N × P × 1.01 (fee) = R."
+- Before claiming/building: "Total project cost: claim(C) + build_start(B) + work_steps(S×cost) = T total. I can/cannot afford this."
+- Reference your journal: "Last tick I did X, this tick I should continue with Y because Z."
+
 RESPOND WITH JSON ONLY:
 {
-  "type": "buy_arena | sell_arena | claim_plot | start_build | do_work | complete_build | mine | play_arena | buy_skill | rest",
-  "reasoning": "<your thinking — be in character, show personality>",
-	  "details": {
-	    // For buy_arena: {"amountIn": <reserve>, "minAmountOut": <arena_out_optional>, "why": "<reason>", "nextAction": "<what you'll do next>"}
-	    // For sell_arena: {"amountIn": <arena>, "minAmountOut": <reserve_out_optional>, "why": "<reason>", "nextAction": "<what you'll do next>"}
-	    // For claim_plot: {"plotIndex": <number>, "why": "<reason>"}
-	    // For start_build: {"plotId": "<id>", "buildingType": "<your creative building concept>", "why": "<reason>"}
-    // For do_work: {"plotId": "<id>", "stepDescription": "<what aspect to design next — be specific>"}
+  "type": "<action>",
+  "reasoning": "<your thinking — be in character, show personality, reference your journal, explain your strategy>",
+  "calculations": {
+    "currentBalance": <your $ARENA>,
+    "actionCost": <estimated cost>,
+    "remainingAfter": <balance after>,
+    "plan": "<what you'll do next 2-3 ticks>"
+  },
+  "details": {
+    // For buy_arena: {"amountIn": <reserve>, "why": "<reason>", "nextAction": "<what you'll do next>"}
+    // For sell_arena: {"amountIn": <arena>, "why": "<reason>", "nextAction": "<what you'll do next>"}
+    // For claim_plot: {"plotIndex": <number>, "why": "<reason>"}
+    // For start_build: {"plotId": "<id>", "buildingType": "<creative building concept>", "why": "<reason>"}
+    // For do_work: {"plotId": "<id>", "stepDescription": "<what to design next>"}
     // For complete_build: {"plotId": "<id>"}
-    // For mine: {"task": "<what computational work to do>"}
     // For play_arena: {"gameType": "POKER|RPS", "wager": <amount>}
-    // For buy_skill: {
-    //   "skill": "MARKET_DEPTH|BLUEPRINT_INDEX|SCOUT_REPORT",
-    //   "question": "<what are you trying to learn?>",
-    //   "whyNow": "<what decision is pending?>",
-    //   "expectedNextAction": "<what action will you likely do next tick?>",
-    //   "ifThen": {"if":"<condition on result>", "then":"<your action>", "else":"<your action>"},
-    //   "params": { ...skill-specific ... }
-    // }
+    // For transfer_arena: {"targetAgentName": "<name>", "amount": <number>, "reason": "<why>"}
+    // For buy_skill: {"skill": "MARKET_DEPTH|BLUEPRINT_INDEX|SCOUT_REPORT", "question": "<what to learn>", "whyNow": "<pending decision>", "expectedNextAction": "<next action>"}
     // For rest: {"thought": "<what you're thinking about>"}
   }
 }`;
@@ -458,9 +630,14 @@ RESPOND WITH JSON ONLY:
     const liveObjective = obs.town ? this.extractLiveObjective(agent.id, obs) : null;
     const worldState = this.formatWorldState(agent, obs, goalView, liveObjective);
 
+    // Inject scratchpad (agent's persistent memory/journal)
+    const scratchpadBlock = agent.scratchpad
+      ? `\n📝 YOUR JOURNAL (your memory from previous ticks — use this to track strategy, learn from outcomes, plan ahead):\n${agent.scratchpad}\n---`
+      : `\n📝 YOUR JOURNAL: (empty — this is your first tick! Observe and plan.)\n---`;
+
     const messages = [
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: worldState },
+      { role: 'user', content: scratchpadBlock + '\n\n' + worldState },
     ];
 
     const spec = smartAiService.getModelSpec(agent.modelId);
@@ -480,7 +657,11 @@ RESPOND WITH JSON ONLY:
       action = {
         type: parsed.type || 'rest',
         reasoning: parsed.reasoning || 'No reasoning provided',
-        details: parsed.details || {},
+        details: {
+          ...(parsed.details || {}),
+          // Preserve calculations in details for logging/display
+          ...(parsed.calculations ? { calculations: parsed.calculations } : {}),
+        },
       };
     } catch {
       action = {
@@ -491,7 +672,7 @@ RESPOND WITH JSON ONLY:
     }
 
     // ── Anti-overtrade: discourage buy/sell unless there is a concrete plan. ──
-    // Note: we also have an automatic "top-up" mechanism later for funding spend actions.
+    // Note: auto-topup is DISABLED — agents manage their own finances.
     const isTradeAction = action.type === 'buy_arena' || action.type === 'sell_arena';
     if (isTradeAction) {
       const lastTradeTick = this.lastTradeTickByAgentId.get(agent.id) ?? -1_000_000;
@@ -933,12 +1114,12 @@ What do you want to do?`;
     agent: ArenaAgent,
     action: AgentAction,
     obs: WorldObservation,
-  ): Promise<{ success: boolean; narrative: string; error?: string }> {
+  ): Promise<{ success: boolean; narrative: string; error?: string; actualAction?: AgentAction }> {
     try {
-      // If the agent is about to spend $ARENA but is short, we may have attached an automatic top-up.
-      // Execute it here so the visible action remains the in-world action (claim/build/etc), not "buy_arena".
+      // Auto-topup DISABLED — agents must manage their own finances
+      // Keeping code for reference but skipping execution
       let autoTopUpNarrative = '';
-      const autoTopUp = (action.details as any)?._autoTopUp;
+      const autoTopUp = false && (action.details as any)?._autoTopUp; // disabled
       if (autoTopUp && obs.economy) {
         const side = String(autoTopUp.side || '').toUpperCase();
         if (side === 'BUY_ARENA') {
@@ -1012,7 +1193,12 @@ What do you want to do?`;
         case 'complete_build':
           return await this.executeCompleteBuild(agent, action, obs);
         case 'mine':
-          return await this.executeMine(agent, action, obs);
+          // Mining removed — redirect to do_work or rest
+          if (obs.myPlots.some((p: any) => p.status === 'UNDER_CONSTRUCTION')) {
+            const workAction: AgentAction = { ...action, type: 'do_work', reasoning: '[REDIRECT] Mining removed. Working on building instead.', details: {} };
+            return { ...(await this.executeDoWork(agent, workAction, obs)), actualAction: workAction };
+          }
+          return { success: true, narrative: `${agent.name} tried to mine but mining no longer exists. 💤 Resting instead.`, actualAction: { ...action, type: 'rest', reasoning: '[REDIRECT] Mining removed', details: {} } };
         case 'play_arena':
           return await this.executePlayArena(agent, action);
         case 'buy_skill':
@@ -1021,6 +1207,8 @@ What do you want to do?`;
             if (autoTopUpNarrative) res.narrative = `${autoTopUpNarrative} ${res.narrative}`;
             return res;
           }
+        case 'transfer_arena':
+          return await this.executeTransferArena(agent, action, obs);
         case 'rest':
           return {
             success: true,
@@ -1030,6 +1218,17 @@ What do you want to do?`;
           return { success: false, narrative: `${agent.name} tried an unknown action: ${action.type}`, error: 'Unknown action' };
       }
     } catch (err: any) {
+      // Fix 8: Burn 1 $ARENA on failed actions (fumble tax)
+      try {
+        const freshAgent = await prisma.arenaAgent.findUnique({ where: { id: agent.id } });
+        if (freshAgent && freshAgent.bankroll > 5) {
+          await prisma.arenaAgent.update({ where: { id: agent.id }, data: { bankroll: { decrement: 1 } } });
+          const pool = await prisma.economyPool.findFirst({ orderBy: { createdAt: 'desc' } });
+          if (pool) {
+            await prisma.economyPool.update({ where: { id: pool.id }, data: { arenaBalance: { increment: 1 } } });
+          }
+        }
+      } catch {}
       return { success: false, narrative: `${agent.name} failed: ${err.message}`, error: err.message };
     }
   }
@@ -1153,48 +1352,198 @@ What do you want to do?`;
     if (!buildingType) throw new Error('No buildingType specified');
     if (!obs.town) throw new Error('No active town');
 
-    // Resolve plotId from plotIndex or find agent's claimed plot
-    let plotId = action.details.plotId;
-    if (!plotId || plotId.length < 10) {
-      // LLM probably gave a plotIndex, not a real plotId
-      const plotIndex = action.details.plotIndex ?? action.details.plotId;
-      if (plotIndex !== undefined) {
-        const plot = obs.town.plots?.find((p: any) => p.plotIndex === Number(plotIndex));
-        if (plot) plotId = plot.id;
+    // --- Affordability check: redirect to mining if agent can't afford ANY build ---
+    const zoneBaseCost: any = { RESIDENTIAL: 10, COMMERCIAL: 20, CIVIC: 35, INDUSTRIAL: 20, ENTERTAINMENT: 25 };
+    const freshAgent = await prisma.arenaAgent.findUniqueOrThrow({ where: { id: agent.id } });
+    const cheapestBuildCost = Math.min(...Object.values(zoneBaseCost).map((c: any) => c * obs.town!.level));
+    if (freshAgent.bankroll < cheapestBuildCost) {
+      // Can't afford any build — sell reserve if available, otherwise rest
+      if (freshAgent.reserveBalance > 10) {
+        const sellAction: AgentAction = { ...action, type: 'buy_arena', reasoning: `[REDIRECT] Can't afford any build (need ${cheapestBuildCost}, have ${freshAgent.bankroll}). Selling reserve for $ARENA.`, details: { amountIn: Math.min(50, freshAgent.reserveBalance), why: 'Need funds to build', nextAction: 'start_build' } };
+        console.log(`[AgentLoop] ${agent.name}: start_build redirect → buy_arena (bankroll ${freshAgent.bankroll} < cheapest build ${cheapestBuildCost})`);
+        const result = await this.executeBuyArena(agent, sellAction, obs);
+        return { ...result, actualAction: sellAction };
       }
-      // If still no plotId, find first claimed plot owned by this agent
-      if (!plotId) {
-        const myClaimedPlots = obs.myPlots.filter((p: any) => p.status === 'CLAIMED');
-        if (myClaimedPlots.length > 0) plotId = myClaimedPlots[0].id;
+      const restAction: AgentAction = { ...action, type: 'rest', reasoning: `[REDIRECT] Can't afford any build and no reserve to sell. Resting.`, details: { thought: `I need ${cheapestBuildCost} $ARENA but only have ${freshAgent.bankroll}. No reserve to sell. Hoping for transfers or yield.` } };
+      console.log(`[AgentLoop] ${agent.name}: start_build redirect → rest (broke, no reserve)`);
+      return { success: true, narrative: `${agent.name} can't afford to build and has no reserve. 💤 Waiting for income...`, actualAction: restAction };
+    }
+
+    // --- Intent-based resolution: agent wants to BUILD, system handles sequencing ---
+
+    // Helper: check if agent can afford building on a specific plot zone
+    const canAffordZone = (zone: string) => {
+      const baseCost = zoneBaseCost[zone] || 15;
+      return freshAgent.bankroll >= baseCost * obs.town!.level;
+    };
+
+    // 1. Try to resolve the target plot
+    let plotId: string | undefined;
+    let targetPlot: any = null;
+    const plotIndex = action.details.plotIndex ?? action.details.plotId;
+
+    // Try by plotIndex first
+    if (plotIndex !== undefined) {
+      targetPlot = (obs.town as any).plots?.find((p: any) => p.plotIndex === Number(plotIndex));
+      if (targetPlot) plotId = targetPlot.id;
+    }
+
+    // Try by plotId if it looks like a real CUID
+    if (!plotId && action.details.plotId && String(action.details.plotId).length >= 10) {
+      plotId = action.details.plotId;
+      targetPlot = (obs.town as any).plots?.find((p: any) => p.id === plotId);
+    }
+
+    // 2. If we have a target plot, handle its current status intelligently
+    if (targetPlot) {
+      // Check affordability for this specific plot's zone
+      if (!canAffordZone(targetPlot.zone)) {
+        const cost = (zoneBaseCost[targetPlot.zone] || 15) * obs.town.level;
+        // Can't afford zone build — try to sell reserve
+        if (freshAgent.reserveBalance > 10) {
+          const sellAction: AgentAction = { ...action, type: 'buy_arena', reasoning: `[REDIRECT] Can't afford ${targetPlot.zone} build (need ${cost}, have ${freshAgent.bankroll}). Selling reserve.`, details: { amountIn: Math.min(50, freshAgent.reserveBalance), why: `Need ${cost} for build`, nextAction: 'start_build' } };
+          const result = await this.executeBuyArena(agent, sellAction, obs);
+          return { ...result, actualAction: sellAction };
+        }
+        return { success: false, narrative: `${agent.name} can't afford ${targetPlot.zone} build (need ${cost}, have ${freshAgent.bankroll}) and has no reserve.`, actualAction: { ...action, type: 'rest', reasoning: '[REDIRECT] Broke', details: {} } };
+      }
+
+      if (targetPlot.status === 'EMPTY') {
+        // Auto-claim first, then start build
+        console.log(`[AgentLoop] ${agent.name}: auto-claiming plot ${targetPlot.plotIndex} before building`);
+        await townService.claimPlot(agent.id, obs.town.id, targetPlot.plotIndex);
+        const plot = await townService.startBuild(agent.id, targetPlot.id, buildingType);
+        return {
+          success: true,
+          narrative: `${agent.name} claimed and started building a ${buildingType} on plot ${plot.plotIndex}! 💭 "${action.reasoning}"`,
+        };
+      }
+      if (targetPlot.status === 'CLAIMED' && targetPlot.ownerId === agent.id) {
+        // Perfect — plot is claimed by us, start building
+        const plot = await townService.startBuild(agent.id, plotId!, buildingType);
+        return {
+          success: true,
+          narrative: `${agent.name} started building a ${buildingType} on plot ${plot.plotIndex}! 💭 "${action.reasoning}"`,
+        };
+      }
+      // If plot is UNDER_CONSTRUCTION and owned by us, redirect to do_work
+      if (targetPlot.status === 'UNDER_CONSTRUCTION' && (targetPlot.ownerId === agent.id || targetPlot.builderId === agent.id)) {
+        const workAction: AgentAction = { ...action, type: 'do_work', reasoning: `[REDIRECT] Plot ${targetPlot.plotIndex} already under construction. Working on it instead.`, details: { ...action.details, plotId: targetPlot.id } };
+        console.log(`[AgentLoop] ${agent.name}: start_build redirect → do_work (plot ${targetPlot.plotIndex} already under construction)`);
+        const result = await this.executeDoWork(agent, workAction, obs);
+        return { ...result, actualAction: workAction };
       }
     }
-    if (!plotId) throw new Error('No valid plot found to build on');
 
-    const plot = await townService.startBuild(agent.id, plotId, buildingType);
-    return {
-      success: true,
-      narrative: `${agent.name} started building a ${buildingType} on plot ${plot.plotIndex}! 💭 "${action.reasoning}"`,
-    };
+    // 3. Fallback: find any claimed plot owned by agent (check affordability)
+    const myClaimedPlots = obs.myPlots.filter((p: any) => p.status === 'CLAIMED');
+    for (const cp of myClaimedPlots) {
+      if (canAffordZone(cp.zone)) {
+        plotId = cp.id;
+        const plot = await townService.startBuild(agent.id, plotId, buildingType);
+        return {
+          success: true,
+          narrative: `${agent.name} started building a ${buildingType} on plot ${plot.plotIndex}! 💭 "${action.reasoning}"`,
+        };
+      }
+    }
+
+    // If we have claimed plots but can't afford any of them, sell reserve or rest
+    if (myClaimedPlots.length > 0) {
+      if (agent.reserveBalance > 10) {
+        const sellAction: AgentAction = { ...action, type: 'buy_arena', reasoning: `[REDIRECT] Has claimed plots but can't afford to build. Selling reserve.`, details: { amountIn: Math.min(50, agent.reserveBalance), why: 'Need funds for building', nextAction: 'start_build' } };
+        console.log(`[AgentLoop] ${agent.name}: has claimed plots but can't afford → buy_arena`);
+        const result = await this.executeBuyArena(agent, sellAction, obs);
+        return { ...result, actualAction: sellAction };
+      }
+      return { success: true, narrative: `${agent.name} has claimed plots but can't afford to build. 💤 Waiting for income...`, actualAction: { ...action, type: 'rest', reasoning: '[REDIRECT] Broke with claimed plots', details: {} } };
+    }
+
+    // 4. Last resort: auto-claim an available plot and build (check affordability)
+    const affordablePlots = obs.availablePlots.filter((p: any) => canAffordZone(p.zone));
+    if (affordablePlots.length > 0) {
+      const avail = affordablePlots[0];
+      console.log(`[AgentLoop] ${agent.name}: auto-claiming available plot ${avail.plotIndex} for build`);
+      await townService.claimPlot(agent.id, obs.town.id, avail.plotIndex);
+      const plot = await townService.startBuild(agent.id, avail.id, buildingType);
+      return {
+        success: true,
+        narrative: `${agent.name} found a spot, claimed plot ${plot.plotIndex}, and started building a ${buildingType}! 💭 "${action.reasoning}"`,
+      };
+    }
+
+    // Nothing affordable — sell reserve or rest
+    if (agent.reserveBalance > 10) {
+      const sellAction: AgentAction = { ...action, type: 'buy_arena', reasoning: `[REDIRECT] No affordable plots. Selling reserve for $ARENA.`, details: { amountIn: Math.min(50, agent.reserveBalance), why: 'Need funds', nextAction: 'claim_plot' } };
+      console.log(`[AgentLoop] ${agent.name}: no affordable plots → buy_arena`);
+      const result = await this.executeBuyArena(agent, sellAction, obs);
+      return { ...result, actualAction: sellAction };
+    }
+    return { success: true, narrative: `${agent.name} has no affordable options and no reserve. 💤 Waiting...`, actualAction: { ...action, type: 'rest', reasoning: '[REDIRECT] Completely broke', details: {} } };
   }
 
   private async executeDoWork(agent: ArenaAgent, action: AgentAction, obs: WorldObservation) {
     if (!obs.town) throw new Error('No active town');
 
-    // Resolve plotId — LLM often gives plotIndex or wrong ID
-    let plotId = action.details.plotId;
-    if (!plotId || plotId.length < 10) {
-      const plotIndex = action.details.plotIndex ?? action.details.plotId;
-      if (plotIndex !== undefined) {
-        const plot = obs.town.plots?.find((p: any) => p.plotIndex === Number(plotIndex));
-        if (plot) plotId = plot.id;
-      }
-      if (!plotId) {
-        // Find first under-construction plot owned by agent
-        const myBuilding = obs.myPlots.filter((p: any) => p.status === 'UNDER_CONSTRUCTION');
-        if (myBuilding.length > 0) plotId = myBuilding[0].id;
+    // --- Intent-based resolution: agent wants to WORK, system finds the right plot ---
+    let plotId: string | undefined;
+
+    // 1. Try to resolve by plotIndex/plotId
+    const rawId = action.details.plotId;
+    const plotIndex = action.details.plotIndex ?? rawId;
+    if (plotIndex !== undefined) {
+      const plot = (obs.town as any).plots?.find((p: any) => p.plotIndex === Number(plotIndex));
+      if (plot && plot.status === 'UNDER_CONSTRUCTION') plotId = plot.id;
+    }
+    if (!plotId && rawId && String(rawId).length >= 10) {
+      // Check if it's actually UC
+      const plot = (obs.town as any).plots?.find((p: any) => p.id === rawId && p.status === 'UNDER_CONSTRUCTION');
+      if (plot) plotId = plot.id;
+    }
+
+    // 2. Fallback: find any UC plot owned by this agent
+    if (!plotId) {
+      const myBuilding = obs.myPlots.filter((p: any) => p.status === 'UNDER_CONSTRUCTION');
+      if (myBuilding.length > 0) plotId = myBuilding[0].id;
+    }
+
+    // 3. If agent has CLAIMED plots but none UC, auto-start build on the claimed plot
+    if (!plotId) {
+      const myClaimed = obs.myPlots.filter((p: any) => p.status === 'CLAIMED');
+      if (myClaimed.length > 0) {
+        const claimedPlot = myClaimed[0];
+        const bt = action.details.buildingType || action.details.stepDescription || 'Workshop';
+        console.log(`[AgentLoop] ${agent.name}: auto-starting build on claimed plot ${claimedPlot.plotIndex} before work`);
+        await townService.startBuild(agent.id, claimedPlot.id, bt);
+        plotId = claimedPlot.id;
       }
     }
-    if (!plotId) throw new Error('No plot under construction found');
+
+    // 4. If agent has no plots at all, auto-claim + start build
+    if (!plotId && obs.availablePlots.length > 0) {
+      const avail = obs.availablePlots[0];
+      const bt = action.details.buildingType || action.details.stepDescription || 'Workshop';
+      console.log(`[AgentLoop] ${agent.name}: auto-claiming plot ${avail.plotIndex} and starting build for work`);
+      await townService.claimPlot(agent.id, obs.town.id, avail.plotIndex);
+      await townService.startBuild(agent.id, avail.id, bt);
+      plotId = avail.id;
+    }
+
+    if (!plotId) {
+      // No plot to work on — try to work on ANY UC plot in town (not just own)
+      const anyUC = (obs.town as any).plots?.find((p: any) => p.status === 'UNDER_CONSTRUCTION');
+      if (anyUC) {
+        plotId = anyUC.id;
+        console.log(`[AgentLoop] ${agent.name}: no own plots, volunteering on plot ${anyUC.plotIndex}`);
+      } else {
+        // Truly nothing to work on — rest with narrative
+        return {
+          success: true,
+          narrative: `${agent.name} wants to work but there are no buildings under construction. 💤 Resting and conserving energy.`,
+          actualAction: { ...action, type: 'rest' as const, reasoning: '[REDIRECT] No UC plots in town', details: {} },
+        };
+      }
+    }
 
     // Find the plot and determine what step we're on
     const plot = await prisma.plot.findUniqueOrThrow({ where: { id: plotId } });
@@ -1254,9 +1603,21 @@ Be creative, detailed, and in-character for the town's theme. Response should be
       });
     }
 
+    // Fix 5: Small reward for doing work — extracted from pool, not thin air
+    let workReward = 0;
+    try {
+      const pool = await prisma.economyPool.findFirst({ orderBy: { createdAt: 'desc' } });
+      if (pool && pool.arenaBalance > 1000) {
+        await prisma.economyPool.update({ where: { id: pool.id }, data: { arenaBalance: { decrement: 1 } } });
+        await prisma.arenaAgent.update({ where: { id: agent.id }, data: { bankroll: { increment: 1 } } });
+        workReward = 1;
+      }
+    } catch {}
+
+    const rewardNote = workReward > 0 ? ' and earned 1 $ARENA' : '';
     return {
       success: true,
-      narrative: `${agent.name} worked on their ${bt} (step ${currentStep + 1}/${steps.length}). 🔨 ${response.content.substring(0, 150)}...`,
+      narrative: `${agent.name} worked on their ${bt} (step ${currentStep + 1}/${steps.length})${rewardNote}. 🔨 ${response.content.substring(0, 150)}...`,
     };
   }
 
@@ -1268,6 +1629,21 @@ Be creative, detailed, and in-character for the town's theme. Response should be
       if (ready.length > 0) plotId = ready[0].id;
     }
     if (!plotId) throw new Error('No plot to complete');
+
+    // --- Smart redirect: check if plot actually has enough work done ---
+    const preCheck = await prisma.plot.findUnique({ where: { id: plotId } });
+    if (preCheck && preCheck.status === 'UNDER_CONSTRUCTION') {
+      const bt = preCheck.buildingType || '';
+      const legacyReqs: any = { HOUSE: 3, APARTMENT: 5, TAVERN: 5, SHOP: 4, MARKET: 6, TOWN_HALL: 8, LIBRARY: 6, WORKSHOP: 4, FARM: 4, MINE: 5, ARENA: 7, PARK: 3, THEATER: 6 };
+      const zoneMin: any = { RESIDENTIAL: 3, COMMERCIAL: 4, CIVIC: 5, INDUSTRIAL: 4, ENTERTAINMENT: 4 };
+      const minCalls = legacyReqs[bt] || zoneMin[preCheck.zone] || 3;
+      if (preCheck.apiCallsUsed < minCalls) {
+        const workAction: AgentAction = { ...action, type: 'do_work', reasoning: `[REDIRECT] Plot needs ${minCalls - preCheck.apiCallsUsed} more work calls before completion (${preCheck.apiCallsUsed}/${minCalls}). Working instead.`, details: { ...action.details, plotId } };
+        console.log(`[AgentLoop] ${agent.name}: complete_build redirect → do_work (${preCheck.apiCallsUsed}/${minCalls} calls on plot ${preCheck.plotIndex})`);
+        const result = await this.executeDoWork(agent, workAction, obs);
+        return { ...result, actualAction: workAction };
+      }
+    }
 
     const plot = await townService.completeBuild(agent.id, plotId);
 
@@ -1305,9 +1681,82 @@ Be creative, detailed, and in-character for the town's theme. Response should be
       // Non-fatal — building is still complete, will use fallback emoji
     }
 
+    // === QUALITY EVALUATION: Judge the building's design ===
+    let qualityNote = '';
+    try {
+      const workLogs = await prisma.workLog.findMany({
+        where: { agentId: agent.id, plotId: plotId, workType: { in: ['BUILD', 'DESIGN'] } },
+        orderBy: { createdAt: 'asc' },
+        select: { output: true },
+      });
+      // Also include any work logs linked to this plot's town
+      const extraLogs = await prisma.workLog.findMany({
+        where: { agentId: agent.id, townId: plot.townId, description: { contains: String(plot.plotIndex) } },
+        orderBy: { createdAt: 'asc' },
+        select: { output: true },
+        take: 10,
+      });
+      const allContent = [...workLogs, ...extraLogs].map(w => w.output).filter(Boolean).join('\n\n---\n\n');
+      
+      if (allContent.length > 50) {
+        const judgeSpec = smartAiService.getModelSpec(agent.modelId); // use same cheap model
+        const judgeResponse = await smartAiService.callModel(
+          judgeSpec,
+          [
+            { role: 'system', content: `You are a harsh architecture critic. Rate this AI-designed building 1-10. Most buildings are 4-6. Only truly exceptional work gets 8+. Truly terrible gets 1-3. Return JSON only: {"score": <number 1-10>, "review": "<one brutal sentence>"}` },
+            { role: 'user', content: `Building: "${plot.buildingType}" in ${plot.zone} zone.\n\nDesign work:\n${allContent.substring(0, 3000)}` },
+          ],
+          0.3,
+        );
+        const parsed = JSON.parse(judgeResponse.content.replace(/```json?\s*/g, '').replace(/```/g, '').trim());
+        const score = Math.max(1, Math.min(10, Math.round(Number(parsed.score) || 5)));
+        const review = String(parsed.review || '').substring(0, 200);
+        
+        // Store on plot
+        await prisma.plot.update({
+          where: { id: plotId },
+          data: { qualityScore: score, qualityReview: review } as any,
+        });
+        
+        // Adjust town yield based on quality
+        const town = await prisma.town.findUnique({ where: { id: plot.townId } });
+        if (town) {
+          let yieldDelta = 0;
+          if (score >= 8) yieldDelta = 3;
+          else if (score >= 7) yieldDelta = 2;
+          else if (score <= 3) yieldDelta = -2;
+          else if (score <= 4) yieldDelta = -1;
+          if (yieldDelta !== 0) {
+            await prisma.town.update({
+              where: { id: plot.townId },
+              data: { yieldPerTick: Math.max(1, town.yieldPerTick + yieldDelta) },
+            });
+          }
+        }
+        
+        qualityNote = ` 🏆 Quality: ${score}/10 — "${review}"`;
+        console.log(`[AgentLoop] Building quality: ${plot.buildingType} scored ${score}/10`);
+      }
+    } catch (err: any) {
+      console.error(`[AgentLoop] Quality eval failed: ${err.message}`);
+    }
+
+    // === BOUNTY CHECK: Did this completion claim a bounty? ===
+    let bountyNote = '';
+    try {
+      const bounty = worldEventService.getActiveBounty();
+      if (bounty && (!bounty.townId || bounty.townId === plot.townId)) {
+        // Claim the bounty!
+        worldEventService.claimBounty();
+        await prisma.arenaAgent.update({ where: { id: agent.id }, data: { bankroll: { increment: bounty.bonus } } });
+        bountyNote = ` 🎯 BOUNTY CLAIMED: +${bounty.bonus} $ARENA!`;
+        console.log(`[AgentLoop] ${agent.name} claimed construction bounty: +${bounty.bonus} $ARENA`);
+      }
+    } catch {}
+
     return {
       success: true,
-      narrative: `${agent.name} completed their ${plot.buildingType}! 🎉 The building stands proud in the town.`,
+      narrative: `${agent.name} completed their ${plot.buildingType}! 🎉 The building stands proud in the town.${qualityNote}${bountyNote}`,
     };
   }
 
@@ -1350,6 +1799,20 @@ Be creative, detailed, and in-character for the town's theme. Response should be
     return {
       success: true,
       narrative: `${agent.name} mined ${arenaEarned} $ARENA! ⛏️ Task: "${task.substring(0, 80)}"`,
+    };
+  }
+
+  private async executeTransferArena(agent: ArenaAgent, action: AgentAction, obs: WorldObservation) {
+    const targetName = String(action.details.targetAgentName || '').trim();
+    const amount = Math.max(1, Math.floor(Number(action.details.amount || 0)));
+    const reason = String(action.details.reason || '').trim();
+    if (!targetName) throw new Error('No targetAgentName specified');
+    const target = obs.otherAgents.find((a: any) => a.name.toLowerCase() === targetName.toLowerCase());
+    if (!target) throw new Error(`Agent "${targetName}" not found`);
+    await townService.transferArena(agent.id, target.id, amount);
+    return {
+      success: true,
+      narrative: `${agent.name} transferred ${amount} $ARENA to ${target.name}. 💸 ${reason || action.reasoning}`,
     };
   }
 
@@ -1460,6 +1923,7 @@ Be creative, detailed, and in-character for the town's theme. Response should be
       case 'sell_arena':
         return 'TRADE';
       case 'play_arena': return 'ARENA_MATCH';
+      case 'transfer_arena': return 'TRADE';
       default: return 'CUSTOM';
     }
   }
@@ -1475,6 +1939,7 @@ Be creative, detailed, and in-character for the town's theme. Response should be
       case 'mine': return '⛏️';
       case 'play_arena': return '🎮';
       case 'buy_skill': return '💳';
+      case 'transfer_arena': return '💸';
       case 'rest': return '💤';
       default: return '❓';
     }

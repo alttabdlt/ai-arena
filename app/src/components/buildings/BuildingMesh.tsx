@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, useMemo, Suspense } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import {
@@ -9,11 +9,58 @@ import {
   getColors,
 } from './shared';
 import { ConstructionRenderer } from './constructionStages';
-import { ResidentialBuilding } from './variants/residential';
-import { CommercialBuilding } from './variants/commercial';
-import { CivicBuilding } from './variants/civic';
-import { IndustrialBuilding } from './variants/industrial';
-import { EntertainmentBuilding } from './variants/entertainment';
+import { GLBBuilding } from './GLBBuilding';
+import { IndustrialSmoke } from './effects';
+
+// Fallback for when GLB hasn't loaded yet — simple glowing box
+function BuildingFallback({
+  h,
+  main,
+  accent,
+  selected,
+}: {
+  h: number;
+  main: THREE.Color;
+  accent: THREE.Color;
+  selected: boolean;
+}) {
+  return (
+    <mesh castShadow receiveShadow position={[0, h / 2, 0]}>
+      <boxGeometry args={[8, h, 8]} />
+      <meshStandardMaterial
+        color={main}
+        emissive={selected ? accent.clone().multiplyScalar(0.25) : undefined}
+        transparent
+        opacity={0.6}
+      />
+    </mesh>
+  );
+}
+
+// Zone-specific effects overlay (smoke, glow, spinning elements)
+function ZoneEffects({ plot, h }: { plot: Plot; h: number }) {
+  if (plot.zone === 'INDUSTRIAL') {
+    return <IndustrialSmoke position={[3.5, h * 1.1, -1.5]} intensity={1.0} />;
+  }
+  if (plot.zone === 'ENTERTAINMENT') {
+    return (
+      <group>
+        {/* Neon glow band */}
+        <mesh position={[0, h * 0.5, 0]}>
+          <boxGeometry args={[10, 0.2, 10]} />
+          <meshStandardMaterial
+            color={'#ff4fd8'}
+            emissive={'#ff4fd8'}
+            emissiveIntensity={0.5}
+            transparent
+            opacity={0.7}
+          />
+        </mesh>
+      </group>
+    );
+  }
+  return null;
+}
 
 export function BuildingMesh({
   plot,
@@ -26,39 +73,36 @@ export function BuildingMesh({
 }) {
   const h = buildHeight(plot);
   const variant = getVariant(plot.id);
-  const { tint, main, accent } = getColors(plot, selected);
+  // Memoize colors so THREE.Color refs are stable across re-renders
+  const { tint, main, accent } = useMemo(() => getColors(plot, selected), [plot.zone, selected]);
 
   const target = getTargetProgress(plot);
   const progressRef = useRef(target);
   const prevStageRef = useRef(Math.floor(target));
   const groupRef = useRef<THREE.Group>(null);
-  const pulseRef = useRef(0); // 0 = no pulse, >0 = remaining pulse time
+  const pulseRef = useRef(0);
 
   useFrame((_, delta) => {
     const current = progressRef.current;
     const targetNow = getTargetProgress(plot);
 
-    // Lerp progress toward target at dt * 2.0 rate (~1.5s to reach)
     if (Math.abs(current - targetNow) > 0.001) {
       progressRef.current = current + (targetNow - current) * Math.min(1, delta * 2.0);
     } else {
       progressRef.current = targetNow;
     }
 
-    // Detect stage-up (floor of progress increases) → trigger scale pulse
     const currentStage = Math.floor(progressRef.current);
     if (currentStage > prevStageRef.current) {
-      pulseRef.current = 0.4; // 0.4s pulse
+      pulseRef.current = 0.4;
     }
     prevStageRef.current = currentStage;
 
-    // Animate scale pulse on the group
     if (groupRef.current) {
       if (pulseRef.current > 0) {
         pulseRef.current = Math.max(0, pulseRef.current - delta);
-        // Bell curve: 0.4 → 0.2 is ramp up, 0.2 → 0 is ramp down
-        const t = 1 - pulseRef.current / 0.4; // 0 → 1
-        const pulse = 1 + 0.06 * Math.sin(t * Math.PI); // peaks at 1.06 midway
+        const t = 1 - pulseRef.current / 0.4;
+        const pulse = 1 + 0.06 * Math.sin(t * Math.PI);
         groupRef.current.scale.setScalar(pulse);
       } else {
         groupRef.current.scale.setScalar(1);
@@ -69,20 +113,25 @@ export function BuildingMesh({
   const isComplete = plot.status === 'BUILT' && progressRef.current >= 3.99;
 
   if (isComplete) {
-    // Stage 4: Complete — render zone-specific variant
-    const variantProps = { plot, h, main, accent, selected, variant };
     return (
       <group ref={groupRef} position={position}>
-        {plot.zone === 'RESIDENTIAL' && <ResidentialBuilding {...variantProps} />}
-        {plot.zone === 'COMMERCIAL' && <CommercialBuilding {...variantProps} />}
-        {plot.zone === 'CIVIC' && <CivicBuilding {...variantProps} />}
-        {plot.zone === 'INDUSTRIAL' && <IndustrialBuilding {...variantProps} />}
-        {plot.zone === 'ENTERTAINMENT' && <EntertainmentBuilding {...variantProps} />}
+        <Suspense fallback={<BuildingFallback h={h} main={main} accent={accent} selected={selected} />}>
+          <GLBBuilding
+            zone={plot.zone}
+            variant={variant}
+            plotId={plot.id}
+            targetHeight={h}
+            main={main}
+            accent={accent}
+            selected={selected}
+          />
+        </Suspense>
+        <ZoneEffects plot={plot} h={h} />
       </group>
     );
   }
 
-  // Under construction — continuous renderer
+  // Under construction — procedural construction stages
   return (
     <group ref={groupRef} position={position}>
       <ConstructionRenderer

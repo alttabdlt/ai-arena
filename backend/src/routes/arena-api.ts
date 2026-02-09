@@ -79,7 +79,7 @@ router.post('/agents/register', async (req: Request, res: Response): Promise<voi
 router.get('/agents', async (_req: Request, res: Response): Promise<void> => {
   try {
     const agents = await arenaService.listAgents();
-    res.json(agents.map(a => ({
+    res.json(agents.map((a: any) => ({
       id: a.id,
       name: a.name,
       archetype: a.archetype,
@@ -90,8 +90,17 @@ router.get('/agents', async (_req: Request, res: Response): Promise<void> => {
       draws: a.draws,
       bankroll: a.bankroll,
       reserveBalance: a.reserveBalance,
+      health: a.health ?? 100,
       isInMatch: a.isInMatch,
+      spawnedByUser: a.spawnedByUser || false,
+      walletAddress: a.walletAddress || null,
       apiCostCents: a.apiCostCents,
+      // Progressive thinking fields
+      lastActionType: a.lastActionType || '',
+      lastReasoning: a.lastReasoning || '',
+      lastNarrative: a.lastNarrative || '',
+      lastTargetPlot: a.lastTargetPlot ?? null,
+      lastTickAt: a.lastTickAt || null,
     })));
   } catch (error: any) {
     res.status(500).json({ error: error.message });

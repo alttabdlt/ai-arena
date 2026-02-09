@@ -103,6 +103,19 @@ CLAUDE.md
 **/generated/prisma/
 prisma/migrations/dev/
 
+# SQLite databases (dev data — don't commit)
+*.db
+*.db-journal
+*.db-wal
+
+# Screenshots (dev only)
+*.png
+!app/public/**/*.png
+!backend/public/**/*.png
+
+# Playwright MCP snapshots
+.playwright-mcp/
+
 # Temporary files
 *.tmp
 *.temp

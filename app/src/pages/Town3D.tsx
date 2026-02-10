@@ -4016,9 +4016,9 @@ function Town3D() {
           </div>
         </div>
 
-        {/* Wheel of Fate Banner (floating overlay) */}
+        {/* Wheel of Fate Banner (centered floating overlay) */}
         {wheel.status && wheel.status.phase !== 'IDLE' && wheel.status.phase !== 'PREP' && (
-          <div className="pointer-events-auto absolute bottom-14 left-0 right-0 z-50">
+          <div className="pointer-events-auto absolute bottom-4 left-1/2 -translate-x-1/2 z-50 w-full max-w-xl px-3">
             <WheelBanner
               status={wheel.status}
               odds={wheel.odds}

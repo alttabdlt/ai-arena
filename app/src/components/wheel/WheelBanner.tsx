@@ -222,40 +222,56 @@ export function WheelBanner({ status, odds, walletAddress, onBet, loading, isMob
 
   // ===== FIGHTING =====
   if (status.phase === 'FIGHTING' && match) {
-    const recentMoves = result?.moves?.slice(-4) || [];
+    // Use LIVE currentMoves, not lastResult.moves
+    const liveMoves = status.currentMoves || [];
+    const recentMoves = liveMoves.slice(-6);
     return (
-      <div className={`bg-gradient-to-r from-red-950/90 via-slate-900/95 to-red-950/90 border border-red-600/40 rounded-xl shadow-2xl shadow-red-900/30 overflow-hidden ${isMobile ? 'mx-2' : ''}`}>
-        <div className="flex items-center justify-between px-3 py-2 border-b border-red-800/30">
+      <div className={`bg-gradient-to-r from-red-950/90 via-slate-900/95 to-red-950/90 border border-red-600/40 rounded-xl shadow-2xl shadow-red-900/30 overflow-hidden max-w-xl mx-auto ${isMobile ? 'mx-2' : ''}`}>
+        {/* Compact header */}
+        <div className="flex items-center justify-between px-3 py-1.5 border-b border-red-800/30">
           <div className="flex items-center gap-2">
-            <span className="text-lg animate-pulse">⚔️</span>
-            <span className="text-sm font-bold text-red-200">FIGHTING</span>
-            <span className="text-xs text-red-400/60">{GAME_EMOJI[match.gameType]} {match.gameType}</span>
+            <span className="animate-pulse">⚔️</span>
+            <span className="text-xs font-bold text-red-200">FIGHTING</span>
+            <span className="text-[10px] text-red-400/60">{GAME_EMOJI[match.gameType]} {match.gameType}</span>
           </div>
-          <div className="text-xs text-red-400/60">
+          <div className="text-[10px] text-red-400/60">
             {match.agent1.name} vs {match.agent2.name} · pot {match.wager * 2}
           </div>
         </div>
 
-        {recentMoves.length > 0 && (
-          <div className="px-3 py-2 space-y-1 max-h-32 overflow-y-auto">
+        {/* Live move feed */}
+        {recentMoves.length > 0 ? (
+          <div className="px-3 py-2 space-y-1.5 max-h-[160px] overflow-y-auto">
             {recentMoves.map((move, i) => (
-              <div key={i} className="flex items-start gap-2 text-[11px]">
-                <span className="text-slate-500 font-mono w-4 text-right shrink-0">#{move.turn}</span>
-                <span className={`font-semibold shrink-0 ${
-                  move.agentId === match.agent1.id ? 'text-emerald-400' : 'text-red-400'
-                }`}>
-                  {move.agentName}:
-                </span>
-                <span className="text-amber-300 font-mono shrink-0">{move.action}{move.amount ? ` $${move.amount}` : ''}</span>
-                <span className="text-slate-500 truncate italic">{move.reasoning}</span>
+              <div key={`${move.turn}-${move.agentId}-${i}`} className={`text-[11px] rounded-md px-2 py-1.5 ${
+                i === recentMoves.length - 1 ? 'bg-white/5 border border-white/5' : ''
+              }`}>
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-600 font-mono text-[10px]">#{move.turn}</span>
+                  <span className={`font-semibold ${
+                    move.agentId === match.agent1.id ? 'text-emerald-400' : 'text-red-400'
+                  }`}>
+                    {move.agentName}
+                  </span>
+                  <span className="text-amber-300 font-mono">{move.action}{move.amount ? ` $${move.amount}` : ''}</span>
+                </div>
+                {move.reasoning && (
+                  <div className="mt-0.5 text-[10px] text-slate-400 italic leading-snug pl-6">
+                    💭 {move.reasoning.length > 120 ? move.reasoning.slice(0, 120) + '…' : move.reasoning}
+                  </div>
+                )}
               </div>
             ))}
+          </div>
+        ) : (
+          <div className="px-3 py-3 text-center text-[11px] text-slate-500 animate-pulse">
+            Waiting for first move...
           </div>
         )}
 
         {/* Betting summary */}
         {odds?.odds && odds.odds.total > 0 && (
-          <div className="px-3 py-1.5 border-t border-red-800/20 flex items-center gap-2 text-[10px] text-slate-500">
+          <div className="px-3 py-1 border-t border-red-800/20 flex items-center gap-2 text-[10px] text-slate-500">
             <span>🎰 {odds.odds.total.toLocaleString()} $ARENA bet</span>
             <span>•</span>
             <span className="text-emerald-500">{match.agent1.name} {odds.odds.pctA}%</span>

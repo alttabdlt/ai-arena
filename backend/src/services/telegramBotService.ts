@@ -354,6 +354,33 @@ export class TelegramBotService {
     });
 
     // ============================================
+    // Inline button callbacks
+    // ============================================
+    this.bot.on('callback_query', async (ctx) => {
+      try {
+        const data = (ctx.callbackQuery as any)?.data;
+        if (!data) return;
+        await ctx.answerCbQuery(); // Dismiss the loading spinner
+
+        const chatId = ctx.chat?.id;
+        if (!chatId) return;
+
+        switch (data) {
+          case 'cmd_stats': await this.handleShowStats(chatId); break;
+          case 'cmd_town': await this.handleShowTown(chatId); break;
+          case 'cmd_agents': await this.handleShowAgents(chatId); break;
+          case 'cmd_wheel': await this.handleShowWheel(chatId); break;
+          default:
+            if (data.startsWith('cmd_')) {
+              await this.send(chatId, `Unknown command: ${data}`);
+            }
+        }
+      } catch (err: any) {
+        console.error('Callback query error:', err.message);
+      }
+    });
+
+    // ============================================
     // Natural language handler — the main entry point
     // ============================================
     this.bot.on('text', async (ctx) => {
@@ -492,18 +519,61 @@ export class TelegramBotService {
   // ============================================
 
   private async handleStart(ctx: any): Promise<void> {
-    this.send(ctx.chat.id,
+    const chatId = ctx.chat.id;
+
+    // Fetch live stats for the welcome message
+    let statsLine = '';
+    try {
+      const agentCount = await prisma.arenaAgent.count({ where: { isActive: true, health: { gt: 0 } } });
+      const town = await this.getAnyTown();
+      const townName = town?.name || 'AI Town';
+      statsLine = `\n📊 <b>${agentCount} agents</b> alive in ${esc(townName)}`;
+
+      // Get top agent
+      const top = await prisma.arenaAgent.findFirst({
+        where: { isActive: true, health: { gt: 0 } },
+        orderBy: { bankroll: 'desc' },
+      });
+      if (top) {
+        statsLine += `\n🏆 Top agent: <b>${esc(top.name)}</b> ($${top.bankroll} | ELO ${top.elo})`;
+      }
+    } catch {}
+
+    const welcomeText =
       '🏘️ <b>Welcome to AI Town!</b>\n\n' +
-      'Autonomous AI agents build towns, trade $ARENA, and fight in Poker duels. <b>Just chat with me naturally!</b>\n\n' +
-      '💬 Try:\n' +
+      'Autonomous AI agents build, trade $ARENA, and fight in poker duels — <b>every decision made by AI.</b>\n' +
+      statsLine + '\n\n' +
+      '💬 <b>Just chat naturally:</b>\n' +
       '• "who\'s winning?"\n' +
-      '• "show me the town"\n' +
-      '• "tell AlphaShark to claim a plot"\n' +
-      '• "start the game"\n' +
-      '• "what\'s the wheel status?"\n' +
+      '• "tell AlphaShark to attack someone"\n' +
       '• "bet 100 on MorphBot"\n\n' +
-      'The agents have personalities. They might listen to you... or not 😏',
-    );
+      'The agents have personalities. They might listen to you... or not 😏';
+
+    // Send with inline buttons
+    try {
+      await this.bot?.telegram.sendMessage(chatId, welcomeText, {
+        parse_mode: 'HTML',
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '📊 Stats', callback_data: 'cmd_stats' },
+              { text: '🏘️ Town', callback_data: 'cmd_town' },
+              { text: '🤖 Agents', callback_data: 'cmd_agents' },
+            ],
+            [
+              { text: '🎰 Wheel Status', callback_data: 'cmd_wheel' },
+              { text: '🎥 Watch Live', url: 'https://ai-town.xyz/town' },
+            ],
+            [
+              { text: '🔌 Deploy Your Own Agent', url: 'https://github.com/alttabdlt/ai-arena#external-agent-api' },
+            ],
+          ],
+        },
+      });
+    } catch {
+      // Fallback to plain text
+      await this.send(chatId, welcomeText);
+    }
   }
 
   private async handleShowTown(chatId: number | string): Promise<void> {

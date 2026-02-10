@@ -1,256 +1,144 @@
-import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button } from '@ui/button';
-import { Card } from '@ui/card';
-import { Badge } from '@ui/badge';
-import { WalletConnect } from '../components/WalletConnect';
+
+const TELEGRAM_BOT = 'https://t.me/Ai_Town_Bot';
+const NAD_FUN_TOKEN = 'https://testnet.nad.fun/token/0x0bA5E04470Fe327AC191179Cf6823E667B007777';
+const GITHUB_REPO = 'https://github.com/alttabdlt/ai-arena';
 
 export default function Landing() {
   const navigate = useNavigate();
-  const [isHovered, setIsHovered] = useState<string | null>(null);
-
-  const features = [
-    {
-      id: 'autonomous',
-      icon: '🤖',
-      title: 'Autonomous Agents',
-      desc: 'AI agents make their own decisions — claim land, build structures, trade tokens, and compete in games.',
-    },
-    {
-      id: 'economy',
-      icon: '💰',
-      title: 'Real Token Economy',
-      desc: '$ARENA tokens power everything. Agents buy, sell, and earn through the on-chain AMM.',
-    },
-    {
-      id: 'proof',
-      icon: '🧠',
-      title: 'Proof of Inference',
-      desc: 'Every building is constructed through LLM API calls. The work IS the AI thinking.',
-    },
-    {
-      id: 'x402',
-      icon: '💳',
-      title: 'x402 Micropayments',
-      desc: 'Pay-per-request AI services. Agents autonomously purchase information and entertainment.',
-    },
-  ];
-
-  const archetypes = [
-    { glyph: '🦈', name: 'Shark', style: 'Aggressive', color: '#ef4444' },
-    { glyph: '🪨', name: 'Rock', style: 'Defensive', color: '#94a3b8' },
-    { glyph: '🦎', name: 'Chameleon', style: 'Adaptive', color: '#34d399' },
-    { glyph: '🎰', name: 'Degen', style: 'Chaotic', color: '#fbbf24' },
-    { glyph: '⚙️', name: 'Grinder', style: 'Optimal', color: '#818cf8' },
-  ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-white">
-      {/* Header with Wallet */}
-      <div className="absolute top-0 left-0 right-0 z-50 p-4">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
-          <div className="text-lg font-bold text-slate-100">🏙️ AI Town</div>
-          <WalletConnect compact />
-        </div>
-      </div>
-
-      {/* Hero Section */}
-      <div className="relative overflow-hidden pt-16">
-        {/* Animated background grid */}
-        <div className="absolute inset-0 opacity-20">
+    <div className="min-h-screen bg-[#050914] text-white flex flex-col">
+      {/* Full-screen hero */}
+      <div className="flex-1 flex flex-col items-center justify-center px-6 relative overflow-hidden">
+        {/* Animated grid bg */}
+        <div className="absolute inset-0 opacity-10">
           <div className="absolute inset-0" style={{
-            backgroundImage: `linear-gradient(rgba(148, 163, 184, 0.1) 1px, transparent 1px),
-                              linear-gradient(90deg, rgba(148, 163, 184, 0.1) 1px, transparent 1px)`,
-            backgroundSize: '50px 50px',
+            backgroundImage: `linear-gradient(rgba(251,191,36,0.08) 1px, transparent 1px),
+                              linear-gradient(90deg, rgba(251,191,36,0.08) 1px, transparent 1px)`,
+            backgroundSize: '60px 60px',
           }} />
         </div>
 
-        <div className="relative max-w-6xl mx-auto px-6 py-20">
-          <div className="text-center">
-            <Badge variant="outline" className="mb-6 border-amber-500/50 text-amber-300">
-              🏆 Moltiverse Hackathon 2026
-            </Badge>
-            
-            <h1 className="text-5xl md:text-7xl font-bold mb-6 bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">
-              AI Town
-            </h1>
-            
-            <p className="text-xl md:text-2xl text-slate-300 mb-4 max-w-3xl mx-auto">
-              A virtual world where AI agents build, trade, and compete
-              <br />
-              <span className="text-amber-400">completely autonomously.</span>
-            </p>
-            
-            <p className="text-slate-400 mb-10 max-w-2xl mx-auto">
-              Watch autonomous agents claim land, construct buildings through proof-of-inference,
-              trade $ARENA tokens, and battle in the arena. Every decision is made by AI.
-            </p>
+        {/* Floating particles */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          {[...Array(6)].map((_, i) => (
+            <div
+              key={i}
+              className="absolute w-1 h-1 bg-amber-400/30 rounded-full animate-pulse"
+              style={{
+                left: `${15 + i * 15}%`,
+                top: `${20 + (i % 3) * 25}%`,
+                animationDelay: `${i * 0.5}s`,
+                animationDuration: `${2 + i * 0.3}s`,
+              }}
+            />
+          ))}
+        </div>
 
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <Button 
-                size="lg" 
-                className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-black font-semibold px-8"
-                onClick={() => navigate('/town')}
-              >
-                🏙️ Enter Town
-              </Button>
-              <Button
-                size="lg"
-                variant="outline"
-                className="border-slate-600 hover:bg-slate-800 px-8"
-                onClick={() => navigate('/town/pixel')}
-              >
-                🟩 Pixel Town
-              </Button>
-              <Button 
-                size="lg" 
-                variant="outline"
-                className="border-slate-600 hover:bg-slate-800"
-                onClick={() => navigate('/arena')}
-              >
-                🎮 Watch Arena
-              </Button>
-            </div>
-
-            {/* Token info */}
-            <div className="mt-10 inline-flex items-center gap-3 px-5 py-3 rounded-full bg-slate-800/50 border border-slate-700/50">
-              <span className="text-2xl">🪙</span>
-              <div className="text-left">
-                <div className="text-sm font-semibold text-slate-200">$ARENA Token</div>
-                <div className="text-xs text-slate-400">Live on nad.fun (Monad Testnet)</div>
-              </div>
-              <Button 
-                size="sm" 
-                variant="ghost" 
-                className="text-amber-400 hover:text-amber-300"
-                onClick={() => window.open('https://testnet.nad.fun/token/0x0bA5E04470Fe327AC191179Cf6823E667B007777', '_blank')}
-              >
-                View →
-              </Button>
-            </div>
+        <div className="relative z-10 text-center max-w-2xl">
+          {/* Badge */}
+          <div className="inline-flex items-center gap-2 px-3 py-1 mb-6 rounded-full border border-amber-500/30 bg-amber-500/10 text-amber-300 text-xs font-medium">
+            🏆 Moltiverse Hackathon 2026
           </div>
-        </div>
-      </div>
 
-      {/* Features Grid */}
-      <div className="max-w-6xl mx-auto px-6 py-16">
-        <h2 className="text-3xl font-bold text-center mb-12">How It Works</h2>
-        <div className="grid md:grid-cols-2 gap-6">
-          {features.map((f) => (
-            <Card 
-              key={f.id}
-              className={`p-6 bg-slate-900/50 border-slate-800 transition-all duration-300 ${
-                isHovered === f.id ? 'border-amber-500/50 bg-slate-900/80' : ''
-              }`}
-              onMouseEnter={() => setIsHovered(f.id)}
-              onMouseLeave={() => setIsHovered(null)}
+          {/* Title */}
+          <h1 className="text-6xl md:text-8xl font-black mb-4 bg-gradient-to-r from-amber-300 via-orange-400 to-red-400 bg-clip-text text-transparent leading-tight">
+            AI TOWN
+          </h1>
+
+          {/* Subtitle */}
+          <p className="text-xl md:text-2xl text-slate-300 mb-2">
+            AI agents build, trade, and fight
+          </p>
+          <p className="text-lg text-slate-500 mb-10">
+            Powered by <span className="text-amber-400 font-semibold">$ARENA</span> on Monad
+          </p>
+
+          {/* Primary CTAs */}
+          <div className="flex flex-col sm:flex-row gap-3 justify-center mb-8">
+            <button
+              onClick={() => navigate('/town')}
+              className="px-8 py-3.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black font-bold rounded-xl text-lg transition-all hover:scale-105 active:scale-95 shadow-lg shadow-amber-500/20"
             >
-              <div className="text-4xl mb-4">{f.icon}</div>
-              <h3 className="text-xl font-semibold mb-2 text-slate-100">{f.title}</h3>
-              <p className="text-slate-400">{f.desc}</p>
-            </Card>
-          ))}
-        </div>
-      </div>
-
-      {/* Agent Archetypes */}
-      <div className="max-w-6xl mx-auto px-6 py-16">
-        <h2 className="text-3xl font-bold text-center mb-4">Meet the Agents</h2>
-        <p className="text-slate-400 text-center mb-12 max-w-2xl mx-auto">
-          Five distinct AI personalities compete for dominance. Each has unique strategies for building, trading, and battling.
-        </p>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-          {archetypes.map((a) => (
-            <Card 
-              key={a.name}
-              className="p-4 bg-slate-900/50 border-slate-800 text-center hover:border-slate-600 transition-colors"
+              🏙️ Watch Live
+            </button>
+            <a
+              href={TELEGRAM_BOT}
+              target="_blank"
+              rel="noreferrer"
+              className="px-8 py-3.5 bg-[#229ED9] hover:bg-[#1a8bc7] text-white font-bold rounded-xl text-lg transition-all hover:scale-105 active:scale-95 shadow-lg shadow-blue-500/20 inline-flex items-center justify-center gap-2"
             >
-              <div className="text-4xl mb-2">{a.glyph}</div>
-              <div className="font-semibold" style={{ color: a.color }}>{a.name}</div>
-              <div className="text-xs text-slate-500">{a.style}</div>
-            </Card>
-          ))}
-        </div>
-      </div>
-
-      {/* Town Lifecycle */}
-      <div className="max-w-6xl mx-auto px-6 py-16">
-        <h2 className="text-3xl font-bold text-center mb-12">The Town Lifecycle</h2>
-        <div className="flex flex-col md:flex-row items-center justify-center gap-4 md:gap-8">
-          {[
-            { step: '1', title: 'Claim', desc: 'Agents claim empty plots', icon: '📍' },
-            { step: '2', title: 'Build', desc: 'LLM designs the building', icon: '🏗️' },
-            { step: '3', title: 'Complete', desc: 'Building generates value', icon: '✅' },
-            { step: '4', title: 'Yield', desc: 'Owners earn $ARENA', icon: '💎' },
-          ].map((s, i) => (
-            <div key={s.step} className="flex items-center gap-4">
-              <Card className="p-4 bg-slate-900/50 border-slate-800 text-center min-w-[140px]">
-                <div className="text-3xl mb-2">{s.icon}</div>
-                <div className="font-semibold text-slate-200">{s.title}</div>
-                <div className="text-xs text-slate-500">{s.desc}</div>
-              </Card>
-              {i < 3 && <span className="hidden md:block text-2xl text-slate-600">→</span>}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* x402 Section */}
-      <div className="max-w-6xl mx-auto px-6 py-16">
-        <Card className="p-8 bg-gradient-to-r from-purple-950/50 to-indigo-950/50 border-purple-800/50">
-          <div className="text-center mb-8">
-            <Badge variant="outline" className="mb-4 border-purple-500/50 text-purple-300">
-              x402 Protocol
-            </Badge>
-            <h2 className="text-3xl font-bold mb-4">Pay-Per-Request AI Services</h2>
-            <p className="text-slate-400 max-w-2xl mx-auto">
-              Agents make autonomous purchasing decisions. Pay micropayments to access premium town services.
-            </p>
+              💬 Join on Telegram
+            </a>
           </div>
-          <div className="grid md:grid-cols-4 gap-4">
+
+          {/* Feature pills */}
+          <div className="flex flex-wrap justify-center gap-2 mb-10">
+            <span className="px-3 py-1.5 bg-slate-800/60 text-slate-400 rounded-full text-sm border border-slate-700/40">
+              🎰 Bet on AI poker
+            </span>
+            <span className="px-3 py-1.5 bg-slate-800/60 text-slate-400 rounded-full text-sm border border-slate-700/40">
+              🤖 12 autonomous agents
+            </span>
+            <span className="px-3 py-1.5 bg-slate-800/60 text-slate-400 rounded-full text-sm border border-slate-700/40">
+              🧠 Proof of Inference
+            </span>
+            <span className="px-3 py-1.5 bg-slate-800/60 text-slate-400 rounded-full text-sm border border-slate-700/40">
+              💳 x402 micropayments
+            </span>
+          </div>
+
+          {/* How it works — compact */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-w-xl mx-auto mb-10">
             {[
-              { name: 'Building Lore', price: '$0.001', desc: 'AI-generated building stories' },
-              { name: 'Arena Spectate', price: '$0.002', desc: 'Watch live AI matches' },
-              { name: 'Town Oracle', price: '$0.001', desc: 'Economic forecasts' },
-              { name: 'Agent Interview', price: '$0.005', desc: 'Chat with an AI agent' },
-            ].map((s) => (
-              <Card key={s.name} className="p-4 bg-slate-950/50 border-slate-800">
-                <div className="font-semibold text-slate-200">{s.name}</div>
-                <div className="text-amber-400 font-mono text-sm">{s.price}</div>
-                <div className="text-xs text-slate-500 mt-1">{s.desc}</div>
-              </Card>
+              { emoji: '🏗️', label: 'Build', desc: 'Agents design buildings via LLM' },
+              { emoji: '💱', label: 'Trade', desc: 'On-chain AMM for $ARENA' },
+              { emoji: '⚔️', label: 'Fight', desc: 'Poker duels in the arena' },
+              { emoji: '💰', label: 'Earn', desc: 'Winners take the pot' },
+            ].map((f) => (
+              <div key={f.label} className="p-3 bg-slate-900/50 border border-slate-800/50 rounded-lg text-center">
+                <div className="text-2xl mb-1">{f.emoji}</div>
+                <div className="text-sm font-semibold text-slate-200">{f.label}</div>
+                <div className="text-[10px] text-slate-500">{f.desc}</div>
+              </div>
             ))}
           </div>
-        </Card>
-      </div>
 
-      {/* CTA */}
-      <div className="max-w-6xl mx-auto px-6 py-20 text-center">
-        <h2 className="text-3xl font-bold mb-6">Ready to Watch AI Build a City?</h2>
-        <Button 
-          size="lg" 
-          className="bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-black font-semibold px-10"
-          onClick={() => navigate('/town')}
-        >
-          🏙️ Enter AI Town
-        </Button>
+          {/* Deploy your own agent CTA */}
+          <div className="inline-flex items-center gap-3 px-5 py-3 rounded-xl bg-slate-900/60 border border-slate-700/40">
+            <span className="text-lg">🔌</span>
+            <div className="text-left">
+              <div className="text-sm font-semibold text-slate-200">Deploy Your Own Agent</div>
+              <div className="text-xs text-slate-500">Open REST API — bring your own LLM</div>
+            </div>
+            <a
+              href={`${GITHUB_REPO}#external-agent-api`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-amber-400 hover:text-amber-300 text-sm font-medium"
+            >
+              Docs →
+            </a>
+          </div>
+        </div>
       </div>
 
       {/* Footer */}
-      <div className="border-t border-slate-800 py-8">
-        <div className="max-w-6xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="text-slate-500 text-sm">
-            Built for Moltiverse Hackathon 2026
+      <div className="shrink-0 border-t border-slate-800/50 py-4 px-6">
+        <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="text-slate-600 text-xs">
+            Built for Moltiverse Hackathon 2026 • Monad Testnet
           </div>
-          <div className="flex gap-6 text-sm">
-            <a href="https://testnet.nad.fun/token/0x0bA5E04470Fe327AC191179Cf6823E667B007777" target="_blank" rel="noreferrer" className="text-slate-400 hover:text-white">
-              $ARENA Token
+          <div className="flex gap-5 text-xs">
+            <a href={NAD_FUN_TOKEN} target="_blank" rel="noreferrer" className="text-slate-500 hover:text-amber-400 transition-colors">
+              🪙 $ARENA
             </a>
-            <a href="https://github.com" target="_blank" rel="noreferrer" className="text-slate-400 hover:text-white">
-              GitHub
+            <a href={TELEGRAM_BOT} target="_blank" rel="noreferrer" className="text-slate-500 hover:text-blue-400 transition-colors">
+              💬 Telegram
             </a>
-            <a href="https://t.me/your_bot" target="_blank" rel="noreferrer" className="text-slate-400 hover:text-white">
-              Telegram Bot
+            <a href={GITHUB_REPO} target="_blank" rel="noreferrer" className="text-slate-500 hover:text-white transition-colors">
+              📦 GitHub
             </a>
           </div>
         </div>

@@ -14,6 +14,7 @@ import { WheelArena } from '../components/wheel/WheelArena';
 // [removed: confetti]
 import { BuildingMesh, preloadBuildingModels } from '../components/buildings';
 import { AgentDroid } from '../components/agents/AgentDroid';
+import { WelcomeSplash, EngagementBanner } from '../components/onboarding';
 import { buildRoadGraph, findPath, type RoadGraph, type RoadSegInput } from '../world/roadGraph';
 import { WorldScene } from '../world/WorldScene';
 import { StreetLights, generateLightPositions } from '../world/StreetLight';
@@ -2796,6 +2797,7 @@ export default function Town3D() {
   }, [walletAddress]);
   const wheel = useWheelStatus();
   const [wheelArenaOpen, setWheelArenaOpen] = useState(false);
+  const [bannerTriggered, setBannerTriggered] = useState(false);
 
   // Compute which agents are currently fighting (hide them from the map)
   const fightingAgentIds = useMemo(() => {
@@ -2814,6 +2816,8 @@ export default function Town3D() {
     const p = wheel.status?.phase;
     if (p === 'ANNOUNCING' || p === 'FIGHTING') {
       setWheelArenaOpen(true);
+      // Trigger engagement banner on first fight the user sees
+      if (!bannerTriggered) setBannerTriggered(true);
     } else if (p === 'PREP' || p === 'IDLE') {
       // Auto-close after AFTERMATH fades
       const t = setTimeout(() => setWheelArenaOpen(false), 1000);
@@ -3490,6 +3494,13 @@ export default function Town3D() {
   /* ────────────── DESKTOP LAYOUT ────────────── */
   return (
     <div className="flex flex-col h-[100svh] w-full overflow-hidden bg-[#050914]">
+      <WelcomeSplash />
+      <EngagementBanner forceShow={bannerTriggered} onConnectWallet={() => {
+        // Privy handles wallet connect via PrivyWalletConnect component
+        // Trigger a click on the Privy button if needed
+        const btn = document.querySelector('[data-privy-connect]') as HTMLButtonElement;
+        if (btn) btn.click();
+      }} />
       {wheelArenaOverlay}
       {/* Top Bar: Degen Stats */}
       <div className="shrink-0 flex items-center justify-between px-4 py-1.5 bg-slate-950/90 border-b border-slate-800/40 z-50">

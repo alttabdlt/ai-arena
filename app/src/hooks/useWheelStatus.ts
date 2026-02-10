@@ -42,6 +42,7 @@ export interface WheelMove {
   turn: number;
   action: string;
   reasoning: string;
+  quip: string;
   amount?: number;
 }
 
@@ -51,8 +52,10 @@ export interface WheelResult {
   gameType: string;
   winnerId: string | null;
   winnerName: string;
+  winnerQuip: string;
   loserId: string | null;
   loserName: string;
+  loserQuip: string;
   pot: number;
   rake: number;
   turns: number;

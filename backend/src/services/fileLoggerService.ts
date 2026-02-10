@@ -220,11 +220,13 @@ process.on('exit', () => {
 });
 
 process.on('SIGINT', () => {
+  console.log('[fileLoggerService] SIGINT received — cleaning up and exiting');
   fileLoggerService.cleanup();
   process.exit();
 });
 
 process.on('SIGTERM', () => {
+  console.log('[fileLoggerService] SIGTERM received — cleaning up and exiting');
   fileLoggerService.cleanup();
   process.exit();
 });

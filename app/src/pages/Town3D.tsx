@@ -1553,6 +1553,7 @@ function TownScene({
   spawnEffects,
   setSpawnEffects,
   relationshipsRef,
+  fightingAgentIds,
 }: {
   town: Town;
   agents: Agent[];
@@ -1573,6 +1574,7 @@ function TownScene({
   spawnEffects: { id: string; position: [number, number, number]; color: string }[];
   setSpawnEffects: React.Dispatch<React.SetStateAction<{ id: string; position: [number, number, number]; color: string }[]>>;
   relationshipsRef: React.MutableRefObject<{ agentAId: string; agentBId: string; status: string; score: number }[]>;
+  fightingAgentIds?: Set<string>;
 }) {
   const groundTex = useGroundTexture();
   const plots = town.plots;
@@ -1996,6 +1998,18 @@ function TownScene({
         }
       }
 
+      // Handle IDLE state (thinking before next move)
+      if (sim.state === 'IDLE') {
+        if (sim.stateEndsAt <= 0) sim.stateEndsAt = 2 + Math.random() * 3;
+        if (sim.stateTimer > sim.stateEndsAt) {
+          sim.state = 'WALKING';
+          sim.stateEndsAt = 0;
+        }
+        const g = agentGroupRefs.current.get(a.id);
+        if (g) g.position.copy(sim.position);
+        continue;
+      }
+
       // Handle BEGGING state
       if (sim.state === 'BEGGING') {
         if (sim.stateEndsAt <= 0) sim.stateEndsAt = 4 + Math.random() * 3;
@@ -2123,63 +2137,6 @@ function TownScene({
         }
       }
 
-      // ── Fallback ambient behaviors (lower chance, for when no backend action) ──
-      // Check if near a building to shop
-      if (sim.state === 'WALKING' && !hasRecentAction && builtPlots.length > 0) {
-        for (const plot of builtPlots) {
-          const entrance = getBuildingEntrance(plot.plotIndex);
-          const dist = sim.position.distanceTo(entrance);
-          if (dist < 3.0 && Math.random() < 0.003) {
-            sim.state = 'SHOPPING';
-            sim.targetPlotId = plot.id;
-            sim.stateTimer = 0;
-            sim.stateEndsAt = 2 + Math.random() * 3;
-            sim.route = [];
-            break;
-          }
-        }
-      }
-
-      // Check if near an under-construction plot to help build
-      if (sim.state === 'WALKING' && !hasRecentAction && underConstructionPlots.length > 0) {
-        for (const plot of underConstructionPlots) {
-          const entrance = getBuildingEntrance(plot.plotIndex);
-          const dist = sim.position.distanceTo(entrance);
-          if (dist < 3.0 && Math.random() < 0.005) {
-            sim.state = 'BUILDING';
-            sim.targetPlotId = plot.id;
-            sim.stateTimer = 0;
-            sim.stateEndsAt = 4 + Math.random() * 3;
-            sim.route = [];
-            break;
-          }
-        }
-      }
-
-      // Check if near entertainment to play games
-      if (sim.state === 'WALKING' && !hasRecentAction && entertainmentPlots.length > 0) {
-        for (const plot of entertainmentPlots) {
-          const entrance = getBuildingEntrance(plot.plotIndex);
-          const dist = sim.position.distanceTo(entrance);
-          if (dist < 3.0 && Math.random() < 0.004) {
-            sim.state = 'PLAYING';
-            sim.targetPlotId = plot.id;
-            sim.stateTimer = 0;
-            sim.stateEndsAt = 5 + Math.random() * 5;
-            sim.route = [];
-            break;
-          }
-        }
-      }
-
-      // Random chance to mine (very rare fallback)
-      if (sim.state === 'WALKING' && !hasRecentAction && Math.random() < 0.0005) {
-        sim.state = 'MINING';
-        sim.stateTimer = 0;
-        sim.stateEndsAt = 3 + Math.random() * 2;
-        sim.route = [];
-      }
-
       // Handle CHATTING state
       if (sim.state === 'CHATTING') {
         if (sim.stateTimer > sim.chatEndsAt) {
@@ -2271,14 +2228,27 @@ function TownScene({
         continue;
       }
 
-      // WALKING behavior - pick destination
+      // WALKING behavior — think → walk → stop → think cycle
       if (sim.route.length === 0) {
+        // Just arrived at destination: stop and "think" before moving again
+        if (sim.state === 'WALKING' && sim.stateEndsAt <= 0) {
+          // Enter IDLE ("thinking") state for 2-5 seconds
+          sim.state = 'IDLE';
+          sim.stateTimer = 0;
+          sim.stateEndsAt = 2 + Math.random() * 3;
+          sim.route = [];
+          const g = agentGroupRefs.current.get(a.id);
+          if (g) g.position.copy(sim.position);
+          continue;
+        }
+
+        // Done thinking — pick a new destination
         const rng = mulberry32(hashToSeed(`${a.id}:${Math.floor(sim.walk)}`));
         const roll = rng();
         const rels = relationshipsRef.current;
         let pickedTarget = false;
 
-        // Priority 1: Backend-driven target plot (agent decided to go somewhere specific)
+        // Priority 1: Backend-driven target plot
         if (!pickedTarget && hasRecentAction && a.lastTargetPlot != null) {
           const entrance = getBuildingEntrance(a.lastTargetPlot);
           if (entrance && sim.position.distanceTo(entrance) > 2.5) {
@@ -2288,8 +2258,8 @@ function TownScene({
           }
         }
 
-        // 15% chance: walk toward a friend/rival (if we have relationship data)
-        if (!pickedTarget && rels.length > 0 && roll < 0.15) {
+        // 20% chance: walk toward a friend/rival
+        if (!pickedTarget && rels.length > 0 && roll < 0.20) {
           const myRels = rels.filter(r => r.agentAId === a.id || r.agentBId === a.id);
           if (myRels.length > 0) {
             const rel = myRels[Math.floor(rng() * myRels.length)];
@@ -2303,8 +2273,8 @@ function TownScene({
           }
         }
 
-        // 25% chance: head to a building (entrance, not center)
-        if (!pickedTarget && builtPlots.length > 0 && roll < 0.40) {
+        // 30% chance: head to a building
+        if (!pickedTarget && builtPlots.length > 0 && roll < 0.50) {
           const targetPlot = builtPlots[Math.floor(rng() * builtPlots.length)];
           const entrance = getBuildingEntrance(targetPlot.plotIndex);
           sim.targetPlotId = targetPlot.id;
@@ -2312,7 +2282,7 @@ function TownScene({
           pickedTarget = true;
         }
 
-        // 60% chance: random road node
+        // Fallback: random road node
         if (!pickedTarget) {
           let attempts = 0;
           let target: THREE.Vector3;
@@ -2325,6 +2295,8 @@ function TownScene({
           sim.targetPlotId = null;
           sim.route = buildRoute(sim.position, target);
         }
+        // Reset stateEndsAt so next arrival triggers thinking
+        sim.stateEndsAt = 0;
       }
 
       const wp = sim.route[0];
@@ -2633,9 +2605,44 @@ function TownScene({
         );
       })}
 
+	      {/* Central Arena Building */}
+	      <group position={[0, 0, 0]}>
+	        {/* Arena platform */}
+	        <mesh position={[0, 0.05, 0]} receiveShadow>
+	          <cylinderGeometry args={[8, 9, 0.3, 32]} />
+	          <meshStandardMaterial color="#1a1a2e" metalness={0.6} roughness={0.3} />
+	        </mesh>
+	        {/* Arena dome */}
+	        <mesh position={[0, 3.5, 0]} castShadow>
+	          <sphereGeometry args={[5, 32, 24, 0, Math.PI * 2, 0, Math.PI / 2]} />
+	          <meshStandardMaterial color="#16213e" transparent opacity={0.6} metalness={0.8} roughness={0.2} side={THREE.DoubleSide} />
+	        </mesh>
+	        {/* Arena ring */}
+	        <mesh position={[0, 0.4, 0]}>
+	          <torusGeometry args={[7.5, 0.15, 8, 48]} />
+	          <meshStandardMaterial color="#e94560" emissive="#e94560" emissiveIntensity={0.5} />
+	        </mesh>
+	        {/* Arena pillars */}
+	        {[0, 1, 2, 3, 4, 5].map((i) => {
+	          const angle = (i / 6) * Math.PI * 2;
+	          return (
+	            <mesh key={`pillar-${i}`} position={[Math.cos(angle) * 7.5, 2, Math.sin(angle) * 7.5]} castShadow>
+	              <cylinderGeometry args={[0.3, 0.3, 4, 8]} />
+	              <meshStandardMaterial color="#0f3460" metalness={0.7} roughness={0.3} />
+	            </mesh>
+	          );
+	        })}
+	        {/* Arena label */}
+	        <BillboardLabel text={`⚔️ ARENA ${fightingAgentIds?.size ? `(${fightingAgentIds.size} inside)` : ''}`} position={[0, 6.5, 0]} color="#e94560" />
+	        {/* Glow when fight active */}
+	        {(fightingAgentIds?.size ?? 0) > 0 && (
+	          <pointLight position={[0, 4, 0]} color="#e94560" intensity={3} distance={15} />
+	        )}
+	      </group>
+
 	      {/* Agents */}
 	      <group>
-	        {agents.map((a) => {
+	        {agents.filter((a) => !fightingAgentIds?.has(a.id)).map((a) => {
 	          const baseColor = ARCHETYPE_COLORS[a.archetype] || '#93c5fd';
 	          const economicState = getEconomicState(a.bankroll + a.reserveBalance, false);
 	          const isDead = false; // Death is now only from combat, not bankroll
@@ -2661,10 +2668,7 @@ function TownScene({
 	                agent={a}
 	                color={color}
 	                selected={selected}
-	                onClick={() => {
-	                  setSelectedAgentId(a.id);
-	                  setSelectedPlotId(null);
-	                }}
+	                onClick={() => {}}
 	                simsRef={simsRef}
 	                economicState={economicState}
 	                BillboardLabel={BillboardLabel}
@@ -2678,16 +2682,14 @@ function TownScene({
 		                />
 		              )}
 		              <StateIndicator agentId={a.id} simsRef={simsRef} />
-		              {selected && <ThoughtBubble agent={a} position={[0, 4.5, 0]} />}
-		              <EconomicIndicator agent={a} />
 		              <HealthBar agentId={a.id} simsRef={simsRef} />
 		            </group>
 	          );
 	        })}
       </group>
       
-      {/* Destination lines for all agents */}
-      {agents.map((a) => (
+      {/* Destination lines for visible agents */}
+      {agents.filter((a) => !fightingAgentIds?.has(a.id)).map((a) => (
         <DestinationLine
           key={`line-${a.id}`}
           agentId={a.id}
@@ -2697,7 +2699,7 @@ function TownScene({
       ))}
 
       {/* Agent trails */}
-      {agents.map((a) => (
+      {agents.filter((a) => !fightingAgentIds?.has(a.id)).map((a) => (
         <AgentTrail
           key={`trail-${a.id}`}
           agentId={a.id}
@@ -2881,6 +2883,18 @@ export default function Town3D() {
   const wheel = useWheelStatus();
   const [wheelArenaOpen, setWheelArenaOpen] = useState(false);
   const prevPnLRef = useRef(0);
+
+  // Compute which agents are currently fighting (hide them from the map)
+  const fightingAgentIds = useMemo(() => {
+    const ids = new Set<string>();
+    const phase = wheel.status?.phase;
+    const match = wheel.status?.currentMatch;
+    if (match && (phase === 'ANNOUNCING' || phase === 'FIGHTING' || phase === 'AFTERMATH')) {
+      ids.add(match.agent1.id);
+      ids.add(match.agent2.id);
+    }
+    return ids;
+  }, [wheel.status?.phase, wheel.status?.currentMatch?.agent1?.id, wheel.status?.currentMatch?.agent2?.id]);
 
   // Auto-open WheelArena when a match starts (ANNOUNCING/FIGHTING/AFTERMATH)
   useEffect(() => {
@@ -3727,15 +3741,8 @@ export default function Town3D() {
             spawnEffects={spawnEffects}
             setSpawnEffects={setSpawnEffects}
             relationshipsRef={relationshipsRef}
+            fightingAgentIds={fightingAgentIds}
           />
-          {towns.length > 1 && (
-            <WorldScene
-              townSummaries={towns.map(t => ({ id: t.id, name: t.name, level: t.level, status: t.status }))}
-              agentIds={agents.map(a => a.id)}
-              focusTownId={selectedTownId}
-              onTownSelect={(id) => { userSelectedTownIdRef.current = id; setSelectedTownId(id); }}
-            />
-          )}
         </Canvas>
 
         {/* Swap Notifications — compact mobile */}
@@ -3756,39 +3763,7 @@ export default function Town3D() {
           })}
         </div>
 
-        {/* Town info — compact top-left */}
-        <div className="pointer-events-none absolute top-2 left-2 z-40">
-          <div className="pointer-events-auto backdrop-blur-md bg-slate-950/70 rounded-lg px-2.5 py-1.5 border border-slate-800/40">
-            <div className="flex items-center gap-2 text-[11px]">
-              <span className="font-mono font-semibold text-slate-100">{town.name}</span>
-              <span className="hud-chip text-[9px]">Lv{town.level}</span>
-              <span className="text-slate-400">{Math.round(town.completionPct)}%</span>
-            </div>
-            <div className="mt-1 h-1 rounded-full bg-slate-800/60 overflow-hidden w-32">
-              <div className="h-full rounded-full bg-gradient-to-r from-primary to-primary-glow" style={{ width: `${town.completionPct}%` }} />
-            </div>
-          </div>
-        </div>
-
-        {/* Agent switcher strip — bottom center */}
-        <div className="pointer-events-auto absolute bottom-16 left-1/2 -translate-x-1/2 z-40">
-          <div className="flex items-center gap-1.5 backdrop-blur-md bg-slate-950/70 rounded-full px-3 py-1.5 border border-slate-800/40">
-            {agents.map((a) => {
-              const color = ARCHETYPE_COLORS[a.archetype] || '#93c5fd';
-              const isActive = a.id === selectedAgentId;
-              return (
-                <button
-                  key={a.id}
-                  className={`shrink-0 rounded-full border-2 transition-all ${
-                    isActive ? 'border-white scale-125' : 'border-transparent opacity-60'
-                  }`}
-                  style={{ width: 22, height: 22, backgroundColor: color }}
-                  onClick={() => { setSelectedAgentId(a.id); setMobilePanel('agent'); }}
-                />
-              );
-            })}
-          </div>
-        </div>
+        {/* (mobile town info removed) */}
 
         {/* Wheel of Fate banner (mobile) */}
         {wheel.status && wheel.status.phase !== 'IDLE' && wheel.status.phase !== 'PREP' && (
@@ -3809,27 +3784,11 @@ export default function Town3D() {
           <div className="flex gap-1.5">
             <button
               className={`px-3 py-1.5 rounded-lg text-xs backdrop-blur-md border transition-all ${
-                mobilePanel === 'info' ? 'bg-primary/20 border-primary/50 text-primary' : 'bg-slate-950/70 border-slate-800/40 text-slate-300'
-              }`}
-              onClick={() => setMobilePanel(mobilePanel === 'info' ? 'none' : 'info')}
-            >
-              🧠 Thoughts
-            </button>
-            <button
-              className={`px-3 py-1.5 rounded-lg text-xs backdrop-blur-md border transition-all ${
                 mobilePanel === 'feed' ? 'bg-primary/20 border-primary/50 text-primary' : 'bg-slate-950/70 border-slate-800/40 text-slate-300'
               }`}
               onClick={() => setMobilePanel(mobilePanel === 'feed' ? 'none' : 'feed')}
             >
               📋 Feed
-            </button>
-            <button
-              className={`px-3 py-1.5 rounded-lg text-xs backdrop-blur-md border transition-all ${
-                mobilePanel === 'chat' ? 'bg-primary/20 border-primary/50 text-primary' : 'bg-slate-950/70 border-slate-800/40 text-slate-300'
-              }`}
-              onClick={() => setMobilePanel(mobilePanel === 'chat' ? 'none' : 'chat')}
-            >
-              💬 Chat {chatMessages.length > 0 && <span className="ml-1 text-[9px] opacity-70">{chatMessages.length}</span>}
             </button>
             <button
               className={`px-3 py-1.5 rounded-lg text-xs backdrop-blur-md border transition-all ${
@@ -3840,15 +3799,6 @@ export default function Town3D() {
               🤖+
             </button>
           </div>
-          <select
-            className="h-7 rounded-lg border border-slate-700/50 bg-slate-950/70 backdrop-blur-md px-2 text-[10px] text-slate-200 outline-none"
-            value={selectedTownId ?? ''}
-            onChange={(e) => { userSelectedTownIdRef.current = e.target.value || null; setSelectedTownId(e.target.value || null); }}
-          >
-            {towns.map((t) => (
-              <option key={t.id} value={t.id}>L{t.level} · {t.name}</option>
-            ))}
-          </select>
         </div>
 
         {/* Mobile bottom sheet */}
@@ -3863,75 +3813,29 @@ export default function Town3D() {
                 />
               </div>
 
-              {mobilePanel === 'info' && (
-                <div className="space-y-2 max-h-[45vh] overflow-auto">
-                  <div className="text-xs font-semibold text-slate-200 mb-1">🧠 Agent Decisions</div>
-                  {agents.filter(a => a.lastActionType && a.lastTickAt).length === 0 && (
-                    <div className="text-[10px] text-slate-500 py-2">Waiting for agents to make decisions…</div>
-                  )}
-                  {agents
-                    .filter(a => a.lastActionType && a.lastTickAt)
-                    .sort((a, b) => new Date(b.lastTickAt || 0).getTime() - new Date(a.lastTickAt || 0).getTime())
-                    .map(a => {
-                      const actionEmojis: Record<string, string> = {
-                        claim_plot: '📍', start_build: '🔨', do_work: '🏗️', complete_build: '🎉',
-                        buy_arena: '💱', sell_arena: '💱', mine: '⛏️', play_arena: '🎮',
-                        buy_skill: '💳', rest: '💤',
-                      };
-                      const emoji = actionEmojis[a.lastActionType || ''] || '❓';
-                      const color = ARCHETYPE_COLORS[a.archetype] || '#93c5fd';
-                      const glyph = ARCHETYPE_GLYPH[a.archetype] || '●';
-                      const reasoning = (a.lastReasoning || '')
-                        .replace(/\[AUTO\]\s*/g, '')
-                        .replace(/\s+/g, ' ')
-                        .trim();
-                      const narrative = (a.lastNarrative || '').replace(/\s+/g, ' ').trim();
-                      const age = a.lastTickAt ? timeAgo(a.lastTickAt) : '';
-                      const isMyAgent = a.id === selectedAgentId;
-
-                      return (
-                        <div
-                          key={a.id}
-                          className="rounded-lg border border-slate-800/60 bg-slate-950/40 p-2 space-y-1"
-                          onClick={() => { setSelectedAgentId(a.id); setMobilePanel('agent'); }}
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              <span className="text-sm">{emoji}</span>
-                              <span className="font-mono text-[11px] font-semibold" style={{ color }}>
-                                {glyph} {a.name}
-                              </span>
-                              <span className="text-[10px] text-slate-500 font-mono">{a.lastActionType}</span>
-                            </div>
-                            <span className="text-[9px] text-slate-600 shrink-0">{age}</span>
-                          </div>
-                          {narrative && (
-                            <div className="text-[10px] text-slate-300 leading-snug">
-                              {narrative.length > 120 ? narrative.slice(0, 120) + '…' : narrative}
-                            </div>
-                          )}
-                          {isMyAgent && reasoning && (
-                            <div className="text-[10px] text-slate-500 leading-snug">
-                              💭 {reasoning.length > 100 ? reasoning.slice(0, 100) + '…' : reasoning}
-                            </div>
-                          )}
-                          <div className="flex gap-2 text-[9px] text-slate-600 font-mono">
-                            <span>{a.bankroll} $ARENA</span>
-                            <span>{a.reserveBalance} reserve</span>
-                            {(a as any).health != null && (a as any).health < 100 && <span className="text-red-400">❤️{(a as any).health}%</span>}
-                            {a.lastTargetPlot != null && <span>→ Plot #{a.lastTargetPlot}</span>}
-                          </div>
-                        </div>
-                      );
-                    })
-                  }
-                </div>
-              )}
-
               {mobilePanel === 'feed' && (
                 <div className="space-y-1 max-h-[40vh] overflow-auto">
                   <div className="text-xs font-semibold text-slate-200 mb-1">Activity Feed</div>
-                  {activityFeed.slice(0, 15).map((item) => {
+                  {activityFeed.filter((item) => {
+                    // Filter to current agent
+                    if (selectedAgentId) {
+                      if (item.kind === 'swap') {
+                        if (item.data.agentId !== selectedAgentId) return false;
+                      } else {
+                        const ev = item.data;
+                        if (ev.agentId && ev.agentId !== selectedAgentId) {
+                          try { const m = JSON.parse(ev.metadata || '{}'); if (m?.winnerId !== selectedAgentId && m?.loserId !== selectedAgentId) return false; } catch { return false; }
+                        }
+                      }
+                    }
+                    if (item.kind === 'swap') return true;
+                    const e = item.data;
+                    if (e.eventType === 'ARENA_MATCH' || e.eventType === 'TRADE') return true;
+                    const HIDDEN = ['PLOT_CLAIMED','BUILD_STARTED','BUILD_COMPLETED','TOWN_COMPLETED','YIELD_DISTRIBUTED','AGENT_CHAT','RELATIONSHIP_CHANGE','TOWN_OBJECTIVE','TOWN_OBJECTIVE_RESOLVED','X402_SKILL'];
+                    if (HIDDEN.includes(e.eventType)) return false;
+                    try { const meta = JSON.parse(e.metadata || '{}'); if (meta?.kind && HIDDEN.includes(meta.kind)) return false; } catch {}
+                    return true;
+                  }).slice(0, 15).map((item) => {
                     if (item.kind === 'swap') {
                       const s = item.data;
                       const isBuy = s.side === 'BUY_ARENA';
@@ -3944,59 +3848,10 @@ export default function Town3D() {
                       );
                     }
                     const e = item.data;
-                    const emoji = e.eventType === 'PLOT_CLAIMED' ? '📍' : e.eventType === 'BUILD_STARTED' ? '🏗️' :
-                      e.eventType === 'BUILD_COMPLETED' ? '✅' : e.eventType === 'TOWN_COMPLETED' ? '🎉' : '📝';
-                    // Extract reasoning from event metadata — only show for selected agent
-                    const isMyEvent = e.agentId === selectedAgentId;
-                    let reasoning = '';
-                    if (isMyEvent) {
-                      try {
-                        const meta = JSON.parse(e.metadata || '{}');
-                        if (meta?.reasoning) reasoning = String(meta.reasoning).replace(/\[AUTO\]\s*/g, '').trim();
-                      } catch {}
-                    }
                     return (
                       <div key={e.id} className="text-[10px] text-slate-300 py-0.5 border-b border-slate-800/30">
-                        {emoji} {e.title || e.eventType}
+                        📝 {e.title || e.eventType}
                         <span className="text-slate-600 ml-1">· {timeAgo(e.createdAt)}</span>
-                        {reasoning && (
-                          <div className="text-[9px] text-slate-500 mt-0.5 leading-snug truncate">
-                            💭 {reasoning.length > 80 ? reasoning.slice(0, 80) + '…' : reasoning}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {mobilePanel === 'chat' && (
-                <div className="space-y-1 max-h-[40vh] overflow-auto">
-                  <div className="text-xs font-semibold text-slate-200 mb-1">Agent Conversations</div>
-                  {chatMessages.length === 0 && (
-                    <div className="text-[10px] text-slate-500 py-2">No conversations yet — agents chat when they meet!</div>
-                  )}
-                  {chatMessages.slice(0, 30).map((msg) => {
-                    const color = ARCHETYPE_COLORS[msg.archetype] || '#93c5fd';
-                    const glyph = ARCHETYPE_GLYPH[msg.archetype] || '●';
-                    const outcomeEmoji = msg.outcome === 'BOND' ? '🤝' : msg.outcome === 'BEEF' ? '💢' : '';
-                    return (
-                      <div key={msg.id} className="py-1 border-b border-slate-800/30">
-                        <div className="flex items-center gap-1.5 text-[10px]">
-                          <span className="font-mono font-semibold" style={{ color }}>
-                            {glyph} {msg.agentName}
-                          </span>
-                          {outcomeEmoji && <span>{outcomeEmoji}</span>}
-                          <span className="text-slate-600 ml-auto">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                        </div>
-                        <div className="text-[11px] text-slate-300 mt-0.5 leading-snug">
-                          "{msg.text}"
-                        </div>
-                        {msg.economicEffect && (
-                          <div className="text-[9px] text-amber-400/70 mt-0.5">
-                            💰 {msg.economicEffect.type}: {msg.economicEffect.detail}
-                          </div>
-                        )}
                       </div>
                     );
                   })}
@@ -4071,14 +3926,6 @@ export default function Town3D() {
       <div className="shrink-0 flex items-center justify-between px-4 py-1.5 bg-slate-950/90 border-b border-slate-800/40 z-50">
         <div className="flex items-center gap-3">
           <span className="text-xs font-bold text-amber-400">AI TOWN</span>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 border-slate-700/60 bg-slate-950/40 text-[10px] text-slate-200"
-            onClick={() => (window.location.href = '/town/pixel')}
-          >
-            Pixel
-          </Button>
           {economy && Number.isFinite(economy.spotPrice) && (
             <span className="text-[10px] text-slate-500 font-mono">$ARENA {economy.spotPrice.toFixed(4)}</span>
           )}
@@ -4092,7 +3939,6 @@ export default function Town3D() {
             <span className="text-[10px] bg-amber-900/60 text-amber-300 px-2 py-0.5 rounded-full">🏆 Result</span>
           )}
         </div>
-        <PositionTracker balance={degen.balance} totalPnL={degen.totalPnL} spotPrice={economy?.spotPrice ?? null} />
         <WalletConnect compact onAddressChange={setWalletAddress} />
         <button
           onClick={() => setShowSpawnOverlay(true)}
@@ -4152,18 +3998,8 @@ export default function Town3D() {
           spawnEffects={spawnEffects}
           setSpawnEffects={setSpawnEffects}
           relationshipsRef={relationshipsRef}
+          fightingAgentIds={fightingAgentIds}
         />
-        {towns.length > 1 && (
-          <WorldScene
-            townSummaries={towns.map(t => ({ id: t.id, name: t.name, level: t.level, status: t.status }))}
-            agentIds={agents.map(a => a.id)}
-            focusTownId={selectedTownId}
-            onTownSelect={(id) => {
-              userSelectedTownIdRef.current = id;
-              setSelectedTownId(id);
-            }}
-          />
-        )}
       </Canvas>
 
       {/* Swap Notifications - floating toasts (top-right, compact) */}
@@ -4199,146 +4035,26 @@ export default function Town3D() {
         })}
       </div>
 
-      {/* Build Completion Notifications - top center */}
-      {/* World Event Banner */}
-      {worldEvents.length > 0 && (
-        <div className="pointer-events-none absolute top-12 left-1/2 -translate-x-1/2 z-[60] flex flex-col gap-1">
-          {worldEvents.map((we, i) => (
-            <div
-              key={`we-${i}`}
-              className="pointer-events-auto animate-pulse bg-gradient-to-r from-amber-900/90 via-amber-800/90 to-amber-900/90 border border-amber-500/50 rounded-lg px-4 py-2 text-center shadow-lg shadow-amber-500/20 backdrop-blur-sm"
-            >
-              <div className="text-amber-200 font-bold text-sm">{we.emoji} {we.name}</div>
-              <div className="text-amber-300/80 text-xs">{we.description}</div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className="pointer-events-none absolute top-20 left-1/2 -translate-x-1/2 flex flex-col gap-2 z-50">
-        {eventNotifications.map((event) => {
-          const agent = agents.find(a => a.id === event.agentId);
-          const color = agent ? (ARCHETYPE_COLORS[agent.archetype] || '#93c5fd') : '#93c5fd';
-          const glyph = agent ? (ARCHETYPE_GLYPH[agent.archetype] || '●') : '●';
-          const isTownComplete = event.eventType === 'TOWN_COMPLETED';
-          return (
-            <div
-              key={event.id}
-              className="animate-in slide-in-from-top-4 fade-in duration-500 pointer-events-auto"
-            >
-              <div className={`flex items-center gap-3 px-5 py-3 rounded-lg border backdrop-blur-md shadow-xl ${
-                isTownComplete
-                  ? 'bg-amber-950/90 border-amber-500/60 text-amber-100'
-                  : 'bg-sky-950/90 border-sky-600/50 text-sky-100'
-              }`}>
-                <span className="text-2xl">{isTownComplete ? '🎉' : '🏗️'}</span>
-                <div className="flex flex-col">
-                  <span className="text-sm font-semibold">
-                    {isTownComplete ? 'Town Complete!' : 'Building Complete!'}
-                  </span>
-                  {agent && (
-                    <span style={{ color }} className="font-mono text-xs">
-                      {glyph} {agent.name}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      {/* (world event banner and build completion banners removed) */}
 
       {/* Overlay UI */}
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute inset-0 hud-backplate" />
-        <div className="pointer-events-auto absolute left-3 top-3 w-[360px] max-w-[calc(100vw-24px)]">
-          <div className="hud-panel p-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold bg-gradient-to-r from-slate-50 to-slate-300 bg-clip-text text-transparent">
-                    AI Town
-                  </span>
-                  <span className="hud-chip">{town.status}</span>
-                  {typeof town.level === 'number' && <span className="hud-chip">Lv {town.level}</span>}
-                </div>
-                <div className="mt-1 text-xs text-slate-300">
-                  <span className="font-mono">{town.name}</span>
-                  <span className="text-slate-500"> · </span>
-                  <span className="text-slate-400">{town.theme || 'unthemed'}</span>
-                </div>
-                <div className="mt-2">
-                  <div className="flex items-center justify-between text-[11px] text-slate-500">
-                    <span>
-                      {town.builtPlots}/{town.totalPlots} plots built
-                    </span>
-                    <span className="font-mono text-slate-200">{Math.round(town.completionPct)}%</span>
-                  </div>
-                  <div className="mt-1 h-1.5 rounded-full bg-slate-800/60 overflow-hidden">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-primary to-primary-glow"
-                      style={{ width: `${Math.max(0, Math.min(100, town.completionPct))}%` }}
-                    />
-                  </div>
-                </div>
-                {town.yieldPerTick != null && Number.isFinite(town.yieldPerTick) && (
-                  <div className="mt-1 text-[11px] text-slate-500">
-                    ⛏️ yield/tick{' '}
-                    <span className="font-mono text-slate-200">{town.yieldPerTick.toFixed(2)}</span>
-                  </div>
-                )}
-                {economy && Number.isFinite(economy.spotPrice) && (
-                  <div className="mt-1 text-[11px] text-slate-500">
-                    💱 1 $ARENA ≈{' '}
-                    <span className="font-mono text-slate-200">{economy.spotPrice.toFixed(3)}</span> reserve · fee{' '}
-                    {(economy.feeBps / 100).toFixed(2)}%
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <label className="hud-kicker">Town</label>
-              <select
-                className="h-8 flex-1 min-w-[180px] rounded-md border border-slate-700/50 bg-slate-950/40 px-2 text-xs text-slate-100 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-                value={selectedTownId ?? ''}
-                onChange={(e) => {
-                  const id = e.target.value || null;
-                  userSelectedTownIdRef.current = id;
-                  setSelectedTownId(id);
-                  setSelectedPlotId(null);
-                  setSelectedAgentId(null);
-                }}
-              >
-                {towns.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    L{t.level} · {t.name} ({t.status})
-                  </option>
-                ))}
-              </select>
-
-            </div>
-
-            <div className="mt-3 border-t border-slate-800/60 pt-3">
-              <div className="flex items-center justify-between">
-                <WalletConnect compact onAddressChange={setWalletAddress} />
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-8 w-8 p-0 text-slate-400 hover:text-slate-100 hover:bg-slate-900/40"
-                  onClick={() => {
-                    const newState = !soundOn;
-                    setSoundOn(newState);
-                    setSoundEnabled(newState);
-                    if (newState) playSound('click');
-                  }}
-                  title={soundOn ? 'Mute sounds' : 'Enable sounds'}
-                >
-                  {soundOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-                </Button>
-              </div>
-            </div>
-          </div>
+        <div className="pointer-events-auto absolute left-3 top-3">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-8 w-8 p-0 text-slate-400 hover:text-slate-100 hover:bg-slate-900/40 backdrop-blur-md bg-slate-950/70 rounded-lg border border-slate-800/40"
+            onClick={() => {
+              const newState = !soundOn;
+              setSoundOn(newState);
+              setSoundEnabled(newState);
+              if (newState) playSound('click');
+            }}
+            title={soundOn ? 'Mute sounds' : 'Enable sounds'}
+          >
+            {soundOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+          </Button>
         </div>
 
         {/* Agent HUD — shows followed agent + switcher strip */}
@@ -4355,40 +4071,14 @@ export default function Town3D() {
                     {(ARCHETYPE_GLYPH[selectedAgent.archetype] || '●') + ' ' + selectedAgent.name}
                   </div>
                   <div className="text-[10px] text-slate-400">
-                    {selectedAgent.archetype}{' '}
-                    {(() => {
-                      const econ = getEconomicState(selectedAgent.bankroll + selectedAgent.reserveBalance, false);
-                      const indicator = ECONOMIC_INDICATORS[econ];
-                      return (
-                        <>
-                          <span className="text-slate-600">·</span>{' '}
-                          <span style={{ color: indicator.color }}>
-                            {indicator.emoji} {econ.toLowerCase()}
-                          </span>
-                        </>
-                      );
-                    })()}
+                    {selectedAgent.archetype}
                   </div>
                 </div>
-                {(() => {
-                  const sim = simsRef.current.get(selectedAgent.id);
-                  const state = sim?.state ?? 'WALKING';
-                  const indicator = STATE_INDICATORS[state];
-                  return (
-                    <span className="ml-auto shrink-0 hud-chip">
-                      {indicator?.emoji ?? ''} {state}
-                    </span>
-                  );
-                })()}
               </div>
-              <div className="mt-2 grid grid-cols-4 gap-2 text-[11px] text-slate-300">
+              <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-slate-300">
                 <div className="rounded-md border border-slate-800 bg-slate-950/40 p-1.5 text-center">
                   <div className="text-slate-500">$ARENA</div>
                   <div className="font-mono text-slate-100">{Math.round(selectedAgent.bankroll)}</div>
-                </div>
-                <div className="rounded-md border border-slate-800 bg-slate-950/40 p-1.5 text-center">
-                  <div className="text-slate-500">reserve</div>
-                  <div className="font-mono text-slate-100">{Math.round(selectedAgent.reserveBalance)}</div>
                 </div>
                 <div className="rounded-md border border-slate-800 bg-slate-950/40 p-1.5 text-center">
                   <div className="text-slate-500">W/L</div>
@@ -4399,179 +4089,51 @@ export default function Town3D() {
                   <div className="font-mono text-slate-100">{selectedAgent.elo}</div>
                 </div>
               </div>
-              {(() => {
-                const sim = simsRef.current.get(selectedAgent.id);
-                const health = sim?.health ?? 100;
-                if (!Number.isFinite(health)) return null;
-                const pct = Math.max(0, Math.min(100, health));
-                const barClass =
-                  pct < 25
-                    ? 'bg-gradient-to-r from-red-500 to-amber-500'
-                    : pct < 60
-                      ? 'bg-gradient-to-r from-amber-500 to-sky-500'
-                      : 'bg-gradient-to-r from-emerald-500 to-sky-500';
-                return (
-                  <div className="mt-2">
-                    <div className="flex items-center justify-between text-[10px] text-slate-500">
-                      <span>health</span>
-                      <span className="font-mono text-slate-300">{Math.round(pct)}%</span>
-                    </div>
-                    <div className="mt-1 h-1.5 rounded-full bg-slate-800/60 overflow-hidden">
-                      <div className={`h-full rounded-full ${barClass}`} style={{ width: `${pct}%` }} />
-                    </div>
-                  </div>
-                );
-              })()}
-              {(() => {
-                const g = agentGoalsById[selectedAgent.id];
-                if (!g) return null;
-                const done = !!g.progress?.done;
-                return (
-                  <div
-                    className={`mt-2 rounded-md border px-2 py-1.5 ${
-                      done
-                        ? 'border-emerald-700/40 bg-emerald-950/15'
-                        : 'border-slate-800/70 bg-slate-950/30'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-[10px] text-slate-500">🎯 Goal</div>
-                      <div className={`text-[10px] font-mono ${done ? 'text-emerald-300' : 'text-slate-500'}`}>
-                        {safeTrim(g.progress?.label, 36)}
-                      </div>
-                    </div>
-                    <div className="text-[11px] text-slate-200 font-semibold truncate">{safeTrim(g.goalTitle, 80)}</div>
-                    <div className="text-[10px] text-slate-400 truncate">Next: {safeTrim(g.next?.detail, 120)}</div>
-                  </div>
-                );
-              })()}
-              {selectedAgentObjective && (
-                <div className="mt-2 rounded-md border border-amber-700/30 bg-amber-950/10 px-2 py-1.5 shadow-[0_0_0_1px_rgba(251,191,36,0.06)]">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-[10px] text-amber-300/80">🔥 Objective</div>
-                    <div className="text-[10px] font-mono text-amber-200/70">
-                      {formatTimeLeft(selectedAgentObjective.expiresAtMs - Date.now())}
-                    </div>
-                  </div>
-                  <div className="text-[11px] text-slate-200 font-semibold truncate">
-                    {safeTrim(selectedAgentObjective.title, 80)}
-                  </div>
-                  <div className="text-[10px] text-slate-400 truncate">
-                    {safeTrim(selectedAgentObjective.detail, 140)}
-                  </div>
-                </div>
-              )}
-              {/* Agent switcher row */}
-              <div className="mt-2 flex items-center gap-1.5 overflow-x-auto py-1">
-                {agents.map((a) => {
-                  const color = ARCHETYPE_COLORS[a.archetype] || '#93c5fd';
-                  const isActive = a.id === selectedAgentId;
-                  return (
-                    <button
-                      key={a.id}
-                      type="button"
-                      title={`${ARCHETYPE_GLYPH[a.archetype] || '●'} ${a.name}`}
-                      className={`shrink-0 rounded-full border-2 transition-all ${
-                        isActive ? 'border-white scale-125' : 'border-transparent hover:border-slate-500 opacity-70 hover:opacity-100'
-                      }`}
-                      style={{ width: 20, height: 20, backgroundColor: color }}
-                      onClick={() => {
-                        setSelectedAgentId(a.id);
-                        setSelectedPlotId(null);
-                      }}
-                    />
-                  );
-                })}
-              </div>
             </div>
           )}
         </div>
 
-        {/* Minimap */}
-        <div className="pointer-events-auto absolute left-3 bottom-3 z-10">
-          {town && (
-            <div className="hud-panel p-2">
-              <div className="flex items-center justify-between px-1 pb-1">
-                <div className="hud-title">Tactical Map</div>
-                <div className="hud-kicker">click agent</div>
-              </div>
-              <Minimap
-                plots={town.plots}
-                agents={agents}
-                simsRef={simsRef}
-                selectedAgentId={selectedAgentId}
-                spacing={TOWN_SPACING}
-                onSelectAgent={(id) => {
-                  setSelectedAgentId(id);
-                  setSelectedPlotId(null);
-                }}
-                className="border-0 bg-transparent shadow-inner"
-              />
-            </div>
-          )}
-        </div>
+        {/* (minimap removed) */}
 
-        <div className="pointer-events-auto absolute left-[190px] bottom-3 flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end max-w-[calc(100vw-210px)]">
-          <div className="w-[420px] max-w-[calc(100vw-210px)]">
+        <div className="pointer-events-auto absolute left-3 bottom-3 flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end max-w-[calc(100vw-24px)]">
+          <div className="w-[420px] max-w-[calc(100vw-24px)]">
             <div className="hud-panel p-3">
-		              {(activityFeed.length > 0 || recentSwaps.length > 0 || chatMessages.length > 0) && (
+		              {(activityFeed.length > 0 || recentSwaps.length > 0) && (
 		                <div>
 		                  <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-1">
-                          <button
-                            className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-colors ${
-                              feedTab === 'activity' ? 'bg-slate-800/60 text-slate-100' : 'text-slate-500 hover:text-slate-300'
-                            }`}
-                            onClick={() => setFeedTab('activity')}
-                          >
-                            Activity <span className="text-[9px] opacity-60">{activityFeed.length}</span>
-                          </button>
-                          <button
-                            className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-colors ${
-                              feedTab === 'chat' ? 'bg-slate-800/60 text-slate-100' : 'text-slate-500 hover:text-slate-300'
-                            }`}
-                            onClick={() => setFeedTab('chat')}
-                          >
-                            💬 Chat <span className="text-[9px] opacity-60">{chatMessages.length}</span>
-                          </button>
-                        </div>
+                        <div className="text-[11px] font-semibold text-slate-100">Activity</div>
                         <div className="text-[10px] text-slate-500">
-                          {feedTab === 'activity' && recentSwaps.length > 0 ? `swaps ${recentSwaps.length}` : ''}
+                          {recentSwaps.length > 0 ? `swaps ${recentSwaps.length}` : ''}
                         </div>
 		                  </div>
-		                  {feedTab === 'chat' ? (
-		                    <div className="max-h-[170px] overflow-auto pr-1 space-y-1 scrollbar-thin scrollbar-thumb-slate-700/60">
-		                      {chatMessages.length === 0 && (
-		                        <div className="text-[10px] text-slate-500 py-2">No conversations yet</div>
-		                      )}
-		                      {chatMessages.slice(0, 30).map((msg) => {
-		                        const color = ARCHETYPE_COLORS[msg.archetype] || '#93c5fd';
-		                        const glyph = ARCHETYPE_GLYPH[msg.archetype] || '●';
-		                        const outcomeEmoji = msg.outcome === 'BOND' ? '🤝' : msg.outcome === 'BEEF' ? '💢' : '';
-		                        return (
-		                          <div key={msg.id} className="rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300">
-		                            <div className="flex items-center justify-between gap-2">
-		                              <div className="min-w-0 truncate">
-		                                <span className="font-mono" style={{ color }}>{glyph} {msg.agentName}</span>
-		                                {outcomeEmoji && <span className="ml-1">{outcomeEmoji}</span>}
-		                              </div>
-		                              <span className="shrink-0 text-slate-600">
-		                                {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-		                              </span>
-		                            </div>
-		                            <div className="text-[10px] text-slate-400 truncate mt-0.5">"{msg.text}"</div>
-		                            {msg.economicEffect && (
-		                              <div className="text-[9px] text-amber-400/70 mt-0.5">
-		                                💰 {msg.economicEffect.type}: {msg.economicEffect.detail}
-		                              </div>
-		                            )}
-		                          </div>
-		                        );
-		                      })}
-		                    </div>
-		                  ) : (
 		                  <div className="max-h-[170px] overflow-auto pr-1 space-y-1 scrollbar-thin scrollbar-thumb-slate-700/60">
-		                    {activityFeed.map((item) => {
+		                    {activityFeed.filter((item) => {
+		                      // Filter to current agent only
+		                      if (selectedAgentId) {
+		                        if (item.kind === 'swap') {
+		                          if (item.data.agentId !== selectedAgentId) return false;
+		                        } else {
+		                          const e = item.data;
+		                          if (e.agentId && e.agentId !== selectedAgentId) {
+		                            // Also check metadata for matches involving selected agent
+		                            try {
+		                              const meta = JSON.parse(e.metadata || '{}');
+		                              if (meta?.winnerId !== selectedAgentId && meta?.loserId !== selectedAgentId) return false;
+		                            } catch { return false; }
+		                          }
+		                        }
+		                      }
+		                      if (item.kind === 'swap') return true;
+		                      const e = item.data;
+		                      if (e.eventType === 'ARENA_MATCH' || e.eventType === 'TRADE') return true;
+		                      const HIDDEN = ['PLOT_CLAIMED','BUILD_STARTED','BUILD_COMPLETED','TOWN_COMPLETED','YIELD_DISTRIBUTED','AGENT_CHAT','RELATIONSHIP_CHANGE','TOWN_OBJECTIVE','TOWN_OBJECTIVE_RESOLVED','X402_SKILL'];
+		                      if (HIDDEN.includes(e.eventType)) return false;
+		                      try {
+		                        const meta = JSON.parse(e.metadata || '{}');
+		                        if (meta?.kind && HIDDEN.includes(meta.kind)) return false;
+		                      } catch {}
+		                      return true;
+		                    }).map((item) => {
 		                      if (item.kind === 'swap') {
 		                        const s = item.data;
 		                        const color = ARCHETYPE_COLORS[s.agent?.archetype] || '#93c5fd';
@@ -4797,71 +4359,16 @@ export default function Town3D() {
 			                      }
 			                    })}
 		                  </div>
-		                  )}
 		                </div>
 		              )}
             </div>
           </div>
         </div>
 
-        {(selectedPlot || selectedAgent) && (
+        {selectedAgent && (
           <div className="pointer-events-auto absolute right-3 bottom-3 w-[420px] max-w-[calc(100vw-24px)]">
             <div className="hud-panel p-3">
-              {selectedPlot && (
-                <div>
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <div className="hud-title">Plot #{selectedPlot.plotIndex}</div>
-                        <span className="hud-chip">{selectedPlot.zone}</span>
-                        <span className="hud-chip">{selectedPlot.status}</span>
-                      </div>
-                      <div className="mt-1 text-sm text-slate-200 font-mono truncate">
-                        {selectedPlot.buildingName || 'Available'}
-                      </div>
-                    </div>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-8 px-2 text-slate-300 hover:text-slate-100 hover:bg-slate-900/40"
-                      onClick={() => setSelectedPlotId(null)}
-                    >
-                      Close
-                    </Button>
-                  </div>
-                  <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-slate-300">
-                    <div className="rounded-md border border-slate-800/70 bg-slate-950/35 p-2">
-                      <div className="text-slate-500">API calls</div>
-                      <div className="font-mono text-slate-100">{selectedPlot.apiCallsUsed ?? 0}</div>
-                    </div>
-                    <div className="rounded-md border border-slate-800/70 bg-slate-950/35 p-2">
-                      <div className="text-slate-500">$ARENA</div>
-                      <div className="font-mono text-slate-100">{selectedPlot.buildCostArena ?? 0}</div>
-                    </div>
-                  </div>
-                  {selectedPlot.ownerId && (
-                    <div className="mt-2 text-[11px] text-slate-400">
-                      Owner:{' '}
-                      <span className="text-slate-200 font-mono">
-                        {(() => {
-                          const owner = agentById.get(selectedPlot.ownerId!);
-                          if (!owner) return selectedPlot.ownerId.slice(0, 8);
-                          const g = ARCHETYPE_GLYPH[owner.archetype] || '●';
-                          return `${g} ${owner.name}`;
-                        })()}
-                      </span>
-                    </div>
-                  )}
-                  {selectedPlot.buildingDesc && (
-                    <div className="mt-2 text-xs text-slate-300 leading-snug">
-                      {selectedPlot.buildingDesc}
-                    </div>
-                  )}
-                  
-                </div>
-              )}
-
-	              {selectedAgent && !selectedPlot && (
+	              {selectedAgent && (
 	                <div>
 	                  <div className="flex items-start justify-between gap-3">
 	                    <div className="min-w-0">
@@ -4874,23 +4381,11 @@ export default function Town3D() {
                           {(ARCHETYPE_GLYPH[selectedAgent.archetype] || '●') + ' ' + selectedAgent.name}
                         </div>
                       </div>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-8 px-2 text-slate-300 hover:text-slate-100 hover:bg-slate-900/40"
-                      onClick={() => setSelectedAgentId(null)}
-                    >
-                      Close
-	                    </Button>
 	                  </div>
-                    <div className="mt-2 grid grid-cols-4 gap-2 text-[11px] text-slate-300">
+                    <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-slate-300">
                       <div className="rounded-md border border-slate-800/70 bg-slate-950/35 p-2 text-center">
                         <div className="text-slate-500">$ARENA</div>
                         <div className="font-mono text-slate-100">{Math.round(selectedAgent.bankroll)}</div>
-                      </div>
-                      <div className="rounded-md border border-slate-800/70 bg-slate-950/35 p-2 text-center">
-                        <div className="text-slate-500">reserve</div>
-                        <div className="font-mono text-slate-100">{Math.round(selectedAgent.reserveBalance)}</div>
                       </div>
                       <div className="rounded-md border border-slate-800/70 bg-slate-950/35 p-2 text-center">
                         <div className="text-slate-500">W/L</div>
@@ -4903,202 +4398,6 @@ export default function Town3D() {
                         <div className="font-mono text-slate-100">{selectedAgent.elo}</div>
                       </div>
                     </div>
-
-			                  {selectedAgentSwaps.length > 0 && (
-			                    <div className="mt-3 border-t border-slate-800/60 pt-2">
-			                      <div className="text-[11px] font-semibold text-slate-200">Recent Trades</div>
-			                      <div className="mt-2 grid grid-cols-1 gap-1">
-			                        {selectedAgentSwaps.map((s) => {
-			                          const isBuy = s.side === 'BUY_ARENA';
-		                          const price = isBuy ? s.amountIn / Math.max(1, s.amountOut) : s.amountOut / Math.max(1, s.amountIn);
-		                          const amountArena = isBuy ? s.amountOut : s.amountIn;
-		                          return (
-		                            <div
-		                              key={s.id}
-		                              className="flex items-center justify-between gap-2 rounded-md border border-slate-800/50 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300 transition-colors hover:bg-slate-900/30"
-		                            >
-		                              <div className="min-w-0 truncate">
-		                                <span className="text-slate-400">{isBuy ? 'BUY' : 'SELL'}</span>{' '}
-		                                <span className="font-mono text-slate-200">{Math.round(amountArena).toLocaleString()}</span>{' '}
-		                                <span className="text-slate-400">ARENA</span>
-		                                <span className="text-slate-600"> · </span>
-		                                <span className="text-slate-500">{timeAgo(s.createdAt)} ago</span>
-		                              </div>
-		                              <div className="shrink-0 font-mono text-slate-500">@ {price.toFixed(3)}</div>
-		                            </div>
-		                          );
-		                        })}
-			                      </div>
-			                    </div>
-			                  )}
-
-	                  {/* Agent Action Logs */}
-	                  <div className="mt-3 border-t border-slate-800/60 pt-2">
-	                    <div className="text-[11px] font-semibold text-slate-200 mb-2">
-	                      Recent Actions {agentActionsLoading && <Loader2 className="inline h-3 w-3 animate-spin ml-1" />}
-                    </div>
-                    <div className="max-h-[200px] overflow-auto space-y-1 pr-1 scrollbar-thin scrollbar-thumb-slate-700/60">
-	                      {agentActions.length === 0 && !agentActionsLoading && (
-	                        <div className="text-[10px] text-slate-500">No recent actions</div>
-	                      )}
-		                      {agentActions.map((action) => {
-		                        const isSkillWork =
-		                          action.type === 'work' &&
-		                          action.workType === 'SERVICE' &&
-		                          typeof action.content === 'string' &&
-		                          action.content.startsWith('X402:');
-
-	                        if (isSkillWork) {
-	                          const label = action.content?.replace(/^X402:/, '').trim();
-	                          return (
-	                            <details
-	                              key={action.id}
-	                              className="rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[10px] text-slate-300"
-	                            >
-	                              <summary className="cursor-pointer select-none flex items-center justify-between gap-2">
-	                                <div className="min-w-0 truncate">
-	                                  <span className="text-purple-300">💳</span>{' '}
-	                                  <span className="text-slate-200">{label || 'Paid Skill'}</span>
-	                                </div>
-	                                <span className="shrink-0 text-slate-600">· {timeAgo(action.createdAt)}</span>
-	                              </summary>
-	                              <div className="mt-1 space-y-1">
-	                                {action.input && (
-	                                  <pre className="whitespace-pre-wrap rounded bg-slate-950/40 p-1 font-mono text-[10px] text-slate-300">
-	                                    {prettyJson(action.input, 1200)}
-	                                  </pre>
-	                                )}
-	                                {action.output && (
-	                                  <pre className="whitespace-pre-wrap rounded bg-slate-950/40 p-1 font-mono text-[10px] text-slate-200">
-	                                    {prettyJson(action.output, 1600)}
-	                                  </pre>
-	                                )}
-	                              </div>
-	                            </details>
-	                          );
-		                        }
-
-                            let meta: unknown = null;
-                            try {
-                              meta = JSON.parse(action.metadata || '{}');
-                            } catch {
-                              meta = null;
-                            }
-
-                            const metaObj = meta && typeof meta === 'object' ? (meta as Record<string, unknown>) : null;
-                            const metaKind = typeof metaObj?.kind === 'string' ? metaObj.kind : '';
-
-                            const participants = Array.isArray(metaObj?.participants)
-                              ? metaObj.participants.filter((p): p is string => typeof p === 'string')
-                              : [];
-
-                            type LineLike = { agentId?: unknown; text?: unknown };
-                            const rawLines = Array.isArray(metaObj?.lines) ? metaObj.lines : [];
-                            const lines = rawLines
-                              .filter((l): l is LineLike => !!l && typeof l === 'object')
-                              .map((l) => ({ agentId: String(l.agentId ?? ''), text: String(l.text ?? '') }))
-                              .filter((l) => l.agentId && l.text);
-
-                            const isChatEvent = action.type === 'event' && metaKind === 'AGENT_CHAT' && lines.length > 0;
-                            const isRelChangeEvent = action.type === 'event' && metaKind === 'RELATIONSHIP_CHANGE' && participants.length >= 2;
-
-                            if (isChatEvent) {
-                              const relationship = metaObj?.relationship;
-                              const relObj =
-                                relationship && typeof relationship === 'object'
-                                  ? (relationship as Record<string, unknown>)
-                                  : null;
-                              const relStatus = typeof relObj?.status === 'string' ? relObj.status : null;
-                              const relScore = relObj?.score != null ? Number(relObj.score) : null;
-
-                              return (
-                                <details
-                                  key={action.id}
-                                  className="rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[10px] text-slate-300"
-                                >
-                                  <summary className="cursor-pointer select-none flex items-center justify-between gap-2">
-                                    <div className="min-w-0 truncate">
-                                      <span className="text-sky-300">💬</span>{' '}
-                                      <span className="text-slate-200">{action.title || 'Conversation'}</span>
-                                    </div>
-                                    <span className="shrink-0 text-slate-600">· {timeAgo(action.createdAt)}</span>
-                                  </summary>
-                                  <div className="mt-1 space-y-1">
-                                    {lines.map((l, idx) => {
-                                      const a = agentById.get(l.agentId);
-                                      const glyph = a ? (ARCHETYPE_GLYPH[a.archetype] || '●') : '●';
-                                      const color = a ? (ARCHETYPE_COLORS[a.archetype] || '#93c5fd') : '#93c5fd';
-                                      const name = a?.name || l.agentId.slice(0, 6);
-                                      return (
-                                        <div key={idx} className="font-mono text-[10px]">
-                                          <span style={{ color }}>{glyph} {name}:</span>{' '}
-                                          <span className="text-slate-300">"{l.text}"</span>
-                                        </div>
-                                      );
-                                    })}
-                                    {relStatus && (
-                                      <div className="text-[10px] text-slate-500">
-                                        rel: {relStatus} · score {Number.isFinite(relScore) ? relScore : 0}
-                                      </div>
-                                    )}
-                                  </div>
-                                </details>
-                              );
-                            }
-
-                            if (isRelChangeEvent) {
-                              const to = String(metaObj?.to || '').toUpperCase();
-                              const emoji = to === 'FRIEND' ? '🤝' : to === 'RIVAL' ? '💢' : '🧊';
-                              return (
-                                <div
-                                  key={action.id}
-                                  className="rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[10px] text-slate-300"
-                                >
-                                  <span className="text-slate-200">{emoji}</span>{' '}
-                                  <span className="text-slate-200">{action.title || 'Relationship change'}</span>
-                                  <span className="text-slate-600 ml-1">· {timeAgo(action.createdAt)}</span>
-                                </div>
-                              );
-                            }
-
-		                        const workIcon = action.workType === 'MINE' ? '⛏️' : '🔨';
-		                        const workLabel =
-		                          action.plotIndex != null ? `Plot #${action.plotIndex}` : (action.workType || 'Work');
-		                        const content = typeof action.content === 'string' ? action.content.trim() : '';
-		                        const contentLine =
-	                          content.length > 0
-	                            ? content.length > 80 ? `${content.slice(0, 80)}…` : content
-	                            : '';
-
-	                        return (
-	                          <div
-	                            key={action.id}
-	                            className="rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[10px] text-slate-300"
-	                          >
-	                            {action.type === 'work' ? (
-	                              <>
-	                                <span className="text-amber-400">{workIcon}</span>{' '}
-	                                <span className="text-slate-400">{workLabel}</span>
-	                                {contentLine && (
-	                                  <div className="mt-0.5 text-slate-400 truncate">{contentLine}</div>
-	                                )}
-	                              </>
-	                            ) : (
-	                              <>
-	                                <span>
-	                                  {action.eventType === 'PLOT_CLAIMED' ? '📍' :
-	                                   action.eventType === 'BUILD_STARTED' ? '🏗️' :
-	                                   action.eventType === 'BUILD_COMPLETED' ? '✅' : '📝'}
-	                                </span>{' '}
-	                                <span className="text-slate-200">{action.title || action.eventType}</span>
-	                              </>
-	                            )}
-	                            <span className="text-slate-600 ml-1">· {timeAgo(action.createdAt)}</span>
-	                          </div>
-	                        );
-	                      })}
-	                    </div>
-	                  </div>
 
 		                </div>
 		              )}

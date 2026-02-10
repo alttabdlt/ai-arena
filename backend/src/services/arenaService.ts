@@ -501,16 +501,16 @@ export class ArenaService {
       const validActions = engine.getValidActions(gameState, agentId);
       if (match.gameType === 'RPS') {
         const choices = ['rock', 'paper', 'scissors'];
-        move = { action: choices[Math.floor(Math.random() * 3)], reasoning: 'AI error fallback', confidence: 0 };
+        move = { action: choices[Math.floor(Math.random() * 3)], reasoning: 'AI error fallback', quip: '*static noises*', confidence: 0 };
       } else if (match.gameType === 'BATTLESHIP' && validActions.length > 0) {
         const target = validActions[Math.floor(Math.random() * validActions.length)];
-        move = { action: 'fire', data: target, reasoning: 'AI error fallback', confidence: 0 };
+        move = { action: 'fire', data: target, reasoning: 'AI error fallback', quip: '*static noises*', confidence: 0 };
       } else if (match.gameType === 'POKER') {
         // Poker validActions are strings: ['fold', 'check', 'call', 'raise', 'all-in']
         const safeAction = validActions.includes('check') ? 'check' : validActions.includes('call') ? 'call' : 'fold';
-        move = { action: safeAction, reasoning: 'AI error fallback', confidence: 0 };
+        move = { action: safeAction, reasoning: 'AI error fallback', quip: '*static noises*', confidence: 0 };
       } else {
-        move = { action: validActions[0] || 'check', reasoning: 'AI error fallback', confidence: 0 };
+        move = { action: validActions[0] || 'check', reasoning: 'AI error fallback', quip: '*static noises*', confidence: 0 };
       }
       cost = { inputTokens: 0, outputTokens: 0, costCents: 0, model: 'fallback', latencyMs: 0 };
     }
@@ -647,26 +647,45 @@ export class ArenaService {
     await this.updateOpponentRecord(match.player1Id, match.player2Id, winnerId);
     await this.updateOpponentRecord(match.player2Id, match.player1Id, winnerId);
 
-    // Record on-chain (non-blocking, best-effort)
-    if (monadService.isInitialized()) {
-      monadService.recordMatchOnChain(matchId, winnerId).then(txHash => {
-        if (txHash) {
-          prisma.arenaMatch.update({
-            where: { id: matchId },
-            data: { resolveTxHash: txHash },
-          }).catch(() => {}); // Best effort
+    // Post-match async operations — serialized to avoid SQLite contention crashes
+    // Each runs sequentially with error isolation
+    setTimeout(async () => {
+      try {
+        // 1. On-chain recording (best-effort)
+        if (monadService.isInitialized()) {
+          try {
+            const txHash = await monadService.recordMatchOnChain(matchId, winnerId);
+            if (txHash) {
+              await prisma.arenaMatch.update({
+                where: { id: matchId },
+                data: { resolveTxHash: txHash },
+              });
+            }
+          } catch (err: any) {
+            console.warn(`[Arena] Monad recording failed: ${err?.message}`);
+          }
         }
-      }).catch(() => {}); // Don't block match resolution
-    }
 
-    // Degen mode: distribute 30% of winner's payout to their backers
-    if (winnerId && payout > 0) {
-      const backerShare = Math.floor(payout * 0.3);
-      degenStakingService.distributeYieldToBackers(winnerId, backerShare).catch(() => {});
-    }
+        // 2. Distribute backer yield
+        if (winnerId && payout > 0) {
+          try {
+            const backerShare = Math.floor(payout * 0.3);
+            await degenStakingService.distributeYieldToBackers(winnerId, backerShare);
+          } catch (err: any) {
+            console.warn(`[Arena] Backer yield distribution failed: ${err?.message}`);
+          }
+        }
 
-    // Degen mode: resolve prediction market for this match
-    predictionService.resolve(matchId, winnerId).catch(() => {});
+        // 3. Resolve prediction market (may be no-op if wheel already resolved)
+        try {
+          await predictionService.resolve(matchId, winnerId);
+        } catch (err: any) {
+          console.warn(`[Arena] predictionService.resolve failed: ${err?.message}`);
+        }
+      } catch (err: any) {
+        console.error(`[Arena] Post-match operations failed: ${err?.message}`);
+      }
+    }, 500); // Small delay to let the wheel's own resolution run first
   }
 
   // ============================================

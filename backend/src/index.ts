@@ -445,6 +445,19 @@ async function startServer() {
         console.log(`🧹 Unstuck agent "${agent.name}" (no active match)`);
       }
     }
+    // Cancel any OPEN/LOCKED prediction markets (leftover from crash)
+    const staleMarkets = await prisma.predictionMarket.findMany({
+      where: { status: { in: ['OPEN', 'LOCKED'] } },
+    });
+    if (staleMarkets.length > 0) {
+      const { predictionService } = await import('./services/predictionService');
+      for (const market of staleMarkets) {
+        try {
+          await predictionService.cancelMarket(market.id);
+        } catch {}
+      }
+      console.log(`🧹 Cancelled ${staleMarkets.length} stale prediction market(s)`);
+    }
   } catch (err: any) {
     console.warn(`[Arena] Startup cleanup failed: ${err.message}`);
   }
@@ -614,19 +627,31 @@ process.on('uncaughtException', (error) => {
   process.exit(1);
 });
 
-// Memory usage monitoring (only if enabled)
-if (ENABLE_MEMORY_MONITOR) {
-  setInterval(() => {
-    const usage = process.memoryUsage();
-    const heapUsed = Math.round(usage.heapUsed / 1024 / 1024);
-    const heapTotal = Math.round(usage.heapTotal / 1024 / 1024);
-    const rss = Math.round(usage.rss / 1024 / 1024);
-    
-    if (heapUsed > 500) { // Alert if heap usage exceeds 500MB
-      console.warn(`⚠️  High memory usage: Heap ${heapUsed}MB / ${heapTotal}MB, RSS: ${rss}MB`);
-    }
-  }, 30000); // Check every 30 seconds
+// Memory usage monitoring — ALWAYS ON for debugging
+setInterval(() => {
+  const usage = process.memoryUsage();
+  const heapUsed = Math.round(usage.heapUsed / 1024 / 1024);
+  const heapTotal = Math.round(usage.heapTotal / 1024 / 1024);
+  const rss = Math.round(usage.rss / 1024 / 1024);
+  const uptime = Math.round(process.uptime());
+  console.log(`💓 alive t=${uptime}s | Heap: ${heapUsed}/${heapTotal}MB | RSS: ${rss}MB`);
+}, 30000); // Every 30 seconds
+
+// Log all signals
+for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGUSR1', 'SIGUSR2'] as const) {
+  process.on(sig, () => {
+    console.log(`[SIGNAL] Received ${sig} at ${new Date().toISOString()}`);
+  });
 }
+
+// Log before exit
+process.on('beforeExit', (code) => {
+  console.log(`[PROCESS] beforeExit with code ${code} at ${new Date().toISOString()}`);
+});
+
+process.on('exit', (code) => {
+  console.log(`[PROCESS] exit with code ${code} at ${new Date().toISOString()}`);
+});
 
 startServer().catch((err) => {
   console.error('Error starting server:', err);

@@ -332,13 +332,28 @@ export function WheelArena({ status, odds, walletAddress, onBet, loading, onClos
             <div className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-300 via-yellow-200 to-amber-300">
               {result.winnerName} WINS!
             </div>
-            <div className="text-lg text-white/40">
+            
+            {/* Winner quip */}
+            {result.winnerQuip && (
+              <div className="text-lg text-amber-200/80 italic font-medium">
+                "{result.winnerQuip}"
+              </div>
+            )}
+
+            <div className="text-sm text-white/40">
               {result.gameType === 'POKER' ? '🃏' : '✊'} {result.gameType} · {result.turns} turns · pot {result.pot} $ARENA
             </div>
 
-            {/* Loser */}
-            <div className="text-white/20 text-sm">
-              💀 {result.loserName} defeated
+            {/* Loser with quip */}
+            <div className="text-center">
+              <div className="text-white/20 text-sm">
+                💀 {result.loserName} defeated
+              </div>
+              {result.loserQuip && (
+                <div className="text-xs text-white/15 italic mt-1">
+                  "{result.loserQuip}"
+                </div>
+              )}
             </div>
 
             {/* Betting payouts */}
@@ -464,17 +479,21 @@ function RPSArena({ agent1, agent2, moves }: { agent1: AgentInfo; agent2: AgentI
         </div>
       )}
 
-      {/* Reasoning quip from latest move */}
-      {(pendingMove || moves[moves.length - 1]) && (
-        <div className="max-w-md mx-auto bg-white/5 border border-white/5 rounded-lg px-3 py-2">
-          <div className="text-[10px] text-white/20 mb-1">
-            {(pendingMove || moves[moves.length - 1]).agentName} thinks:
+      {/* Agent quip from latest move */}
+      {(pendingMove || moves[moves.length - 1]) && (() => {
+        const m = pendingMove || moves[moves.length - 1];
+        const quipText = m.quip || m.reasoning;
+        return (
+          <div className="max-w-md mx-auto bg-white/5 border border-white/5 rounded-lg px-3 py-2">
+            <div className="text-[10px] text-white/20 mb-1">
+              {m.agentName}:
+            </div>
+            <div className="text-sm text-white/70 italic font-medium">
+              "{quipText}"
+            </div>
           </div>
-          <div className="text-xs text-white/40 italic">
-            "{(pendingMove || moves[moves.length - 1]).reasoning}"
-          </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
@@ -558,16 +577,16 @@ function PokerArena({ agent1, agent2, moves, wager }: { agent1: AgentInfo; agent
             <span className="text-amber-300 font-mono shrink-0">
               {POKER_ACTION_EMOJI[move.action] || ''} {move.action}{move.amount ? ` $${move.amount}` : ''}
             </span>
-            <span className="text-white/20 truncate italic text-[10px]">{move.reasoning}</span>
+            <span className="text-white/20 truncate italic text-[10px]">{move.quip || move.reasoning}</span>
           </div>
         ))}
       </div>
 
-      {/* Latest reasoning highlight */}
+      {/* Latest quip highlight */}
       {latestMove && (
         <div className="max-w-lg mx-auto bg-white/5 border border-white/5 rounded-lg px-3 py-2">
-          <div className="text-[10px] text-white/20 mb-1">{latestMove.agentName} thinks:</div>
-          <div className="text-xs text-white/40 italic">"{latestMove.reasoning}"</div>
+          <div className="text-[10px] text-white/20 mb-1">{latestMove.agentName}:</div>
+          <div className="text-sm text-white/70 italic font-medium">"{latestMove.quip || latestMove.reasoning}"</div>
         </div>
       )}
     </div>

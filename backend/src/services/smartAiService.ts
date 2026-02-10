@@ -83,6 +83,7 @@ export interface GameMoveResponse {
   amount?: number;
   data?: any; // Game-specific data (e.g., RPS choice, battleship coords)
   reasoning: string;
+  quip: string; // In-character one-liner for the audience (max ~15 words)
   confidence: number;
 }
 
@@ -309,9 +310,10 @@ export class SmartAIService {
     const systemPrompt = `${archetypeBase}\n\n${archetypeGame}${customStrategy}
 
 RESPONSE FORMAT: Respond with a JSON object. No markdown, no explanation outside the JSON.
-${gameType === 'POKER' ? '{"action": "fold|check|call|raise|all-in", "amount": <number_if_raise>, "reasoning": "<your_thinking>", "confidence": <0.0-1.0>}' : ''}
-${gameType === 'RPS' ? '{"action": "rock|paper|scissors", "reasoning": "<your_thinking>", "confidence": <0.0-1.0>}' : ''}
-${gameType === 'BATTLESHIP' ? '{"action": "fire", "data": {"row": <0-9>, "col": <0-9>}, "reasoning": "<your_thinking>", "confidence": <0.0-1.0>}' : ''}`;
+Include a "quip" field: a short in-character one-liner (max 15 words) that the AUDIENCE sees. Be entertaining, trash-talk, flex, or taunt — stay in character!
+${gameType === 'POKER' ? '{"action": "fold|check|call|raise|all-in", "amount": <number_if_raise>, "reasoning": "<your_thinking>", "quip": "<audience_one_liner>", "confidence": <0.0-1.0>}' : ''}
+${gameType === 'RPS' ? '{"action": "rock|paper|scissors", "reasoning": "<your_thinking>", "quip": "<audience_one_liner>", "confidence": <0.0-1.0>}' : ''}
+${gameType === 'BATTLESHIP' ? '{"action": "fire", "data": {"row": <0-9>, "col": <0-9>}, "reasoning": "<your_thinking>", "quip": "<audience_one_liner>", "confidence": <0.0-1.0>}' : ''}`;
 
     const messages: Array<{ role: string; content: string }> = [
       { role: 'system', content: systemPrompt },
@@ -624,10 +626,10 @@ Respond ONLY with compact JSON (keep reasoning under 50 words):
     if (!parsed) {
       // Fallback based on game type
       switch (gameType) {
-        case 'POKER': return { action: 'check', reasoning: 'Fallback: check', confidence: 0.1 };
-        case 'RPS': return { action: ['rock', 'paper', 'scissors'][Math.floor(Math.random() * 3)], reasoning: 'Fallback: random', confidence: 0.1 };
-        case 'BATTLESHIP': return { action: 'fire', data: { row: Math.floor(Math.random() * 10), col: Math.floor(Math.random() * 10) }, reasoning: 'Fallback: random', confidence: 0.1 };
-        default: return { action: 'pass', reasoning: 'Unknown game type', confidence: 0 };
+        case 'POKER': return { action: 'check', reasoning: 'Fallback: check', quip: '...', confidence: 0.1 };
+        case 'RPS': return { action: ['rock', 'paper', 'scissors'][Math.floor(Math.random() * 3)], reasoning: 'Fallback: random', quip: 'Let the dice decide!', confidence: 0.1 };
+        case 'BATTLESHIP': return { action: 'fire', data: { row: Math.floor(Math.random() * 10), col: Math.floor(Math.random() * 10) }, reasoning: 'Fallback: random', quip: 'Fire in the hole!', confidence: 0.1 };
+        default: return { action: 'pass', reasoning: 'Unknown game type', quip: '', confidence: 0 };
       }
     }
     
@@ -636,6 +638,7 @@ Respond ONLY with compact JSON (keep reasoning under 50 words):
       amount: parsed.amount,
       data: parsed.data,
       reasoning: parsed.reasoning || '',
+      quip: parsed.quip || '',
       confidence: parsed.confidence || 0.5,
     };
   }

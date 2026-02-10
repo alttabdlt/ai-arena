@@ -188,7 +188,7 @@ export function AgentDroid({
   });
 
   const glyph = ARCHETYPE_GLYPH[agent.archetype] || '●';
-  const label = isDead ? `💀${agent.name.slice(0, 5)}` : `${glyph}${agent.name.slice(0, 6)}`;
+  const label = isDead ? `💀${agent.name.slice(0, 8)}` : `${glyph}${agent.name.slice(0, 10)}`;
   const labelColor = isDead ? '#6b7280' : (selected ? '#e2e8f0' : '#cbd5e1');
 
   // Eye glow colors: SCHEMING gets indigo, selected gets blue, default dark

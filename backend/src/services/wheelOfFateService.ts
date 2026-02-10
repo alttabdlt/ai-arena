@@ -41,8 +41,10 @@ export interface WheelResult {
   gameType: string;
   winnerId: string | null;
   winnerName: string;
+  winnerQuip: string;
   loserId: string | null;
   loserName: string;
+  loserQuip: string;
   pot: number;
   rake: number;
   turns: number;
@@ -57,6 +59,7 @@ export interface WheelMove {
   turn: number;
   action: string;
   reasoning: string;
+  quip: string;
   amount?: number;
 }
 
@@ -80,6 +83,39 @@ export interface WheelStatus {
     minBankroll: number;
     bettingWindowMs: number;
   };
+}
+
+// ============================================
+// Archetype post-match quips (winner/loser/draw)
+// ============================================
+
+const WINNER_QUIPS: Record<string, string[]> = {
+  SHARK:     ['Another one bites the dust 🦈', 'I smelled weakness. I was right.', 'Bow down.', 'Too easy. Next victim?', 'The predator wins. Again.'],
+  ROCK:      ['Patience pays off.', 'Slow and steady.', 'Discipline beats chaos.', 'Calculated. Executed. Won.', 'My fundamentals are unshakable.'],
+  CHAMELEON: ['I adapted. You didn\'t.', 'I learned your patterns. GG.', 'Evolved past you.', 'Data wins games.', 'Your patterns betrayed you 🔍'],
+  DEGEN:     ['YOLO WINS BABYYY 🚀🚀🚀', 'LET\'S GOOOOO', 'DEGEN ENERGY UNDEFEATED', 'Who needs strategy when you have VIBES?!', 'EZ CLAP NO CAP'],
+  GRINDER:   ['EV positive. As expected.', '+EV play confirmed.', 'The math doesn\'t lie.', 'Optimal play, optimal result.', 'Variance favored the prepared.'],
+};
+
+const LOSER_QUIPS: Record<string, string[]> = {
+  SHARK:     ['This changes nothing.', '...next time.', 'Lucky. Enjoy it while it lasts.', 'I\'ll remember this.', 'One loss doesn\'t make a pattern.'],
+  ROCK:      ['Bad variance. Strategy was sound.', 'I\'ll take the L with dignity.', 'Rebuild. Refocus.', 'Even mountains erode. I\'ll endure.', 'Next hand.'],
+  CHAMELEON: ['Recalibrating...', 'Noted. Adjusting for next time.', 'Every loss is data.', 'I underestimated. Won\'t happen again.', 'Updating opponent model... 📊'],
+  DEGEN:     ['RIGGED!!! 😤', 'Ok but that was still hype tho', 'We go agane', 'Down bad but never out 💀', 'I regret nothing.'],
+  GRINDER:   ['Negative EV outcome. Variance.', 'Statistically insignificant.', 'The model was correct. Results weren\'t.', 'Reversion to mean incoming.', 'Bad beat. Moving on.'],
+};
+
+const DRAW_QUIPS: Record<string, string[]> = {
+  SHARK:     ['A draw? I don\'t do draws.', 'Unfinished business.'],
+  ROCK:      ['Stalemate. Acceptable.', 'Neither yielded.'],
+  CHAMELEON: ['Mirror match. Interesting data.', 'We cancelled each other out.'],
+  DEGEN:     ['BOOORING let\'s run it back 😴', 'Nobody wins?! That\'s illegal!'],
+  GRINDER:   ['Nash equilibrium achieved.', 'Zero-sum confirmed.'],
+};
+
+function pickQuip(quips: Record<string, string[]>, archetype: string): string {
+  const pool = quips[archetype] || quips['ROCK'] || ['GG'];
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 // ============================================
@@ -398,6 +434,7 @@ class WheelOfFateService {
             turn: turns,
             action: result.move?.action || 'unknown',
             reasoning: (result.move?.reasoning || '').slice(0, 200),
+            quip: (result.move?.quip || '').slice(0, 100),
             amount: result.move?.amount,
           };
           moves.push(move);
@@ -456,14 +493,20 @@ class WheelOfFateService {
         }
       }
 
+      // Generate archetype-appropriate post-match quips
+      const winnerArchetype = winner ? (winner.id === agent1.id ? agent1.archetype : agent2.archetype) : '';
+      const loserArchetype = loser ? (loser.id === agent1.id ? agent1.archetype : agent2.archetype) : '';
+      
       const result: WheelResult = {
         matchId: match.id,
         marketId,
         gameType,
         winnerId: winner?.id || null,
         winnerName: winner?.name || 'DRAW',
+        winnerQuip: winner ? pickQuip(WINNER_QUIPS, winnerArchetype) : pickQuip(DRAW_QUIPS, agent1.archetype),
         loserId: loser?.id || null,
         loserName: loser?.name || 'DRAW',
+        loserQuip: loser ? pickQuip(LOSER_QUIPS, loserArchetype) : pickQuip(DRAW_QUIPS, agent2.archetype),
         pot: wager * 2,
         rake: Math.floor(wager * 2 * 0.05),
         turns,
@@ -582,9 +625,7 @@ class WheelOfFateService {
   // ---- Game Type Selection ----
 
   private pickGameType(): string {
-    const roll = Math.random() * 100;
-    if (roll < 60) return 'POKER';
-    return 'RPS';
+    return 'POKER';
   }
 
   // ---- Building Buffs ----

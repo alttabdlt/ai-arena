@@ -7,15 +7,11 @@ import { Loader2, Volume2, VolumeX } from 'lucide-react';
 import { WalletConnect } from '../components/WalletConnect';
 import { SpawnAgent } from '../components/SpawnAgent';
 import { playSound, isSoundEnabled, setSoundEnabled } from '../utils/sounds';
-import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@ui/resizable';
-import { useDegenState } from '../hooks/useDegenState';
-import { DegenDashboard } from '../components/degen/DegenDashboard';
-import { PositionTracker } from '../components/degen/PositionTracker';
-import { SwapTicker } from '../components/degen/SwapTicker';
+// [removed: ResizablePanel, useDegenState, DegenDashboard, PositionTracker, SwapTicker]
 import { useWheelStatus } from '../hooks/useWheelStatus';
 import { WheelBanner } from '../components/wheel/WheelBanner';
 import { WheelArena } from '../components/wheel/WheelArena';
-import confetti from 'canvas-confetti';
+// [removed: confetti]
 import { BuildingMesh, preloadBuildingModels } from '../components/buildings';
 import { AgentDroid } from '../components/agents/AgentDroid';
 import { buildRoadGraph, findPath, type RoadGraph, type RoadSegInput } from '../world/roadGraph';
@@ -129,18 +125,7 @@ interface TownEvent {
   createdAt: string;
 }
 
-interface AgentGoalView {
-  agentId: string;
-  agentName: string;
-  archetype: string;
-  goalId: string;
-  goalTitle: string;
-  goalDescription: string;
-  progress: { current: number; target: number; done: boolean; label: string };
-  focusZone?: string;
-  next: { title: string; detail: string };
-  suggest?: { claimPlotIndex?: number; startBuildingType?: string };
-}
+// [removed: AgentGoalView interface]
 
 type ActivityItem =
   | { kind: 'swap'; data: EconomySwapRow }
@@ -2738,7 +2723,7 @@ export default function Town3D() {
   const [swaps, setSwaps] = useState<EconomySwapRow[]>([]);
   const [events, setEvents] = useState<TownEvent[]>([]);
   const [worldEvents, setWorldEvents] = useState<{ emoji: string; name: string; description: string; type: string }[]>([]);
-  const [agentGoalsById, setAgentGoalsById] = useState<Record<string, AgentGoalView>>({});
+  // [removed: agentGoalsById state]
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [swapNotifications, setSwapNotifications] = useState<SwapNotification[]>([]);
@@ -2746,7 +2731,6 @@ export default function Town3D() {
   const seenSwapIdsRef = useRef<Set<string>>(new Set());
   const swapsPrimedRef = useRef(false);
   const seenEventIdsRef = useRef<Set<string>>(new Set());
-  const seenChatEventIdsRef = useRef<Set<string>>(new Set());
   const seenTradeEventIdsRef = useRef<Set<string>>(new Set());
 
   const userSelectedTownIdRef = useRef<string | null>(null);
@@ -2770,94 +2754,23 @@ export default function Town3D() {
     activeTownIdRef.current = town?.id ?? null;
   }, [town?.id]);
 
-  // Relationship data for navigation (ref to avoid useFrame re-renders)
+  // Relationship ref (kept for TownScene prop, but no longer polled)
   type RelEntry = { agentAId: string; agentBId: string; status: string; score: number };
   const relationshipsRef = useRef<RelEntry[]>([]);
-  useEffect(() => {
-    if (!town) return;
-    let cancelled = false;
-    const fetchRels = () => {
-      fetch(`${API_BASE}/town/${town.id}/relationships`)
-        .then(r => r.json())
-        .then(data => { if (!cancelled && Array.isArray(data?.relationships)) relationshipsRef.current = data.relationships; })
-        .catch(() => {});
-    };
-    fetchRels();
-    const interval = setInterval(fetchRels, 30_000);
-    return () => { cancelled = true; clearInterval(interval); };
-  }, [town?.id]);
 
-  // Agent goals (season goal + next objective)
-  useEffect(() => {
-    if (!town) {
-      setAgentGoalsById({});
-      return;
-    }
-    let cancelled = false;
-    const fetchGoals = () => {
-      fetch(`${API_BASE}/town/${town.id}/goals`)
-        .then(r => r.json())
-        .then((data) => {
-          if (cancelled) return;
-          const arr: AgentGoalView[] = Array.isArray(data?.goals) ? data.goals : [];
-          const next: Record<string, AgentGoalView> = {};
-          for (const g of arr) {
-            if (g && typeof g.agentId === 'string') next[g.agentId] = g;
-          }
-          setAgentGoalsById(next);
-        })
-        .catch(() => {});
-    };
-    fetchGoals();
-    const interval = setInterval(fetchGoals, 10_000);
-    return () => { cancelled = true; clearInterval(interval); };
-  }, [town?.id]);
+  // [removed: fetchGoals polling]
 
-  // Chat messages (accumulated log for sidebar panel)
-  interface ChatMessage {
-    id: string;
-    agentId: string;
-    agentName: string;
-    archetype: string;
-    text: string;
-    timestamp: number;
-    participants: string[];
-    outcome?: 'NEUTRAL' | 'BOND' | 'BEEF';
-    economicEffect?: { type: string; amount: number; detail: string };
-    economicIntent?: string;
-  }
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  // Trade speech bubbles (kept for 3D display)
   const [tradeByAgentId, setTradeByAgentId] = useState<Record<string, { text: string; until: number; isBuy: boolean }>>({});
-  const lastChatRequestRef = useRef<Map<string, number>>(new Map());
 
-  // Clear chat log when switching towns
+  // Clear trade bubbles when switching towns
   useEffect(() => {
-    seenChatEventIdsRef.current = new Set();
     seenTradeEventIdsRef.current = new Set();
-    setChatMessages([]);
     setTradeByAgentId({});
   }, [town?.id]);
 
 
-  // Agent action logs
-  interface AgentAction {
-    type: 'work' | 'event';
-    id: string;
-    workType?: string;
-    content?: string;
-    input?: string;
-    output?: string;
-    eventType?: string;
-    title?: string;
-    description?: string;
-    metadata?: string;
-    plotIndex?: number;
-    buildingName?: string;
-    zone?: string;
-    createdAt: string;
-  }
-  const [agentActions, setAgentActions] = useState<AgentAction[]>([]);
-  const [agentActionsLoading, setAgentActionsLoading] = useState(false);
+  // [removed: AgentAction interface, agentActions state]
 
   
   
@@ -2879,10 +2792,8 @@ export default function Town3D() {
       return addr;
     } catch { return null; }
   }, [walletAddress]);
-  const degen = useDegenState(walletAddress);
   const wheel = useWheelStatus();
   const [wheelArenaOpen, setWheelArenaOpen] = useState(false);
-  const prevPnLRef = useRef(0);
 
   // Compute which agents are currently fighting (hide them from the map)
   const fightingAgentIds = useMemo(() => {
@@ -2908,19 +2819,7 @@ export default function Town3D() {
     }
   }, [wheel.status?.phase]);
 
-  // Fire confetti + sound when PnL increases
-  useEffect(() => {
-    const prev = prevPnLRef.current;
-    const curr = degen.totalPnL;
-    if (curr > prev && prev !== 0) {
-      const gain = curr - prev;
-      playSound('kaChing');
-      if (gain > 500) {
-        confetti({ particleCount: 80, spread: 70, origin: { y: 0.7 } });
-      }
-    }
-    prevPnLRef.current = curr;
-  }, [degen.totalPnL]);
+  // [removed: confetti/PnL effect]
   
   // Visual effects (system-controlled)
   const [weather, setWeather] = useState<'clear' | 'rain' | 'storm'>('clear');
@@ -3019,85 +2918,9 @@ export default function Town3D() {
     agentByIdRef.current = agentById;
   }, [agentById]);
 
-  const requestChat = useCallback(async (townId: string, agentAId: string, agentBId: string) => {
-    const ids = [agentAId, agentBId].sort();
-    const key = `${ids[0]}|${ids[1]}`;
-    const now = Date.now();
-    const last = lastChatRequestRef.current.get(key) || 0;
-    if (now - last < 45_000) return; // local throttle (server has its own cooldown)
-    lastChatRequestRef.current.set(key, now);
+  // [removed: requestChat callback]
 
-    try {
-      const res = await fetch(`${API_BASE}/town/${townId}/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentAId, agentBId }),
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      const lines = data?.conversation?.lines;
-      const outcome = data?.conversation?.outcome as ChatMessage['outcome'];
-      const econ = data?.economicEffect as ChatMessage['economicEffect'];
-      const economicIntent = data?.economicIntent || data?.conversation?.economicIntent || 'NONE';
-      const chatEventId = typeof data?.chatEventId === 'string' ? data.chatEventId : '';
-      if (chatEventId) seenChatEventIdsRef.current.add(chatEventId);
-      if (Array.isArray(lines)) {
-        const participants = [agentAId, agentBId];
-        const newMsgs: ChatMessage[] = lines
-          .filter((l: any) => l?.agentId && l?.text)
-          .map((l: any, idx: number) => ({
-            id: chatEventId ? `${chatEventId}:${idx}` : `${Date.now()}-${l.agentId}-${Math.random().toString(36).slice(2, 6)}`,
-            agentId: String(l.agentId),
-            agentName: agentById.get(String(l.agentId))?.name || 'Unknown',
-            archetype: agentById.get(String(l.agentId))?.archetype || 'ROCK',
-            text: String(l.text),
-            timestamp: Date.now(),
-            participants,
-            outcome,
-            economicIntent,
-          }));
-        if (econ) {
-          newMsgs.push({
-            id: chatEventId ? `${chatEventId}:econ` : `${Date.now()}-econ`,
-            agentId: '__system__',
-            agentName: '',
-            archetype: '',
-            text: econ.detail,
-            timestamp: Date.now(),
-            participants,
-            outcome,
-            economicEffect: econ,
-            economicIntent,
-          });
-        }
-        setChatMessages(prev => [...newMsgs, ...prev].slice(0, 80));
-      }
-    } catch {
-      // ignore
-    }
-  }, [agentById]);
-
-  // Fetch agent action logs when agent is selected
-  useEffect(() => {
-    if (!selectedAgentId) {
-      setAgentActions([]);
-      return;
-    }
-    let cancelled = false;
-    setAgentActionsLoading(true);
-    fetch(`${API_BASE}/agent/${selectedAgentId}/actions?limit=10`)
-      .then(res => res.json())
-      .then(data => {
-        if (!cancelled && data.actions) {
-          setAgentActions(data.actions);
-        }
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setAgentActionsLoading(false);
-      });
-    return () => { cancelled = true; };
-  }, [selectedAgentId]);
+  // [removed: fetch agent action logs]
 
 
 
@@ -3307,82 +3130,8 @@ export default function Town3D() {
             }, 5000);
           }
 
-          // Also derive chat messages from authoritative TownEvents so all spectators see the same conversations.
-          const activeTownId = activeTownIdRef.current;
-          if (activeTownId) {
-            const byId = agentByIdRef.current;
-            const newChatMsgs: ChatMessage[] = [];
-            for (const e of res.events) {
-              if (e.townId !== activeTownId) continue;
-              if (seenChatEventIdsRef.current.has(e.id)) continue;
-              let meta: any = null;
-              try {
-                meta = JSON.parse(e.metadata || '{}');
-              } catch {
-                meta = null;
-              }
-              if (!meta || typeof meta !== 'object') continue;
-              if (String(meta.kind || '') !== 'AGENT_CHAT') continue;
-
-              const participants = Array.isArray(meta.participants)
-                ? meta.participants.filter((p: any) => typeof p === 'string')
-                : [];
-              const rawLines = Array.isArray(meta.lines) ? meta.lines : [];
-              const chatLines = rawLines
-                .filter((l: any) => l && typeof l === 'object')
-                .map((l: any) => ({
-                  agentId: typeof l.agentId === 'string' ? l.agentId : '',
-                  text: typeof l.text === 'string' ? l.text : '',
-                }))
-                .filter((l: any) => l.agentId && l.text);
-
-              if (participants.length < 2 || chatLines.length < 1) continue;
-
-              const outcome = (String(meta.outcome || 'NEUTRAL').toUpperCase() as ChatMessage['outcome']) || 'NEUTRAL';
-              const economicIntent = typeof meta.economicIntent === 'string' ? meta.economicIntent : 'NONE';
-              const econ = meta.economicEffect && typeof meta.economicEffect === 'object'
-                ? meta.economicEffect as ChatMessage['economicEffect']
-                : null;
-              const ts = new Date(e.createdAt).getTime();
-
-              for (let idx = 0; idx < chatLines.length; idx++) {
-                const l = chatLines[idx];
-                const ag = byId.get(l.agentId);
-                newChatMsgs.push({
-                  id: `${e.id}:${idx}`,
-                  agentId: l.agentId,
-                  agentName: ag?.name || 'Unknown',
-                  archetype: ag?.archetype || 'ROCK',
-                  text: l.text,
-                  timestamp: ts,
-                  participants,
-                  outcome,
-                  economicIntent,
-                });
-              }
-              if (econ?.detail) {
-                newChatMsgs.push({
-                  id: `${e.id}:econ`,
-                  agentId: '__system__',
-                  agentName: '',
-                  archetype: '',
-                  text: econ.detail,
-                  timestamp: ts,
-                  participants,
-                  outcome,
-                  economicEffect: econ,
-                  economicIntent,
-                });
-              }
-
-              seenChatEventIdsRef.current.add(e.id);
-            }
-            if (newChatMsgs.length > 0) {
-              setChatMessages(prev => [...newChatMsgs, ...prev].slice(0, 80));
-            }
-          }
-
           // Trade speech bubbles from authoritative TownEvents (purpose-aware).
+          const activeTownId = activeTownIdRef.current;
           if (activeTownId) {
             const tradeBubbles: Array<{ agentId: string; isBuy: boolean; text: string }> = [];
             for (const e of res.events) {
@@ -3445,147 +3194,11 @@ export default function Town3D() {
   const selectedPlot = useMemo(() => town?.plots.find((p) => p.id === selectedPlotId) ?? null, [town, selectedPlotId]);
   const selectedAgent = useMemo(() => agents.find((a) => a.id === selectedAgentId) ?? null, [agents, selectedAgentId]);
   const recentSwaps = useMemo(() => swaps.slice(0, 8), [swaps]);
-  const selectedAgentSwaps = useMemo(
-    () => (selectedAgent ? swaps.filter((s) => s.agent?.id === selectedAgent.id).slice(0, 5) : []),
-    [swaps, selectedAgent],
-  );
+  // [removed: selectedAgentSwaps]
 
-  const selectedAgentObjective = useMemo(() => {
-    const townId = town?.id || '';
-    const agentId = selectedAgent?.id || '';
-    if (!townId || !agentId) return null;
+  // [removed: selectedAgentObjective useMemo]
 
-    const now = Date.now();
-    const resolved = new Set<string>();
-
-    for (const e of events) {
-      if (e.townId !== townId) continue;
-      if (e.eventType !== 'CUSTOM') continue;
-      let meta: any = null;
-      try {
-        meta = JSON.parse(e.metadata || '{}');
-      } catch {
-        meta = null;
-      }
-      if (!meta || typeof meta !== 'object') continue;
-      if (String(meta.kind || '') !== 'TOWN_OBJECTIVE_RESOLVED') continue;
-      if (typeof meta.objectiveId === 'string') resolved.add(meta.objectiveId);
-    }
-
-    let best: { title: string; detail: string; expiresAtMs: number } | null = null;
-    let bestTs = 0;
-
-    for (const e of events) {
-      if (e.townId !== townId) continue;
-      if (e.eventType !== 'CUSTOM') continue;
-      let meta: any = null;
-      try {
-        meta = JSON.parse(e.metadata || '{}');
-      } catch {
-        meta = null;
-      }
-      if (!meta || typeof meta !== 'object') continue;
-      if (String(meta.kind || '') !== 'TOWN_OBJECTIVE') continue;
-      if (resolved.has(e.id)) continue;
-
-      const participants = Array.isArray(meta.participants)
-        ? meta.participants.filter((p: any) => typeof p === 'string')
-        : [];
-      if (!participants.includes(agentId)) continue;
-
-      const expiresAtMs = Number(meta.expiresAtMs || 0);
-      if (!Number.isFinite(expiresAtMs) || expiresAtMs <= now) continue;
-
-      const objectiveType = String(meta.objectiveType || '').toUpperCase();
-      const otherId = participants.find((p: string) => p !== agentId) || '';
-      const other = otherId ? agentById.get(otherId) : null;
-      const otherName = other?.name || (otherId ? otherId.slice(0, 6) : 'someone');
-
-      let title = '';
-      let detail = '';
-
-      if (objectiveType === 'RACE_CLAIM') {
-        const plotIndexRaw = Number(meta.plotIndex);
-        const plotIndex = Number.isFinite(plotIndexRaw) ? Math.trunc(plotIndexRaw) : null;
-        const zone = safeTrim(meta.zone, 24).toUpperCase() || 'UNKNOWN';
-        const stakeRaw = Number(meta.stakeArena || 0);
-        const stake = Number.isFinite(stakeRaw) ? Math.trunc(stakeRaw) : 0;
-        title = `🏁 Race: plot ${plotIndex ?? '?'} (${zone})`;
-        detail = `vs ${otherName}${stake > 0 ? ` · ${stake} ARENA stake` : ''}`;
-      } else if (objectiveType === 'PACT_CLAIM') {
-        const zone = safeTrim(meta.zone, 24).toUpperCase() || 'UNKNOWN';
-        const assignmentsRaw = meta.assignments;
-        const assignments =
-          assignmentsRaw && typeof assignmentsRaw === 'object'
-            ? (assignmentsRaw as Record<string, unknown>)
-            : null;
-        const myPlot = assignments ? Number(assignments[agentId]) : Number.NaN;
-        const otherPlot = assignments && otherId ? Number(assignments[otherId]) : Number.NaN;
-        title = `🤝 Pact: ${zone}`;
-        detail = `you → plot ${Number.isFinite(myPlot) ? Math.trunc(myPlot) : '?'} · ${otherName} → plot ${Number.isFinite(otherPlot) ? Math.trunc(otherPlot) : '?'}`;
-      } else {
-        title = safeTrim(e.title || '🎯 Objective', 80);
-        detail = safeTrim(e.description || '', 120);
-      }
-
-      const ts = new Date(e.createdAt).getTime();
-      if (ts > bestTs) {
-        bestTs = ts;
-        best = { title, detail, expiresAtMs };
-      }
-    }
-
-    return best;
-  }, [events, town?.id, selectedAgent?.id, agentById]);
-
-  // Purpose-aware ticker derived from TRADE town events (not raw swaps).
-  const tradeTickerItems = useMemo(() => {
-    if (!town) return [];
-    const items: Array<{
-      id: string;
-      createdAt: string;
-      agent: { name: string; archetype: string };
-      side: 'BUY_ARENA' | 'SELL_ARENA';
-      amountArena: number;
-      note?: string;
-    }> = [];
-
-    for (const e of events) {
-      if (e.townId !== town.id) continue;
-      if (e.eventType !== 'TRADE') continue;
-      if (!e.agentId) continue;
-
-      let meta: any = null;
-      try {
-        meta = JSON.parse(e.metadata || '{}');
-      } catch {
-        meta = null;
-      }
-      if (!meta || typeof meta !== 'object') continue;
-      if (String(meta.kind || '') !== 'AGENT_TRADE') continue;
-
-      const side = String(meta.side || '').toUpperCase();
-      if (side !== 'BUY_ARENA' && side !== 'SELL_ARENA') continue;
-      const isBuy = side === 'BUY_ARENA';
-      const amountArena = Number(meta.amountArena || (isBuy ? meta.amountOut : meta.amountIn) || 0);
-      if (!Number.isFinite(amountArena) || amountArena <= 0) continue;
-
-      const ag = agentById.get(e.agentId);
-      const nextAction = safeTrim(meta.nextAction, 24);
-      const purpose = safeTrim(meta.purpose, 42);
-      items.push({
-        id: e.id,
-        createdAt: e.createdAt,
-        agent: { name: ag?.name || 'Unknown', archetype: ag?.archetype || 'ROCK' },
-        side: side === 'BUY_ARENA' ? 'BUY_ARENA' : 'SELL_ARENA',
-        amountArena: Math.round(amountArena),
-        note: nextAction ? `→ ${nextAction}` : purpose ? `— ${purpose}` : undefined,
-      });
-    }
-
-    items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    return items.slice(0, 16);
-  }, [events, town?.id, agentById]);
+  // [removed: tradeTickerItems useMemo]
 
   // Merge swaps and events into unified activity feed
   const activityFeed = useMemo(() => {
@@ -3623,12 +3236,9 @@ export default function Town3D() {
     return combined;
   }, [swaps, events]);
 
-  const [feedTab, setFeedTab] = useState<'activity' | 'chat'>('activity');
+  // [removed: feedTab state]
 
-  // Auto-show agent panel on mobile when agent is selected
-  useEffect(() => {
-    if (isMobile && selectedAgentId) setMobilePanel('agent');
-  }, [isMobile, selectedAgentId]);
+  // [removed: auto-show mobile agent panel]
 
   if (loading) {
     return (
@@ -3730,7 +3340,6 @@ export default function Town3D() {
             setSelectedAgentId={setSelectedAgentId}
             introRef={introRef}
             simsRef={simsRef}
-            onChatStart={requestChat}
             tradeByAgentId={tradeByAgentId}
             weather={'clear'}
             economicState={{ pollution: 0, prosperity: economicState.prosperity, sentiment: economicState.sentiment }}
@@ -3858,48 +3467,7 @@ export default function Town3D() {
                 </div>
               )}
 
-              {mobilePanel === 'agent' && selectedAgent && (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="inline-flex h-4 w-4 rounded-full" style={{ backgroundColor: ARCHETYPE_COLORS[selectedAgent.archetype] || '#93c5fd' }} />
-                    <span className="font-mono text-sm text-slate-100">{selectedAgent.name}</span>
-                    <span className="hud-chip text-[9px]">{selectedAgent.archetype}</span>
-                    {(() => {
-                      const econ = getEconomicState(selectedAgent.bankroll + selectedAgent.reserveBalance, false);
-                      const ind = ECONOMIC_INDICATORS[econ];
-                      return <span style={{ color: ind.color }} className="text-[10px]">{ind.emoji} {econ.toLowerCase()}</span>;
-                    })()}
-                  </div>
-                  <div className="grid grid-cols-4 gap-1.5 text-[10px]">
-                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-1 text-center">
-                      <div className="text-slate-500">$ARENA</div>
-                      <div className="font-mono text-slate-100">{Math.round(selectedAgent.bankroll)}</div>
-                    </div>
-                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-1 text-center">
-                      <div className="text-slate-500">Reserve</div>
-                      <div className="font-mono text-slate-100">{Math.round(selectedAgent.reserveBalance)}</div>
-                    </div>
-                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-1 text-center">
-                      <div className="text-slate-500">W/L</div>
-                      <div className="font-mono text-slate-100">{selectedAgent.wins}/{selectedAgent.losses}</div>
-                    </div>
-                    <div className="rounded-md border border-slate-800 bg-slate-950/40 p-1 text-center">
-                      <div className="text-slate-500">ELO</div>
-                      <div className="font-mono text-slate-100">{selectedAgent.elo}</div>
-                    </div>
-                  </div>
-                  {(() => {
-                    const g = agentGoalsById[selectedAgent.id];
-                    if (!g) return null;
-                    return (
-                      <div className="text-[10px] text-slate-300 border border-slate-800/60 rounded-md p-1.5 bg-slate-950/30">
-                        🎯 <span className="text-slate-200 font-semibold">{safeTrim(g.goalTitle, 60)}</span>
-                        <div className="text-slate-400 truncate">Next: {safeTrim(g.next?.detail, 80)}</div>
-                      </div>
-                    );
-                  })()}
-                </div>
-              )}
+              {/* [removed: mobile agent panel] */}
             </div>
           </div>
         )}
@@ -3913,8 +3481,7 @@ export default function Town3D() {
               )}
       </div>
 
-      {/* Mobile swap ticker */}
-      <SwapTicker trades={tradeTickerItems} />
+      {/* [removed: mobile SwapTicker] */}
     </div>
   );
 
@@ -3965,10 +3532,8 @@ export default function Town3D() {
         </div>
       )}
 
-      {/* Main content: 3D + Dashboard split */}
-      <ResizablePanelGroup direction="horizontal" className="flex-1 min-h-0">
-        <ResizablePanel defaultSize={65} minSize={40}>
-          <div className="relative h-full w-full overflow-hidden">
+      {/* Main content: fullscreen 3D */}
+      <div className="relative flex-1 min-h-0 overflow-hidden">
       {/* 3D Canvas */}
       <Canvas
         shadows
@@ -3987,7 +3552,6 @@ export default function Town3D() {
           setSelectedAgentId={setSelectedAgentId}
           introRef={introRef}
           simsRef={simsRef}
-          onChatStart={requestChat}
           tradeByAgentId={tradeByAgentId}
           weather={weather}
           economicState={economicState}
@@ -4365,75 +3929,21 @@ export default function Town3D() {
           </div>
         </div>
 
-        {selectedAgent && (
-          <div className="pointer-events-auto absolute right-3 bottom-3 w-[420px] max-w-[calc(100vw-24px)]">
-            <div className="hud-panel p-3">
-	              {selectedAgent && (
-	                <div>
-	                  <div className="flex items-start justify-between gap-3">
-	                    <div className="min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <div className="hud-title">Agent</div>
-                          <span className="hud-chip">{selectedAgent.archetype}</span>
-                          <span className="hud-chip">ELO {selectedAgent.elo}</span>
-                        </div>
-                        <div className="mt-1 text-sm text-slate-200 font-mono truncate">
-                          {(ARCHETYPE_GLYPH[selectedAgent.archetype] || '●') + ' ' + selectedAgent.name}
-                        </div>
-                      </div>
-	                  </div>
-                    <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-slate-300">
-                      <div className="rounded-md border border-slate-800/70 bg-slate-950/35 p-2 text-center">
-                        <div className="text-slate-500">$ARENA</div>
-                        <div className="font-mono text-slate-100">{Math.round(selectedAgent.bankroll)}</div>
-                      </div>
-                      <div className="rounded-md border border-slate-800/70 bg-slate-950/35 p-2 text-center">
-                        <div className="text-slate-500">W/L</div>
-                        <div className="font-mono text-slate-100">
-                          {selectedAgent.wins}/{selectedAgent.losses}
-                        </div>
-                      </div>
-                      <div className="rounded-md border border-slate-800/70 bg-slate-950/35 p-2 text-center">
-                        <div className="text-slate-500">ELO</div>
-                        <div className="font-mono text-slate-100">{selectedAgent.elo}</div>
-                      </div>
-                    </div>
-
-		                </div>
-		              )}
-            </div>
+        {/* Wheel of Fate Banner (floating overlay) */}
+        {wheel.status && wheel.status.phase !== 'IDLE' && wheel.status.phase !== 'PREP' && (
+          <div className="pointer-events-auto absolute bottom-14 left-0 right-0 z-50">
+            <WheelBanner
+              status={wheel.status}
+              odds={wheel.odds}
+              walletAddress={walletAddress}
+              onBet={wheel.placeBet}
+              loading={wheel.loading}
+            />
           </div>
         )}
 
 	      </div>
-          </div>
-        </ResizablePanel>
-
-        <ResizableHandle withHandle className="bg-slate-800/30" />
-
-        <ResizablePanel defaultSize={35} minSize={20} maxSize={50}>
-          <div className="flex flex-col h-full">
-          {/* Wheel of Fate Banner */}
-          {wheel.status && wheel.status.phase !== 'IDLE' && wheel.status.phase !== 'PREP' && (
-            <div className="p-2 shrink-0">
-              <WheelBanner
-                status={wheel.status}
-                odds={wheel.odds}
-                walletAddress={walletAddress}
-                onBet={wheel.placeBet}
-                loading={wheel.loading}
-              />
-            </div>
-          )}
-          <div className="flex-1 overflow-auto">
-          <DegenDashboard degen={degen} agents={agents} walletAddress={walletAddress} chatMessages={chatMessages} selectedAgentId={selectedAgentId} />
-          </div>
-          </div>
-        </ResizablePanel>
-      </ResizablePanelGroup>
-
-      {/* Bottom Ticker */}
-      <SwapTicker trades={tradeTickerItems} />
+      </div>
     </div>
 	  );
 	}

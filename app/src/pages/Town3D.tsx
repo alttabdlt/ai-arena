@@ -14,7 +14,7 @@ import { WheelArena } from '../components/wheel/WheelArena';
 // [removed: confetti]
 import { BuildingMesh, preloadBuildingModels } from '../components/buildings';
 import { AgentDroid } from '../components/agents/AgentDroid';
-import { WelcomeSplash, EngagementBanner } from '../components/onboarding';
+// [removed: WelcomeSplash, EngagementBanner — replaced by mandatory onboarding gate on Landing]
 import { buildRoadGraph, findPath, type RoadGraph, type RoadSegInput } from '../world/roadGraph';
 import { WorldScene } from '../world/WorldScene';
 import { StreetLights, generateLightPositions } from '../world/StreetLight';
@@ -2714,7 +2714,18 @@ interface SwapNotification {
 // Preload building GLB models as soon as module is imported
 preloadBuildingModels();
 
-export default function Town3D() {
+const ONBOARDED_KEY = 'aitown_onboarded';
+
+/** Gate: redirect to landing if user hasn't completed onboarding */
+export default function Town3DGate() {
+  if (!localStorage.getItem(ONBOARDED_KEY)) {
+    window.location.replace('/');
+    return null;
+  }
+  return <Town3D />;
+}
+
+function Town3D() {
   const isMobile = useIsMobile();
   const [mobilePanel, setMobilePanel] = useState<'none' | 'info' | 'feed' | 'chat' | 'agent' | 'spawn'>('none');
   const [towns, setTowns] = useState<TownSummary[]>([]);
@@ -2797,7 +2808,6 @@ export default function Town3D() {
   }, [walletAddress]);
   const wheel = useWheelStatus();
   const [wheelArenaOpen, setWheelArenaOpen] = useState(false);
-  const [bannerTriggered, setBannerTriggered] = useState(false);
 
   // Compute which agents are currently fighting (hide them from the map)
   const fightingAgentIds = useMemo(() => {
@@ -2816,8 +2826,6 @@ export default function Town3D() {
     const p = wheel.status?.phase;
     if (p === 'ANNOUNCING' || p === 'FIGHTING') {
       setWheelArenaOpen(true);
-      // Trigger engagement banner on first fight the user sees
-      if (!bannerTriggered) setBannerTriggered(true);
     } else if (p === 'PREP' || p === 'IDLE') {
       // Auto-close after AFTERMATH fades
       const t = setTimeout(() => setWheelArenaOpen(false), 1000);
@@ -3494,13 +3502,7 @@ export default function Town3D() {
   /* ────────────── DESKTOP LAYOUT ────────────── */
   return (
     <div className="flex flex-col h-[100svh] w-full overflow-hidden bg-[#050914]">
-      <WelcomeSplash />
-      <EngagementBanner forceShow={bannerTriggered} onConnectWallet={() => {
-        // Privy handles wallet connect via PrivyWalletConnect component
-        // Trigger a click on the Privy button if needed
-        const btn = document.querySelector('[data-privy-connect]') as HTMLButtonElement;
-        if (btn) btn.click();
-      }} />
+      {/* [removed: WelcomeSplash + EngagementBanner — mandatory onboarding gate on Landing page] */}
       {wheelArenaOverlay}
       {/* Top Bar: Degen Stats */}
       <div className="shrink-0 flex items-center justify-between px-4 py-1.5 bg-slate-950/90 border-b border-slate-800/40 z-50">

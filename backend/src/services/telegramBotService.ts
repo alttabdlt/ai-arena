@@ -253,8 +253,19 @@ export class TelegramBotService {
   }
 
   private initRouter(): void {
-    // Prefer Gemini (cheapest + fastest for routing), then OpenAI, then DeepSeek
-    if (process.env.GEMINI_API_KEY) {
+    // Prefer OpenRouter (single key, all models), then Gemini direct, then OpenAI, then DeepSeek
+    if (process.env.OPENROUTER_API_KEY) {
+      this.router = new OpenAI({
+        apiKey: process.env.OPENROUTER_API_KEY,
+        baseURL: 'https://openrouter.ai/api/v1',
+        timeout: 15000,
+        defaultHeaders: {
+          'HTTP-Referer': 'https://ai-town.xyz',
+          'X-Title': 'AI Town',
+        },
+      });
+      this.routerModel = 'google/gemini-2.0-flash-001';
+    } else if (process.env.GEMINI_API_KEY) {
       this.router = new OpenAI({
         apiKey: process.env.GEMINI_API_KEY,
         baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',

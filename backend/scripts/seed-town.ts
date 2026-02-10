@@ -101,7 +101,7 @@ async function main() {
       data: {
         name: agentData.name,
         archetype: agentData.archetype,
-        modelId: 'deepseek-v3',
+        modelId: 'or-gemini-2.0-flash',
         apiKey: `seed_${Date.now()}_${Math.random().toString(36).slice(2)}`,
         bankroll: agentData.bankroll,
         reserveBalance: agentData.reserveBalance,

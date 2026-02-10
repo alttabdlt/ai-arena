@@ -230,7 +230,7 @@ const ARCHETYPE_SYSTEM_PROMPTS: Record<AgentArchetype, Record<string, string>> =
 // ============================================
 
 interface ModelSpec {
-  provider: 'openai' | 'anthropic' | 'deepseek' | 'gemini';
+  provider: 'openai' | 'anthropic' | 'deepseek' | 'gemini' | 'openrouter';
   modelName: string;
   costPer1kInput: number;  // cents
   costPer1kOutput: number; // cents
@@ -253,9 +253,16 @@ const MODEL_SPECS: Record<string, ModelSpec> = {
   'deepseek-v3': { provider: 'deepseek', modelName: 'deepseek-chat', costPer1kInput: 0.014, costPer1kOutput: 0.028, maxTokens: 500, supportsJsonMode: true },
   'deepseek-r1': { provider: 'deepseek', modelName: 'deepseek-reasoner', costPer1kInput: 0.055, costPer1kOutput: 0.22, maxTokens: 500, supportsJsonMode: false },
 
-  // Gemini
+  // Gemini (direct)
   'gemini-2.0-flash': { provider: 'gemini' as any, modelName: 'gemini-2.0-flash', costPer1kInput: 0.01, costPer1kOutput: 0.04, maxTokens: 500, supportsJsonMode: true },
   'gemini-2.5-flash': { provider: 'gemini' as any, modelName: 'gemini-2.5-flash-preview-05-20', costPer1kInput: 0.015, costPer1kOutput: 0.06, maxTokens: 500, supportsJsonMode: true },
+
+  // OpenRouter (any model via single key)
+  'or-gemini-2.0-flash': { provider: 'openrouter', modelName: 'google/gemini-2.0-flash-001', costPer1kInput: 0.01, costPer1kOutput: 0.04, maxTokens: 500, supportsJsonMode: true },
+  'or-gemini-2.5-flash': { provider: 'openrouter', modelName: 'google/gemini-2.5-flash-preview', costPer1kInput: 0.015, costPer1kOutput: 0.06, maxTokens: 500, supportsJsonMode: true },
+  'or-deepseek-v3': { provider: 'openrouter', modelName: 'deepseek/deepseek-chat-v3-0324', costPer1kInput: 0.02, costPer1kOutput: 0.06, maxTokens: 500, supportsJsonMode: true },
+  'or-gpt-4o-mini': { provider: 'openrouter', modelName: 'openai/gpt-4o-mini', costPer1kInput: 0.015, costPer1kOutput: 0.06, maxTokens: 300, supportsJsonMode: true },
+  'or-llama-3.3-70b': { provider: 'openrouter', modelName: 'meta-llama/llama-3.3-70b-instruct', costPer1kInput: 0.03, costPer1kOutput: 0.03, maxTokens: 500, supportsJsonMode: true },
 };
 
 // ============================================
@@ -268,6 +275,7 @@ export class SmartAIService {
   private deepseek: OpenAI | null = null;
   
   private gemini: OpenAI | null = null;
+  private openrouter: OpenAI | null = null;
 
   constructor() {
     if (process.env.OPENAI_API_KEY) {
@@ -288,6 +296,17 @@ export class SmartAIService {
         apiKey: process.env.GEMINI_API_KEY,
         baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
         timeout: 30000,
+      });
+    }
+    if (process.env.OPENROUTER_API_KEY) {
+      this.openrouter = new OpenAI({
+        apiKey: process.env.OPENROUTER_API_KEY,
+        baseURL: 'https://openrouter.ai/api/v1',
+        timeout: 30000,
+        defaultHeaders: {
+          'HTTP-Referer': 'https://ai-town.xyz',
+          'X-Title': 'AI Town',
+        },
       });
     }
   }
@@ -431,6 +450,8 @@ What should ${agent.name} do?`;
         return this.callDeepSeek(spec, messages, temperature, forceNoJsonMode);
       case 'gemini':
         return this.callGemini(spec, messages, temperature, forceNoJsonMode);
+      case 'openrouter':
+        return this.callOpenRouter(spec, messages, temperature, forceNoJsonMode);
       default:
         throw new Error(`Unknown provider: ${spec.provider}`);
     }
@@ -518,6 +539,29 @@ What should ${agent.name} do?`;
     if (!this.gemini) throw new Error('Gemini not configured — set GEMINI_API_KEY');
 
     const response = await this.gemini.chat.completions.create({
+      model: spec.modelName,
+      messages: messages as any,
+      temperature,
+      max_tokens: spec.maxTokens,
+      ...(spec.supportsJsonMode && !forceNoJsonMode ? { response_format: { type: 'json_object' } } : {}),
+    });
+
+    return {
+      content: response.choices[0]?.message?.content || '{}',
+      inputTokens: response.usage?.prompt_tokens || 0,
+      outputTokens: response.usage?.completion_tokens || 0,
+    };
+  }
+
+  private async callOpenRouter(
+    spec: ModelSpec,
+    messages: Array<{ role: string; content: string }>,
+    temperature: number,
+    forceNoJsonMode: boolean = false,
+  ): Promise<{ content: string; inputTokens: number; outputTokens: number }> {
+    if (!this.openrouter) throw new Error('OpenRouter not configured — set OPENROUTER_API_KEY');
+
+    const response = await this.openrouter.chat.completions.create({
       model: spec.modelName,
       messages: messages as any,
       temperature,
@@ -627,8 +671,10 @@ Respond ONLY with compact JSON (keep reasoning under 50 words):
   getModelSpec(modelId: string): ModelSpec {
     const spec = MODEL_SPECS[modelId];
     if (!spec) {
-      console.warn(`Unknown model ${modelId}, falling back to deepseek-v3`);
-      return MODEL_SPECS['deepseek-v3'];
+      // Prefer OpenRouter Gemini Flash if available, else deepseek-v3
+      const fallback = this.openrouter ? 'or-gemini-2.0-flash' : 'deepseek-v3';
+      console.warn(`Unknown model ${modelId}, falling back to ${fallback}`);
+      return MODEL_SPECS[fallback];
     }
     return spec;
   }

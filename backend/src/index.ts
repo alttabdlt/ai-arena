@@ -469,6 +469,23 @@ async function startServer() {
     console.warn(`[Arena] Startup cleanup failed: ${err.message}`);
   }
 
+  // Auto-upgrade agent models: if OpenRouter is configured, migrate old models
+  if (process.env.OPENROUTER_API_KEY) {
+    try {
+      const upgradeTarget = 'or-gemini-2.0-flash';
+      const oldModels = ['deepseek-v3', 'deepseek-chat', 'gpt-4o-mini'];
+      const upgraded = await prisma.arenaAgent.updateMany({
+        where: { modelId: { in: oldModels } },
+        data: { modelId: upgradeTarget },
+      });
+      if (upgraded.count > 0) {
+        console.log(`🧠 Upgraded ${upgraded.count} agent(s) to ${upgradeTarget} via OpenRouter`);
+      }
+    } catch (err: any) {
+      console.warn(`[Model upgrade] Failed: ${err.message}`);
+    }
+  }
+
   // Start Wheel of Fate (PvP match scheduler — the core game mechanic)
   const { wheelOfFateService } = await import('./services/wheelOfFateService');
   wheelOfFateService.start();

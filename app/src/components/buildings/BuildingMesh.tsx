@@ -25,7 +25,7 @@ function BuildingFallback({
   selected: boolean;
 }) {
   return (
-    <mesh castShadow receiveShadow position={[0, h / 2, 0]}>
+    <mesh position={[0, h / 2, 0]}>
       <boxGeometry args={[8, h, 8]} />
       <meshStandardMaterial
         color={main}

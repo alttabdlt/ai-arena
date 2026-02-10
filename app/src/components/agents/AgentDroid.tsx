@@ -202,17 +202,17 @@ export function AgentDroid({
     <group ref={group} onPointerDown={(e) => (e.stopPropagation(), onClick())}>
       <group ref={innerGroup}>
         {/* Legs */}
-        <mesh ref={legL} castShadow position={[-0.25, cfg.legHeight / 2, 0]}>
+        <mesh ref={legL}  position={[-0.25, cfg.legHeight / 2, 0]}>
           <boxGeometry args={[cfg.legWidth, cfg.legHeight, cfg.legWidth]} />
           <meshStandardMaterial color="#0b1220" />
         </mesh>
-        <mesh ref={legR} castShadow position={[0.25, cfg.legHeight / 2, 0]}>
+        <mesh ref={legR}  position={[0.25, cfg.legHeight / 2, 0]}>
           <boxGeometry args={[cfg.legWidth, cfg.legHeight, cfg.legWidth]} />
           <meshStandardMaterial color="#0b1220" />
         </mesh>
 
         {/* Arms */}
-        <mesh ref={armL} castShadow position={[-(cfg.bodyRadius + 0.05), 1.05, 0]}>
+        <mesh ref={armL}  position={[-(cfg.bodyRadius + 0.05), 1.05, 0]}>
           <boxGeometry args={[cfg.armWidth, cfg.armLength, cfg.armWidth]} />
           <meshStandardMaterial
             color="#1f2937"
@@ -220,7 +220,7 @@ export function AgentDroid({
             emissiveIntensity={activity === 'BUILDING' ? 0.3 : 0}
           />
         </mesh>
-        <mesh ref={armR} castShadow position={[cfg.bodyRadius + 0.05, 1.05, 0]}>
+        <mesh ref={armR}  position={[cfg.bodyRadius + 0.05, 1.05, 0]}>
           <boxGeometry args={[cfg.armWidth, cfg.armLength, cfg.armWidth]} />
           <meshStandardMaterial
             color="#1f2937"
@@ -230,7 +230,7 @@ export function AgentDroid({
         </mesh>
 
         {/* Body */}
-        <mesh ref={body} castShadow position={[0, 1.05, 0]}>
+        <mesh ref={body}  position={[0, 1.05, 0]}>
           <capsuleGeometry args={[cfg.bodyRadius, cfg.bodyHeight, 8, 16]} />
           <meshStandardMaterial
             color={color}
@@ -242,7 +242,7 @@ export function AgentDroid({
         </mesh>
 
         {/* Head */}
-        <mesh castShadow position={[0, 1.9, 0.05]}>
+        <mesh  position={[0, 1.9, 0.05]}>
           <sphereGeometry args={[cfg.headRadius, 16, 16]} />
           <meshStandardMaterial color="#e2e8f0" roughness={0.15} />
         </mesh>

@@ -213,8 +213,8 @@ export function GLBBuilding({
         const mesh = child as THREE.Mesh;
         // Geometry already split at clone time — just apply materials
         mesh.material = [wallMat, roofMat, floorMat];
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
       }
     });
 
@@ -237,7 +237,7 @@ export function GLBBuilding({
 
       {/* Base glow ring */}
       <mesh position={[0, 0.04, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[5.5, 6.0, 32]} />
+        <ringGeometry args={[5.5, 6.0, 16]} />
         <meshStandardMaterial
           color={accentHex_}
           emissive={accentHex_}
@@ -248,14 +248,16 @@ export function GLBBuilding({
         />
       </mesh>
 
-      {/* Rooftop accent light */}
-      <pointLight
-        position={[0, targetHeight + 1.0, 0]}
-        color={accentHex_}
-        intensity={selected ? 2.0 : 0.5}
-        distance={20}
-        decay={2}
-      />
+      {/* Rooftop accent light — only for selected building (saves ~30 PointLights) */}
+      {selected && (
+        <pointLight
+          position={[0, targetHeight + 1.0, 0]}
+          color={accentHex_}
+          intensity={2.0}
+          distance={20}
+          decay={2}
+        />
+      )}
     </group>
   );
 }

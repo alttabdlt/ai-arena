@@ -253,6 +253,24 @@ export class AgentLoopService {
         console.error(`[AgentLoop] World event tick failed: ${e.message}`);
       }
 
+      // === AUTO-CREATE TOWN: ensure agents always have somewhere to build ===
+      try {
+        const activeTown = await townService.getActiveTown();
+        if (!activeTown) {
+          const completedCount = await prisma.town.count({ where: { status: 'COMPLETE' } });
+          const nextLevel = completedCount + 1;
+          const townName = `Town ${nextLevel}`;
+          const newTown = await townService.createTown(townName, undefined, undefined, nextLevel);
+          console.log(`🏘️ [AgentLoop] Auto-created "${newTown.name}" (level ${nextLevel}, ${newTown.plots.length} plots) — no active town existed`);
+          // Broadcast to Telegram if available
+          if (this.onTickResult) {
+            // Not a tick result, but we can log it
+          }
+        }
+      } catch (e: any) {
+        console.error(`[AgentLoop] Auto-create town failed: ${e.message}`);
+      }
+
       // === UPKEEP: deduct survival cost from all agents ===
       const upkeepCost = Math.max(1, Math.round(1 * worldEventService.getUpkeepMultiplier()));
       for (const agent of agents) {

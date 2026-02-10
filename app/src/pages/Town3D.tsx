@@ -2435,7 +2435,7 @@ function TownScene({
       ]} />
 
       {/* Ambient floating particles */}
-      <AmbientParticles count={60} />
+      <AmbientParticles count={25} />
 
       {/* Economic atmosphere effects */}
       <SmogLayer pollution={economicState.pollution} />
@@ -2443,8 +2443,8 @@ function TownScene({
       <ProsperitySparkles prosperity={economicState.prosperity} />
 
       {/* Weather effects */}
-      {weather === 'rain' && <RainEffect intensity={200} />}
-      {weather === 'storm' && <RainEffect intensity={500} />}
+      {weather === 'rain' && <RainEffect intensity={80} />}
+      {weather === 'storm' && <RainEffect intensity={200} />}
 
       {/* Coin burst effects */}
       {coinBursts.map((burst) => (
@@ -2478,9 +2478,9 @@ function TownScene({
       {/* Ambient light */}
       <ambientLight intensity={weather === 'storm' ? 0.5 : weather === 'rain' ? 0.7 : 1.0} />
       {/* Warm directional sunlight */}
-      <directionalLight position={[80, 120, 50]} intensity={weather === 'storm' ? 0.3 : weather === 'rain' ? 0.5 : 1.2} color="#fff5e0" castShadow />
+      <directionalLight position={[80, 120, 50]} intensity={weather === 'storm' ? 0.3 : weather === 'rain' ? 0.5 : 1.2} color="#fff5e0" />
 
-      <mesh receiveShadow rotation-x={-Math.PI / 2} position={[0, 0, 0]}>
+      <mesh rotation-x={-Math.PI / 2} position={[0, 0, 0]}>
         <planeGeometry args={[groundSize, groundSize]} />
         <meshStandardMaterial color={groundTint} map={groundTex ?? undefined} roughness={1} />
       </mesh>
@@ -3567,9 +3567,10 @@ function Town3D() {
       <div className="relative flex-1 min-h-0 overflow-hidden">
       {/* 3D Canvas */}
       <Canvas
-        shadows
-        dpr={[1, 2]}
+        shadows={false}
+        dpr={[1, 1.5]}
         camera={{ position: [50, 55, 50], fov: 45, near: 0.1, far: 3000 }}
+        gl={{ antialias: true, powerPreference: 'high-performance', alpha: false }}
         onPointerMissed={() => {
           setSelectedPlotId(null);
         }}

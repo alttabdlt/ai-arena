@@ -16,7 +16,7 @@ const POLE_HEIGHT = 6.0;
 const LAMP_RADIUS = 0.35;
 const LIGHT_COLOR = '#ffb347';
 const LIGHT_INTENSITY_NIGHT = 1.2;
-const MAX_LIGHTS_WITH_POINTLIGHT = 16; // Performance cap
+const MAX_LIGHTS_WITH_POINTLIGHT = 4; // Performance cap (PointLights are expensive)
 
 export function StreetLights({ positions }: StreetLightProps) {
   const poleMeshRef = useRef<THREE.InstancedMesh>(null);
@@ -90,7 +90,7 @@ export function StreetLights({ positions }: StreetLightProps) {
   return (
     <group>
       {/* Poles */}
-      <instancedMesh ref={poleMeshRef} args={[undefined, undefined, count]} castShadow>
+      <instancedMesh ref={poleMeshRef} args={[undefined, undefined, count]}>
         <cylinderGeometry args={[0.06, 0.08, POLE_HEIGHT, 6]} />
         <meshStandardMaterial color="#1a1a2e" roughness={0.9} metalness={0.3} />
       </instancedMesh>

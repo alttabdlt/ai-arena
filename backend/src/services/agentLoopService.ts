@@ -134,6 +134,8 @@ export interface AgentTickResult {
   narrative: string; // Human-readable description for Telegram
   cost: AICost | null;
   error?: string;
+  /** Telegram chat IDs that sent instructions this tick — for reply routing */
+  instructionSenders?: { chatId: string; fromUser: string }[];
 }
 
 interface WorldObservation {
@@ -168,6 +170,26 @@ export class AgentLoopService {
   private running: boolean = false;
   private tickInterval: NodeJS.Timeout | null = null;
   private tickInFlight: boolean = false;
+
+  // User instructions queue — Telegram users can tell agents what to do
+  // Map<agentId, { text: string, chatId: string, fromUser: string }[]>
+  private pendingInstructions: Map<string, { text: string; chatId: string; fromUser: string }[]> = new Map();
+
+  /** Queue a user instruction for an agent. Will be injected into next LLM tick. */
+  queueInstruction(agentId: string, text: string, chatId: string, fromUser: string): void {
+    const queue = this.pendingInstructions.get(agentId) || [];
+    queue.push({ text: text.slice(0, 500), chatId, fromUser });
+    // Keep only last 3 instructions per agent
+    if (queue.length > 3) queue.splice(0, queue.length - 3);
+    this.pendingInstructions.set(agentId, queue);
+  }
+
+  /** Pop all pending instructions for an agent (consumed on tick) */
+  popInstructions(agentId: string): { text: string; chatId: string; fromUser: string }[] {
+    const queue = this.pendingInstructions.get(agentId) || [];
+    this.pendingInstructions.delete(agentId);
+    return queue;
+  }
   private currentTick: number = 0;
   public onTickResult?: (result: AgentTickResult) => void; // Hook for broadcasting
   private lastTradeTickByAgentId: Map<string, number> = new Map();
@@ -316,6 +338,10 @@ export class AgentLoopService {
   // ============================================
 
   private async processAgentTick(agent: ArenaAgent): Promise<AgentTickResult> {
+    // Capture pending user instructions BEFORE tick (will be consumed by decide())
+    const pendingInstr = this.pendingInstructions.get(agent.id) || [];
+    const instructionSenders = pendingInstr.map(i => ({ chatId: i.chatId, fromUser: i.fromUser }));
+
     // Re-fetch agent to get post-upkeep state
     const freshAgentState = await prisma.arenaAgent.findUnique({ where: { id: agent.id } });
     if (freshAgentState) agent = freshAgentState;
@@ -374,7 +400,7 @@ export class AgentLoopService {
     // 5. Update agent memory (scratchpad) and last-action fields
     await this.updateAgentMemory(agent, effectiveAction, observation, success, narrative);
 
-    return { agentId: agent.id, agentName: agent.name, archetype: agent.archetype, action: effectiveAction, success, narrative, cost, error };
+    return { agentId: agent.id, agentName: agent.name, archetype: agent.archetype, action: effectiveAction, success, narrative, cost, error, instructionSenders: instructionSenders.length > 0 ? instructionSenders : undefined };
   }
 
   // ============================================
@@ -696,9 +722,20 @@ RESPOND WITH JSON ONLY:
       ? `\n📝 YOUR JOURNAL (your memory from previous ticks — use this to track strategy, learn from outcomes, plan ahead):\n${agent.scratchpad}\n---`
       : `\n📝 YOUR JOURNAL: (empty — this is your first tick! Observe and plan.)\n---`;
 
+    // Inject user instructions from Telegram
+    const userInstructions = this.popInstructions(agent.id);
+    let instructionBlock = '';
+    if (userInstructions.length > 0) {
+      const instructionTexts = userInstructions.map(i => `  - "${i.text}" (from ${i.fromUser})`).join('\n');
+      instructionBlock = `\n\n📢 HUMAN OPERATOR MESSAGES:
+The following spectators/operators have sent you instructions. You are an AUTONOMOUS agent — you decide whether to follow these suggestions or not. Consider them, but make your own strategic decision. Respond to them in your "reasoning" field (address them directly, in character).
+${instructionTexts}
+---`;
+    }
+
     const messages = [
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: scratchpadBlock + '\n\n' + worldState },
+      { role: 'user', content: scratchpadBlock + instructionBlock + '\n\n' + worldState },
     ];
 
     const spec = smartAiService.getModelSpec(agent.modelId);

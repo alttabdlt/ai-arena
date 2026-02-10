@@ -1,5 +1,11 @@
 /**
- * TelegramBotService — Streams AI Town events to a Telegram channel/group.
+ * TelegramBotService — Telegram is the user interface for AI Town.
+ *
+ * Users chat with AI agents via Telegram:
+ * - /tell <agent> <message> — give an agent instructions
+ * - Free-text messages are routed to your bonded agent (or matched by @name)
+ * - Agents decide autonomously whether to follow instructions
+ * - Agents reply in-character with their reasoning
  */
 
 import { Telegraf } from 'telegraf';
@@ -83,24 +89,23 @@ export class TelegramBotService {
     this.bot.command('start', (ctx) => {
       this.send(ctx.chat.id,
         '🏘️ <b>Welcome to AI Town!</b>\n\n' +
-        'Watch AI agents autonomously build a virtual town. Every building, every design choice, every piece of lore is created by AI inference. This is <b>Proof of Inference</b>.\n\n' +
-        '<b>📊 Status</b>\n' +
-        '/town — Current town status\n' +
-        '/plots — Visual plot map\n' +
+        'Autonomous AI agents build towns, trade $ARENA, and fight in Poker matches. <b>You can talk to them.</b>\n\n' +
+        '<b>💬 Chat with Agents</b>\n' +
+        '/tell &lt;agent&gt; &lt;message&gt; — Give an agent instructions\n' +
+        'Or just type: <code>AlphaShark go claim a plot</code>\n' +
+        'Agents decide if they listen. They have opinions. 😏\n\n' +
+        '<b>📊 Watch</b>\n' +
         '/agents — Agent leaderboard\n' +
-        '/stats — World statistics\n\n' +
-        '<b>🏗️ Buildings</b>\n' +
+        '/town — Current town status\n' +
         '/buildings — List all buildings\n' +
-        '/building &lt;n&gt; — Deep dive into a building\n' +
-        '/events — Recent town events\n\n' +
+        '/stats — World statistics\n' +
+        '/events — Recent events\n\n' +
         '<b>💰 Token</b>\n' +
-        '/token — $ARENA token info + trade link\n' +
-        '/newtown [name] — Found a new town\n\n' +
+        '/token — $ARENA token info\n\n' +
         '<b>🎮 Control</b>\n' +
-        '/tick — Trigger one agent round\n' +
-        '/go — Start auto-run (agents act every 45s)\n' +
-        '/stop — Pause auto-run\n' +
-        '/stream — Enable live broadcasting here',
+        '/go — Start agents\n' +
+        '/stop — Pause agents\n' +
+        '/stream — Enable live feed here',
       );
     });
 
@@ -377,6 +382,125 @@ export class TelegramBotService {
         ctx.reply(`❌ Error: ${err.message}`);
       }
     });
+
+    // ============================================
+    // /tell — Talk to an agent
+    // ============================================
+    this.bot.command('tell', async (ctx) => {
+      const parts = ctx.message.text.replace(/^\/tell\s*/i, '').trim();
+      if (!parts) {
+        this.send(ctx.chat.id,
+          '💬 <b>Talk to an agent!</b>\n\n' +
+          'Usage: <code>/tell AgentName your message</code>\n\n' +
+          'Example:\n' +
+          '<code>/tell AlphaShark go claim plot 5</code>\n' +
+          '<code>/tell YoloDegen bet big on the next fight</code>\n\n' +
+          'The agent will consider your suggestion and respond in character. They might follow it... or not! 😏',
+        );
+        return;
+      }
+
+      // Parse: first word = agent name (fuzzy match), rest = message
+      const firstSpace = parts.indexOf(' ');
+      if (firstSpace === -1) {
+        ctx.reply('❌ Usage: /tell <agent_name> <message>');
+        return;
+      }
+      const agentQuery = parts.slice(0, firstSpace).trim();
+      const message = parts.slice(firstSpace + 1).trim();
+      if (!message) {
+        ctx.reply('❌ What do you want to tell them?');
+        return;
+      }
+
+      const agent = await this.fuzzyFindAgent(agentQuery);
+      if (!agent) {
+        const agents = await prisma.arenaAgent.findMany({ where: { isActive: true }, select: { name: true }, take: 10 });
+        const names = agents.map(a => a.name).join(', ');
+        ctx.reply(`❌ No agent found matching "${agentQuery}"\n\nActive agents: ${names}`);
+        return;
+      }
+
+      const fromUser = ctx.from?.first_name || ctx.from?.username || 'Anon';
+      agentLoopService.queueInstruction(agent.id, message, ctx.chat.id.toString(), fromUser);
+
+      const emoji = this.archetypeEmoji(agent.archetype);
+      this.send(ctx.chat.id,
+        `${emoji} Message queued for <b>${esc(agent.name)}</b>:\n` +
+        `<i>"${esc(truncate(message, 200))}"</i>\n\n` +
+        `${esc(agent.name)} will respond on their next tick. ${agent.archetype === 'DEGEN' ? 'No promises they\'ll listen though... 🎲' : 'They\'ll consider it.'}`,
+      );
+    });
+
+    // ============================================
+    // Free-text handler — route to agents via @mention or last-used
+    // ============================================
+    this.bot.on('text', async (ctx) => {
+      // Skip commands
+      if (ctx.message.text.startsWith('/')) return;
+
+      const text = ctx.message.text.trim();
+      if (!text || text.length < 2) return;
+
+      // Try to find an @mentioned agent
+      const mentionMatch = text.match(/@(\w+)/);
+      let agent: any = null;
+      let message = text;
+
+      if (mentionMatch) {
+        agent = await this.fuzzyFindAgent(mentionMatch[1]);
+        message = text.replace(/@\w+/, '').trim();
+      }
+
+      // If no mention, try to match agent name at start of message
+      if (!agent) {
+        const agents = await prisma.arenaAgent.findMany({ where: { isActive: true }, select: { id: true, name: true, archetype: true } });
+        for (const a of agents) {
+          if (text.toLowerCase().startsWith(a.name.toLowerCase())) {
+            agent = a;
+            message = text.slice(a.name.length).replace(/^[,:\s]+/, '').trim();
+            break;
+          }
+        }
+      }
+
+      if (!agent || !message) return; // No agent matched, ignore
+
+      const fromUser = ctx.from?.first_name || ctx.from?.username || 'Anon';
+      agentLoopService.queueInstruction(agent.id, message, ctx.chat.id.toString(), fromUser);
+
+      const emoji = this.archetypeEmoji(agent.archetype);
+      await ctx.reply(`${emoji} ${agent.name} heard you. They'll respond next tick.`);
+    });
+  }
+
+  // ============================================
+  // Agent Lookup
+  // ============================================
+
+  /** Fuzzy match an agent by name (case-insensitive, partial match) */
+  private async fuzzyFindAgent(query: string): Promise<{ id: string; name: string; archetype: string } | null> {
+    const q = query.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!q) return null;
+
+    const agents = await prisma.arenaAgent.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true, archetype: true },
+    });
+
+    // Exact match first
+    const exact = agents.find(a => a.name.toLowerCase() === query.toLowerCase());
+    if (exact) return exact;
+
+    // Prefix match
+    const prefix = agents.find(a => a.name.toLowerCase().startsWith(q));
+    if (prefix) return prefix;
+
+    // Fuzzy: contains
+    const contains = agents.find(a => a.name.toLowerCase().replace(/[^a-z0-9]/g, '').includes(q));
+    if (contains) return contains;
+
+    return null;
   }
 
   // ============================================
@@ -447,6 +571,32 @@ export class TelegramBotService {
     }
 
     await this.send(this.chatId, msg);
+
+    // If this agent had user instructions, send personalized replies
+    if (result.instructionSenders && result.instructionSenders.length > 0) {
+      const reasoning = result.action.reasoning || result.narrative || '';
+      const emoji = this.archetypeEmoji(result.archetype);
+      const replyMsg =
+        `${emoji} <b>${esc(result.agentName)}</b> responds:\n\n` +
+        `<i>"${esc(truncate(reasoning, 500))}"</i>\n\n` +
+        `Action: ${result.action.type.replace(/_/g, ' ')} ${result.success ? '✅' : '❌'}`;
+
+      // Send to each unique chat that sent instructions
+      const sentChats = new Set<string>();
+      for (const sender of result.instructionSenders) {
+        if (sentChats.has(sender.chatId)) continue;
+        sentChats.add(sender.chatId);
+        // Don't double-send if it's the streaming chat
+        if (sender.chatId !== this.chatId) {
+          await this.send(sender.chatId, replyMsg);
+        }
+      }
+
+      // Always send the reply to the streaming chat too (if different from normal broadcast)
+      if (this.chatId && !sentChats.has(this.chatId)) {
+        // Already sent via normal broadcast above
+      }
+    }
   }
 
   private archetypeEmoji(archetype: string): string {

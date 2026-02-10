@@ -61,4 +61,24 @@ router.post('/agent-loop/tick/:agentId', async (req: Request, res: Response): Pr
   }
 });
 
+// Send an instruction to an agent (will be processed on next tick)
+router.post('/agent-loop/tell/:agentId', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { message, from } = req.body || {};
+    if (!message || typeof message !== 'string') {
+      res.status(400).json({ error: 'message is required' });
+      return;
+    }
+    agentLoopService.queueInstruction(
+      req.params.agentId,
+      message,
+      'api',
+      typeof from === 'string' ? from : 'API User',
+    );
+    res.json({ status: 'queued', agentId: req.params.agentId, message });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;

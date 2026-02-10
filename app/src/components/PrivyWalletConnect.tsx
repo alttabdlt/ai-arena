@@ -5,7 +5,7 @@
 import { usePrivy, useWallets, useLogin, useLogout } from '@privy-io/react-auth';
 import { Button } from '@ui/button';
 import { Badge } from '@ui/badge';
-import { Component, type ReactNode } from 'react';
+import { Component, useEffect, type ReactNode } from 'react';
 
 const ARENA_TOKEN_ADDRESS = '0x0bA5E04470Fe327AC191179Cf6823E667B007777';
 
@@ -32,12 +32,14 @@ function PrivyInner({ compact = false, onAddressChange }: PrivyWalletConnectProp
   const { logout } = useLogout();
 
   const activeWallet = wallets[0];
-  const address = activeWallet?.address || null;
+  // Use wallet from useWallets first, fall back to user.wallet for external wallets (Coinbase etc.)
+  const address = activeWallet?.address || (user?.wallet as any)?.address || null;
   const shortAddress = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : null;
 
-  if (onAddressChange) {
-    setTimeout(() => onAddressChange(address), 0);
-  }
+  // Notify parent of address changes via useEffect (not in render)
+  useEffect(() => {
+    if (onAddressChange) onAddressChange(address);
+  }, [address, onAddressChange]);
 
   if (!ready) return <div className="text-xs text-slate-500">Loading...</div>;
 

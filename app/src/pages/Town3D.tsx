@@ -14,7 +14,7 @@ import { WheelArena } from '../components/wheel/WheelArena';
 // [removed: confetti]
 import { BuildingMesh, preloadBuildingModels } from '../components/buildings';
 import { AgentDroid } from '../components/agents/AgentDroid';
-// [removed: WelcomeSplash, EngagementBanner — replaced by mandatory onboarding gate on Landing]
+import { OnboardingOverlay, isOnboarded } from '../components/onboarding';
 import { buildRoadGraph, findPath, type RoadGraph, type RoadSegInput } from '../world/roadGraph';
 import { WorldScene } from '../world/WorldScene';
 import { StreetLights, generateLightPositions } from '../world/StreetLight';
@@ -2714,18 +2714,7 @@ interface SwapNotification {
 // Preload building GLB models as soon as module is imported
 preloadBuildingModels();
 
-const ONBOARDED_KEY = 'aitown_onboarded';
-
-/** Gate: redirect to landing if user hasn't completed onboarding */
-export default function Town3DGate() {
-  if (!localStorage.getItem(ONBOARDED_KEY)) {
-    window.location.replace('/');
-    return null;
-  }
-  return <Town3D />;
-}
-
-function Town3D() {
+export default function Town3D() {
   const isMobile = useIsMobile();
   const [mobilePanel, setMobilePanel] = useState<'none' | 'info' | 'feed' | 'chat' | 'agent' | 'spawn'>('none');
   const [towns, setTowns] = useState<TownSummary[]>([]);
@@ -2792,6 +2781,7 @@ function Town3D() {
   // Degen mode state
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [showSpawnOverlay, setShowSpawnOverlay] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(() => !isOnboarded());
 
   // connectWallet: Privy handles this via PrivyWalletConnect component.
   // This fallback tries window.ethereum for SpawnAgent compatibility.
@@ -3323,6 +3313,9 @@ function Town3D() {
   /* ────────────── MOBILE LAYOUT ────────────── */
   if (isMobile) return (
     <div className="flex flex-col h-[100svh] w-full overflow-hidden bg-[#050914]">
+      {showOnboarding && (
+        <OnboardingOverlay walletAddress={walletAddress} onComplete={() => setShowOnboarding(false)} />
+      )}
       {wheelArenaOverlay}
       {/* Mobile top bar — compact */}
       <div className="shrink-0 flex items-center justify-between px-3 py-1 bg-slate-950/95 border-b border-slate-800/40 z-50">
@@ -3518,7 +3511,13 @@ function Town3D() {
   /* ────────────── DESKTOP LAYOUT ────────────── */
   return (
     <div className="flex flex-col h-[100svh] w-full overflow-hidden bg-[#050914]">
-      {/* [removed: WelcomeSplash + EngagementBanner — mandatory onboarding gate on Landing page] */}
+      {/* In-game onboarding overlay */}
+      {showOnboarding && (
+        <OnboardingOverlay
+          walletAddress={walletAddress}
+          onComplete={() => setShowOnboarding(false)}
+        />
+      )}
       {wheelArenaOverlay}
       {/* Top Bar: Degen Stats */}
       <div className="shrink-0 flex items-center justify-between px-4 py-1.5 bg-slate-950/90 border-b border-slate-800/40 z-50">

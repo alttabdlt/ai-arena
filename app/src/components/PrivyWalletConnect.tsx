@@ -1,12 +1,12 @@
 /**
  * PrivyWalletConnect — Email/Social login → embedded wallet via Privy.
- * Replaces raw MetaMask WalletConnect for non-techie onboarding.
+ * Gracefully degrades when Privy is not configured (no app ID).
  */
 import { usePrivy, useWallets, useLogin, useLogout } from '@privy-io/react-auth';
 import { Button } from '@ui/button';
 import { Badge } from '@ui/badge';
+import { Component, type ReactNode } from 'react';
 
-// $ARENA token on nad.fun
 const ARENA_TOKEN_ADDRESS = '0x0bA5E04470Fe327AC191179Cf6823E667B007777';
 
 interface PrivyWalletConnectProps {
@@ -14,16 +14,20 @@ interface PrivyWalletConnectProps {
   onAddressChange?: (address: string | null) => void;
 }
 
-export function PrivyWalletConnect({ compact = false, onAddressChange }: PrivyWalletConnectProps) {
+/** Error boundary: catches Privy hook failures when no provider exists */
+class PrivyErrorBoundary extends Component<{ fallback: ReactNode; children: ReactNode }, { hasError: boolean }> {
+  state = { hasError: false };
+  static getDerivedStateFromError() { return { hasError: true }; }
+  componentDidCatch() {} // swallow
+  render() { return this.state.hasError ? this.props.fallback : this.props.children; }
+}
+
+function PrivyInner({ compact = false, onAddressChange }: PrivyWalletConnectProps) {
   const { ready, authenticated, user } = usePrivy();
   const { wallets } = useWallets();
   const { login } = useLogin({
-    onComplete: (user) => {
-      console.log('[Privy] Login complete:', user.id);
-    },
-    onError: (error) => {
-      console.error('[Privy] Login error:', error);
-    },
+    onComplete: (u: any) => console.log('[Privy] Login complete:', u.id),
+    onError: (err: any) => console.error('[Privy] Login error:', err),
   });
   const { logout } = useLogout();
 
@@ -31,15 +35,11 @@ export function PrivyWalletConnect({ compact = false, onAddressChange }: PrivyWa
   const address = activeWallet?.address || null;
   const shortAddress = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : null;
 
-  // Notify parent of address changes
   if (onAddressChange) {
-    // Using a ref pattern would be better, but this works for the hackathon
     setTimeout(() => onAddressChange(address), 0);
   }
 
-  if (!ready) {
-    return <div className="text-xs text-slate-500">Loading...</div>;
-  }
+  if (!ready) return <div className="text-xs text-slate-500">Loading...</div>;
 
   if (compact) {
     return (
@@ -54,7 +54,7 @@ export function PrivyWalletConnect({ compact = false, onAddressChange }: PrivyWa
             </Button>
           </>
         ) : (
-          <Button size="sm" variant="outline" onClick={login}>
+          <Button size="sm" variant="outline" onClick={login} data-privy-connect>
             ✨ Sign In
           </Button>
         )}
@@ -74,28 +74,23 @@ export function PrivyWalletConnect({ compact = false, onAddressChange }: PrivyWa
               🟢 Monad Testnet
             </Badge>
           </div>
-          
           <div className="flex items-center gap-2">
             <span className="font-mono text-sm text-slate-200">{shortAddress}</span>
-            <Button size="sm" variant="ghost" className="text-xs" onClick={logout}>
-              Sign Out
-            </Button>
+            <Button size="sm" variant="ghost" className="text-xs" onClick={logout}>Sign Out</Button>
           </div>
-
-          <div className="flex gap-2">
-            <Button 
-              size="sm" variant="outline" className="flex-1 text-xs border-amber-600/50 text-amber-300"
-              onClick={() => window.open(`https://testnet.nad.fun/token/${ARENA_TOKEN_ADDRESS}`, '_blank')}
-            >
-              Buy $ARENA on nad.fun
-            </Button>
-          </div>
+          <Button 
+            size="sm" variant="outline" className="w-full text-xs border-amber-600/50 text-amber-300"
+            onClick={() => window.open(`https://testnet.nad.fun/token/${ARENA_TOKEN_ADDRESS}`, '_blank')}
+          >
+            Buy $ARENA on nad.fun
+          </Button>
         </div>
       ) : (
         <div className="space-y-2">
           <Button 
             className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
             onClick={login}
+            data-privy-connect
           >
             ✨ Sign In (Email, Google, Twitter)
           </Button>
@@ -105,5 +100,30 @@ export function PrivyWalletConnect({ compact = false, onAddressChange }: PrivyWa
         </div>
       )}
     </div>
+  );
+}
+
+function FallbackConnect({ compact, onAddressChange }: PrivyWalletConnectProps) {
+  const connect = async () => {
+    try {
+      const eth = (window as any).ethereum;
+      if (!eth) { alert('Install MetaMask or set VITE_PRIVY_APP_ID for social login'); return; }
+      const accounts = await eth.request({ method: 'eth_requestAccounts' });
+      const addr = accounts?.[0] || null;
+      if (addr && onAddressChange) onAddressChange(addr);
+    } catch {}
+  };
+
+  if (compact) {
+    return <Button size="sm" variant="outline" onClick={connect}>🔗 Wallet</Button>;
+  }
+  return <Button className="w-full" variant="outline" onClick={connect}>🔗 Connect Wallet</Button>;
+}
+
+export function PrivyWalletConnect(props: PrivyWalletConnectProps) {
+  return (
+    <PrivyErrorBoundary fallback={<FallbackConnect {...props} />}>
+      <PrivyInner {...props} />
+    </PrivyErrorBoundary>
   );
 }

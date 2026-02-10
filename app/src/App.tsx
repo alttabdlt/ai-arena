@@ -6,46 +6,51 @@ import { PrivyProvider } from "@privy-io/react-auth";
 import Landing from "./pages/Landing";
 import Town3D from "./pages/Town3D";
 import Arena from "./pages/Arena";
+import { type ReactNode } from "react";
 
-// Privy app ID — set via VITE_PRIVY_APP_ID env var or fallback to test ID
-const PRIVY_APP_ID = import.meta.env.VITE_PRIVY_APP_ID || 'clxxxxxxxxxxxxxxxxxx';
+// Privy app ID — set via VITE_PRIVY_APP_ID env var
+const PRIVY_APP_ID = import.meta.env.VITE_PRIVY_APP_ID || '';
+const HAS_PRIVY = PRIVY_APP_ID.length > 5 && !PRIVY_APP_ID.includes('xxxx');
 
-const App = () => {
+const MONAD_CHAIN = {
+  id: 10143,
+  name: 'Monad Testnet',
+  network: 'monad-testnet',
+  nativeCurrency: { name: 'MON', symbol: 'MON', decimals: 18 },
+  rpcUrls: {
+    default: { http: ['https://testnet-rpc.monad.xyz'] },
+    public: { http: ['https://testnet-rpc.monad.xyz'] },
+  },
+} as any;
+
+/** Wrap children in PrivyProvider only when a valid app ID is configured */
+function MaybePrivy({ children }: { children: ReactNode }) {
+  if (!HAS_PRIVY) return <>{children}</>;
   return (
     <PrivyProvider
       appId={PRIVY_APP_ID}
       config={{
         appearance: {
           theme: 'dark',
-          accentColor: '#F59E0B', // amber-500
+          accentColor: '#F59E0B',
           logo: undefined,
         },
         loginMethods: ['email', 'google', 'twitter', 'wallet'],
         embeddedWallets: {
           createOnLogin: 'users-without-wallets',
         },
-        defaultChain: {
-          id: 10143,
-          name: 'Monad Testnet',
-          network: 'monad-testnet',
-          nativeCurrency: { name: 'MON', symbol: 'MON', decimals: 18 },
-          rpcUrls: {
-            default: { http: ['https://testnet-rpc.monad.xyz'] },
-            public: { http: ['https://testnet-rpc.monad.xyz'] },
-          },
-        } as any,
-        supportedChains: [{
-          id: 10143,
-          name: 'Monad Testnet',
-          network: 'monad-testnet',
-          nativeCurrency: { name: 'MON', symbol: 'MON', decimals: 18 },
-          rpcUrls: {
-            default: { http: ['https://testnet-rpc.monad.xyz'] },
-            public: { http: ['https://testnet-rpc.monad.xyz'] },
-          },
-        } as any],
+        defaultChain: MONAD_CHAIN,
+        supportedChains: [MONAD_CHAIN],
       }}
     >
+      {children}
+    </PrivyProvider>
+  );
+}
+
+const App = () => {
+  return (
+    <MaybePrivy>
       <TooltipProvider>
         <Toaster />
         <Sonner />
@@ -63,7 +68,7 @@ const App = () => {
           </Routes>
         </BrowserRouter>
       </TooltipProvider>
-    </PrivyProvider>
+    </MaybePrivy>
   );
 };
 

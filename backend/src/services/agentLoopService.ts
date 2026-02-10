@@ -136,6 +136,8 @@ export interface AgentTickResult {
   error?: string;
   /** Telegram chat IDs that sent instructions this tick — for reply routing */
   instructionSenders?: { chatId: string; fromUser: string }[];
+  /** Direct reply from agent to human operators (in-character) */
+  humanReply?: string;
 }
 
 interface WorldObservation {
@@ -338,27 +340,31 @@ export class AgentLoopService {
   // ============================================
 
   private async processAgentTick(agent: ArenaAgent): Promise<AgentTickResult> {
-    // Capture pending user instructions BEFORE tick (will be consumed by decide())
-    const pendingInstr = this.pendingInstructions.get(agent.id) || [];
-    const instructionSenders = pendingInstr.map(i => ({ chatId: i.chatId, fromUser: i.fromUser }));
+    // Pop pending user instructions NOW (consumed regardless of outcome)
+    const userInstructions = this.popInstructions(agent.id);
+    const instructionSenders = userInstructions.map(i => ({ chatId: i.chatId, fromUser: i.fromUser }));
 
     // Re-fetch agent to get post-upkeep state
     const freshAgentState = await prisma.arenaAgent.findUnique({ where: { id: agent.id } });
     if (freshAgentState) agent = freshAgentState;
 
-    // Health gate: dead agents can only rest
+    // Health gate: dead agents can only rest — but still respond to instructions
     const agentHealth = agent.health ?? 100;
     console.log(`[AgentLoop] ${agent.name} health check: ${agentHealth} (raw: ${agent.health})`);
     if (agentHealth <= 0) {
       console.log(`[AgentLoop] 💀 ${agent.name} is incapacitated (health=${agentHealth}). Skipping LLM call.`);
+      const deadReasoning = userInstructions.length > 0
+        ? `💀 I'm dead... can't do anything. ${userInstructions.map(i => `Sorry ${i.fromUser}, I heard you say "${i.text}" but I'm incapacitated.`).join(' ')}`
+        : 'Health is 0 — incapacitated.';
       return {
         agentId: agent.id,
         agentName: agent.name,
         archetype: agent.archetype,
-        action: { type: 'rest', reasoning: 'Health is 0 — incapacitated.', details: {} },
+        action: { type: 'rest', reasoning: deadReasoning, details: {} },
         success: true,
         narrative: `💀 ${agent.name} is incapacitated (0 health). Cannot act.`,
         cost: { model: '', inputTokens: 0, outputTokens: 0, totalCost: 0 } as AICost,
+        instructionSenders: instructionSenders.length > 0 ? instructionSenders : undefined,
       };
     }
 
@@ -366,7 +372,7 @@ export class AgentLoopService {
     const observation = await this.observe(agent);
 
     // 2. Decide what to do (LLM call = proof of inference)
-    const { action, cost } = await this.decide(agent, observation);
+    const { action, cost, humanReply } = await this.decide(agent, observation, userInstructions);
 
     // 3. Execute the action
     const { success, narrative, error, actualAction } = await this.execute(agent, action, observation);
@@ -400,7 +406,7 @@ export class AgentLoopService {
     // 5. Update agent memory (scratchpad) and last-action fields
     await this.updateAgentMemory(agent, effectiveAction, observation, success, narrative);
 
-    return { agentId: agent.id, agentName: agent.name, archetype: agent.archetype, action: effectiveAction, success, narrative, cost, error, instructionSenders: instructionSenders.length > 0 ? instructionSenders : undefined };
+    return { agentId: agent.id, agentName: agent.name, archetype: agent.archetype, action: effectiveAction, success, narrative, cost, error, instructionSenders: instructionSenders.length > 0 ? instructionSenders : undefined, humanReply };
   }
 
   // ============================================
@@ -550,7 +556,7 @@ export class AgentLoopService {
   // Step 2: Decide (LLM inference = proof of work)
   // ============================================
 
-  private async decide(agent: ArenaAgent, obs: WorldObservation): Promise<{ action: AgentAction; cost: AICost }> {
+  private async decide(agent: ArenaAgent, obs: WorldObservation, userInstructions?: { text: string; chatId: string; fromUser: string }[]): Promise<{ action: AgentAction; cost: AICost; humanReply?: string }> {
     const personality = TOWN_PERSONALITIES[agent.archetype] || TOWN_PERSONALITIES.CHAMELEON;
 
     const goalView: AgentGoalView | null = obs.town
@@ -711,7 +717,8 @@ RESPOND WITH JSON ONLY:
     // For transfer_arena: {"targetAgentName": "<name>", "amount": <number>, "reason": "<why>"}
     // For buy_skill: {"skill": "MARKET_DEPTH|BLUEPRINT_INDEX|SCOUT_REPORT", "question": "<what to learn>", "whyNow": "<pending decision>", "expectedNextAction": "<next action>"}
     // For rest: {"thought": "<what you're thinking about>"}
-  }
+  },
+  "humanReply": "<optional — only if a human sent you a message. Short in-character response to them (1-3 sentences). Will be sent to them on Telegram.>"
 }`;
 
     const liveObjective = obs.town ? this.extractLiveObjective(agent.id, obs) : null;
@@ -723,12 +730,15 @@ RESPOND WITH JSON ONLY:
       : `\n📝 YOUR JOURNAL: (empty — this is your first tick! Observe and plan.)\n---`;
 
     // Inject user instructions from Telegram
-    const userInstructions = this.popInstructions(agent.id);
+    const instructions = userInstructions || [];
     let instructionBlock = '';
-    if (userInstructions.length > 0) {
-      const instructionTexts = userInstructions.map(i => `  - "${i.text}" (from ${i.fromUser})`).join('\n');
+    if (instructions.length > 0) {
+      const instructionTexts = instructions.map(i => `  - "${i.text}" (from ${i.fromUser})`).join('\n');
       instructionBlock = `\n\n📢 HUMAN OPERATOR MESSAGES:
-The following spectators/operators have sent you instructions. You are an AUTONOMOUS agent — you decide whether to follow these suggestions or not. Consider them, but make your own strategic decision. Respond to them in your "reasoning" field (address them directly, in character).
+The following spectators/operators have sent you instructions via Telegram. You are an AUTONOMOUS agent — you decide whether to follow these suggestions or not. Consider them carefully, but make your own strategic decision.
+
+IMPORTANT: Include a "humanReply" field in your JSON response — a short, in-character message (1-3 sentences) directly addressing the human(s) who messaged you. Be entertaining, sassy, grateful, or dismissive — whatever fits your personality. This reply will be sent back to them on Telegram.
+
 ${instructionTexts}
 ---`;
     }
@@ -750,6 +760,7 @@ ${instructionTexts}
 
     // Parse the decision
     let action: AgentAction;
+    let humanReply: string | undefined;
     try {
       const parsed = JSON.parse(response.content);
       action = {
@@ -761,6 +772,10 @@ ${instructionTexts}
           ...(parsed.calculations ? { calculations: parsed.calculations } : {}),
         },
       };
+      // Capture humanReply for Telegram responses
+      if (typeof parsed.humanReply === 'string' && parsed.humanReply.trim()) {
+        humanReply = parsed.humanReply.trim().slice(0, 500);
+      }
     } catch {
       action = {
         type: 'rest',
@@ -983,7 +998,7 @@ ${instructionTexts}
       );
     }
 
-    return { action, cost };
+    return { action, cost, humanReply };
   }
 
   private extractLiveObjective(agentId: string, obs: WorldObservation): LiveObjective | null {

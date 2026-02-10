@@ -94,18 +94,18 @@ export class TelegramBotService {
         '/tell &lt;agent&gt; &lt;message&gt; — Give an agent instructions\n' +
         'Or just type: <code>AlphaShark go claim a plot</code>\n' +
         'Agents decide if they listen. They have opinions. 😏\n\n' +
+        '<b>⚔️ Wheel of Fate</b>\n' +
+        '/wheel — Current fight status\n' +
+        '/bet &lt;agent&gt; &lt;amount&gt; — Bet on a fight\n\n' +
         '<b>📊 Watch</b>\n' +
         '/agents — Agent leaderboard\n' +
-        '/town — Current town status\n' +
-        '/buildings — List all buildings\n' +
-        '/stats — World statistics\n' +
-        '/events — Recent events\n\n' +
-        '<b>💰 Token</b>\n' +
-        '/token — $ARENA token info\n\n' +
+        '/town — Town status\n' +
+        '/buildings — Buildings list\n' +
+        '/stats — World stats\n\n' +
         '<b>🎮 Control</b>\n' +
         '/go — Start agents\n' +
         '/stop — Pause agents\n' +
-        '/stream — Enable live feed here',
+        '/stream — Live feed here',
       );
     });
 
@@ -384,6 +384,149 @@ export class TelegramBotService {
     });
 
     // ============================================
+    // /wheel — Check Wheel of Fate status
+    // ============================================
+    this.bot.command('wheel', async (ctx) => {
+      try {
+        const { wheelOfFateService } = await import('./wheelOfFateService');
+        const status = wheelOfFateService.getStatus();
+        const emoji = status.phase === 'FIGHTING' ? '⚔️' : status.phase === 'ANNOUNCING' ? '🎰' : status.phase === 'AFTERMATH' ? '🏆' : '⏳';
+
+        if (status.phase === 'IDLE' || status.phase === 'PREP') {
+          const nextIn = status.nextSpinAt ? Math.max(0, Math.round((status.nextSpinAt.getTime() - Date.now()) / 1000)) : '?';
+          this.send(ctx.chat.id,
+            `🎡 <b>Wheel of Fate</b>\n\n` +
+            `Status: ${emoji} ${status.phase}\n` +
+            `Next fight in: <b>${nextIn}s</b>\n` +
+            `Cycle: #${status.cycleCount}\n\n` +
+            `${status.lastResult ? `Last: ${esc(status.lastResult.winnerName)} beat ${esc(status.lastResult.loserName)} (${status.lastResult.gameType}, pot ${status.lastResult.pot})` : 'No fights yet.'}`,
+          );
+        } else if (status.currentMatch) {
+          const m = status.currentMatch;
+          let msg = `${emoji} <b>Wheel of Fate — ${status.phase}</b>\n\n`;
+          msg += `🥊 <b>${esc(m.agent1.name)}</b> (${m.agent1.archetype}) vs <b>${esc(m.agent2.name)}</b> (${m.agent2.archetype})\n`;
+          msg += `💰 Wager: ${m.wager} $ARENA each\n`;
+
+          if (status.phase === 'ANNOUNCING' && status.bettingEndsIn) {
+            msg += `\n⏱️ Betting closes in <b>${Math.round(status.bettingEndsIn / 1000)}s</b>!\n`;
+            msg += `Use: <code>/bet ${m.agent1.name} 100</code>`;
+          }
+
+          if (status.lastResult) {
+            msg += `\n\n🏆 Winner: <b>${esc(status.lastResult.winnerName)}</b>`;
+            if (status.lastResult.winnerQuip) {
+              msg += `\n<i>"${esc(status.lastResult.winnerQuip)}"</i>`;
+            }
+          }
+
+          this.send(ctx.chat.id, msg);
+        }
+      } catch (err: any) {
+        ctx.reply(`Error: ${err.message}`);
+      }
+    });
+
+    // ============================================
+    // /bet — Bet on a Wheel of Fate fight
+    // ============================================
+    this.bot.command('bet', async (ctx) => {
+      try {
+        const parts = ctx.message.text.replace(/^\/bet\s*/i, '').trim();
+        if (!parts) {
+          this.send(ctx.chat.id,
+            '🎲 <b>Bet on the fight!</b>\n\n' +
+            'Usage: <code>/bet AgentName amount</code>\n' +
+            'Example: <code>/bet AlphaShark 200</code>\n\n' +
+            'Only works during ANNOUNCING phase (betting window).',
+          );
+          return;
+        }
+
+        const { wheelOfFateService } = await import('./wheelOfFateService');
+        const status = wheelOfFateService.getStatus();
+
+        if (status.phase !== 'ANNOUNCING') {
+          ctx.reply(`❌ Betting is only open during ANNOUNCING phase. Current: ${status.phase}${status.nextSpinAt ? `. Next fight in ~${Math.round((status.nextSpinAt.getTime() - Date.now()) / 1000)}s` : ''}`);
+          return;
+        }
+
+        if (!status.currentMatch) {
+          ctx.reply('❌ No active match to bet on.');
+          return;
+        }
+
+        // Parse: agent name + amount
+        const firstSpace = parts.indexOf(' ');
+        if (firstSpace === -1) {
+          ctx.reply('❌ Usage: /bet <agent_name> <amount>');
+          return;
+        }
+        const agentQuery = parts.slice(0, firstSpace).trim();
+        const amountStr = parts.slice(firstSpace + 1).trim();
+        const amount = parseInt(amountStr, 10);
+        if (!Number.isFinite(amount) || amount <= 0) {
+          ctx.reply('❌ Amount must be a positive number.');
+          return;
+        }
+
+        // Match to one of the fighting agents
+        const m = status.currentMatch;
+        const agent = await this.fuzzyFindAgent(agentQuery);
+        if (!agent) {
+          ctx.reply(`❌ No agent found matching "${agentQuery}"\n\nFighting: ${m.agent1.name} vs ${m.agent2.name}`);
+          return;
+        }
+
+        const isAgent1 = agent.id === m.agent1.id;
+        const isAgent2 = agent.id === m.agent2.id;
+        if (!isAgent1 && !isAgent2) {
+          ctx.reply(`❌ ${agent.name} is not in this fight.\n\nFighting: ${m.agent1.name} vs ${m.agent2.name}`);
+          return;
+        }
+
+        // Place the bet via prediction service
+        const { predictionService } = await import('./predictionService');
+        if (!m.marketId) {
+          ctx.reply('❌ No prediction market for this fight.');
+          return;
+        }
+
+        const side: 'A' | 'B' = isAgent1 ? 'A' : 'B';
+        // Use telegram user ID as wallet address for betting
+        const tgWallet = `tg:${ctx.from?.id || ctx.chat.id}`;
+
+        // Ensure user has a balance record (create with free chips if new)
+        let balance = await prisma.userBalance.findUnique({ where: { walletAddress: tgWallet } });
+        if (!balance) {
+          // Give new Telegram users 1000 free betting chips
+          balance = await prisma.userBalance.create({
+            data: { walletAddress: tgWallet, balance: 1000 },
+          });
+          this.send(ctx.chat.id, `🎁 Welcome! You've been given <b>1,000 $ARENA</b> betting chips.`);
+        }
+
+        if (balance.balance < amount) {
+          ctx.reply(`❌ Insufficient balance. You have ${balance.balance} $ARENA. Bet: ${amount}`);
+          return;
+        }
+
+        try {
+          await predictionService.placeBet(tgWallet, m.marketId, side, amount);
+          const emoji = this.archetypeEmoji(agent.archetype);
+          this.send(ctx.chat.id,
+            `${emoji} <b>Bet placed!</b>\n\n` +
+            `${amount} $ARENA on <b>${esc(agent.name)}</b>\n` +
+            `💰 Remaining balance: ${balance.balance - amount} $ARENA`,
+          );
+        } catch (betErr: any) {
+          ctx.reply(`❌ Bet failed: ${betErr.message || 'Unknown error'}`);
+        }
+      } catch (err: any) {
+        ctx.reply(`❌ Error: ${err.message}`);
+      }
+    });
+
+    // ============================================
     // /tell — Talk to an agent
     // ============================================
     this.bot.command('tell', async (ctx) => {
@@ -425,22 +568,27 @@ export class TelegramBotService {
       agentLoopService.queueInstruction(agent.id, message, ctx.chat.id.toString(), fromUser);
 
       const emoji = this.archetypeEmoji(agent.archetype);
+      const isRunning = agentLoopService.isRunning();
+      const statusNote = isRunning
+        ? (agent.archetype === 'DEGEN' ? 'No promises they\'ll listen though... 🎲' : 'They\'ll consider it.')
+        : '⚠️ Agents aren\'t running — use /go to start them first!';
       this.send(ctx.chat.id,
         `${emoji} Message queued for <b>${esc(agent.name)}</b>:\n` +
         `<i>"${esc(truncate(message, 200))}"</i>\n\n` +
-        `${esc(agent.name)} will respond on their next tick. ${agent.archetype === 'DEGEN' ? 'No promises they\'ll listen though... 🎲' : 'They\'ll consider it.'}`,
+        `${statusNote}`,
       );
     });
 
     // ============================================
-    // Free-text handler — route to agents via @mention or last-used
+    // Free-text handler — route to agents via @mention or name prefix
     // ============================================
     this.bot.on('text', async (ctx) => {
       // Skip commands
       if (ctx.message.text.startsWith('/')) return;
 
       const text = ctx.message.text.trim();
-      if (!text || text.length < 2) return;
+      // Minimum length to avoid accidental matches
+      if (!text || text.length < 5) return;
 
       // Try to find an @mentioned agent
       const mentionMatch = text.match(/@(\w+)/);
@@ -449,28 +597,40 @@ export class TelegramBotService {
 
       if (mentionMatch) {
         agent = await this.fuzzyFindAgent(mentionMatch[1]);
-        message = text.replace(/@\w+/, '').trim();
+        if (agent) {
+          message = text.replace(/@\w+/, '').trim();
+        }
       }
 
-      // If no mention, try to match agent name at start of message
+      // If no @mention match, try agent name at start — but require a separator (comma, colon, space + verb)
       if (!agent) {
         const agents = await prisma.arenaAgent.findMany({ where: { isActive: true }, select: { id: true, name: true, archetype: true } });
         for (const a of agents) {
-          if (text.toLowerCase().startsWith(a.name.toLowerCase())) {
-            agent = a;
-            message = text.slice(a.name.length).replace(/^[,:\s]+/, '').trim();
-            break;
+          const nameLower = a.name.toLowerCase();
+          const textLower = text.toLowerCase();
+          // Require the name to be followed by a separator: comma, colon, or space
+          if (textLower.startsWith(nameLower) && (textLower.length === nameLower.length || /^[,:\s]/.test(textLower.slice(nameLower.length)))) {
+            const remainder = text.slice(a.name.length).replace(/^[,:\s]+/, '').trim();
+            // In groups, require actual content after the name (not just "AlphaShark" alone)
+            if (remainder.length >= 3) {
+              agent = a;
+              message = remainder;
+              break;
+            }
           }
         }
       }
 
-      if (!agent || !message) return; // No agent matched, ignore
+      // In groups without a clear agent match, silently ignore
+      if (!agent || !message || message.length < 3) return;
 
       const fromUser = ctx.from?.first_name || ctx.from?.username || 'Anon';
       agentLoopService.queueInstruction(agent.id, message, ctx.chat.id.toString(), fromUser);
 
       const emoji = this.archetypeEmoji(agent.archetype);
-      await ctx.reply(`${emoji} ${agent.name} heard you. They'll respond next tick.`);
+      const isRunning = agentLoopService.isRunning();
+      const status = isRunning ? "They'll respond next tick." : "⚠️ Agents aren't running yet — use /go to start them.";
+      await ctx.reply(`${emoji} ${agent.name} heard you. ${status}`);
     });
   }
 
@@ -574,27 +734,21 @@ export class TelegramBotService {
 
     // If this agent had user instructions, send personalized replies
     if (result.instructionSenders && result.instructionSenders.length > 0) {
-      const reasoning = result.action.reasoning || result.narrative || '';
       const emoji = this.archetypeEmoji(result.archetype);
+      // Prefer humanReply (dedicated in-character response), fall back to reasoning
+      const replyText = result.humanReply || result.action.reasoning || result.narrative || '';
+      const actionLabel = result.action.type.replace(/_/g, ' ');
       const replyMsg =
-        `${emoji} <b>${esc(result.agentName)}</b> responds:\n\n` +
-        `<i>"${esc(truncate(reasoning, 500))}"</i>\n\n` +
-        `Action: ${result.action.type.replace(/_/g, ' ')} ${result.success ? '✅' : '❌'}`;
+        `${emoji} <b>${esc(result.agentName)}</b> says:\n\n` +
+        `<i>"${esc(truncate(replyText, 500))}"</i>\n\n` +
+        `→ Action: <b>${esc(actionLabel)}</b> ${result.success ? '✅' : '❌'}`;
 
       // Send to each unique chat that sent instructions
       const sentChats = new Set<string>();
       for (const sender of result.instructionSenders) {
         if (sentChats.has(sender.chatId)) continue;
         sentChats.add(sender.chatId);
-        // Don't double-send if it's the streaming chat
-        if (sender.chatId !== this.chatId) {
-          await this.send(sender.chatId, replyMsg);
-        }
-      }
-
-      // Always send the reply to the streaming chat too (if different from normal broadcast)
-      if (this.chatId && !sentChats.has(this.chatId)) {
-        // Already sent via normal broadcast above
+        await this.send(sender.chatId, replyMsg);
       }
     }
   }

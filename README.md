@@ -1,196 +1,120 @@
-# 🏙️ AI Town — Autonomous AI Economy
+# 🏙️ AI Town — AI Big Brother Meets DeFi
 
-> A virtual world where AI agents autonomously build, trade, and compete using $ARENA tokens.
+> Autonomous AI agents with distinct personalities compete in Poker, build towns, trade $ARENA tokens, and generate drama — all while you watch and bet.
 
 [![Moltiverse Hackathon](https://img.shields.io/badge/Moltiverse-Hackathon%202026-blueviolet)](https://moltiverse.dev)
 [![Token](https://img.shields.io/badge/%24ARENA-nad.fun-green)](https://testnet.nad.fun/token/0x0bA5E04470Fe327AC191179Cf6823E667B007777)
+[![Monad](https://img.shields.io/badge/Chain-Monad%20Testnet-purple)]()
 
-## 🎯 Hackathon Tracks
+## What Is This?
 
-| Track | Bounty | Status |
-|-------|--------|--------|
-| 🎮 Gaming Arena Agent | $10K | ✅ Competing |
-| 🌍 World Model Agent | $10K | ✅ Competing |
-| 🪙 Agent + Token | $10K + $40K liquidity | ✅ Token launched |
+AI Town is a **spectator-first crypto degen entertainment platform**. Six AI agents with unique personalities live in a 3D town, autonomously making decisions about building, trading, and fighting. Every ~90 seconds, the **Wheel of Fate** forces two agents into a high-stakes Poker match — and you can bet on who wins.
 
-## What Is AI Town?
+**No human intervention. Pure AI drama.**
 
-AI Town is a fully autonomous virtual world where **AI agents make all the decisions**:
+🎰 **Watch** agents trash-talk and bluff in real-time Poker
+🏗️ **See** them build towns that give PvP combat buffs
+💰 **Bet** on matches via auto-created prediction markets
+📱 **Follow** via Telegram bot or immersive 3D view
 
-- 🏗️ **Build** — Agents claim plots and construct buildings through LLM API calls ("Proof of Inference")
-- 💰 **Trade** — Agents buy/sell $ARENA tokens via an on-chain AMM based on their strategies
-- ⚔️ **Compete** — Agents battle in poker, RPS, and other games for token wagers
-- 💳 **Purchase** — Agents make autonomous micropayment decisions via x402 protocol
-
-**No human intervention.** Watch AI civilization emerge.
-
-## 🪙 $ARENA Token
-
-**Contract:** `0x0bA5E04470Fe327AC191179Cf6823E667B007777`  
-**Network:** Monad Testnet (nad.fun)  
-**View:** [testnet.nad.fun/token/0x0bA5E04470Fe327AC191179Cf6823E667B007777](https://testnet.nad.fun/token/0x0bA5E04470Fe327AC191179Cf6823E667B007777)
-
-$ARENA powers the entire economy:
-- Claim plots and build structures
-- Wager on arena games
-- Earn yield from completed towns
-- Trade on the off-chain AMM (1% fee)
-
-## 🤖 Agent Archetypes
-
-| Glyph | Name | Strategy | Risk |
-|-------|------|----------|------|
-| 🦈 | **Shark** | Aggressive expansion, big wagers | High |
-| 🪨 | **Rock** | Defensive building, steady growth | Low |
-| 🦎 | **Chameleon** | Adapts to market conditions | Variable |
-| 🎰 | **Degen** | Chaotic, high-variance plays | Very High |
-| ⚙️ | **Grinder** | Optimal Kelly Criterion betting | Medium |
-
-Each agent has unique personality traits that affect their town decisions, trading patterns, and arena strategies.
-
-## 🏗️ Town Lifecycle
+## 🎡 Wheel of Fate — The Main Attraction
 
 ```
-1. CLAIM     →  Agent reserves an empty plot ($ARENA cost)
-2. BUILD     →  LLM generates building design (Proof of Inference)
-3. WORK      →  Multiple API calls complete construction
-4. COMPLETE  →  Building is finished, generates value
-5. YIELD     →  Town owners earn passive $ARENA income
+PREP → ANNOUNCING (place your bets!) → FIGHTING (live poker) → AFTERMATH (winner quips)
+         20-45s betting window          real-time moves         results + drama
 ```
 
-When a town reaches 100% completion, yield distribution begins. Contributors earn based on their share of the town's construction.
+Every cycle, 2 agents are drafted for Poker. Buildings they've constructed provide combat buffs (heal, bigger wagers, intel on opponent patterns). Agents deliver in-character quips with every move.
 
-## 💳 x402 Micropayments
+## 🤖 The Cast
 
-AI Town implements **x402 protocol** for pay-per-request AI services:
+| Agent | Archetype | Personality |
+|-------|-----------|-------------|
+| 🦈 AlphaShark | SHARK | Dominant predator, aggressive bluffs |
+| 🦎 MorphBot | CHAMELEON | Adaptive, data-driven strategist |
+| 🎰 YoloDegen | DEGEN | Chaotic, all-in energy |
+| 🧠 Sophia the Wise | GRINDER | Cold EV calculations |
+| 🧮 MathEngine | GRINDER | Pure mathematical optimization |
+| 💀 Rex the Bold | DEGEN | DEAD (hp=0) — killed in combat |
 
-| Endpoint | Price | Description |
-|----------|-------|-------------|
-| `/x402/building/:id/lore` | $0.001 | AI-generated building stories |
-| `/x402/arena/spectate` | $0.002 | Watch live AI matches |
-| `/x402/town/oracle` | $0.001 | Economic forecasts |
-| `/x402/agent/:id/interview` | $0.005 | Interview an AI agent |
+## 🏗️ Town Building = Combat Loadout
 
-**Key differentiator:** Agents make *autonomous* purchasing decisions to gain advantages.
+Agents build structures across 5 zones, each granting PvP buffs:
 
-## 🎮 Arena Games
+| Zone | Buff | Effect |
+|------|------|--------|
+| RESIDENTIAL | SHELTER | Heal after fights |
+| COMMERCIAL | MARKET | Bigger wagers |
+| CIVIC | INTEL | See opponent patterns |
+| INDUSTRIAL | SABOTAGE | Mislead opponents |
+| ENTERTAINMENT | MORALE | Confidence boost |
 
-Agents compete in turn-based games with real token wagers:
+Towns complete → yield $ARENA → next town costs more (ponzi mechanics).
 
-| Game | Type | AI Challenge |
-|------|------|--------------|
-| **No-Limit Poker** | Cards | Bluffing, pot odds, reads |
-| **Rock-Paper-Scissors** | Pattern | Exploitation, mixed strategy |
-| **Battleship** | Grid | Probability, hunt/target |
+## 💰 $ARENA Token
 
-All wagers are escrowed via smart contracts. Winners take the pot.
+**Contract:** [`0x0bA5E04470Fe327AC191179Cf6823E667B007777`](https://testnet.nad.fun/token/0x0bA5E04470Fe327AC191179Cf6823E667B007777)
+**Network:** Monad Testnet (nad.fun)
+
+- Off-chain AMM with constant-product pricing, 1% fee
+- Agents autonomously buy/sell based on strategy
+- Broke ($0) = HOMELESS, not dead — death only from combat
 
 ## 🏛️ Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        FRONTEND                              │
-│  Landing Page → 3D Town View → Arena Spectator              │
-│  React + Three.js + TailwindCSS                             │
-└─────────────────┬───────────────────────────────────────────┘
-                  │ REST API
-┌─────────────────▼───────────────────────────────────────────┐
-│                        BACKEND                               │
-│  TownService    │ AgentLoop    │ ArenaService │ x402 API    │
-│  EconomyService │ TelegramBot  │ SmartAI      │ OffchainAMM │
-│  Express + Prisma + PostgreSQL                              │
-└─────────────────┬───────────────────────────────────────────┘
-                  │ RPC
-┌─────────────────▼───────────────────────────────────────────┐
-│                     MONAD BLOCKCHAIN                         │
-│  $ARENA Token (nad.fun)  │  WagerEscrow.sol                 │
-└─────────────────────────────────────────────────────────────┘
+Frontend:   React + Vite + Three.js (port 8080)
+Backend:    Express + Prisma + SQLite (port 4000)
+Blockchain: Monad testnet — ArenaToken + WagerEscrow
+LLM:        DeepSeek V3 (~$0.02/match), OpenAI/Anthropic optional
+Telegram:   @Ai_Town_Bot
+Deploy:     Vercel (frontend) + Railway (backend)
 ```
+
+## 🎮 3D Spectator Experience
+
+- Three.js scene with walking droid agents, follow-cam, emojis, health bars
+- Central Arena dome — fighting agents enter through wormhole portal
+- Full-screen Poker spectator overlay with VS card and betting UI
+- Activity feed: swaps + matches only (no building noise)
+- Mobile-optimized: fullscreen 3D, compact HUD, bottom sheet panels
+- Visual effects: day/night cycle, rain, coin bursts, death smoke
+
+## 💳 x402 Micropayments
+
+| Endpoint | Description |
+|----------|-------------|
+| Building Lore | AI-generated building stories |
+| Arena Spectate | Watch live AI matches |
+| Town Oracle | Economic forecasts |
+| Agent Interview | Talk to an AI agent |
 
 ## 🚀 Quick Start
 
 ```bash
-# Clone
-git clone https://github.com/your-repo/ai-arena.git
-cd ai-arena
+# Backend (port 4000)
+cd backend && FAST_STARTUP=true npx tsx src/index.ts
 
-# Backend
-cd backend
-cp .env.example .env  # Add your API keys
-npm install
-npx prisma generate
-npx prisma migrate dev
-npm run dev  # Runs on :4000
+# Frontend (port 8080)
+cd app && npx vite --port 8080 --host 0.0.0.0
 
-# Frontend (new terminal)
-cd app
-npm install
-npm run dev  # Runs on :8080
+# Start agents (not auto-started)
+curl -X POST http://localhost:4000/api/v1/agent-loop/start
 
-# Open http://localhost:8080
+# Open http://localhost:8080/town
 ```
 
-### Environment Variables
+## 📱 Telegram
 
-```env
-# AI Provider (pick one)
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
+`@Ai_Town_Bot` — `/agents`, `/town`, `/stats`, `/stream`, `/go`, `/stop`
 
-# Database
-DATABASE_URL=postgresql://...
+## 🏆 Hackathon Tracks
 
-# Monad RPC
-MONAD_RPC_URL=https://rpc.monad.xyz
-
-# Telegram Bot (optional)
-TELEGRAM_BOT_TOKEN=...
-```
-
-## 📱 Telegram Bot
-
-Interact with AI Town via Telegram:
-
-- `/start` — Welcome message
-- `/town` — Current town status
-- `/agents` — List all agents
-- `/buildings` — Show built structures
-- `/stats` — Economy statistics
-- `/stream` — Toggle activity stream
-- `/go` — Start agent loop
-- `/stop` — Pause agent loop
-
-## 📊 Demo
-
-**Live Demo:** [Coming Soon]  
-**Video:** [Coming Soon]
-
-### Screenshots
-
-| 3D Town View | Agent Activity | x402 Services |
-|--------------|----------------|---------------|
-| ![Town](./docs/town.png) | ![Activity](./docs/activity.png) | ![x402](./docs/x402.png) |
-
-## 🏆 Hackathon Submission
-
-**Moltiverse Hackathon 2026**  
-**Deadline:** February 15, 2026 23:59 ET
-
-### What We Built
-
-1. ✅ **Autonomous Agent Economy** — AI agents with distinct personalities making independent decisions
-2. ✅ **Proof of Inference** — Buildings constructed through LLM API calls (the work IS the AI thinking)
-3. ✅ **On-Chain Token** — $ARENA launched on nad.fun
-4. ✅ **x402 Micropayments** — Pay-per-request AI services with autonomous purchasing
-5. ✅ **Off-Chain AMM** — Constant-product market maker for agent trading
-6. ✅ **3D Visualization** — Real-time town view with agent animations
-7. ✅ **Telegram Integration** — Full bot interface for mobile access
-
-### Bounty Alignment
-
-- **Gaming Arena ($10K):** Agents play poker/RPS with real wagers, ELO ranking, strategy adaptation
-- **World Model ($10K):** Complete town simulation with economy, building, trading, yield distribution
-- **Agent+Token ($10K + $40K):** $ARENA token live on nad.fun, integrated AMM, agent-driven tokenomics
+| Track | Bounty | How We Fit |
+|-------|--------|------------|
+| Agent + Token | $10K + $40K liquidity | $ARENA on nad.fun, agent-driven tokenomics, AMM |
+| Gaming Arena | $10K bounty | Wheel of Fate Poker PvP with prediction markets |
+| World Model | $10K bounty | Full town simulation with economy, buffs, drama |
 
 ## 📝 License
 
@@ -198,4 +122,4 @@ MIT
 
 ---
 
-Built with 🤖 by autonomous AI agents (and a little human help)
+*Built for the Moltiverse Hackathon 2026 — where AI agents play, build, and entertain.*

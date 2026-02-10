@@ -3208,6 +3208,22 @@ function Town3D() {
   const selectedPlot = useMemo(() => town?.plots.find((p) => p.id === selectedPlotId) ?? null, [town, selectedPlotId]);
   const selectedAgent = useMemo(() => agents.find((a) => a.id === selectedAgentId) ?? null, [agents, selectedAgentId]);
   const recentSwaps = useMemo(() => swaps.slice(0, 8), [swaps]);
+
+  // Latest agent thoughts for the activity panel
+  const latestThoughts = useMemo(() => {
+    return agents
+      .filter(a => a.lastReasoning && a.lastTickAt)
+      .map(a => ({
+        agentId: a.id,
+        agentName: a.name,
+        archetype: a.archetype,
+        actionType: a.lastActionType || 'rest',
+        reasoning: a.lastReasoning || '',
+        narrative: a.lastNarrative || '',
+        tickAt: a.lastTickAt || '',
+      }))
+      .sort((a, b) => new Date(b.tickAt).getTime() - new Date(a.tickAt).getTime());
+  }, [agents]);
   // [removed: selectedAgentSwaps]
 
   // [removed: selectedAgentObjective useMemo]
@@ -3368,12 +3384,12 @@ function Town3D() {
           />
         </Canvas>
 
-        {/* Swap Notifications — compact mobile */}
-        <div className="pointer-events-none absolute top-2 right-2 flex flex-col gap-1 z-50">
+        {/* Swap Notifications — center-top mobile */}
+        <div className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 z-50">
           {swapNotifications.slice(0, 2).map((notif) => {
             const isBuy = notif.side === 'BUY_ARENA';
             return (
-              <div key={notif.id} className="animate-in slide-in-from-right-4 fade-in duration-300">
+              <div key={notif.id} className="animate-in slide-in-from-top-2 fade-in duration-300">
                 <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] backdrop-blur-md ${
                   isBuy ? 'bg-emerald-950/80 text-emerald-200' : 'bg-rose-950/80 text-rose-200'
                 }`}>
@@ -3581,8 +3597,8 @@ function Town3D() {
         />
       </Canvas>
 
-      {/* Swap Notifications - floating toasts (top-right, compact) */}
-      <div className="pointer-events-none absolute top-16 right-4 flex flex-col gap-1.5 z-50">
+      {/* Swap Notifications - floating toasts (center-top) */}
+      <div className="pointer-events-none absolute top-14 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 z-50">
         {swapNotifications.slice(0, 3).map((notif) => {
           const isBuy = notif.side === 'BUY_ARENA';
           const color = ARCHETYPE_COLORS[notif.archetype] || '#93c5fd';
@@ -3590,9 +3606,9 @@ function Town3D() {
           return (
             <div
               key={notif.id}
-              className="animate-in slide-in-from-right-4 fade-in duration-300 pointer-events-auto"
+              className="animate-in slide-in-from-top-2 fade-in duration-300 pointer-events-auto"
             >
-              <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full border backdrop-blur-md shadow-lg ${
+              <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border backdrop-blur-md shadow-lg ${
                 isBuy
                   ? 'bg-emerald-950/80 border-emerald-700/50 text-emerald-200'
                   : 'bg-rose-950/80 border-rose-700/50 text-rose-200'
@@ -3668,6 +3684,23 @@ function Town3D() {
                   <div className="font-mono text-slate-100">{selectedAgent.elo}</div>
                 </div>
               </div>
+              {/* Agent thought process */}
+              {selectedAgent.lastReasoning && (
+                <div className="mt-2 pt-2 border-t border-slate-800/50">
+                  <div className="flex items-center gap-1.5 text-[10px] text-slate-500 mb-1">
+                    <span>🧠</span>
+                    <span className="font-medium uppercase tracking-wide">
+                      {(selectedAgent.lastActionType || 'thinking').replace(/_/g, ' ')}
+                    </span>
+                    {selectedAgent.lastTickAt && (
+                      <span className="ml-auto">{timeAgo(selectedAgent.lastTickAt)}</span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-slate-300 italic leading-relaxed max-h-[80px] overflow-auto scrollbar-thin scrollbar-thumb-slate-700/60">
+                    &ldquo;{selectedAgent.lastReasoning.slice(0, 300)}{selectedAgent.lastReasoning.length > 300 ? '…' : ''}&rdquo;
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -3940,6 +3973,45 @@ function Town3D() {
 		                  </div>
 		                </div>
 		              )}
+
+              {/* Agent Thoughts — latest decisions from all agents */}
+              {latestThoughts.length > 0 && (
+                <div className="mt-3 pt-2 border-t border-slate-800/40">
+                  <div className="text-[11px] font-semibold text-slate-100 mb-2">🧠 Agent Thoughts</div>
+                  <div className="max-h-[200px] overflow-auto pr-1 space-y-1.5 scrollbar-thin scrollbar-thumb-slate-700/60">
+                    {latestThoughts.slice(0, 12).map((t) => {
+                      const color = ARCHETYPE_COLORS[t.archetype] || '#93c5fd';
+                      const glyph = ARCHETYPE_GLYPH[t.archetype] || '●';
+                      const actionEmoji: Record<string, string> = {
+                        buy_arena: '💰', sell_arena: '📤', claim_plot: '📍',
+                        start_build: '🏗️', do_work: '🔨', complete_build: '✅',
+                        mine: '⛏️', play_arena: '🎮', buy_skill: '💳',
+                        rest: '😴', transfer_arena: '💸',
+                      };
+                      return (
+                        <details
+                          key={t.agentId + ':' + t.tickAt}
+                          className="rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300"
+                        >
+                          <summary className="cursor-pointer select-none flex items-center justify-between gap-2">
+                            <div className="min-w-0 truncate">
+                              <span>{actionEmoji[t.actionType] || '🤔'}</span>{' '}
+                              <span className="font-mono" style={{ color }}>
+                                {glyph} {t.agentName}
+                              </span>{' '}
+                              <span className="text-slate-400">{t.actionType.replace(/_/g, ' ')}</span>
+                            </div>
+                            <span className="shrink-0 text-slate-600">· {timeAgo(t.tickAt)}</span>
+                          </summary>
+                          <div className="mt-1 text-[10px] text-slate-400 italic leading-relaxed whitespace-pre-wrap">
+                            &ldquo;{t.reasoning.slice(0, 400)}{t.reasoning.length > 400 ? '…' : ''}&rdquo;
+                          </div>
+                        </details>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

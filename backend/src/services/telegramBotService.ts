@@ -164,6 +164,30 @@ const ROUTER_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'watch_agent',
+      description: 'Subscribe to an agent\'s full thought process — see their reasoning and decisions in real-time. Say "watch AlphaShark" or "follow MorphBot"',
+      parameters: {
+        type: 'object',
+        properties: { agentName: { type: 'string', description: 'Name of the agent to watch' } },
+        required: ['agentName'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'unwatch_agent',
+      description: 'Stop watching an agent\'s thought process. Say "unwatch" or "stop following"',
+      parameters: {
+        type: 'object',
+        properties: { agentName: { type: 'string', description: 'Name of the agent to stop watching (optional — unwatches all if empty)' } },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'create_town',
       description: 'Create a new town for agents to build in',
       parameters: {
@@ -218,6 +242,8 @@ export class TelegramBotService {
   private chatId: string | null = null;
   private router: OpenAI | null = null;
   private routerModel: string = 'gemini-2.0-flash';
+  /** Map of agentId → Set<chatId> for users watching agent thoughts */
+  private watchers: Map<string, Set<string>> = new Map();
 
   async start(token: string, chatId?: string): Promise<void> {
     if (!token) {
@@ -471,6 +497,8 @@ export class TelegramBotService {
       case 'stop_agents': await this.handleStopAgents(chatId); break;
       case 'run_tick': await this.handleRunTick(chatId); break;
       case 'enable_stream': await this.handleEnableStream(chatId); break;
+      case 'watch_agent': await this.handleWatchAgent(chatId, args.agentName); break;
+      case 'unwatch_agent': await this.handleUnwatchAgent(chatId, args.agentName); break;
       case 'create_town': await this.handleCreateTown(chatId, args.name); break;
       case 'general_chat': await this.send(chatId, args.response || "Hey! Ask me about agents, fights, or the town 🏘️"); break;
       default: await this.send(chatId, `🤔 I understood "${fn}" but don't know how to do that yet.`);
@@ -504,6 +532,14 @@ export class TelegramBotService {
     if (/\bwheel\b|\bfight\b|\bduel\b|\bmatch/i.test(lower)) { await this.handleShowWheel(chatId); return; }
     if (/\btoken\b|\bprice\b|\barena\b/i.test(lower)) { await this.handleShowToken(chatId); return; }
     if (/\bstat/i.test(lower)) { await this.handleShowStats(chatId); return; }
+    if (/\bwatch\s+\w/i.test(lower)) {
+      const name = text.replace(/^.*?watch\s+/i, '').trim();
+      if (name) { await this.handleWatchAgent(chatId, name); return; }
+    }
+    if (/\bunwatch/i.test(lower)) {
+      const name = text.replace(/^.*?unwatch\s*/i, '').trim();
+      await this.handleUnwatchAgent(chatId, name || undefined); return;
+    }
     if (/\bstart\b|\bgo\b|\brun\b/i.test(lower)) { await this.handleStartAgents(chatId); return; }
     if (/\bstop\b|\bpause\b/i.test(lower)) { await this.handleStopAgents(chatId); return; }
 
@@ -930,6 +966,51 @@ export class TelegramBotService {
     console.log(`📱 Telegram streaming to chat ${this.chatId}`);
   }
 
+  private async handleWatchAgent(chatId: number | string, agentName?: string): Promise<void> {
+    if (!agentName) {
+      await this.send(chatId, '❓ Which agent? E.g. "watch AlphaShark"');
+      return;
+    }
+    const agent = await this.fuzzyFindAgent(agentName);
+    if (!agent) {
+      await this.send(chatId, `❓ Can't find agent "${esc(agentName)}". Try "show agents" to see the list.`);
+      return;
+    }
+    const chatStr = chatId.toString();
+    if (!this.watchers.has(agent.id)) {
+      this.watchers.set(agent.id, new Set());
+    }
+    this.watchers.get(agent.id)!.add(chatStr);
+    const emoji = this.archetypeEmoji(agent.archetype);
+    await this.send(chatId,
+      `${emoji} <b>Watching ${esc(agent.name)}</b>\n\n` +
+      `You'll see their full thought process on every tick.\n` +
+      `Say "unwatch" to stop.`
+    );
+    console.log(`👁️ Chat ${chatStr} watching agent ${agent.name} (${agent.id})`);
+  }
+
+  private async handleUnwatchAgent(chatId: number | string, agentName?: string): Promise<void> {
+    const chatStr = chatId.toString();
+    if (agentName) {
+      const agent = await this.fuzzyFindAgent(agentName);
+      if (agent && this.watchers.has(agent.id)) {
+        this.watchers.get(agent.id)!.delete(chatStr);
+        await this.send(chatId, `✅ Stopped watching <b>${esc(agent.name)}</b>`);
+        return;
+      }
+    }
+    // Unwatch all
+    let count = 0;
+    for (const [, chatIds] of this.watchers) {
+      if (chatIds.delete(chatStr)) count++;
+    }
+    await this.send(chatId, count > 0
+      ? `✅ Stopped watching ${count} agent${count > 1 ? 's' : ''}.`
+      : `You weren't watching any agents. Say "watch <agent name>" to start.`
+    );
+  }
+
   private async handleCreateTown(chatId: number | string, name?: string): Promise<void> {
     const townName = name?.trim() || `Town ${Date.now().toString(36).slice(-4)}`;
     await this.send(chatId, `🏗️ Creating <b>${esc(townName)}</b>...`);
@@ -1031,6 +1112,44 @@ export class TelegramBotService {
         if (sentChats.has(sender.chatId)) continue;
         sentChats.add(sender.chatId);
         await this.send(sender.chatId, replyMsg);
+      }
+    }
+
+    // Send full thought process to watchers of this agent
+    const watcherChatIds = this.watchers.get(result.agentId);
+    if (watcherChatIds && watcherChatIds.size > 0) {
+      const emoji = this.archetypeEmoji(result.archetype);
+      const actionLabel = result.action.type.replace(/_/g, ' ').toUpperCase();
+      const reasoning = result.action.reasoning || '';
+      const narrative = result.narrative || '';
+      const details = result.action.details || {};
+      const detailStr = Object.keys(details).length > 0
+        ? Object.entries(details).map(([k, v]) => `${k}: ${v}`).join(', ')
+        : '';
+
+      let thoughtMsg =
+        `${emoji} <b>${esc(result.agentName)}</b> — 🧠 <b>THOUGHT PROCESS</b>\n\n` +
+        `<b>Action:</b> ${esc(actionLabel)} ${result.success ? '✅' : '❌'}\n`;
+      if (detailStr) {
+        thoughtMsg += `<b>Details:</b> ${esc(truncate(detailStr, 200))}\n`;
+      }
+      thoughtMsg += `\n<b>Reasoning:</b>\n<i>"${esc(truncate(reasoning, 800))}"</i>\n`;
+      if (narrative && narrative !== reasoning) {
+        thoughtMsg += `\n<b>Result:</b> ${esc(truncate(narrative, 300))}`;
+      }
+      if (result.cost && result.cost.costCents > 0) {
+        thoughtMsg += `\n\n💸 Inference: $${(result.cost.costCents / 100).toFixed(4)}`;
+      }
+
+      for (const wChatId of watcherChatIds) {
+        // Don't double-send if this chat is also the broadcast chatId
+        if (wChatId === this.chatId) continue;
+        try {
+          await this.send(wChatId, thoughtMsg);
+        } catch {
+          // If send fails, remove watcher
+          watcherChatIds.delete(wChatId);
+        }
       }
     }
   }

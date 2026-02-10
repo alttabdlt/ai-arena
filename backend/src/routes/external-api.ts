@@ -201,6 +201,26 @@ router.post('/external/act', authenticateAgent as any, async (req: Authenticated
       return;
     }
 
+    // === INFERENCE COST: External agents pay 1 $ARENA per action (Proof of Inference) ===
+    const INFERENCE_COST = 1;
+    if (type !== 'rest' && freshAgent.bankroll < INFERENCE_COST) {
+      res.status(402).json({
+        error: `Insufficient $ARENA. Actions cost ${INFERENCE_COST} $ARENA. Balance: ${freshAgent.bankroll}. Buy $ARENA first (buy_arena action with reserve).`,
+        bankroll: freshAgent.bankroll,
+        reserveBalance: freshAgent.reserveBalance,
+        inferenceCost: INFERENCE_COST,
+      });
+      return;
+    }
+
+    // Deduct inference cost (except rest which is free)
+    if (type !== 'rest') {
+      await prisma.arenaAgent.update({
+        where: { id: freshAgent.id },
+        data: { bankroll: { decrement: INFERENCE_COST } },
+      });
+    }
+
     const action = {
       type: type as any,
       reasoning: reasoning.slice(0, 500),
@@ -238,6 +258,7 @@ router.post('/external/act', authenticateAgent as any, async (req: Authenticated
       success: result.success,
       narrative: result.narrative,
       error: result.error,
+      inferenceCost: type !== 'rest' ? INFERENCE_COST : 0,
       agentState: updatedAgent ? {
         bankroll: updatedAgent.bankroll,
         reserve: updatedAgent.reserveBalance,

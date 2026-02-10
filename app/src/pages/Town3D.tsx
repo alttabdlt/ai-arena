@@ -4,7 +4,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Sky, Line } from '@react-three/drei';
 import { Button } from '@ui/button';
 import { Loader2, Volume2, VolumeX } from 'lucide-react';
-import { WalletConnect } from '../components/WalletConnect';
+import { PrivyWalletConnect } from '../components/PrivyWalletConnect';
 import { SpawnAgent } from '../components/SpawnAgent';
 import { playSound, isSoundEnabled, setSoundEnabled } from '../utils/sounds';
 // [removed: ResizablePanel, useDegenState, DegenDashboard, PositionTracker, SwapTicker]
@@ -2781,11 +2781,13 @@ export default function Town3D() {
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [showSpawnOverlay, setShowSpawnOverlay] = useState(false);
 
+  // connectWallet: Privy handles this via PrivyWalletConnect component.
+  // This fallback tries window.ethereum for SpawnAgent compatibility.
   const connectWallet = useCallback(async (): Promise<string | null> => {
     if (walletAddress) return walletAddress;
     try {
       const eth = (window as any).ethereum;
-      if (!eth) { alert('No wallet detected. Install MetaMask or Coinbase Wallet.'); return null; }
+      if (!eth) { alert('Click "Sign In" to create a wallet — no extension needed!'); return null; }
       const accounts = await eth.request({ method: 'eth_requestAccounts' });
       const addr = accounts?.[0] || null;
       if (addr) setWalletAddress(addr);
@@ -3506,7 +3508,7 @@ export default function Town3D() {
             <span className="text-[10px] bg-amber-900/60 text-amber-300 px-2 py-0.5 rounded-full">🏆 Result</span>
           )}
         </div>
-        <WalletConnect compact onAddressChange={setWalletAddress} />
+        <PrivyWalletConnect compact onAddressChange={setWalletAddress} />
         <button
           onClick={() => setShowSpawnOverlay(true)}
           className="px-3 py-1 bg-gradient-to-r from-amber-600/80 to-orange-600/80 text-white text-xs font-bold rounded hover:from-amber-500 hover:to-orange-500 transition-all"

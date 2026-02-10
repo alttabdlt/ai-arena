@@ -3314,7 +3314,7 @@ export default function Town3D() {
   if (isMobile) return (
     <div className="flex flex-col h-[100svh] w-full overflow-hidden bg-[#050914]">
       {showOnboarding && (
-        <OnboardingOverlay walletAddress={walletAddress} onComplete={() => setShowOnboarding(false)} />
+        <OnboardingOverlay onComplete={() => setShowOnboarding(false)} />
       )}
       {wheelArenaOverlay}
       {/* Mobile top bar — compact */}
@@ -3514,7 +3514,6 @@ export default function Town3D() {
       {/* In-game onboarding overlay */}
       {showOnboarding && (
         <OnboardingOverlay
-          walletAddress={walletAddress}
           onComplete={() => setShowOnboarding(false)}
         />
       )}

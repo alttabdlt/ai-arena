@@ -1064,7 +1064,7 @@ ${result.sprites.map(s => `
 
 router.post('/agents/spawn', async (req: Request, res: Response) => {
   try {
-    const { name, personality, walletAddress } = req.body;
+    const { name, personality, walletAddress, modelId: reqModelId } = req.body;
     
     if (!name || typeof name !== 'string' || name.trim().length < 2 || name.trim().length > 20) {
       return res.status(400).json({ error: 'Name must be 2-20 characters' });
@@ -1095,7 +1095,7 @@ router.post('/agents/spawn', async (req: Request, res: Response) => {
       data: {
         name: name.trim(),
         archetype: archetype as any,
-        modelId: 'deepseek-v3',
+        modelId: reqModelId || (process.env.OPENROUTER_API_KEY ? 'or-gemini-2.0-flash' : 'deepseek-v3'),
         walletAddress,
         apiKey: `spawn_${Date.now()}_${Math.random().toString(36).slice(2)}`,
         reserveBalance: 100,

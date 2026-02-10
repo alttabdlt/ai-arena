@@ -481,7 +481,7 @@ export class AgentLoopService {
   // Step 1: Observe
   // ============================================
 
-  private async observe(agent: ArenaAgent): Promise<WorldObservation> {
+  async observe(agent: ArenaAgent): Promise<WorldObservation> {
     const economy = await offchainAmmService.getPoolSummary().catch(() => null);
     const town = await townService.getActiveTown();
     if (!town) {
@@ -1223,7 +1223,7 @@ What do you want to do?`;
   // Step 3: Execute
   // ============================================
 
-  private async execute(
+  async execute(
     agent: ArenaAgent,
     action: AgentAction,
     obs: WorldObservation,

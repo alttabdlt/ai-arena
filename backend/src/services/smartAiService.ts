@@ -230,7 +230,7 @@ const ARCHETYPE_SYSTEM_PROMPTS: Record<AgentArchetype, Record<string, string>> =
 // ============================================
 
 interface ModelSpec {
-  provider: 'openai' | 'anthropic' | 'deepseek';
+  provider: 'openai' | 'anthropic' | 'deepseek' | 'gemini';
   modelName: string;
   costPer1kInput: number;  // cents
   costPer1kOutput: number; // cents
@@ -252,6 +252,10 @@ const MODEL_SPECS: Record<string, ModelSpec> = {
   // DeepSeek
   'deepseek-v3': { provider: 'deepseek', modelName: 'deepseek-chat', costPer1kInput: 0.014, costPer1kOutput: 0.028, maxTokens: 500, supportsJsonMode: true },
   'deepseek-r1': { provider: 'deepseek', modelName: 'deepseek-reasoner', costPer1kInput: 0.055, costPer1kOutput: 0.22, maxTokens: 500, supportsJsonMode: false },
+
+  // Gemini
+  'gemini-2.0-flash': { provider: 'gemini' as any, modelName: 'gemini-2.0-flash', costPer1kInput: 0.01, costPer1kOutput: 0.04, maxTokens: 500, supportsJsonMode: true },
+  'gemini-2.5-flash': { provider: 'gemini' as any, modelName: 'gemini-2.5-flash-preview-05-20', costPer1kInput: 0.015, costPer1kOutput: 0.06, maxTokens: 500, supportsJsonMode: true },
 };
 
 // ============================================
@@ -263,6 +267,8 @@ export class SmartAIService {
   private anthropic: Anthropic | null = null;
   private deepseek: OpenAI | null = null;
   
+  private gemini: OpenAI | null = null;
+
   constructor() {
     if (process.env.OPENAI_API_KEY) {
       this.openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 30000 });
@@ -274,6 +280,13 @@ export class SmartAIService {
       this.deepseek = new OpenAI({
         apiKey: process.env.DEEPSEEK_API_KEY,
         baseURL: 'https://api.deepseek.com/v1',
+        timeout: 30000,
+      });
+    }
+    if (process.env.GEMINI_API_KEY) {
+      this.gemini = new OpenAI({
+        apiKey: process.env.GEMINI_API_KEY,
+        baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
         timeout: 30000,
       });
     }
@@ -416,6 +429,8 @@ What should ${agent.name} do?`;
         return this.callAnthropic(spec, messages, temperature);
       case 'deepseek':
         return this.callDeepSeek(spec, messages, temperature, forceNoJsonMode);
+      case 'gemini':
+        return this.callGemini(spec, messages, temperature, forceNoJsonMode);
       default:
         throw new Error(`Unknown provider: ${spec.provider}`);
     }
@@ -487,6 +502,29 @@ What should ${agent.name} do?`;
       ...(spec.supportsJsonMode && !forceNoJsonMode ? { response_format: { type: 'json_object' } } : {}),
     });
     
+    return {
+      content: response.choices[0]?.message?.content || '{}',
+      inputTokens: response.usage?.prompt_tokens || 0,
+      outputTokens: response.usage?.completion_tokens || 0,
+    };
+  }
+
+  private async callGemini(
+    spec: ModelSpec,
+    messages: Array<{ role: string; content: string }>,
+    temperature: number,
+    forceNoJsonMode: boolean = false,
+  ): Promise<{ content: string; inputTokens: number; outputTokens: number }> {
+    if (!this.gemini) throw new Error('Gemini not configured — set GEMINI_API_KEY');
+
+    const response = await this.gemini.chat.completions.create({
+      model: spec.modelName,
+      messages: messages as any,
+      temperature,
+      max_tokens: spec.maxTokens,
+      ...(spec.supportsJsonMode && !forceNoJsonMode ? { response_format: { type: 'json_object' } } : {}),
+    });
+
     return {
       content: response.choices[0]?.message?.content || '{}',
       inputTokens: response.usage?.prompt_tokens || 0,

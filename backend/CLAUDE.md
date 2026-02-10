@@ -34,6 +34,7 @@ backend/
 │   │   ├── x402-api.ts              # 321 lines
 │   │   ├── wheel-api.ts             # 164 lines
 │   │   ├── economy-api.ts           # 128 lines
+│   │   ├── external-api.ts           # External agent API (OpenClaw/third-party)
 │   │   └── agent-loop-api.ts        # 64 lines
 │   │
 │   └── index.ts

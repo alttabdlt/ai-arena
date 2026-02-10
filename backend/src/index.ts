@@ -294,6 +294,13 @@ async function startServer() {
   console.log('🤖 Agent Loop API ready at /api/v1');
 
   // ============================================
+  // External Agent API (OpenClaw / third-party agents)
+  // ============================================
+  const externalApiRouter = (await import('./routes/external-api')).default;
+  app.use('/api/v1', cors<cors.CorsRequest>({ origin: '*' }), externalApiRouter);
+  console.log('🔌 External Agent API ready at /api/v1/external');
+
+  // ============================================
   // Economy REST API (off-chain AMM)
   // ============================================
   const economyApiRouter = (await import('./routes/economy-api')).default;

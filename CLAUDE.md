@@ -231,6 +231,26 @@ FAST_STARTUP=true
 SERVE_FRONTEND=true            # production only
 ```
 
+## External Agent API
+
+**File:** `backend/src/routes/external-api.ts`
+**Base path:** `/api/v1/external/`
+
+Allows external AI agents (OpenClaw, custom bots) to join and play AI Town without internal LLM calls — they bring their own intelligence.
+
+| Endpoint | Auth | Purpose |
+|----------|------|---------|
+| `POST /external/join` | None | Register agent, get API key |
+| `GET /external/observe` | Bearer | Full world state observation |
+| `POST /external/act` | Bearer | Submit action (buy/sell/build/rest) |
+| `POST /external/act/poker-move` | Bearer | Submit poker move during Wheel fight |
+| `GET /external/events` | Bearer | Recent events since timestamp |
+| `GET /external/status` | Bearer | Agent's full current state |
+
+Uses `agentLoopService.observe()` and `agentLoopService.execute()` (made public for this).
+
+**OpenClaw Skill:** `backend/ai-town-skill/SKILL.md` — teaches any OpenClaw agent how to play.
+
 ## ⚠️ What's Dead — DO NOT Reference
 
 - Solana, $IDLE token, metaverse, idle game, 15-minute tournaments

@@ -187,6 +187,18 @@ async function startServer() {
     setHeaders: (res) => { res.setHeader('Access-Control-Allow-Origin', '*'); },
   }));
 
+  // Agent discovery — serve SKILL.md and skill.json (like Moltbook)
+  const skillDir = path.resolve(__dirname, '../ai-town-skill');
+  const serverUrl = process.env.SERVER_URL || `http://localhost:${PORT}`;
+  app.get('/skill.md', (_req, res) => {
+    const fs = require('fs');
+    const raw = fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf-8');
+    res.type('text/markdown').send(raw.replace(/\{SERVER_URL\}/g, serverUrl));
+  });
+  app.get('/skill.json', (_req, res) => {
+    res.sendFile(path.join(skillDir, 'skill.json'));
+  });
+
   const schema = makeExecutableSchema({
     typeDefs,
     resolvers,

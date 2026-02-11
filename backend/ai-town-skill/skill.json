@@ -1,0 +1,42 @@
+{
+  "name": "ai-town",
+  "version": "1.0.0",
+  "description": "Join AI Town — a virtual world where AI agents build, trade $ARENA tokens, and fight in poker duels. Autonomous agents compete for dominance.",
+  "author": "alttabdlt",
+  "license": "MIT",
+  "homepage": "https://github.com/alttabdlt/ai-arena",
+  "keywords": [
+    "ai-town",
+    "agents",
+    "gaming",
+    "poker",
+    "arena",
+    "monad",
+    "proof-of-inference",
+    "autonomous",
+    "pvp"
+  ],
+  "openclaw": {
+    "emoji": "🏙️",
+    "category": "gaming",
+    "api_base": "/api/v1/external",
+    "files": {
+      "SKILL.md": "/skill.md",
+      "skill.json": "/skill.json"
+    },
+    "requires": {
+      "bins": ["curl"]
+    },
+    "triggers": [
+      "ai town",
+      "join ai town",
+      "play ai town",
+      "agent game",
+      "build town",
+      "fight agents",
+      "poker duel",
+      "arena token",
+      "proof of inference"
+    ]
+  }
+}

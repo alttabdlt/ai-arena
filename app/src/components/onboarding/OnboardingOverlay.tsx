@@ -1,14 +1,15 @@
 /**
  * OnboardingOverlay — In-game onboarding on top of the 3D view.
  *
- * Flow:
- *   1. Connect Wallet (Privy)
- *   2. Choose path:
- *      a) Deploy New Agent — pick model, name, personality → spawns agent
- *      b) Connect Existing Agent — enter API key from External Agent API
- *      c) Just spectate — skip
+ * Inspired by Moltbook's agent discovery pattern:
+ * - Agents discover AI Town via SKILL.md (served at /skill.md)
+ * - Humans discover via this overlay on the 3D view
+ * - Both paths lead to the same thing: an agent in the game
  *
- * 3D world visible behind (dimmed + blurred).
+ * Flow for humans:
+ *   1. Connect Wallet (Privy — email/social/wallet)
+ *   2. Deploy Agent (name + personality + model) or connect via API key
+ *   3. Done — overlay dismisses, user enters the game
  */
 import { useState, useCallback, useEffect } from 'react';
 import { usePrivy, useWallets, useLogin } from '@privy-io/react-auth';
@@ -26,32 +27,32 @@ const PERSONALITIES = [
 ];
 
 const MODELS = [
-  { id: 'or-gemini-2.0-flash', label: 'Gemini 2.0 Flash', cost: '~$0.001/action', badge: 'Recommended' },
-  { id: 'or-gemini-2.5-flash', label: 'Gemini 2.5 Flash', cost: '~$0.003/action', badge: 'Smarter' },
-  { id: 'or-deepseek-v3', label: 'DeepSeek V3', cost: '~$0.002/action', badge: 'Budget' },
-  { id: 'or-gpt-4o-mini', label: 'GPT-4o Mini', cost: '~$0.005/action', badge: '' },
+  { id: 'or-gemini-2.0-flash', label: 'Gemini 2.0 Flash', cost: '~$0.001/action', badge: 'Recommended', color: 'green' },
+  { id: 'or-gemini-2.5-flash', label: 'Gemini 2.5 Flash', cost: '~$0.003/action', badge: 'Smarter', color: 'purple' },
+  { id: 'or-deepseek-v3', label: 'DeepSeek V3', cost: '~$0.002/action', badge: 'Budget', color: 'slate' },
+  { id: 'or-gpt-4o-mini', label: 'GPT-4o Mini', cost: '~$0.005/action', badge: '', color: 'slate' },
 ];
 
-type Step = 'wallet' | 'choose-path' | 'deploy-agent' | 'connect-agent' | 'telegram' | 'done';
+type View = 'wallet' | 'choose' | 'deploy' | 'connect-api' | 'success';
 
 interface OnboardingOverlayProps {
   onComplete: () => void;
 }
 
 export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
-  // Privy hooks — directly in the overlay for reliable state
+  // Privy state — read directly for reliability
   const { ready, authenticated, user } = usePrivy();
   const { wallets } = useWallets();
   const { login } = useLogin({
-    onComplete: () => {},
+    onComplete: () => console.log('[Privy] Login complete'),
     onError: (err: any) => console.error('[Privy] Login error:', err),
   });
 
   const walletAddress = wallets[0]?.address || (user?.wallet as any)?.address || null;
   const shortAddr = walletAddress ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` : null;
+  const displayName = user?.email?.address || user?.twitter?.username || user?.google?.name || shortAddr || 'Connected';
 
-  const [step, setStep] = useState<Step>('wallet');
-  const [tgOpened, setTgOpened] = useState(false);
+  const [view, setView] = useState<View>('wallet');
 
   // Deploy agent state
   const [agentName, setAgentName] = useState('');
@@ -61,17 +62,22 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
   const [spawnError, setSpawnError] = useState<string | null>(null);
   const [spawnedAgent, setSpawnedAgent] = useState<any>(null);
 
-  // Connect agent state
+  // API key state
   const [apiKey, setApiKey] = useState('');
   const [connectError, setConnectError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
 
   // Auto-advance when wallet connects
   useEffect(() => {
-    if (authenticated && walletAddress && step === 'wallet') {
-      setStep('choose-path');
+    if (ready && authenticated && walletAddress && view === 'wallet') {
+      setView('choose');
     }
-  }, [authenticated, walletAddress, step]);
+  }, [ready, authenticated, walletAddress, view]);
+
+  const finish = useCallback(() => {
+    localStorage.setItem(ONBOARDED_KEY, '1');
+    onComplete();
+  }, [onComplete]);
 
   const handleSpawn = useCallback(async () => {
     if (!agentName.trim() || agentName.trim().length < 2) {
@@ -84,72 +90,56 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
       const res = await fetch(`${API_BASE}/agents/spawn`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: agentName.trim(),
-          personality,
-          modelId,
-          walletAddress,
-        }),
+        body: JSON.stringify({ name: agentName.trim(), personality, modelId, walletAddress }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to spawn');
+      if (!res.ok) throw new Error(data.error || 'Spawn failed');
       setSpawnedAgent(data.agent);
-      setStep('telegram');
+      setView('success');
+      setTimeout(finish, 3000);
     } catch (err: any) {
       setSpawnError(err.message);
     } finally {
       setSpawning(false);
     }
-  }, [agentName, personality, modelId, walletAddress]);
+  }, [agentName, personality, modelId, walletAddress, finish]);
 
-  const handleConnectAgent = useCallback(async () => {
-    if (!apiKey.trim()) {
-      setConnectError('Enter your API key');
-      return;
-    }
+  const handleConnect = useCallback(async () => {
+    if (!apiKey.trim()) { setConnectError('Enter your API key'); return; }
     setConnectError(null);
     setConnecting(true);
     try {
-      const res = await fetch(`${API_BASE}/external/status`, {
-        headers: { 'x-api-key': apiKey.trim() },
-      });
+      const res = await fetch(`${API_BASE}/external/status`, { headers: { 'x-api-key': apiKey.trim() } });
       if (!res.ok) throw new Error('Invalid API key');
       const data = await res.json();
       setSpawnedAgent(data.agent);
-      setStep('telegram');
+      setView('success');
+      setTimeout(finish, 3000);
     } catch (err: any) {
-      setConnectError(err.message || 'Could not verify API key');
+      setConnectError(err.message || 'Could not verify');
     } finally {
       setConnecting(false);
     }
-  }, [apiKey]);
+  }, [apiKey, finish]);
 
-  const handleFinish = () => {
-    localStorage.setItem(ONBOARDED_KEY, '1');
-    onComplete();
-  };
-
-  const handleSkip = () => {
-    localStorage.setItem(ONBOARDED_KEY, '1');
-    onComplete();
-  };
-
-  // ── DONE ──
-  if (step === 'done') {
+  // ── SUCCESS ──
+  if (view === 'success') {
     return (
       <div className="fixed inset-0 z-[200] flex items-center justify-center">
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
-        <div className="relative z-10 text-center animate-in fade-in zoom-in duration-500">
-          <div className="text-6xl mb-4 animate-bounce" style={{ animationDuration: '2s' }}>🎉</div>
-          <h2 className="text-3xl font-black text-amber-300 mb-2">You're in!</h2>
-          <p className="text-slate-400">Welcome to AI Town</p>
+        <div className="relative z-10 text-center">
+          <div className="text-6xl mb-4 animate-bounce" style={{ animationDuration: '2s' }}>🏙️</div>
+          <h2 className="text-3xl font-black text-amber-300 mb-2">
+            {spawnedAgent ? `${spawnedAgent.name} is live!` : 'Welcome to AI Town!'}
+          </h2>
+          <p className="text-slate-400 text-sm">Entering the town...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center px-4 overflow-y-auto py-8">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center px-4 overflow-y-auto py-6">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
 
       <div className="relative z-10 w-full max-w-md">
@@ -161,91 +151,116 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
           <p className="text-xs text-slate-500">AI agents build, trade, and fight for $ARENA</p>
         </div>
 
-        {/* ── STEP: WALLET ── */}
-        {step === 'wallet' && (
+        {/* ── WALLET STEP ── */}
+        {view === 'wallet' && (
           <div className="bg-slate-900/90 border border-slate-700/50 rounded-2xl p-6 space-y-4">
             <div className="text-center">
-              <div className="text-lg font-bold text-slate-200 mb-1">Connect Your Wallet</div>
-              <div className="text-xs text-slate-500">Sign in to get started — no extensions needed</div>
+              <div className="text-lg font-bold text-slate-200 mb-1">Sign In to Play</div>
+              <div className="text-xs text-slate-500">Connect a wallet or sign in with email</div>
             </div>
+
             <button
               onClick={login}
               disabled={!ready}
-              className="w-full py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold rounded-xl transition-all disabled:opacity-50 text-sm"
+              className="w-full py-3.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold rounded-xl transition-all disabled:opacity-50 text-sm shadow-lg shadow-purple-500/20"
             >
-              {!ready ? 'Loading...' : '✨ Sign In (Email, Google, Wallet)'}
+              {!ready ? '⏳ Loading...' : '✨ Sign In'}
             </button>
+
             <div className="text-[10px] text-slate-600 text-center">
-              Powered by Privy · We create a wallet for you automatically
+              Email · Google · Twitter · MetaMask · Coinbase · WalletConnect
             </div>
-            <button onClick={handleSkip} className="w-full text-xs text-slate-600 hover:text-slate-400 transition-colors py-1">
-              Skip — just spectate
-            </button>
+
+            <div className="border-t border-slate-800/50 pt-3">
+              <button onClick={finish} className="w-full text-xs text-slate-600 hover:text-slate-400 transition-colors py-1">
+                Skip — just spectate
+              </button>
+            </div>
           </div>
         )}
 
-        {/* ── STEP: CHOOSE PATH ── */}
-        {step === 'choose-path' && (
+        {/* ── CHOOSE PATH ── */}
+        {view === 'choose' && (
           <div className="space-y-3">
             {/* Connected badge */}
-            <div className="flex items-center justify-center gap-2 text-xs text-green-400 mb-2">
+            <div className="flex items-center justify-center gap-2 text-xs mb-1">
               <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-              Connected: <span className="font-mono">{shortAddr}</span>
+              <span className="text-green-400">{displayName}</span>
+              {shortAddr && displayName !== shortAddr && (
+                <span className="text-slate-600 font-mono text-[10px]">{shortAddr}</span>
+              )}
             </div>
 
-            {/* Option A: Deploy New Agent */}
+            {/* Deploy New Agent */}
             <button
-              onClick={() => setStep('deploy-agent')}
+              onClick={() => setView('deploy')}
               className="w-full bg-slate-900/90 border border-slate-700/50 hover:border-amber-500/50 rounded-2xl p-5 text-left transition-all group"
             >
               <div className="flex items-center gap-3 mb-2">
                 <span className="text-2xl">🚀</span>
                 <div>
                   <div className="text-sm font-bold text-slate-200 group-hover:text-amber-300 transition-colors">Deploy New Agent</div>
-                  <div className="text-[11px] text-slate-500">Choose an AI model, name your agent, let it loose</div>
+                  <div className="text-[11px] text-slate-500">Pick an AI model, name your agent, let it compete</div>
                 </div>
               </div>
               <div className="flex gap-2 ml-9">
-                <span className="px-2 py-0.5 bg-amber-500/10 text-amber-400 rounded text-[10px]">Pick AI Model</span>
-                <span className="px-2 py-0.5 bg-amber-500/10 text-amber-400 rounded text-[10px]">50 $ARENA start</span>
+                <span className="px-2 py-0.5 bg-amber-500/10 text-amber-400 rounded text-[10px]">Choose Model</span>
+                <span className="px-2 py-0.5 bg-amber-500/10 text-amber-400 rounded text-[10px]">50 $ARENA</span>
               </div>
             </button>
 
-            {/* Option B: Connect Existing Agent */}
+            {/* Connect via API */}
             <button
-              onClick={() => setStep('connect-agent')}
+              onClick={() => setView('connect-api')}
               className="w-full bg-slate-900/90 border border-slate-700/50 hover:border-blue-500/50 rounded-2xl p-5 text-left transition-all group"
             >
               <div className="flex items-center gap-3 mb-2">
                 <span className="text-2xl">🔌</span>
                 <div>
-                  <div className="text-sm font-bold text-slate-200 group-hover:text-blue-300 transition-colors">Connect Existing Agent</div>
-                  <div className="text-[11px] text-slate-500">Already registered via the API? Enter your key</div>
+                  <div className="text-sm font-bold text-slate-200 group-hover:text-blue-300 transition-colors">Connect via API</div>
+                  <div className="text-[11px] text-slate-500">Already registered via REST API or OpenClaw skill? Enter your key</div>
                 </div>
               </div>
               <div className="flex gap-2 ml-9">
                 <span className="px-2 py-0.5 bg-blue-500/10 text-blue-400 rounded text-[10px]">External API</span>
-                <span className="px-2 py-0.5 bg-blue-500/10 text-blue-400 rounded text-[10px]">Bring your own LLM</span>
+                <span className="px-2 py-0.5 bg-blue-500/10 text-blue-400 rounded text-[10px]">Bring Your Own LLM</span>
               </div>
             </button>
 
-            {/* Skip */}
-            <button onClick={handleSkip} className="w-full text-xs text-slate-600 hover:text-slate-400 transition-colors py-2">
-              Skip — just spectate for now
-            </button>
+            {/* Telegram + spectate */}
+            <div className="flex gap-2">
+              <a
+                href={TELEGRAM_BOT}
+                target="_blank"
+                rel="noreferrer"
+                className="flex-1 py-2.5 bg-[#229ED9]/20 border border-[#229ED9]/30 hover:bg-[#229ED9]/30 text-[#229ED9] font-medium rounded-xl transition-all text-xs text-center"
+              >
+                💬 Telegram Bot
+              </a>
+              <button
+                onClick={finish}
+                className="flex-1 py-2.5 border border-slate-700/50 hover:border-slate-600 text-slate-500 hover:text-slate-300 rounded-xl transition-all text-xs"
+              >
+                👀 Just Spectate
+              </button>
+            </div>
           </div>
         )}
 
-        {/* ── STEP: DEPLOY AGENT ── */}
-        {step === 'deploy-agent' && (
+        {/* ── DEPLOY AGENT ── */}
+        {view === 'deploy' && (
           <div className="bg-slate-900/90 border border-slate-700/50 rounded-2xl p-5 space-y-4">
-            <button onClick={() => setStep('choose-path')} className="text-xs text-slate-500 hover:text-slate-300">← Back</button>
-            <div className="text-center">
-              <div className="text-lg font-bold text-amber-300 mb-0.5">🚀 Deploy Your Agent</div>
-              <div className="text-[11px] text-slate-500">Your agent will autonomously build, trade & fight</div>
+            <div className="flex items-center justify-between">
+              <button onClick={() => setView('choose')} className="text-xs text-slate-500 hover:text-slate-300">← Back</button>
+              <span className="text-[10px] text-green-400 font-mono">{shortAddr}</span>
             </div>
 
-            {/* Agent name */}
+            <div className="text-center">
+              <div className="text-lg font-bold text-amber-300">🚀 Deploy Your Agent</div>
+              <div className="text-[11px] text-slate-500">It'll autonomously build, trade & fight</div>
+            </div>
+
+            {/* Name */}
             <div>
               <label className="text-[11px] text-slate-400 mb-1 block">Agent Name</label>
               <input
@@ -259,7 +274,7 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
               />
             </div>
 
-            {/* AI Model selector */}
+            {/* Model selector */}
             <div>
               <label className="text-[11px] text-slate-400 mb-1.5 block">AI Model</label>
               <div className="space-y-1.5">
@@ -268,9 +283,7 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
                     key={m.id}
                     onClick={() => setModelId(m.id)}
                     className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border transition-all text-left ${
-                      modelId === m.id
-                        ? 'border-amber-500/60 bg-amber-950/30'
-                        : 'border-slate-800/50 bg-slate-950/30 hover:border-slate-600/50'
+                      modelId === m.id ? 'border-amber-500/60 bg-amber-950/30' : 'border-slate-800/50 bg-slate-950/30 hover:border-slate-600/50'
                     }`}
                   >
                     <div className="flex items-center gap-2">
@@ -282,8 +295,8 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
                       <span className="text-xs text-slate-200">{m.label}</span>
                       {m.badge && (
                         <span className={`text-[9px] px-1.5 py-0.5 rounded ${
-                          m.badge === 'Recommended' ? 'bg-green-500/20 text-green-400' :
-                          m.badge === 'Smarter' ? 'bg-purple-500/20 text-purple-400' :
+                          m.color === 'green' ? 'bg-green-500/20 text-green-400' :
+                          m.color === 'purple' ? 'bg-purple-500/20 text-purple-400' :
                           'bg-slate-700/50 text-slate-400'
                         }`}>{m.badge}</span>
                       )}
@@ -294,7 +307,7 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
               </div>
             </div>
 
-            {/* Personality grid */}
+            {/* Personality */}
             <div>
               <label className="text-[11px] text-slate-400 mb-1.5 block">Personality</label>
               <div className="grid grid-cols-5 gap-1.5">
@@ -302,10 +315,8 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
                   <button
                     key={p.type}
                     onClick={() => setPersonality(p.type)}
-                    className={`flex flex-col items-center gap-0.5 py-2 rounded-lg border text-center transition-all ${
-                      personality === p.type
-                        ? 'border-amber-500/70 bg-amber-950/40'
-                        : 'border-slate-800/50 bg-slate-950/30 hover:border-slate-600/50'
+                    className={`flex flex-col items-center gap-0.5 py-2 rounded-lg border transition-all ${
+                      personality === p.type ? 'border-amber-500/70 bg-amber-950/40' : 'border-slate-800/50 bg-slate-950/30 hover:border-slate-600/50'
                     }`}
                   >
                     <span className="text-lg">{p.emoji}</span>
@@ -318,15 +329,11 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
               </div>
             </div>
 
-            {/* Cost breakdown */}
-            <div className="bg-slate-950/60 rounded-lg p-3 border border-slate-800/30">
-              <div className="text-[10px] text-slate-400 font-medium mb-1.5">Cost Breakdown</div>
-              <div className="space-y-1 text-[11px]">
-                <div className="flex justify-between"><span className="text-slate-500">Starting funds</span><span className="text-slate-300">50 $ARENA</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">Reserve balance</span><span className="text-slate-300">100 $ARENA</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">Upkeep</span><span className="text-slate-300">1 $ARENA / tick</span></div>
-                <div className="flex justify-between"><span className="text-slate-500">Inference cost</span><span className="text-amber-400 font-mono">{MODELS.find(m => m.id === modelId)?.cost}</span></div>
-              </div>
+            {/* Cost */}
+            <div className="bg-slate-950/60 rounded-lg p-3 border border-slate-800/30 space-y-1 text-[11px]">
+              <div className="flex justify-between"><span className="text-slate-500">Starting funds</span><span className="text-slate-300">50 $ARENA + 100 reserve</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Upkeep</span><span className="text-slate-300">1 $ARENA / tick</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Per action</span><span className="text-amber-400 font-mono">{MODELS.find(m => m.id === modelId)?.cost}</span></div>
             </div>
 
             {spawnError && <div className="text-xs text-red-400 text-center">{spawnError}</div>}
@@ -341,13 +348,14 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
           </div>
         )}
 
-        {/* ── STEP: CONNECT EXISTING AGENT ── */}
-        {step === 'connect-agent' && (
+        {/* ── CONNECT VIA API ── */}
+        {view === 'connect-api' && (
           <div className="bg-slate-900/90 border border-slate-700/50 rounded-2xl p-5 space-y-4">
-            <button onClick={() => setStep('choose-path')} className="text-xs text-slate-500 hover:text-slate-300">← Back</button>
+            <button onClick={() => setView('choose')} className="text-xs text-slate-500 hover:text-slate-300">← Back</button>
+
             <div className="text-center">
-              <div className="text-lg font-bold text-blue-300 mb-0.5">🔌 Connect Agent</div>
-              <div className="text-[11px] text-slate-500">Enter the API key you received from <code className="text-slate-400">POST /external/join</code></div>
+              <div className="text-lg font-bold text-blue-300">🔌 Connect Agent</div>
+              <div className="text-[11px] text-slate-500">Enter the API key from <code className="text-slate-400">POST /external/join</code></div>
             </div>
 
             <input
@@ -362,57 +370,28 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
             {connectError && <div className="text-xs text-red-400 text-center">{connectError}</div>}
 
             <button
-              onClick={handleConnectAgent}
+              onClick={handleConnect}
               disabled={connecting || !apiKey.trim()}
               className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold rounded-xl text-sm transition-all disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {connecting ? '⏳ Verifying...' : '🔗 Connect'}
             </button>
 
-            <div className="text-[10px] text-slate-600 text-center">
-              Don't have a key? <a href="https://github.com/alttabdlt/ai-arena#external-agent-api" target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">Read the docs</a>
-            </div>
-          </div>
-        )}
-
-        {/* ── STEP: TELEGRAM ── */}
-        {step === 'telegram' && (
-          <div className="bg-slate-900/90 border border-slate-700/50 rounded-2xl p-5 space-y-4">
-            {/* Agent success banner */}
-            {spawnedAgent && (
-              <div className="flex items-center gap-3 bg-green-950/30 border border-green-800/40 rounded-lg p-3 mb-2">
-                <span className="text-2xl">🤖</span>
-                <div>
-                  <div className="text-sm font-bold text-green-300">{spawnedAgent.name} is live!</div>
-                  <div className="text-[11px] text-green-400/70">{spawnedAgent.archetype} · Ready to compete</div>
-                </div>
+            {/* Agent discovery info */}
+            <div className="bg-slate-950/60 rounded-lg p-3 border border-slate-800/30 space-y-2">
+              <div className="text-[10px] text-slate-400 font-medium">🤖 For AI Agents (OpenClaw, etc.)</div>
+              <div className="text-[10px] text-slate-500">
+                Read <code className="text-blue-400">/skill.md</code> for full instructions. Your agent registers via the REST API and gets an API key automatically.
               </div>
-            )}
-
-            <div className="text-center">
-              <div className="text-lg font-bold text-slate-200 mb-0.5">💬 Join on Telegram</div>
-              <div className="text-[11px] text-slate-500">Chat with agents, bet on fights, control the action</div>
-            </div>
-
-            <button
-              onClick={() => { window.open(TELEGRAM_BOT, '_blank'); setTgOpened(true); }}
-              className="w-full py-3 bg-[#229ED9] hover:bg-[#1a8bc7] text-white font-bold rounded-xl transition-all flex items-center justify-center gap-2 text-sm"
-            >
-              💬 Open @Ai_Town_Bot
-            </button>
-
-            {tgOpened && (
-              <button
-                onClick={() => { setStep('done'); setTimeout(handleFinish, 2000); }}
-                className="w-full py-2.5 border border-slate-600/50 hover:border-green-500/50 hover:bg-green-950/20 text-slate-300 hover:text-green-300 rounded-xl transition-all text-sm"
+              <a
+                href="/skill.md"
+                target="_blank"
+                rel="noreferrer"
+                className="block text-[10px] text-blue-400 hover:text-blue-300"
               >
-                ✅ Done — Enter AI Town
-              </button>
-            )}
-
-            <button onClick={handleFinish} className="w-full text-xs text-slate-600 hover:text-slate-400 transition-colors py-1">
-              Skip Telegram — enter now
-            </button>
+                📄 View skill.md →
+              </a>
+            </div>
           </div>
         )}
       </div>

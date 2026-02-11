@@ -12,6 +12,7 @@
  */
 import { useState, useCallback, useEffect } from 'react';
 import { usePrivy, useWallets, useLogin } from '@privy-io/react-auth';
+import { HAS_PRIVY } from '../../App';
 
 const TELEGRAM_BOT = 'https://t.me/Ai_Town_Bot';
 const ONBOARDED_KEY = 'aitown_onboarded';
@@ -40,7 +41,84 @@ interface OnboardingOverlayProps {
   onComplete: () => void;
 }
 
-export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
+/**
+ * Wrapper: uses Privy when available, MetaMask fallback otherwise.
+ */
+export function OnboardingOverlay(props: OnboardingOverlayProps) {
+  if (HAS_PRIVY) {
+    return <PrivyOnboarding {...props} />;
+  }
+  return <FallbackOnboarding {...props} />;
+}
+
+/** MetaMask-only fallback for HTTP / no Privy */
+function FallbackOnboarding({ onComplete }: OnboardingOverlayProps) {
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  const [view, setView] = useState<'wallet' | 'choose'>('wallet');
+
+  const connectMetaMask = async () => {
+    try {
+      const eth = (window as any).ethereum;
+      if (!eth) { alert('Install MetaMask or use HTTPS for social login'); return; }
+      const accounts = await eth.request({ method: 'eth_requestAccounts' });
+      const addr = accounts?.[0] || null;
+      if (addr) {
+        setWalletAddress(addr);
+        localStorage.setItem(MY_WALLET_KEY, addr);
+        setView('choose');
+      }
+    } catch {}
+  };
+
+  const finishWith = useCallback((agentId?: string) => {
+    localStorage.setItem(ONBOARDED_KEY, '1');
+    if (agentId) localStorage.setItem(MY_AGENT_KEY, agentId);
+    onComplete();
+  }, [onComplete]);
+
+  const shortAddr = walletAddress ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` : null;
+
+  return (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center px-4 overflow-y-auto py-6">
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+      <div className="relative z-10 w-full max-w-md">
+        <div className="text-center mb-5">
+          <div className="text-4xl sm:text-5xl font-black bg-gradient-to-r from-amber-300 via-orange-400 to-red-400 bg-clip-text text-transparent mb-1">AI TOWN</div>
+          <p className="text-xs text-slate-500">AI agents build, trade, and fight for $ARENA</p>
+        </div>
+
+        {view === 'wallet' && (
+          <div className="bg-slate-900/90 border border-slate-700/50 rounded-2xl p-6 space-y-4">
+            <div className="text-center">
+              <div className="text-lg font-bold text-slate-200 mb-1">Connect Wallet</div>
+              <div className="text-xs text-slate-500">Use HTTPS for email/social login</div>
+            </div>
+            <button onClick={connectMetaMask} className="w-full py-3.5 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-400 hover:to-amber-400 text-black font-bold rounded-xl transition-all text-sm shadow-lg">
+              🦊 Connect MetaMask
+            </button>
+            <div className="border-t border-slate-800/50 pt-3">
+              <button onClick={() => finishWith()} className="w-full text-xs text-slate-600 hover:text-slate-400 transition-colors py-1">
+                Skip — just spectate
+              </button>
+            </div>
+          </div>
+        )}
+
+        {view === 'choose' && (
+          <div className="bg-slate-900/90 border border-slate-700/50 rounded-2xl p-6 space-y-3">
+            <div className="text-center text-xs text-green-400 mb-2">✓ Connected: <span className="font-mono">{shortAddr}</span></div>
+            <button onClick={() => finishWith()} className="w-full py-3 bg-gradient-to-r from-amber-500 to-orange-500 text-black font-bold rounded-xl text-sm">
+              🏙️ Enter AI Town
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Full Privy-powered onboarding (HTTPS / localhost only) */
+function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
   const { ready, authenticated, user } = usePrivy();
   const { wallets } = useWallets();
   const { login } = useLogin({

@@ -10,7 +10,16 @@ import { type ReactNode } from "react";
 
 // Privy app ID — set via VITE_PRIVY_APP_ID env var
 const PRIVY_APP_ID = import.meta.env.VITE_PRIVY_APP_ID || '';
-const HAS_PRIVY = PRIVY_APP_ID.length > 5 && !PRIVY_APP_ID.includes('xxxx');
+// Privy embedded wallets REQUIRE HTTPS (localhost gets a special exception)
+const IS_SECURE = typeof window !== 'undefined' && (
+  window.location.protocol === 'https:' ||
+  window.location.hostname === 'localhost' ||
+  window.location.hostname === '127.0.0.1'
+);
+const HAS_PRIVY = PRIVY_APP_ID.length > 5 && !PRIVY_APP_ID.includes('xxxx') && IS_SECURE;
+
+/** Exported so other components can check if Privy is available */
+export { HAS_PRIVY };
 
 const MONAD_CHAIN = {
   id: 10143,

@@ -122,7 +122,7 @@ function FallbackConnect({ compact, onAddressChange }: PrivyWalletConnectProps) 
   return <Button className="w-full" variant="outline" onClick={connect}>🔗 Connect Wallet</Button>;
 }
 
-const HAS_PRIVY = (import.meta.env.VITE_PRIVY_APP_ID || '').length > 5 && !(import.meta.env.VITE_PRIVY_APP_ID || '').includes('xxxx');
+import { HAS_PRIVY } from '../App';
 
 export function PrivyWalletConnect(props: PrivyWalletConnectProps) {
   if (!HAS_PRIVY) return <FallbackConnect {...props} />;

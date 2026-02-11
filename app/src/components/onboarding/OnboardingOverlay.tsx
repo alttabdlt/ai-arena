@@ -1,15 +1,14 @@
 /**
  * OnboardingOverlay — In-game onboarding on top of the 3D view.
  *
- * Inspired by Moltbook's agent discovery pattern:
- * - Agents discover AI Town via SKILL.md (served at /skill.md)
- * - Humans discover via this overlay on the 3D view
- * - Both paths lead to the same thing: an agent in the game
- *
- * Flow for humans:
- *   1. Connect Wallet (Privy — email/social/wallet)
- *   2. Deploy Agent (name + personality + model) or connect via API key
- *   3. Done — overlay dismisses, user enters the game
+ * Handles ALL user journey cases:
+ *   1. Fresh user (no wallet, no agent) → Sign in → Deploy → Play
+ *   2. Returning user (localStorage) → Auto-skip
+ *   3. Returning user, cleared cache → Sign in → Auto-detect agent by wallet → Play
+ *   4. Wallet exists, no agent → Sign in → Deploy/Connect → Play
+ *   5. OpenClaw/external agent → Reads /skill.md → REST API (no overlay)
+ *   6. API agent, now wants browser → Sign in → Connect via API key → Play
+ *   7. Spectator → Skip → Watch only
  */
 import { useState, useCallback, useEffect } from 'react';
 import { usePrivy, useWallets, useLogin } from '@privy-io/react-auth';
@@ -35,14 +34,13 @@ const MODELS = [
   { id: 'or-gpt-4o-mini', label: 'GPT-4o Mini', cost: '~$0.005/action', badge: '', color: 'slate' },
 ];
 
-type View = 'wallet' | 'choose' | 'deploy' | 'connect-api' | 'success';
+type View = 'wallet' | 'checking' | 'welcome-back' | 'choose' | 'deploy' | 'connect-api' | 'success';
 
 interface OnboardingOverlayProps {
   onComplete: () => void;
 }
 
 export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
-  // Privy state — read directly for reliability
   const { ready, authenticated, user } = usePrivy();
   const { wallets } = useWallets();
   const { login } = useLogin({
@@ -55,6 +53,7 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
   const displayName = user?.email?.address || user?.twitter?.username || user?.google?.name || shortAddr || 'Connected';
 
   const [view, setView] = useState<View>('wallet');
+  const [existingAgent, setExistingAgent] = useState<any>(null);
 
   // Deploy agent state
   const [agentName, setAgentName] = useState('');
@@ -69,14 +68,29 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
   const [connectError, setConnectError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
 
-  // Auto-advance when wallet connects
+  // ── After wallet connects, check if this wallet already has an agent ──
   useEffect(() => {
-    if (ready && authenticated && walletAddress && view === 'wallet') {
-      setView('choose');
-    }
+    if (!ready || !authenticated || !walletAddress || view !== 'wallet') return;
+
+    setView('checking');
+
+    fetch(`${API_BASE}/agents/me?wallet=${walletAddress}`)
+      .then(res => {
+        if (res.ok) return res.json();
+        throw new Error('no-agent');
+      })
+      .then(data => {
+        // Case 3: Returning user — wallet already has an agent
+        setExistingAgent(data.agent);
+        setView('welcome-back');
+      })
+      .catch(() => {
+        // Case 4: Wallet exists but no agent — offer deployment
+        setView('choose');
+      });
   }, [ready, authenticated, walletAddress, view]);
 
-  const finish = useCallback((agentId?: string) => {
+  const finishWith = useCallback((agentId?: string) => {
     localStorage.setItem(ONBOARDED_KEY, '1');
     if (agentId) localStorage.setItem(MY_AGENT_KEY, agentId);
     if (walletAddress) localStorage.setItem(MY_WALLET_KEY, walletAddress);
@@ -100,13 +114,13 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
       if (!res.ok) throw new Error(data.error || 'Spawn failed');
       setSpawnedAgent(data.agent);
       setView('success');
-      setTimeout(() => finish(data.agent.id), 3000);
+      setTimeout(() => finishWith(data.agent.id), 3000);
     } catch (err: any) {
       setSpawnError(err.message);
     } finally {
       setSpawning(false);
     }
-  }, [agentName, personality, modelId, walletAddress, finish]);
+  }, [agentName, personality, modelId, walletAddress, finishWith]);
 
   const handleConnect = useCallback(async () => {
     if (!apiKey.trim()) { setConnectError('Enter your API key'); return; }
@@ -118,23 +132,27 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
       const data = await res.json();
       setSpawnedAgent(data.agent);
       setView('success');
-      setTimeout(() => finish(data.agent.id), 3000);
+      setTimeout(() => finishWith(data.agent?.id), 3000);
     } catch (err: any) {
       setConnectError(err.message || 'Could not verify');
     } finally {
       setConnecting(false);
     }
-  }, [apiKey, finish]);
+  }, [apiKey, finishWith]);
+
+  // ── Shared backdrop ──
+  const Backdrop = () => <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />;
 
   // ── SUCCESS ──
   if (view === 'success') {
+    const name = spawnedAgent?.name || existingAgent?.name || '';
     return (
       <div className="fixed inset-0 z-[200] flex items-center justify-center">
-        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+        <Backdrop />
         <div className="relative z-10 text-center">
           <div className="text-6xl mb-4 animate-bounce" style={{ animationDuration: '2s' }}>🏙️</div>
           <h2 className="text-3xl font-black text-amber-300 mb-2">
-            {spawnedAgent ? `${spawnedAgent.name} is live!` : 'Welcome to AI Town!'}
+            {name ? `${name} is live!` : 'Welcome to AI Town!'}
           </h2>
           <p className="text-slate-400 text-sm">Entering the town...</p>
         </div>
@@ -144,7 +162,7 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center px-4 overflow-y-auto py-6">
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+      <Backdrop />
 
       <div className="relative z-10 w-full max-w-md">
         {/* Header */}
@@ -176,14 +194,81 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
             </div>
 
             <div className="border-t border-slate-800/50 pt-3">
-              <button onClick={finish} className="w-full text-xs text-slate-600 hover:text-slate-400 transition-colors py-1">
+              <button onClick={() => finishWith()} className="w-full text-xs text-slate-600 hover:text-slate-400 transition-colors py-1">
                 Skip — just spectate
               </button>
             </div>
           </div>
         )}
 
-        {/* ── CHOOSE PATH ── */}
+        {/* ── CHECKING WALLET ── */}
+        {view === 'checking' && (
+          <div className="bg-slate-900/90 border border-slate-700/50 rounded-2xl p-6 text-center space-y-3">
+            <div className="text-2xl animate-spin inline-block" style={{ animationDuration: '1.5s' }}>⚙️</div>
+            <div className="text-sm text-slate-300">Checking wallet...</div>
+            <div className="text-[10px] text-slate-500 font-mono">{shortAddr}</div>
+          </div>
+        )}
+
+        {/* ── WELCOME BACK (wallet already has agent) ── */}
+        {view === 'welcome-back' && existingAgent && (
+          <div className="bg-slate-900/90 border border-amber-500/30 rounded-2xl p-6 space-y-4">
+            <div className="text-center">
+              <div className="text-2xl mb-2">👋</div>
+              <div className="text-lg font-bold text-amber-300">Welcome back!</div>
+              <div className="text-xs text-slate-400 mt-1">
+                Your agent is already in the town
+              </div>
+            </div>
+
+            {/* Agent card */}
+            <div className="flex items-center gap-3 bg-slate-950/60 border border-slate-700/40 rounded-xl p-3">
+              <div className="text-3xl">
+                {existingAgent.archetype === 'SHARK' ? '🦈' :
+                 existingAgent.archetype === 'DEGEN' ? '🎲' :
+                 existingAgent.archetype === 'CHAMELEON' ? '🦎' :
+                 existingAgent.archetype === 'GRINDER' ? '⚙️' :
+                 existingAgent.archetype === 'VISIONARY' ? '🔮' : '🤖'}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="font-bold text-slate-200 truncate">{existingAgent.name}</div>
+                <div className="text-[11px] text-slate-500">{existingAgent.archetype}</div>
+              </div>
+              <div className="text-right">
+                <div className="text-sm font-mono text-amber-400">${existingAgent.bankroll?.toFixed(0) ?? '?'}</div>
+                <div className="text-[10px] text-slate-500">$ARENA</div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between text-[11px] text-slate-400">
+              <span>❤️ HP: {existingAgent.health ?? '?'}</span>
+              <span>🏆 ELO: {existingAgent.eloRating ?? '?'}</span>
+              <span>📊 W/L: {existingAgent.wins ?? 0}/{existingAgent.losses ?? 0}</span>
+            </div>
+
+            <button
+              onClick={() => {
+                setView('success');
+                setTimeout(() => finishWith(existingAgent.id), 2000);
+              }}
+              className="w-full py-3 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-black font-bold rounded-xl text-sm transition-all shadow-lg shadow-amber-500/20"
+            >
+              🏙️ Enter AI Town
+            </button>
+
+            {/* Telegram link */}
+            <a
+              href={TELEGRAM_BOT}
+              target="_blank"
+              rel="noreferrer"
+              className="block w-full py-2 bg-[#229ED9]/20 border border-[#229ED9]/30 hover:bg-[#229ED9]/30 text-[#229ED9] font-medium rounded-xl transition-all text-xs text-center"
+            >
+              💬 Chat on Telegram
+            </a>
+          </div>
+        )}
+
+        {/* ── CHOOSE PATH (wallet connected, no agent found) ── */}
         {view === 'choose' && (
           <div className="space-y-3">
             {/* Connected badge */}
@@ -222,7 +307,7 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
                 <span className="text-2xl">🔌</span>
                 <div>
                   <div className="text-sm font-bold text-slate-200 group-hover:text-blue-300 transition-colors">Connect via API</div>
-                  <div className="text-[11px] text-slate-500">Already registered via REST API or OpenClaw skill? Enter your key</div>
+                  <div className="text-[11px] text-slate-500">Already registered via REST API or OpenClaw skill?</div>
                 </div>
               </div>
               <div className="flex gap-2 ml-9">
@@ -231,7 +316,7 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
               </div>
             </button>
 
-            {/* Telegram + spectate */}
+            {/* Bottom row */}
             <div className="flex gap-2">
               <a
                 href={TELEGRAM_BOT}
@@ -242,7 +327,7 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
                 💬 Telegram Bot
               </a>
               <button
-                onClick={finish}
+                onClick={() => finishWith()}
                 className="flex-1 py-2.5 border border-slate-700/50 hover:border-slate-600 text-slate-500 hover:text-slate-300 rounded-xl transition-all text-xs"
               >
                 👀 Just Spectate
@@ -381,18 +466,12 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
               {connecting ? '⏳ Verifying...' : '🔗 Connect'}
             </button>
 
-            {/* Agent discovery info */}
             <div className="bg-slate-950/60 rounded-lg p-3 border border-slate-800/30 space-y-2">
-              <div className="text-[10px] text-slate-400 font-medium">🤖 For AI Agents (OpenClaw, etc.)</div>
+              <div className="text-[10px] text-slate-400 font-medium">🤖 For AI Agents</div>
               <div className="text-[10px] text-slate-500">
-                Read <code className="text-blue-400">/skill.md</code> for full instructions. Your agent registers via the REST API and gets an API key automatically.
+                Read <code className="text-blue-400">/skill.md</code> — your agent registers via REST API and gets a key automatically.
               </div>
-              <a
-                href="/skill.md"
-                target="_blank"
-                rel="noreferrer"
-                className="block text-[10px] text-blue-400 hover:text-blue-300"
-              >
+              <a href="/skill.md" target="_blank" rel="noreferrer" className="block text-[10px] text-blue-400 hover:text-blue-300">
                 📄 View skill.md →
               </a>
             </div>

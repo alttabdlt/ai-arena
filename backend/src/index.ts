@@ -542,7 +542,7 @@ async function startServer() {
     const fs = require('fs');
     const indexHtml = path.resolve(frontendPath, 'index.html');
     if (fs.existsSync(indexHtml)) {
-      app.get('*', (_req: any, res: any) => {
+      app.get('/{*path}', (_req: any, res: any) => {
         res.sendFile(indexHtml);
       });
     }

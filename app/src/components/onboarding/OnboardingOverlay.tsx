@@ -189,6 +189,12 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
         body: JSON.stringify({ name: agentName.trim(), personality, modelId, walletAddress }),
       });
       const data = await res.json();
+      if (res.status === 409 && data.agent) {
+        // Wallet already has an agent — recover gracefully
+        setExistingAgent(data.agent);
+        setView('welcome-back');
+        return;
+      }
       if (!res.ok) throw new Error(data.error || 'Spawn failed');
       setSpawnedAgent(data.agent);
       setView('success');

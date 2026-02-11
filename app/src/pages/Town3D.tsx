@@ -14,7 +14,7 @@ import { WheelArena } from '../components/wheel/WheelArena';
 // [removed: confetti]
 import { BuildingMesh, preloadBuildingModels } from '../components/buildings';
 import { AgentDroid } from '../components/agents/AgentDroid';
-import { OnboardingOverlay, isOnboarded } from '../components/onboarding';
+import { OnboardingOverlay, isOnboarded, getMyAgentId, getMyWallet } from '../components/onboarding';
 import { buildRoadGraph, findPath, type RoadGraph, type RoadSegInput } from '../world/roadGraph';
 import { WorldScene } from '../world/WorldScene';
 import { StreetLights, generateLightPositions } from '../world/StreetLight';
@@ -2743,12 +2743,22 @@ export default function Town3D() {
   const introRef = useRef({ active: true, t: 0 });
   const simsRef = useRef<Map<string, AgentSim>>(new Map());
 
-  // Auto-select first agent so camera has someone to follow
+  // Auto-select user's agent (from onboarding) or fall back to first
+  const myAgentId = useMemo(() => getMyAgentId(), []);
   useEffect(() => {
     if (!selectedAgentId && agents.length > 0) {
-      setSelectedAgentId(agents[0].id);
+      // Try to find user's spawned agent
+      const myAgent = myAgentId ? agents.find(a => a.id === myAgentId) : null;
+      if (myAgent) {
+        setSelectedAgentId(myAgent.id);
+      } else {
+        // Try wallet lookup
+        const myWallet = getMyWallet();
+        const walletAgent = myWallet ? agents.find((a: any) => a.walletAddress === myWallet) : null;
+        setSelectedAgentId(walletAgent?.id || agents[0].id);
+      }
     }
-  }, [agents, selectedAgentId]);
+  }, [agents, selectedAgentId, myAgentId]);
 
   // Keep active town id in a ref for interval callbacks
   useEffect(() => {
@@ -3199,9 +3209,9 @@ export default function Town3D() {
   const selectedAgent = useMemo(() => agents.find((a) => a.id === selectedAgentId) ?? null, [agents, selectedAgentId]);
   const recentSwaps = useMemo(() => swaps.slice(0, 8), [swaps]);
 
-  // Latest agent thoughts for the activity panel
+  // Latest agent thoughts — user's agent first, then others by recency
   const latestThoughts = useMemo(() => {
-    return agents
+    const thoughts = agents
       .filter(a => a.lastReasoning && a.lastTickAt)
       .map(a => ({
         agentId: a.id,
@@ -3211,9 +3221,16 @@ export default function Town3D() {
         reasoning: a.lastReasoning || '',
         narrative: a.lastNarrative || '',
         tickAt: a.lastTickAt || '',
+        isMine: a.id === myAgentId,
       }))
-      .sort((a, b) => new Date(b.tickAt).getTime() - new Date(a.tickAt).getTime());
-  }, [agents]);
+      .sort((a, b) => {
+        // User's agent always first
+        if (a.isMine && !b.isMine) return -1;
+        if (!a.isMine && b.isMine) return 1;
+        return new Date(b.tickAt).getTime() - new Date(a.tickAt).getTime();
+      });
+    return thoughts;
+  }, [agents, myAgentId]);
   // [removed: selectedAgentSwaps]
 
   // [removed: selectedAgentObjective useMemo]
@@ -3663,6 +3680,9 @@ export default function Town3D() {
                 <div className="min-w-0">
                   <div className="font-mono text-sm font-semibold text-slate-100 truncate">
                     {(ARCHETYPE_GLYPH[selectedAgent.archetype] || '●') + ' ' + selectedAgent.name}
+                    {selectedAgent.id === myAgentId && (
+                      <span className="ml-1.5 text-[9px] text-amber-400 font-sans font-medium bg-amber-500/10 px-1.5 py-0.5 rounded">YOU</span>
+                    )}
                   </div>
                   <div className="text-[10px] text-slate-400">
                     {selectedAgent.archetype}
@@ -3990,11 +4010,17 @@ export default function Town3D() {
                       return (
                         <details
                           key={t.agentId + ':' + t.tickAt}
-                          className="rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300"
+                          className={`rounded-md border px-2 py-1 text-[11px] text-slate-300 ${
+                            t.isMine
+                              ? 'border-amber-500/40 bg-amber-950/20'
+                              : 'border-slate-800/60 bg-slate-950/30'
+                          }`}
+                          open={t.isMine}
                         >
                           <summary className="cursor-pointer select-none flex items-center justify-between gap-2">
                             <div className="min-w-0 truncate">
                               <span>{actionEmoji[t.actionType] || '🤔'}</span>{' '}
+                              {t.isMine && <span className="text-amber-400 text-[9px] mr-1">YOU</span>}
                               <span className="font-mono" style={{ color }}>
                                 {glyph} {t.agentName}
                               </span>{' '}

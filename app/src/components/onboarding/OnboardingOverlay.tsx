@@ -16,6 +16,8 @@ import { usePrivy, useWallets, useLogin } from '@privy-io/react-auth';
 
 const TELEGRAM_BOT = 'https://t.me/Ai_Town_Bot';
 const ONBOARDED_KEY = 'aitown_onboarded';
+const MY_AGENT_KEY = 'aitown_my_agent_id';
+const MY_WALLET_KEY = 'aitown_my_wallet';
 const API_BASE = '/api/v1';
 
 const PERSONALITIES = [
@@ -74,10 +76,12 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
     }
   }, [ready, authenticated, walletAddress, view]);
 
-  const finish = useCallback(() => {
+  const finish = useCallback((agentId?: string) => {
     localStorage.setItem(ONBOARDED_KEY, '1');
+    if (agentId) localStorage.setItem(MY_AGENT_KEY, agentId);
+    if (walletAddress) localStorage.setItem(MY_WALLET_KEY, walletAddress);
     onComplete();
-  }, [onComplete]);
+  }, [onComplete, walletAddress]);
 
   const handleSpawn = useCallback(async () => {
     if (!agentName.trim() || agentName.trim().length < 2) {
@@ -96,7 +100,7 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
       if (!res.ok) throw new Error(data.error || 'Spawn failed');
       setSpawnedAgent(data.agent);
       setView('success');
-      setTimeout(finish, 3000);
+      setTimeout(() => finish(data.agent.id), 3000);
     } catch (err: any) {
       setSpawnError(err.message);
     } finally {
@@ -114,7 +118,7 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
       const data = await res.json();
       setSpawnedAgent(data.agent);
       setView('success');
-      setTimeout(finish, 3000);
+      setTimeout(() => finish(data.agent.id), 3000);
     } catch (err: any) {
       setConnectError(err.message || 'Could not verify');
     } finally {
@@ -401,4 +405,12 @@ export function OnboardingOverlay({ onComplete }: OnboardingOverlayProps) {
 
 export function isOnboarded(): boolean {
   return localStorage.getItem(ONBOARDED_KEY) === '1';
+}
+
+export function getMyAgentId(): string | null {
+  return localStorage.getItem(MY_AGENT_KEY);
+}
+
+export function getMyWallet(): string | null {
+  return localStorage.getItem(MY_WALLET_KEY);
 }

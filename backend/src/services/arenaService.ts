@@ -495,6 +495,59 @@ export class ArenaService {
       const aiResult = await smartAiService.getGameMove(request);
       move = aiResult.move;
       cost = aiResult.cost;
+
+      // Apply archetype-specific action biases for POKER
+      // These override the LLM to make archetypes play visibly differently
+      if (match.gameType === 'POKER' && move.action) {
+        const validActions = engine!.getValidActions(gameState, agentId);
+        const archetype = agent.archetype as string;
+        const rand = Math.random();
+
+        if (archetype === 'SHARK') {
+          // SHARK: override checks to raises 40% of the time (force aggression)
+          if (move.action === 'check' && validActions.includes('raise') && rand < 0.40) {
+            const pot = gameState.pot || 0;
+            move.action = 'raise';
+            move.amount = Math.max(gameState.bigBlind * 3, Math.floor(pot * 0.75));
+            move.reasoning = `[SHARK aggression override] ${move.reasoning}`;
+          }
+        } else if (archetype === 'ROCK') {
+          // ROCK: override raises to folds 30% of the time on marginal spots
+          if (move.action === 'raise' && move.confidence !== undefined && move.confidence < 0.6 && rand < 0.30) {
+            move.action = validActions.includes('check') ? 'check' : 'fold';
+            move.reasoning = `[ROCK discipline override] ${move.reasoning}`;
+          }
+        } else if (archetype === 'DEGEN') {
+          // DEGEN: inject random all-ins ~15% of the time
+          if (validActions.includes('all-in') && rand < 0.15 && move.action !== 'fold') {
+            move.action = 'all-in';
+            move.reasoning = `[DEGEN YOLO override] ${move.reasoning}`;
+          }
+        } else if (archetype === 'CHAMELEON') {
+          // CHAMELEON: mirror opponent's recent action frequency from current match
+          const opponentMoves = (gameState.actionLog || [])
+            .filter((a: any) => a.playerId !== agentId && a.hand === gameState.handNumber);
+          if (opponentMoves.length > 0) {
+            const lastOppAction = opponentMoves[opponentMoves.length - 1].action;
+            // If opponent raised, we call/raise back. If opponent checked, we bet
+            if (lastOppAction === 'raise' && validActions.includes('call') && move.action === 'fold' && rand < 0.50) {
+              move.action = 'call';
+              move.reasoning = `[CHAMELEON mirror] Adapting to opponent's aggression. ${move.reasoning}`;
+            }
+          }
+        } else if (archetype === 'GRINDER') {
+          // GRINDER: enforce GTO-ish bet sizing (60-75% pot) on raises
+          if ((move.action === 'raise' || move.action === 'bet') && move.amount) {
+            const pot = gameState.pot || 0;
+            const gtoMin = Math.floor(pot * 0.60);
+            const gtoMax = Math.floor(pot * 0.75);
+            if (pot > 0) {
+              move.amount = Math.max(gameState.bigBlind * 2, gtoMin + Math.floor(Math.random() * (gtoMax - gtoMin)));
+              move.reasoning = `[GRINDER sizing: ${(move.amount / Math.max(1, pot) * 100).toFixed(0)}% pot] ${move.reasoning}`;
+            }
+          }
+        }
+      }
     } catch (err: any) {
       console.error(`[Arena] AI call failed for agent ${agentId}: ${err.message}`);
       // Fallback: random move so the game doesn't stall
@@ -676,12 +729,8 @@ export class ArenaService {
           }
         }
 
-        // 3. Resolve prediction market (may be no-op if wheel already resolved)
-        try {
-          await predictionService.resolve(matchId, winnerId);
-        } catch (err: any) {
-          console.warn(`[Arena] predictionService.resolve failed: ${err?.message}`);
-        }
+        // 3. Prediction market resolution is handled by wheelOfFateService (canonical resolver).
+        //    Removed duplicate resolve call to prevent double payouts.
       } catch (err: any) {
         console.error(`[Arena] Post-match operations failed: ${err?.message}`);
       }
@@ -931,11 +980,17 @@ export class ArenaService {
   }
 
   private initPokerState(p1: string, p2: string) {
+    const maxHands = parseInt(process.env.POKER_MAX_HANDS || '') || 5;
     return ArenaPokerEngine.createInitialState(p1, p2, {
       startingChips: 1000,
       smallBlind: 10,
       bigBlind: 20,
-      maxHands: 3,  // 3 hands max — keep it fast for spectators
+      maxHands,
+      blindSchedule: [
+        { hand: 1, sb: 10, bb: 20 },    // Hands 1-2: probing
+        { hand: 3, sb: 25, bb: 50 },    // Hands 3-4: escalation
+        { hand: 5, sb: 50, bb: 100 },   // Hand 5+: desperate all-in territory
+      ],
     });
   }
 

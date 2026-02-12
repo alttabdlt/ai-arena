@@ -107,7 +107,7 @@ export function GameErrorBoundary({ children }: { children: React.ReactNode }) {
                 </Button>
                 <Button 
                   variant="outline" 
-                  onClick={() => window.location.href = '/tournaments'}
+                  onClick={() => window.location.href = '/town'}
                   className="border-gray-600 hover:bg-gray-700"
                 >
                   Back to Tournaments

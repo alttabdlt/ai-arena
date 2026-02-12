@@ -98,57 +98,63 @@ class PredictionService {
       return;
     }
 
-    const winningSide = winnerId === market.optionAAgentId ? 'A' : 'B';
-    const winningPool = winningSide === 'A' ? market.poolA : market.poolB;
-    const totalPool = market.poolA + market.poolB;
-    const rake = Math.floor(totalPool * market.rakePercent / 100);
-    const payoutPool = totalPool - rake;
+    await prisma.$transaction(async (tx) => {
+      // Re-check status inside transaction for idempotency
+      const current = await tx.predictionMarket.findUnique({ where: { id: market.id } });
+      if (!current || (current.status !== 'OPEN' && current.status !== 'LOCKED')) return;
 
-    // Get winning bets
-    const winningBets = await prisma.predictionBet.findMany({
-      where: { marketId: market.id, side: winningSide },
-    });
+      const winningSide = winnerId === current.optionAAgentId ? 'A' : 'B';
+      const winningPool = winningSide === 'A' ? current.poolA : current.poolB;
+      const totalPool = current.poolA + current.poolB;
+      const rake = Math.floor(totalPool * current.rakePercent / 100);
+      const payoutPool = totalPool - rake;
 
-    // Distribute payouts proportionally
-    for (const bet of winningBets) {
-      const share = winningPool > 0 ? bet.amount / winningPool : 0;
-      const payout = Math.floor(share * payoutPool);
-      if (payout <= 0) continue;
-
-      await prisma.predictionBet.update({
-        where: { id: bet.id },
-        data: { payout },
+      // Get winning bets
+      const winningBets = await tx.predictionBet.findMany({
+        where: { marketId: current.id, side: winningSide },
       });
 
-      // Credit user balance
-      await prisma.userBalance.upsert({
-        where: { walletAddress: bet.walletAddress },
-        update: {
-          balance: { increment: payout },
-          totalEarned: { increment: payout - bet.amount }, // Net profit
-        },
-        create: {
-          walletAddress: bet.walletAddress,
-          balance: 10000 + payout,
-          totalEarned: payout - bet.amount,
+      // Distribute payouts proportionally
+      for (const bet of winningBets) {
+        const share = winningPool > 0 ? bet.amount / winningPool : 0;
+        const payout = Math.floor(share * payoutPool);
+        if (payout <= 0) continue;
+
+        await tx.predictionBet.update({
+          where: { id: bet.id },
+          data: { payout },
+        });
+
+        // Credit user balance
+        await tx.userBalance.upsert({
+          where: { walletAddress: bet.walletAddress },
+          update: {
+            balance: { increment: payout },
+            totalEarned: { increment: payout - bet.amount }, // Net profit
+          },
+          create: {
+            walletAddress: bet.walletAddress,
+            balance: 10000 + payout,
+            totalEarned: payout - bet.amount,
+          },
+        });
+      }
+
+      // Mark losing bets
+      await tx.predictionBet.updateMany({
+        where: { marketId: current.id, side: winningSide === 'A' ? 'B' : 'A' },
+        data: { payout: 0 },
+      });
+
+      // Resolve market
+      await tx.predictionMarket.update({
+        where: { id: current.id },
+        data: {
+          status: 'RESOLVED',
+          outcome: winningSide,
+          resolvedAt: new Date(),
         },
       });
-    }
-
-    // Mark losing bets
-    await prisma.predictionBet.updateMany({
-      where: { marketId: market.id, side: winningSide === 'A' ? 'B' : 'A' },
-      data: { payout: 0 },
-    });
-
-    // Resolve market
-    await prisma.predictionMarket.update({
-      where: { id: market.id },
-      data: {
-        status: 'RESOLVED',
-        outcome: winningSide,
-        resolvedAt: new Date(),
-      },
     });
   }
 
@@ -156,24 +162,29 @@ class PredictionService {
    * Cancel a market and refund all bets.
    */
   async cancelMarket(marketId: string) {
-    const bets = await prisma.predictionBet.findMany({ where: { marketId } });
+    await prisma.$transaction(async (tx) => {
+      const market = await tx.predictionMarket.findUnique({ where: { id: marketId } });
+      if (!market || market.status === 'CANCELLED' || market.status === 'RESOLVED') return;
 
-    for (const bet of bets) {
-      await prisma.userBalance.upsert({
-        where: { walletAddress: bet.walletAddress },
-        update: { balance: { increment: bet.amount } },
-        create: { walletAddress: bet.walletAddress, balance: 10000 + bet.amount },
+      const bets = await tx.predictionBet.findMany({ where: { marketId } });
+
+      for (const bet of bets) {
+        await tx.userBalance.upsert({
+          where: { walletAddress: bet.walletAddress },
+          update: { balance: { increment: bet.amount } },
+          create: { walletAddress: bet.walletAddress, balance: 10000 + bet.amount },
+        });
+
+        await tx.predictionBet.update({
+          where: { id: bet.id },
+          data: { payout: bet.amount },
+        });
+      }
+
+      await tx.predictionMarket.update({
+        where: { id: marketId },
+        data: { status: 'CANCELLED', resolvedAt: new Date() },
       });
-
-      await prisma.predictionBet.update({
-        where: { id: bet.id },
-        data: { payout: bet.amount },
-      });
-    }
-
-    await prisma.predictionMarket.update({
-      where: { id: marketId },
-      data: { status: 'CANCELLED', resolvedAt: new Date() },
     });
   }
 

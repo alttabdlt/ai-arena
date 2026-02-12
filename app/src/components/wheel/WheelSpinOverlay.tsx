@@ -7,14 +7,15 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
+import { playSound } from '../../utils/sounds';
 
 const GAMES = [
   { name: 'POKER', emoji: '🃏', color: '#f59e0b' },
-  { name: 'RPS', emoji: '✊', color: '#ef4444' },
+  { name: 'POKER', emoji: '🃏', color: '#10b981' },
   { name: 'POKER', emoji: '🃏', color: '#f59e0b' },
-  { name: 'RPS', emoji: '✊', color: '#ef4444' },
+  { name: 'POKER', emoji: '🃏', color: '#8b5cf6' },
   { name: 'POKER', emoji: '🃏', color: '#f59e0b' },
-  { name: 'RPS', emoji: '✊', color: '#ef4444' },
+  { name: 'POKER', emoji: '🃏', color: '#ef4444' },
 ];
 
 interface WheelSpinOverlayProps {
@@ -36,9 +37,13 @@ export function WheelSpinOverlay({ selectedGame, onComplete }: WheelSpinOverlayP
     const targetRotation = spins * 360 + (360 - targetIndex * segmentAngle - segmentAngle / 2);
     
     setRotation(targetRotation);
-    
+    playSound('prediction');
+
     // Land after 2.5s
-    const landTimer = setTimeout(() => setPhase('landed'), 2500);
+    const landTimer = setTimeout(() => {
+      setPhase('landed');
+      playSound('notify');
+    }, 2500);
     // Complete after 3.5s
     const doneTimer = setTimeout(() => {
       setPhase('done');

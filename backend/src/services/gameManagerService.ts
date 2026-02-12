@@ -16,7 +16,8 @@ import { PubSub } from 'graphql-subscriptions';
 import { prisma } from '../config/database';
 import { aiService } from './aiService';
 import Redis from 'ioredis';
-import { GameEngineAdapter, GameEngineAdapterFactory } from './gameEngineAdapter';
+import { GameEngineAdapter } from './gameEngineAdapter';
+import { ArenaPokerEngine } from './arenaPokerEngine';
 import { fileLoggerService } from './fileLoggerService';
 import { ExperienceService } from './experienceService';
 import { getConnect4TournamentService } from './connect4TournamentService';
@@ -64,10 +65,8 @@ class GameManagerService {
     });
     this.redis.on('error', () => {}); // Suppress Redis errors when not available
 
-    // Initialize game adapters
-    this.adapters.set('poker', GameEngineAdapterFactory.create('poker'));
-    this.adapters.set('reverse-hangman', GameEngineAdapterFactory.create('reverse-hangman'));
-    this.adapters.set('connect4', GameEngineAdapterFactory.create('connect4'));
+    // Initialize game adapters (only poker is actively used)
+    this.adapters.set('poker', new ArenaPokerEngine());
 
     // Start cleanup interval
     this.startCleanupProcess();

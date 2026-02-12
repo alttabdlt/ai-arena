@@ -9,9 +9,33 @@ import { predictionService } from '../services/predictionService';
 const router = Router();
 
 // GET /wheel/status — Current wheel state (frontend polls this)
-router.get('/wheel/status', async (_req: Request, res: Response): Promise<void> => {
+// Optional: ?wallet=0x... to get personal bet result during AFTERMATH
+router.get('/wheel/status', async (req: Request, res: Response): Promise<void> => {
   try {
     const status = wheelOfFateService.getStatus();
+    const wallet = (req.query.wallet as string || '').toLowerCase().trim();
+
+    // Enrich with personal bet result during AFTERMATH
+    if (wallet && status.phase === 'AFTERMATH' && status.lastResult?.marketId) {
+      try {
+        const { prisma } = await import('../config/database');
+        const bet = await prisma.predictionBet.findFirst({
+          where: { walletAddress: wallet, marketId: status.lastResult.marketId },
+          orderBy: { createdAt: 'desc' },
+        });
+        if (bet) {
+          const won = (bet.payout || 0) > 0;
+          (status as any).myBetResult = {
+            side: bet.side,
+            amount: bet.amount,
+            payout: bet.payout || 0,
+            netProfit: (bet.payout || 0) - bet.amount,
+            won,
+          };
+        }
+      } catch {}
+    }
+
     res.json(status);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
@@ -156,6 +180,102 @@ router.get('/wheel/odds', async (_req: Request, res: Response): Promise<void> =>
       betCount: market.bets.length,
       bettingEndsIn: status.bettingEndsIn,
     });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /wheel/my-stats — Per-wallet betting stats (P&L, hit rate, streaks)
+router.get('/wheel/my-stats', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const wallet = (req.query.wallet as string || '').toLowerCase().trim();
+    if (!wallet) {
+      res.status(400).json({ error: 'wallet query parameter required' });
+      return;
+    }
+
+    const { prisma } = await import('../config/database');
+    const bets = await prisma.predictionBet.findMany({
+      where: { walletAddress: wallet },
+      include: { market: { select: { status: true, outcome: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    let totalWagered = 0;
+    let totalWon = 0;
+    let wins = 0;
+    let losses = 0;
+    let currentStreak = 0;
+    let bestStreak = 0;
+    let worstLoss = 0;
+    const resolved = bets.filter(b => b.market.status === 'RESOLVED');
+
+    for (const bet of resolved) {
+      totalWagered += bet.amount;
+      totalWon += bet.payout || 0;
+      const won = (bet.payout || 0) > 0;
+      if (won) {
+        wins++;
+        if (currentStreak >= 0) currentStreak++;
+        else currentStreak = 1;
+        if (currentStreak > bestStreak) bestStreak = currentStreak;
+      } else {
+        losses++;
+        if (currentStreak <= 0) currentStreak--;
+        else currentStreak = -1;
+        if (bet.amount > worstLoss) worstLoss = bet.amount;
+      }
+    }
+
+    const netPnL = totalWon - totalWagered;
+    const hitRate = resolved.length > 0 ? Math.round((wins / resolved.length) * 100) : 0;
+
+    // Get current balance
+    const userBalance = await prisma.userBalance.findUnique({ where: { walletAddress: wallet } });
+
+    res.json({
+      wallet,
+      balance: userBalance?.balance ?? 0,
+      totalBets: resolved.length,
+      totalWagered,
+      totalWon,
+      netPnL,
+      hitRate,
+      wins,
+      losses,
+      currentStreak,
+      bestStreak,
+      worstLoss,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /wheel/leaderboard — Top bettors by net profit
+router.get('/wheel/leaderboard', async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const { prisma } = await import('../config/database');
+    const balances = await prisma.userBalance.findMany({
+      orderBy: { totalEarned: 'desc' },
+      take: 10,
+      select: { walletAddress: true, balance: true, totalEarned: true },
+    });
+
+    // Enrich with bet counts
+    const leaderboard = await Promise.all(balances.map(async (b) => {
+      const betCount = await prisma.predictionBet.count({
+        where: { walletAddress: b.walletAddress, market: { status: 'RESOLVED' } },
+      });
+      return {
+        wallet: `${b.walletAddress.slice(0, 6)}...${b.walletAddress.slice(-4)}`,
+        netProfit: b.totalEarned,
+        balance: b.balance,
+        bets: betCount,
+      };
+    }));
+
+    res.json(leaderboard);
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

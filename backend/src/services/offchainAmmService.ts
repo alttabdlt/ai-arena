@@ -42,21 +42,10 @@ type Quote = {
 };
 
 export class OffchainAmmService {
-  private poolResetDone = false;
 
   private async getOrCreatePool(tx: any = prisma): Promise<EconomyPool> {
     const existing = await tx.economyPool.findFirst({ orderBy: { createdAt: 'desc' } });
     if (existing) {
-      // One-time pool reset: shrink oversized pools (hackathon migration)
-      if (!this.poolResetDone && (existing.reserveBalance > 100_000 || existing.arenaBalance > 100_000)) {
-        this.poolResetDone = true;
-        console.log(`[AMM] Resizing oversized pool: ${existing.reserveBalance}/${existing.arenaBalance} → 10000/10000`);
-        return tx.economyPool.update({
-          where: { id: existing.id },
-          data: { reserveBalance: 10_000, arenaBalance: 10_000 },
-        });
-      }
-      this.poolResetDone = true;
       return existing;
     }
 

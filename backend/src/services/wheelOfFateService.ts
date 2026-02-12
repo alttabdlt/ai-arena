@@ -15,6 +15,7 @@
 import { prisma } from '../config/database';
 import { arenaService } from './arenaService';
 import { predictionService } from './predictionService';
+import { smartAiService } from './smartAiService';
 import { ArenaGameType } from '@prisma/client';
 
 // ============================================
@@ -31,6 +32,7 @@ export interface WheelMatch {
   agent2: { id: string; name: string; archetype: string; bankroll: number; elo: number };
   wager: number;
   buffs: { agent1: PvPBuff[]; agent2: PvPBuff[] };
+  trashTalk?: { agent1: string; agent2: string };  // Pre-match trash talk from LLM
   announcedAt: number;      // timestamp when betting opened
   fightStartsAt: number;    // timestamp when fight begins (betting closes)
 }
@@ -53,6 +55,23 @@ export interface WheelResult {
   timestamp: Date;
 }
 
+export interface GameSnapshot {
+  communityCards: string[];
+  pot: number;
+  phase: string;
+  chips: Record<string, number>;    // agentId → chip count
+  bets: Record<string, number>;     // agentId → current bet this round
+  handNumber: number;
+  maxHands: number;
+  smallBlind: number;
+  bigBlind: number;
+  // Only set on showdown/fold
+  holeCards?: Record<string, string[]>;   // agentId → hole cards (revealed at showdown)
+  handRanks?: Record<string, string>;     // agentId → hand rank name
+  handWinner?: string | null;             // winner of this hand
+  handResult?: string;                    // e.g. "FULL HOUSE beats TWO PAIR"
+}
+
 export interface WheelMove {
   agentId: string;
   agentName: string;
@@ -61,6 +80,7 @@ export interface WheelMove {
   reasoning: string;
   quip: string;
   amount?: number;
+  gameSnapshot?: GameSnapshot;
 }
 
 export interface PvPBuff {
@@ -70,13 +90,23 @@ export interface PvPBuff {
   description: string;
 }
 
+export interface SessionStats {
+  agentRecords: Record<string, { name: string; wins: number; losses: number; streak: number }>;
+  biggestPot: number;
+  biggestUpset: string | null;  // e.g. "MorphBot (+280 underdog)"
+  totalMatches: number;
+  crowdAccuracy: number | null;  // % of time crowd favorite won
+}
+
 export interface WheelStatus {
   phase: WheelPhase;
   nextSpinAt: Date | null;
   currentMatch: WheelMatch | null;
+  currentMoves: WheelMove[];  // Live moves during FIGHTING
   lastResult: WheelResult | null;
   cycleCount: number;
   bettingEndsIn: number | null;  // ms until betting closes (null if not ANNOUNCING)
+  sessionStats: SessionStats;
   config: {
     cycleMs: number;
     wagerPct: number;
@@ -157,6 +187,13 @@ class WheelOfFateService {
   private resultHistory: WheelResult[] = [];
   private cycleCount = 0;
 
+  // Session stats tracking
+  private sessionAgentRecords: Map<string, { name: string; wins: number; losses: number; streak: number }> = new Map();
+  private sessionBiggestPot = 0;
+  private sessionBiggestUpset: string | null = null;
+  private sessionCrowdCorrect = 0;
+  private sessionCrowdTotal = 0;
+
   // ---- Lifecycle ----
 
   start() {
@@ -195,6 +232,12 @@ class WheelOfFateService {
       bettingEndsIn = Math.max(0, this.currentMatch.fightStartsAt - now);
     }
 
+    // Build session stats
+    const agentRecords: Record<string, { name: string; wins: number; losses: number; streak: number }> = {};
+    for (const [id, record] of this.sessionAgentRecords) {
+      agentRecords[id] = record;
+    }
+
     return {
       phase: this.phase,
       nextSpinAt: this.nextSpinAt,
@@ -203,6 +246,15 @@ class WheelOfFateService {
       lastResult: this.lastResult,
       cycleCount: this.cycleCount,
       bettingEndsIn,
+      sessionStats: {
+        agentRecords,
+        biggestPot: this.sessionBiggestPot,
+        biggestUpset: this.sessionBiggestUpset,
+        totalMatches: this.resultHistory.length,
+        crowdAccuracy: this.sessionCrowdTotal > 0
+          ? Math.round((this.sessionCrowdCorrect / this.sessionCrowdTotal) * 100)
+          : null,
+      },
       config: {
         cycleMs: this.CYCLE_MS,
         wagerPct: this.WAGER_PCT,
@@ -287,6 +339,12 @@ class WheelOfFateService {
         wager = Math.floor(wager * multiplier);
         console.log(`[Wheel] ${agent1.name} MARKET buff → wager ${wager} (${multiplier}x)`);
       }
+      const marketBuff2 = buffs2.find(b => b.type === 'MARKET');
+      if (marketBuff2) {
+        const multiplier = Math.min(2.0, 1.0 + marketBuff2.count * 0.25);
+        wager = Math.floor(wager * multiplier);
+        console.log(`[Wheel] ${agent2.name} MARKET buff → wager ${wager} (${multiplier}x)`);
+      }
       // Cap wager to what both can afford
       wager = Math.min(wager, agent1.bankroll, agent2.bankroll);
 
@@ -324,6 +382,22 @@ class WheelOfFateService {
       console.log(`🎰 Betting closes in ${this.BETTING_WINDOW_MS / 1000}s`);
       if (buffs1.length) console.log(`  ${agent1.name} buffs: ${buffs1.map(b => `${b.type}(${b.count})`).join(', ')}`);
       if (buffs2.length) console.log(`  ${agent2.name} buffs: ${buffs2.map(b => `${b.type}(${b.count})`).join(', ')}`);
+
+      // Generate pre-match trash talk (fire and forget, update match when ready)
+      this.generatePreMatchTrashTalk(agent1, agent2).then(trashTalk => {
+        if (this.currentMatch && trashTalk) {
+          this.currentMatch.trashTalk = trashTalk;
+        }
+      }).catch(() => {});
+
+      // Fetch H2H records and real stats (fire and forget)
+      this.fetchMatchEnrichment(agent1.id, agent2.id).then(enrichment => {
+        if (this.currentMatch && enrichment) {
+          (this.currentMatch as any).h2h = enrichment.h2h;
+          (this.currentMatch as any).agent1Stats = enrichment.agent1Stats;
+          (this.currentMatch as any).agent2Stats = enrichment.agent2Stats;
+        }
+      }).catch(() => {});
 
       // Schedule fight after betting window
       this.fightTimeout = setTimeout(() => {
@@ -416,6 +490,7 @@ class WheelOfFateService {
       this.currentMoves = [];  // Reset live moves
       let turns = 0;
       let errorCount = 0;
+      let prevHandNumber = 0;  // Track hand transitions for showdown snapshots
 
       while (turns < this.MAX_TURNS) {
         const currentMatch = await prisma.arenaMatch.findUnique({ where: { id: match.id } });
@@ -425,6 +500,66 @@ class WheelOfFateService {
           const result = await arenaService.playAITurn(match.id, currentMatch.currentTurnId);
           turns++;
           errorCount = 0; // Reset on success
+
+          // Read updated game state to build snapshot for frontend
+          const updatedMatch = await prisma.arenaMatch.findUnique({ where: { id: match.id } });
+          const gameState = updatedMatch ? JSON.parse(updatedMatch.gameState) : null;
+
+          let snapshot: GameSnapshot | undefined;
+          if (gameState && gameState.players) {
+            const chips: Record<string, number> = {};
+            const bets: Record<string, number> = {};
+            for (const p of gameState.players) {
+              chips[p.id] = p.chips;
+              bets[p.id] = p.bet || 0;
+            }
+
+            snapshot = {
+              communityCards: gameState.communityCards || [],
+              pot: gameState.pot || 0,
+              phase: gameState.phase || 'unknown',
+              chips,
+              bets,
+              handNumber: gameState.handNumber || 1,
+              maxHands: gameState.maxHands || 5,
+              smallBlind: gameState.smallBlind || 10,
+              bigBlind: gameState.bigBlind || 20,
+            };
+
+            // Check if a hand just completed (showdown or fold)
+            const handHistory = gameState.handHistory || [];
+            if (handHistory.length > 0) {
+              const latestHand = handHistory[handHistory.length - 1];
+              // If this is a new hand result (hand number changed from last check)
+              if (latestHand.handNumber > prevHandNumber) {
+                prevHandNumber = latestHand.handNumber;
+                // Include hole cards and hand ranks from the completed hand
+                const holeCards: Record<string, string[]> = {};
+                const handRanks: Record<string, string> = {};
+                for (const p of latestHand.players || []) {
+                  if (p.holeCards && p.holeCards[0] !== '?') {
+                    holeCards[p.id] = p.holeCards;
+                  }
+                  if (p.handRank) {
+                    handRanks[p.id] = p.handRank;
+                  }
+                }
+                snapshot.holeCards = holeCards;
+                snapshot.handRanks = handRanks;
+                snapshot.handWinner = latestHand.winnerId || null;
+                // Build descriptive hand result
+                if (latestHand.showdown && latestHand.players?.length >= 2) {
+                  const winner = latestHand.players.find((p: any) => p.id === latestHand.winnerId);
+                  const loser = latestHand.players.find((p: any) => p.id !== latestHand.winnerId);
+                  if (winner?.handRank && loser?.handRank) {
+                    snapshot.handResult = `${winner.handRank.toUpperCase()} beats ${loser.handRank.toUpperCase()}`;
+                  }
+                } else if (!latestHand.showdown) {
+                  snapshot.handResult = 'Fold';
+                }
+              }
+            }
+          }
 
           // Record move for frontend (both local array and live state)
           const movingAgent = currentMatch.currentTurnId === agent1.id ? agent1 : agent2;
@@ -436,6 +571,7 @@ class WheelOfFateService {
             reasoning: (result.move?.reasoning || '').slice(0, 200),
             quip: (result.move?.quip || '').slice(0, 100),
             amount: result.move?.amount,
+            gameSnapshot: snapshot,
           };
           moves.push(move);
           this.currentMoves = [...moves];  // Update live state for polling
@@ -493,20 +629,77 @@ class WheelOfFateService {
         }
       }
 
-      // Generate archetype-appropriate post-match quips
+      // Generate context-aware post-match quips via LLM
       const winnerArchetype = winner ? (winner.id === agent1.id ? agent1.archetype : agent2.archetype) : '';
       const loserArchetype = loser ? (loser.id === agent1.id ? agent1.archetype : agent2.archetype) : '';
-      
+
+      // Extract final hand info from game state for quip context
+      const finalGameState = await prisma.arenaMatch.findUnique({ where: { id: match.id } });
+      let finalHandRank: string | undefined;
+      let loserHandRank: string | undefined;
+      let wasBluff = false;
+      if (finalGameState?.gameState) {
+        try {
+          const gs = JSON.parse(finalGameState.gameState);
+          const lastHand = gs.handHistory?.[gs.handHistory.length - 1];
+          if (lastHand?.players) {
+            const winnerPlayer = lastHand.players.find((p: any) => p.id === winnerId);
+            const loserPlayer = lastHand.players.find((p: any) => p.id !== winnerId);
+            finalHandRank = winnerPlayer?.handRank;
+            loserHandRank = loserPlayer?.handRank;
+            wasBluff = !lastHand.showdown && winnerId !== null; // Won by fold = potential bluff
+          }
+        } catch {}
+      }
+
+      // Get streak info from session records
+      const winnerRecord = winner ? this.sessionAgentRecords.get(winner.id) : null;
+      const loserRecord = loser ? this.sessionAgentRecords.get(loser.id) : null;
+
+      // Generate LLM quips (parallel, with fallback to hardcoded)
+      let winnerQuip: string;
+      let loserQuip: string;
+      try {
+        const [wq, lq] = await Promise.all([
+          winner
+            ? smartAiService.generatePostMatchQuip({
+                agentName: winner.name, archetype: winnerArchetype, opponentName: loser?.name || 'opponent',
+                won: true, isDraw: false, finalHandRank, opponentHandRank: loserHandRank,
+                potSize: wager * 2, wasBluff, winStreak: winnerRecord?.streak,
+              }).then(r => r.quip)
+            : smartAiService.generatePostMatchQuip({
+                agentName: agent1.name, archetype: agent1.archetype, opponentName: agent2.name,
+                won: false, isDraw: true, potSize: wager * 2,
+              }).then(r => r.quip),
+          loser
+            ? smartAiService.generatePostMatchQuip({
+                agentName: loser.name, archetype: loserArchetype, opponentName: winner?.name || 'opponent',
+                won: false, isDraw: false, finalHandRank: loserHandRank, opponentHandRank: finalHandRank,
+                potSize: wager * 2, lossStreak: loserRecord ? Math.abs(loserRecord.streak) : undefined,
+              }).then(r => r.quip)
+            : smartAiService.generatePostMatchQuip({
+                agentName: agent2.name, archetype: agent2.archetype, opponentName: agent1.name,
+                won: false, isDraw: true, potSize: wager * 2,
+              }).then(r => r.quip),
+        ]);
+        winnerQuip = wq;
+        loserQuip = lq;
+      } catch {
+        // Fallback to hardcoded quips
+        winnerQuip = winner ? pickQuip(WINNER_QUIPS, winnerArchetype) : pickQuip(DRAW_QUIPS, agent1.archetype);
+        loserQuip = loser ? pickQuip(LOSER_QUIPS, loserArchetype) : pickQuip(DRAW_QUIPS, agent2.archetype);
+      }
+
       const result: WheelResult = {
         matchId: match.id,
         marketId,
         gameType,
         winnerId: winner?.id || null,
         winnerName: winner?.name || 'DRAW',
-        winnerQuip: winner ? pickQuip(WINNER_QUIPS, winnerArchetype) : pickQuip(DRAW_QUIPS, agent1.archetype),
+        winnerQuip,
         loserId: loser?.id || null,
         loserName: loser?.name || 'DRAW',
-        loserQuip: loser ? pickQuip(LOSER_QUIPS, loserArchetype) : pickQuip(DRAW_QUIPS, agent2.archetype),
+        loserQuip,
         pot: wager * 2,
         rake: Math.floor(wager * 2 * 0.05),
         turns,
@@ -518,6 +711,36 @@ class WheelOfFateService {
       this.lastResult = result;
       this.resultHistory.push(result);
       if (this.resultHistory.length > 50) this.resultHistory.shift();
+
+      // Update session stats
+      if (result.pot > this.sessionBiggestPot) this.sessionBiggestPot = result.pot;
+      for (const agent of [agent1, agent2]) {
+        const existing = this.sessionAgentRecords.get(agent.id) || { name: agent.name, wins: 0, losses: 0, streak: 0 };
+        if (winnerId === agent.id) {
+          existing.wins++;
+          existing.streak = existing.streak >= 0 ? existing.streak + 1 : 1;
+        } else if (winnerId) {
+          existing.losses++;
+          existing.streak = existing.streak <= 0 ? existing.streak - 1 : -1;
+        }
+        this.sessionAgentRecords.set(agent.id, existing);
+      }
+      // Track crowd accuracy
+      if (bettingPool.totalBets > 0 && winnerId) {
+        this.sessionCrowdTotal++;
+        const favoriteIsA = bettingPool.poolA >= bettingPool.poolB;
+        const winnerIsA = winnerId === agent1.id;
+        if (favoriteIsA === winnerIsA) {
+          this.sessionCrowdCorrect++;
+        } else {
+          // This was an upset
+          const underdog = winnerIsA ? agent1.name : agent2.name;
+          const underdogPool = winnerIsA ? bettingPool.poolA : bettingPool.poolB;
+          const total = bettingPool.poolA + bettingPool.poolB;
+          const payout = underdogPool > 0 ? `+${((total / underdogPool) * 100 - 100).toFixed(0)}` : '';
+          this.sessionBiggestUpset = `${underdog} (${payout} underdog)`;
+        }
+      }
 
       console.log(`🏆 Winner: ${result.winnerName} | Pot: ${result.pot} | Turns: ${turns} | Spectator bets: ${bettingPool.totalBets}`);
 
@@ -656,6 +879,113 @@ class WheelOfFateService {
     }
 
     return buffs;
+  }
+
+  // ---- Pre-match Trash Talk ----
+
+  private async generatePreMatchTrashTalk(
+    agent1: { id: string; name: string; archetype: string },
+    agent2: { id: string; name: string; archetype: string },
+  ): Promise<{ agent1: string; agent2: string } | null> {
+    try {
+      // Get head-to-head records
+      const record12 = await prisma.opponentRecord.findUnique({
+        where: { agentId_opponentId: { agentId: agent1.id, opponentId: agent2.id } },
+      });
+      const record21 = await prisma.opponentRecord.findUnique({
+        where: { agentId_opponentId: { agentId: agent2.id, opponentId: agent1.id } },
+      });
+      const a1Streak = this.sessionAgentRecords.get(agent1.id)?.streak;
+      const a2Streak = this.sessionAgentRecords.get(agent2.id)?.streak;
+
+      const [talk1, talk2] = await Promise.all([
+        smartAiService.generatePreMatchTrashTalk({
+          agentName: agent1.name, archetype: agent1.archetype,
+          opponentName: agent2.name, opponentArchetype: agent2.archetype,
+          headToHead: record12 ? `${record12.wins}W-${record12.losses}L` : undefined,
+          currentStreak: a1Streak,
+        }).then(r => r.quip),
+        smartAiService.generatePreMatchTrashTalk({
+          agentName: agent2.name, archetype: agent2.archetype,
+          opponentName: agent1.name, opponentArchetype: agent1.archetype,
+          headToHead: record21 ? `${record21.wins}W-${record21.losses}L` : undefined,
+          currentStreak: a2Streak,
+        }).then(r => r.quip),
+      ]);
+      return { agent1: talk1, agent2: talk2 };
+    } catch (err: any) {
+      console.warn(`[Wheel] Trash talk generation failed: ${err.message}`);
+      return null;
+    }
+  }
+
+  // ---- Match Enrichment (H2H + Real Stats) ----
+
+  private async fetchMatchEnrichment(agent1Id: string, agent2Id: string) {
+    try {
+      // H2H records
+      const [record12, record21] = await Promise.all([
+        prisma.opponentRecord.findUnique({
+          where: { agentId_opponentId: { agentId: agent1Id, opponentId: agent2Id } },
+        }),
+        prisma.opponentRecord.findUnique({
+          where: { agentId_opponentId: { agentId: agent2Id, opponentId: agent1Id } },
+        }),
+      ]);
+      const h2h = {
+        agent1Wins: record12?.wins || 0,
+        agent2Wins: record21?.wins || 0,
+        draws: record12?.draws || 0,
+      };
+
+      // Compute real play-style stats from last 10 matches
+      const computeStats = async (agentId: string) => {
+        const matches = await prisma.arenaMatch.findMany({
+          where: {
+            OR: [{ player1Id: agentId }, { player2Id: agentId }],
+            status: 'COMPLETED',
+          },
+          orderBy: { completedAt: 'desc' },
+          take: 10,
+          select: { gameState: true },
+        });
+
+        let raises = 0, calls = 0, checks = 0, folds = 0;
+        for (const m of matches) {
+          try {
+            const history = typeof m.gameState === 'string' ? JSON.parse(m.gameState) : m.gameState;
+            const log = history?.actionLog || [];
+            for (const entry of log) {
+              if (entry.playerId !== agentId) continue;
+              const a = (entry.action || '').toLowerCase();
+              if (a === 'raise' || a === 'bet' || a === 'all-in') raises++;
+              else if (a === 'call') calls++;
+              else if (a === 'check') checks++;
+              else if (a === 'fold') folds++;
+            }
+          } catch {}
+        }
+        const total = raises + calls + checks + folds;
+        if (total === 0) return null;
+        return {
+          aggression: Math.round((raises / total) * 100),
+          foldRate: Math.round((folds / total) * 100),
+          callRate: Math.round((calls / total) * 100),
+          totalActions: total,
+          matchesAnalyzed: matches.length,
+        };
+      };
+
+      const [agent1Stats, agent2Stats] = await Promise.all([
+        computeStats(agent1Id),
+        computeStats(agent2Id),
+      ]);
+
+      return { h2h, agent1Stats, agent2Stats };
+    } catch (err: any) {
+      console.warn(`[Wheel] Match enrichment failed: ${err.message}`);
+      return null;
+    }
   }
 
   // ---- PvP Memory ----

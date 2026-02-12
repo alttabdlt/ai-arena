@@ -32,8 +32,28 @@ export interface WheelMatch {
   agent2: WheelAgent;
   wager: number;
   buffs: { agent1: WheelBuff[]; agent2: WheelBuff[] };
+  trashTalk?: { agent1: string; agent2: string };
+  h2h?: { agent1Wins: number; agent2Wins: number; draws: number };
+  agent1Stats?: { aggression: number; foldRate: number; callRate: number; totalActions: number; matchesAnalyzed: number };
+  agent2Stats?: { aggression: number; foldRate: number; callRate: number; totalActions: number; matchesAnalyzed: number };
   announcedAt: number;
   fightStartsAt: number;
+}
+
+export interface GameSnapshot {
+  communityCards: string[];
+  pot: number;
+  phase: string;
+  chips: Record<string, number>;
+  bets: Record<string, number>;
+  handNumber: number;
+  maxHands: number;
+  smallBlind: number;
+  bigBlind: number;
+  holeCards?: Record<string, string[]>;
+  handRanks?: Record<string, string>;
+  handWinner?: string | null;
+  handResult?: string;
 }
 
 export interface WheelMove {
@@ -44,6 +64,7 @@ export interface WheelMove {
   reasoning: string;
   quip: string;
   amount?: number;
+  gameSnapshot?: GameSnapshot;
 }
 
 export interface WheelResult {
@@ -66,6 +87,14 @@ export interface WheelResult {
 
 export type WheelPhase = 'PREP' | 'ANNOUNCING' | 'FIGHTING' | 'AFTERMATH' | 'IDLE';
 
+export interface SessionStats {
+  agentRecords: Record<string, { name: string; wins: number; losses: number; streak: number }>;
+  biggestPot: number;
+  biggestUpset: string | null;
+  totalMatches: number;
+  crowdAccuracy: number | null;
+}
+
 export interface WheelStatus {
   phase: WheelPhase;
   nextSpinAt: string | null;
@@ -74,6 +103,8 @@ export interface WheelStatus {
   lastResult: WheelResult | null;
   cycleCount: number;
   bettingEndsIn: number | null;
+  sessionStats: SessionStats;
+  myBetResult?: { side: string; amount: number; payout: number; netProfit: number; won: boolean };
   config: {
     cycleMs: number;
     wagerPct: number;
@@ -98,15 +129,19 @@ export interface WheelOdds {
   bettingEndsIn?: number;
 }
 
-export function useWheelStatus() {
+export function useWheelStatus(walletAddress?: string | null) {
   const [status, setStatus] = useState<WheelStatus | null>(null);
   const [odds, setOdds] = useState<WheelOdds | null>(null);
   const [loading, setLoading] = useState(false);
   const mountedRef = useRef(true);
+  const walletRef = useRef(walletAddress);
+  walletRef.current = walletAddress;
 
   const fetchStatus = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/wheel/status`);
+      const w = walletRef.current;
+      const url = w ? `${API_BASE}/wheel/status?wallet=${encodeURIComponent(w)}` : `${API_BASE}/wheel/status`;
+      const res = await fetch(url);
       if (!res.ok) return;
       const data = await res.json();
       if (mountedRef.current) setStatus(data);

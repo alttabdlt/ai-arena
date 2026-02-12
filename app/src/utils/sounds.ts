@@ -132,6 +132,24 @@ export const sounds = {
       setTimeout(() => playBeep(freq, 0.06, 0.12), i * 50);
     });
   },
+
+  cardFlip: () => {
+    // Short click
+    playBeep(1800, 0.02, 0.12);
+    setTimeout(() => playBeep(2200, 0.015, 0.08), 30);
+  },
+
+  allIn: () => {
+    // Dramatic bass hit
+    playBeep(100, 0.3, 0.35);
+    setTimeout(() => playBeep(150, 0.25, 0.25), 50);
+    setTimeout(() => playBeep(800, 0.1, 0.15), 100);
+  },
+
+  countdown: () => {
+    // Tick
+    playBeep(1000, 0.03, 0.15);
+  },
 };
 
 // Enable/disable sounds

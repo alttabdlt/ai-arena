@@ -342,7 +342,7 @@ export class SmartAIService {
     const systemPrompt = `${archetypeBase}\n\n${archetypeGame}${customStrategy}
 
 RESPONSE FORMAT: Respond with a JSON object. No markdown, no explanation outside the JSON.
-Include a "quip" field: a short in-character one-liner (max 15 words) that the AUDIENCE sees. Be entertaining, trash-talk, flex, or taunt — stay in character!
+Include a "quip" field: a short in-character one-liner (max 15 words) that the AUDIENCE sees. Reference the actual hand/cards/situation when possible (e.g. "flush draw on the turn", "pocket aces baby"). Be entertaining, trash-talk, flex, or taunt — stay in character!
 ${gameType === 'POKER' ? '{"action": "fold|check|call|raise|all-in", "amount": <number_if_raise>, "reasoning": "<your_thinking>", "quip": "<audience_one_liner>", "confidence": <0.0-1.0>}' : ''}
 ${gameType === 'RPS' ? '{"action": "rock|paper|scissors", "reasoning": "<your_thinking>", "quip": "<audience_one_liner>", "confidence": <0.0-1.0>}' : ''}
 ${gameType === 'BATTLESHIP' ? '{"action": "fire", "data": {"row": <0-9>, "col": <0-9>}, "reasoning": "<your_thinking>", "quip": "<audience_one_liner>", "confidence": <0.0-1.0>}' : ''}`;
@@ -710,10 +710,8 @@ Respond ONLY with compact JSON (keep reasoning under 50 words):
     if (!parsed) {
       // Fallback based on game type
       switch (gameType) {
-        case 'POKER': return { action: 'check', reasoning: 'Fallback: check', quip: '...', confidence: 0.1 };
-        case 'RPS': return { action: ['rock', 'paper', 'scissors'][Math.floor(Math.random() * 3)], reasoning: 'Fallback: random', quip: 'Let the dice decide!', confidence: 0.1 };
-        case 'BATTLESHIP': return { action: 'fire', data: { row: Math.floor(Math.random() * 10), col: Math.floor(Math.random() * 10) }, reasoning: 'Fallback: random', quip: 'Fire in the hole!', confidence: 0.1 };
-        default: return { action: 'pass', reasoning: 'Unknown game type', quip: '', confidence: 0 };
+        case 'POKER': return { action: 'fold', reasoning: 'Fallback: fold (parse failed)', quip: '...', confidence: 0.1 };
+        default: return { action: 'fold', reasoning: 'Fallback: fold (unknown game type)', quip: '', confidence: 0 };
       }
     }
     
@@ -745,6 +743,96 @@ Respond ONLY with compact JSON (keep reasoning under 50 words):
     
     console.error('Failed to parse JSON from:', content.substring(0, 200));
     return fallback;
+  }
+
+  // ============================================
+  // Context-Aware Quip Generation
+  // ============================================
+
+  async generatePostMatchQuip(params: {
+    agentName: string;
+    archetype: string;
+    opponentName: string;
+    won: boolean;
+    isDraw: boolean;
+    finalHandRank?: string;       // e.g. "Full House"
+    opponentHandRank?: string;    // e.g. "Two Pair"
+    potSize: number;
+    wasBluff?: boolean;
+    winStreak?: number;
+    lossStreak?: number;
+  }): Promise<{ quip: string; cost: AICost }> {
+    const startTime = Date.now();
+    const archetype = params.archetype as AgentArchetype;
+    const archetypeBase = ARCHETYPE_SYSTEM_PROMPTS[archetype]?._base || '';
+
+    const systemPrompt = `You are ${params.agentName}, a ${params.archetype} AI poker agent. ${archetypeBase}
+
+Generate a single post-match quip (max 20 words). Be specific about what happened. Reference the actual hand, opponent, or situation. Stay in character.`;
+
+    const context = params.isDraw
+      ? `You just drew against ${params.opponentName}. Pot was ${params.potSize} $ARENA.`
+      : params.won
+        ? `You just BEAT ${params.opponentName}! Pot: ${params.potSize} $ARENA.${params.finalHandRank ? ` Your hand: ${params.finalHandRank}.` : ''}${params.opponentHandRank ? ` Their hand: ${params.opponentHandRank}.` : ''}${params.wasBluff ? ' They folded to your bluff!' : ''}${params.winStreak && params.winStreak > 2 ? ` You're on a ${params.winStreak}-win streak.` : ''}`
+        : `You just LOST to ${params.opponentName}. Pot: ${params.potSize} $ARENA.${params.finalHandRank ? ` Your hand: ${params.finalHandRank}.` : ''}${params.opponentHandRank ? ` Their winning hand: ${params.opponentHandRank}.` : ''}${params.lossStreak && params.lossStreak > 2 ? ` You're on a ${params.lossStreak}-loss streak.` : ''}`;
+
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: `${context}\n\nRespond with ONLY the quip text. No quotes, no JSON, just the quip.` },
+    ];
+
+    try {
+      const spec = this.getModelSpec('deepseek-v3');
+      const response = await this.callModel(spec, messages, this.getTemperature(archetype), true);
+      const latencyMs = Date.now() - startTime;
+      const cost = this.calculateCost(spec, response.inputTokens, response.outputTokens, latencyMs);
+      const quip = response.content.replace(/^["']|["']$/g, '').trim().slice(0, 120);
+      return { quip, cost };
+    } catch (err: any) {
+      console.warn(`[SmartAI] Quip generation failed: ${err.message}`);
+      return {
+        quip: params.won ? 'GG.' : params.isDraw ? 'Even match.' : 'Next time.',
+        cost: { inputTokens: 0, outputTokens: 0, costCents: 0, model: 'fallback', latencyMs: 0 },
+      };
+    }
+  }
+
+  async generatePreMatchTrashTalk(params: {
+    agentName: string;
+    archetype: string;
+    opponentName: string;
+    opponentArchetype: string;
+    headToHead?: string;         // e.g. "3W-1L"
+    currentStreak?: number;
+  }): Promise<{ quip: string; cost: AICost }> {
+    const startTime = Date.now();
+    const archetype = params.archetype as AgentArchetype;
+    const archetypeBase = ARCHETYPE_SYSTEM_PROMPTS[archetype]?._base || '';
+
+    const systemPrompt = `You are ${params.agentName}, a ${params.archetype} AI poker agent. ${archetypeBase}
+
+Generate ONE short pre-match trash talk line (max 15 words). You're about to fight ${params.opponentName} (${params.opponentArchetype}). Stay in character.`;
+
+    const context = `${params.headToHead ? `Your record vs them: ${params.headToHead}.` : 'First time facing them.'}${params.currentStreak && params.currentStreak > 1 ? ` You're on a ${params.currentStreak}-win streak.` : params.currentStreak && params.currentStreak < -1 ? ` You're on a ${Math.abs(params.currentStreak)}-loss streak.` : ''}`;
+
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: `${context}\n\nRespond with ONLY the trash talk. No quotes, no JSON.` },
+    ];
+
+    try {
+      const spec = this.getModelSpec('deepseek-v3');
+      const response = await this.callModel(spec, messages, this.getTemperature(archetype), true);
+      const latencyMs = Date.now() - startTime;
+      const cost = this.calculateCost(spec, response.inputTokens, response.outputTokens, latencyMs);
+      const quip = response.content.replace(/^["']|["']$/g, '').trim().slice(0, 100);
+      return { quip, cost };
+    } catch {
+      return {
+        quip: "Let's go.",
+        cost: { inputTokens: 0, outputTokens: 0, costCents: 0, model: 'fallback', latencyMs: 0 },
+      };
+    }
   }
 
   // ============================================

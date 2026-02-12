@@ -23,36 +23,39 @@ import { GameEngineAdapter } from './gameEngineAdapter';
 export interface PokerState {
   // Players
   players: PokerPlayer[];
-  
+
   // Deck & cards
   deck: string[];
   communityCards: string[];
   burnt: string[];
-  
+
   // Betting
   pot: number;
   currentBet: number;
   minRaise: number;
-  
+
   // Blinds
   smallBlind: number;
   bigBlind: number;
-  
+
+  // Blind escalation schedule (optional)
+  blindSchedule?: { hand: number; sb: number; bb: number }[];
+
   // Positions
   dealerIndex: number; // Index into players array (button/SB in heads-up)
-  
+
   // Phase tracking
   phase: 'preflop' | 'flop' | 'turn' | 'river' | 'showdown' | 'handComplete';
   currentTurn: string; // Player ID whose turn it is
-  
+
   // Multi-hand
   handNumber: number;
   maxHands: number;
-  
+
   // History
   handHistory: HandResult[];
   actionLog: ActionLogEntry[];
-  
+
   // Flags
   handComplete: boolean;
   gameComplete: boolean;
@@ -298,6 +301,7 @@ export class ArenaPokerEngine implements GameEngineAdapter {
     smallBlind?: number;
     bigBlind?: number;
     maxHands?: number;
+    blindSchedule?: { hand: number; sb: number; bb: number }[];
   }): PokerState {
     const startingChips = options?.startingChips ?? 1000;
     const smallBlind = options?.smallBlind ?? 10;
@@ -317,6 +321,7 @@ export class ArenaPokerEngine implements GameEngineAdapter {
       minRaise: bigBlind,
       smallBlind,
       bigBlind,
+      blindSchedule: options?.blindSchedule,
       dealerIndex: 0, // Player 0 starts as dealer/SB
       phase: 'preflop',
       currentTurn: '',
@@ -339,6 +344,19 @@ export class ArenaPokerEngine implements GameEngineAdapter {
     const s = JSON.parse(JSON.stringify(state)) as PokerState;
     s.handNumber++;
     s.handComplete = false;
+
+    // Apply blind escalation if schedule exists
+    if (s.blindSchedule && s.blindSchedule.length > 0) {
+      // Find the highest matching schedule entry for this hand number
+      let matched: { sb: number; bb: number } | null = null;
+      for (const entry of s.blindSchedule) {
+        if (s.handNumber >= entry.hand) matched = entry;
+      }
+      if (matched) {
+        s.smallBlind = matched.sb;
+        s.bigBlind = matched.bb;
+      }
+    }
 
     // Shuffle new deck
     s.deck = createShuffledDeck();
@@ -474,13 +492,34 @@ export class ArenaPokerEngine implements GameEngineAdapter {
       const winners = evals.filter(e => compareScores(e.score, bestScore) === 0);
 
       if (winners.length === 1) {
-        // Single winner
-        winners[0].player.chips += s.pot;
+        // Side pot calculation for unequal all-ins:
+        // Short-stack can only win min(p1.totalBet, p2.totalBet) * 2
+        const p1 = s.players[0];
+        const p2 = s.players[1];
+        const minTotalBet = Math.min(p1.totalBet, p2.totalBet);
+        const mainPot = minTotalBet * 2;
+        const sidePot = Math.abs(p1.totalBet - p2.totalBet);
+        const winner = winners[0].player;
+        const loser = s.players.find(p => p.id !== winner.id)!;
+
+        // Winner always gets the main pot
+        winner.chips += mainPot;
+
+        // Side pot: if winner bet more (bigger stack), they get it back.
+        // If winner bet less (short stack), the excess refunds to loser.
+        if (winner.totalBet >= loser.totalBet) {
+          // Winner was the bigger stack — they get the whole pot
+          winner.chips += sidePot;
+        } else {
+          // Winner was the short stack — refund excess to loser
+          loser.chips += sidePot;
+        }
+
         s.handHistory.push({
           handNumber: s.handNumber,
-          winnerId: winners[0].player.id,
+          winnerId: winner.id,
           winnerHand: winners[0].name,
-          amount: s.pot,
+          amount: mainPot,
           showdown: true,
           players: evals.map(e => ({
             id: e.player.id,

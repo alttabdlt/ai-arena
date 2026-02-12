@@ -9,8 +9,9 @@
  * Collapses to a minimal bar during PREP/IDLE.
  */
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import type { WheelStatus, WheelOdds, WheelResult, WheelMove } from '../../hooks/useWheelStatus';
+import { playSound } from '../../utils/sounds';
 
 const ARCHETYPE_EMOJI: Record<string, string> = {
   SHARK: '🦈',
@@ -22,8 +23,6 @@ const ARCHETYPE_EMOJI: Record<string, string> = {
 
 const GAME_EMOJI: Record<string, string> = {
   POKER: '🃏',
-  RPS: '✊',
-  BATTLESHIP: '🚢',
 };
 
 const QUICK_BETS = [50, 100, 250, 500];
@@ -57,6 +56,17 @@ export function WheelBanner({ status, odds, walletAddress, onBet, loading, isMob
     return () => clearInterval(t);
   }, [status?.phase, status?.bettingEndsIn]);
 
+  // Play sound on phase transitions
+  const prevPhaseRef = useRef(status?.phase);
+  useEffect(() => {
+    const prev = prevPhaseRef.current;
+    const cur = status?.phase;
+    prevPhaseRef.current = cur;
+    if (cur === 'ANNOUNCING' && prev !== 'ANNOUNCING') {
+      playSound('notify');
+    }
+  }, [status?.phase]);
+
   // Auto-expand on phase change
   useEffect(() => {
     if (status?.phase === 'ANNOUNCING' || status?.phase === 'FIGHTING' || status?.phase === 'AFTERMATH') {
@@ -86,15 +96,56 @@ export function WheelBanner({ status, odds, walletAddress, onBet, loading, isMob
   };
 
   if (!status || status.phase === 'IDLE' || status.phase === 'PREP') {
-    // Minimal next-spin indicator
+    // Enhanced next-spin indicator with stats ticker
     if (!status?.nextSpinAt) return null;
     const nextMs = new Date(status.nextSpinAt).getTime() - Date.now();
     if (nextMs <= 0 || nextMs > 20 * 60 * 1000) return null;
+    const nextSec = Math.ceil(nextMs / 1000);
     const nextMin = Math.ceil(nextMs / 60000);
+    const isLastMinute = nextSec <= 60;
+    const stats = status?.sessionStats;
+    const records = stats?.agentRecords ? Object.values(stats.agentRecords) : [];
+    const hasStats = records.length > 0;
+
     return (
-      <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-900/70 border border-slate-700/30 rounded-lg text-xs text-slate-400">
-        <span className="animate-pulse">🎡</span>
-        <span>Next fight in ~{nextMin}m</span>
+      <div className={`bg-slate-900/80 border rounded-xl overflow-hidden ${isLastMinute ? 'border-purple-600/40 shadow-lg shadow-purple-900/20' : 'border-slate-700/30'}`}>
+        {/* Countdown row */}
+        <div className="flex items-center justify-between px-3 py-1.5">
+          <div className="flex items-center gap-2">
+            <span className={`${isLastMinute ? 'animate-pulse' : ''}`}>🎡</span>
+            <span className={`text-xs font-bold ${isLastMinute ? 'text-purple-200' : 'text-slate-400'}`}>
+              {isLastMinute ? `Next fight in ${nextSec}s` : `Next fight in ~${nextMin}m`}
+            </span>
+          </div>
+          {stats?.totalMatches ? (
+            <span className="text-[10px] text-slate-500">
+              {stats.totalMatches} match{stats.totalMatches !== 1 ? 'es' : ''} this session
+            </span>
+          ) : null}
+        </div>
+
+        {/* Stats ticker */}
+        {hasStats && (
+          <div className="px-3 py-1 border-t border-slate-800/40 flex items-center gap-3 text-[10px] text-slate-500 overflow-x-auto">
+            {records.sort((a, b) => b.wins - a.wins).slice(0, 5).map((r, i) => (
+              <span key={i} className="shrink-0">
+                <span className="text-slate-300">{r.name}</span>{' '}
+                <span className="text-emerald-500">{r.wins}W</span>-<span className="text-red-500">{r.losses}L</span>
+                {r.streak > 1 && <span className="text-amber-400"> 🔥{r.streak}</span>}
+                {r.streak < -1 && <span className="text-red-400"> 💀{Math.abs(r.streak)}</span>}
+              </span>
+            ))}
+            {stats.biggestPot > 0 && (
+              <span className="shrink-0 text-amber-400/60">Max pot: {stats.biggestPot}</span>
+            )}
+            {stats.biggestUpset && (
+              <span className="shrink-0 text-purple-400/60">Upset: {stats.biggestUpset}</span>
+            )}
+            {stats.crowdAccuracy !== null && (
+              <span className="shrink-0 text-white/30">Crowd: {stats.crowdAccuracy}% right</span>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -224,26 +275,70 @@ export function WheelBanner({ status, odds, walletAddress, onBet, loading, isMob
   if (status.phase === 'FIGHTING' && match) {
     // Use LIVE currentMoves, not lastResult.moves
     const liveMoves = status.currentMoves || [];
-    const recentMoves = liveMoves.slice(-6);
+    const recentMoves = liveMoves.slice(-4);
+    const latestSnapshot = liveMoves.length > 0 ? liveMoves[liveMoves.length - 1].gameSnapshot : null;
+    const communityCards = latestSnapshot?.communityCards || [];
+    const pot = latestSnapshot?.pot ?? match.wager * 2;
+    const phase = latestSnapshot?.phase || 'preflop';
+    const handNum = latestSnapshot?.handNumber || 1;
+    const maxHands = latestSnapshot?.maxHands || 5;
+    const blinds = latestSnapshot ? `${latestSnapshot.smallBlind}/${latestSnapshot.bigBlind}` : '10/20';
+    const a1Chips = latestSnapshot?.chips?.[match.agent1.id] ?? '—';
+    const a2Chips = latestSnapshot?.chips?.[match.agent2.id] ?? '—';
+
+    const SUIT_DISPLAY: Record<string, string> = { '♠': '♠', '♥': '♥', '♦': '♦', '♣': '♣' };
+    const SUIT_CLR: Record<string, string> = { '♠': '#cbd5e1', '♥': '#f87171', '♦': '#f87171', '♣': '#cbd5e1' };
+    const renderMiniCard = (card: string) => {
+      const rank = card[0] === 'T' ? '10' : card[0];
+      const suit = card.slice(1);
+      return (
+        <span key={card} className="inline-flex items-center bg-slate-100 text-[10px] font-bold rounded px-0.5 mx-px" style={{ color: SUIT_CLR[suit] || '#666' }}>
+          {rank}{SUIT_DISPLAY[suit] || suit}
+        </span>
+      );
+    };
+
     return (
       <div className={`bg-gradient-to-r from-red-950/90 via-slate-900/95 to-red-950/90 border border-red-600/40 rounded-xl shadow-2xl shadow-red-900/30 overflow-hidden max-w-xl mx-auto ${isMobile ? 'mx-2' : ''}`}>
-        {/* Compact header */}
+        {/* Compact header with game state */}
         <div className="flex items-center justify-between px-3 py-1.5 border-b border-red-800/30">
           <div className="flex items-center gap-2">
             <span className="animate-pulse">⚔️</span>
-            <span className="text-xs font-bold text-red-200">FIGHTING</span>
-            <span className="text-[10px] text-red-400/60">{GAME_EMOJI[match.gameType]} {match.gameType}</span>
+            <span className="text-xs font-bold text-red-200">Hand {handNum}/{maxHands}</span>
+            <span className="text-[10px] text-red-400/40">{blinds}</span>
+            <span className="text-[10px] text-amber-300/60 uppercase">{phase}</span>
           </div>
-          <div className="text-[10px] text-red-400/60">
-            {match.agent1.name} vs {match.agent2.name} · pot {match.wager * 2}
+          <div className="text-[10px] text-amber-300 font-mono font-bold">
+            POT {pot}
+          </div>
+        </div>
+
+        {/* Community cards + agent chips row */}
+        <div className="px-3 py-1.5 flex items-center justify-between border-b border-red-800/15">
+          <div className="flex items-center gap-1 text-[10px] text-white/40">
+            <span className="text-emerald-400 font-mono">{a1Chips}</span>
+            <span className="text-white/15">·</span>
+            <span className="text-white/25">{match.agent1.name}</span>
+          </div>
+          <div className="flex items-center gap-0.5">
+            {communityCards.length > 0 ? (
+              communityCards.map(c => renderMiniCard(c))
+            ) : (
+              <span className="text-[10px] text-green-400/20 italic">—</span>
+            )}
+          </div>
+          <div className="flex items-center gap-1 text-[10px] text-white/40">
+            <span className="text-white/25">{match.agent2.name}</span>
+            <span className="text-white/15">·</span>
+            <span className="text-red-400 font-mono">{a2Chips}</span>
           </div>
         </div>
 
         {/* Live move feed */}
         {recentMoves.length > 0 ? (
-          <div className="px-3 py-2 space-y-1.5 max-h-[160px] overflow-y-auto">
+          <div className="px-3 py-1.5 space-y-1 max-h-[120px] overflow-y-auto">
             {recentMoves.map((move, i) => (
-              <div key={`${move.turn}-${move.agentId}-${i}`} className={`text-[11px] rounded-md px-2 py-1.5 ${
+              <div key={`${move.turn}-${move.agentId}-${i}`} className={`text-[11px] rounded-md px-2 py-1 ${
                 i === recentMoves.length - 1 ? 'bg-white/5 border border-white/5' : ''
               }`}>
                 <div className="flex items-center gap-2">
@@ -254,17 +349,13 @@ export function WheelBanner({ status, odds, walletAddress, onBet, loading, isMob
                     {move.agentName}
                   </span>
                   <span className="text-amber-300 font-mono">{move.action}{move.amount ? ` $${move.amount}` : ''}</span>
+                  {move.quip && <span className="text-white/20 italic text-[10px] truncate">"{move.quip}"</span>}
                 </div>
-                {move.reasoning && (
-                  <div className="mt-0.5 text-[10px] text-slate-400 italic leading-snug pl-6">
-                    💭 {move.reasoning.length > 120 ? move.reasoning.slice(0, 120) + '…' : move.reasoning}
-                  </div>
-                )}
               </div>
             ))}
           </div>
         ) : (
-          <div className="px-3 py-3 text-center text-[11px] text-slate-500 animate-pulse">
+          <div className="px-3 py-2 text-center text-[11px] text-slate-500 animate-pulse">
             Waiting for first move...
           </div>
         )}

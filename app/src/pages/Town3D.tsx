@@ -7,11 +7,11 @@ import { Loader2, Volume2, VolumeX } from 'lucide-react';
 import { PrivyWalletConnect } from '../components/PrivyWalletConnect';
 import { SpawnAgent } from '../components/SpawnAgent';
 import { playSound, isSoundEnabled, setSoundEnabled } from '../utils/sounds';
-// [removed: ResizablePanel, useDegenState, DegenDashboard, PositionTracker, SwapTicker]
+
 import { useWheelStatus } from '../hooks/useWheelStatus';
 import { WheelBanner } from '../components/wheel/WheelBanner';
 import { WheelArena } from '../components/wheel/WheelArena';
-// [removed: confetti]
+
 import { BuildingMesh, preloadBuildingModels } from '../components/buildings';
 import { AgentDroid } from '../components/agents/AgentDroid';
 import { OnboardingOverlay, isOnboarded, getMyAgentId, getMyWallet } from '../components/onboarding';
@@ -126,7 +126,6 @@ interface TownEvent {
   createdAt: string;
 }
 
-// [removed: AgentGoalView interface]
 
 type ActivityItem =
   | { kind: 'swap'; data: EconomySwapRow }
@@ -2724,7 +2723,6 @@ export default function Town3D() {
   const [swaps, setSwaps] = useState<EconomySwapRow[]>([]);
   const [events, setEvents] = useState<TownEvent[]>([]);
   const [worldEvents, setWorldEvents] = useState<{ emoji: string; name: string; description: string; type: string }[]>([]);
-  // [removed: agentGoalsById state]
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [swapNotifications, setSwapNotifications] = useState<SwapNotification[]>([]);
@@ -2740,6 +2738,7 @@ export default function Town3D() {
 
   const [selectedPlotId, setSelectedPlotId] = useState<string | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [feedMode, setFeedMode] = useState<'global' | 'agent'>('global');
   const introRef = useRef({ active: true, t: 0 });
   const simsRef = useRef<Map<string, AgentSim>>(new Map());
 
@@ -2780,7 +2779,6 @@ export default function Town3D() {
   type RelEntry = { agentAId: string; agentBId: string; status: string; score: number };
   const relationshipsRef = useRef<RelEntry[]>([]);
 
-  // [removed: fetchGoals polling]
 
   // Trade speech bubbles (kept for 3D display)
   const [tradeByAgentId, setTradeByAgentId] = useState<Record<string, { text: string; until: number; isBuy: boolean }>>({});
@@ -2792,7 +2790,6 @@ export default function Town3D() {
   }, [town?.id]);
 
 
-  // [removed: AgentAction interface, agentActions state]
 
   
   
@@ -2817,7 +2814,7 @@ export default function Town3D() {
       return addr;
     } catch { return null; }
   }, [walletAddress]);
-  const wheel = useWheelStatus();
+  const wheel = useWheelStatus(walletAddress);
   const [wheelArenaOpen, setWheelArenaOpen] = useState(false);
 
   // Compute which agents are currently fighting (hide them from the map)
@@ -2844,7 +2841,6 @@ export default function Town3D() {
     }
   }, [wheel.status?.phase]);
 
-  // [removed: confetti/PnL effect]
   
   // Visual effects (system-controlled)
   const [weather, setWeather] = useState<'clear' | 'rain' | 'storm'>('clear');
@@ -2943,9 +2939,7 @@ export default function Town3D() {
     agentByIdRef.current = agentById;
   }, [agentById]);
 
-  // [removed: requestChat callback]
 
-  // [removed: fetch agent action logs]
 
 
 
@@ -3242,11 +3236,8 @@ export default function Town3D() {
       });
     return thoughts;
   }, [agents, myAgentId]);
-  // [removed: selectedAgentSwaps]
 
-  // [removed: selectedAgentObjective useMemo]
 
-  // [removed: tradeTickerItems useMemo]
 
   // Merge swaps and events into unified activity feed
   const activityFeed = useMemo(() => {
@@ -3284,9 +3275,7 @@ export default function Town3D() {
     return combined;
   }, [swaps, events]);
 
-  // [removed: feedTab state]
 
-  // [removed: auto-show mobile agent panel]
 
   if (loading) {
     return (
@@ -3743,15 +3732,24 @@ export default function Town3D() {
 		              {(activityFeed.length > 0 || recentSwaps.length > 0) && (
 		                <div>
 		                  <div className="flex items-center justify-between mb-2">
-                        <div className="text-[11px] font-semibold text-slate-100">Activity</div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => setFeedMode('global')}
+                            className={`text-[11px] font-semibold px-1.5 py-0.5 rounded transition-colors ${feedMode === 'global' ? 'text-amber-300 bg-amber-900/20' : 'text-slate-400 hover:text-slate-200'}`}
+                          >All Drama</button>
+                          <button
+                            onClick={() => setFeedMode('agent')}
+                            className={`text-[11px] font-semibold px-1.5 py-0.5 rounded transition-colors ${feedMode === 'agent' ? 'text-amber-300 bg-amber-900/20' : 'text-slate-400 hover:text-slate-200'}`}
+                          >My Agent</button>
+                        </div>
                         <div className="text-[10px] text-slate-500">
                           {recentSwaps.length > 0 ? `swaps ${recentSwaps.length}` : ''}
                         </div>
 		                  </div>
 		                  <div className="max-h-[170px] overflow-auto pr-1 space-y-1 scrollbar-thin scrollbar-thumb-slate-700/60">
 		                    {activityFeed.filter((item) => {
-		                      // Filter to current agent only
-		                      if (selectedAgentId) {
+		                      // In agent mode, filter to current agent only
+		                      if (feedMode === 'agent' && selectedAgentId) {
 		                        if (item.kind === 'swap') {
 		                          if (item.data.agentId !== selectedAgentId) return false;
 		                        } else {
@@ -3768,6 +3766,13 @@ export default function Town3D() {
 		                      if (item.kind === 'swap') return true;
 		                      const e = item.data;
 		                      if (e.eventType === 'ARENA_MATCH' || e.eventType === 'TRADE') return true;
+		                      // In global mode, show more event types
+		                      if (feedMode === 'global') {
+		                        const GLOBAL_HIDDEN = ['PLOT_CLAIMED','BUILD_STARTED','BUILD_COMPLETED','TOWN_COMPLETED','YIELD_DISTRIBUTED','TOWN_OBJECTIVE','TOWN_OBJECTIVE_RESOLVED','X402_SKILL'];
+		                        if (GLOBAL_HIDDEN.includes(e.eventType)) return false;
+		                        // Show agent chats and relationship changes in global mode
+		                        return true;
+		                      }
 		                      const HIDDEN = ['PLOT_CLAIMED','BUILD_STARTED','BUILD_COMPLETED','TOWN_COMPLETED','YIELD_DISTRIBUTED','AGENT_CHAT','RELATIONSHIP_CHANGE','TOWN_OBJECTIVE','TOWN_OBJECTIVE_RESOLVED','X402_SKILL'];
 		                      if (HIDDEN.includes(e.eventType)) return false;
 		                      try {

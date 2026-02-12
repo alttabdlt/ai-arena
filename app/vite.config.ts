@@ -9,6 +9,7 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
     port: 8080,
+    allowedHosts: true,
     proxy: {
       '/graphql': {
         target: 'http://localhost:4000',

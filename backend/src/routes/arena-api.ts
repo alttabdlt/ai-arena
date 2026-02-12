@@ -8,6 +8,8 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { arenaService } from '../services/arenaService';
 import { ArenaAgent, ArenaGameType } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
+const prismaForMe = new PrismaClient();
 
 const router = Router();
 
@@ -102,6 +104,28 @@ router.get('/agents', async (_req: Request, res: Response): Promise<void> => {
       lastTargetPlot: a.lastTargetPlot ?? null,
       lastTickAt: a.lastTickAt || null,
     })));
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Must be BEFORE /agents/:id to avoid Express matching "me" as an :id param
+router.get('/agents/me', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const wallet = req.query.wallet as string;
+    if (!wallet) { res.status(400).json({ error: 'wallet query param required' }); return; }
+    
+    // Case-insensitive wallet lookup (EIP-55 checksummed vs lowercased)
+    const allWithWallet = await prismaForMe.arenaAgent.findMany({
+      where: { NOT: { walletAddress: null } },
+    });
+    const agent = allWithWallet.find(a => a.walletAddress?.toLowerCase() === wallet.toLowerCase()) || null;
+    if (!agent) { res.status(404).json({ error: 'No agent found for this wallet' }); return; }
+    
+    // Strip apiKey from response
+    const { apiKey, ...publicAgent } = agent as any;
+    void apiKey;
+    res.json({ agent: publicAgent });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

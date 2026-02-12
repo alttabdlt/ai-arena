@@ -1074,11 +1074,8 @@ router.post('/agents/spawn', async (req: Request, res: Response) => {
     }
     
     // Check if wallet already has an agent (case-insensitive for EIP-55 checksums)
-    const existingArr = await prisma.$queryRaw<any[]>`
-      SELECT id, name, archetype, bankroll, health, eloRating, wins, losses FROM ArenaAgent
-      WHERE LOWER(walletAddress) = LOWER(${walletAddress}) LIMIT 1
-    `;
-    const existing = existingArr[0] || null;
+    const allAgents = await prisma.arenaAgent.findMany({ where: { walletAddress: { not: '' } }, select: { id: true, name: true, archetype: true, bankroll: true, health: true, eloRating: true, wins: true, losses: true, walletAddress: true } });
+    const existing = allAgents.find(a => a.walletAddress?.toLowerCase() === walletAddress.toLowerCase()) || null;
     if (existing) {
       return res.status(409).json({ error: 'Wallet already has an agent', agent: existing });
     }
@@ -1120,29 +1117,7 @@ router.post('/agents/spawn', async (req: Request, res: Response) => {
   }
 });
 
-router.get('/agents/me', async (req: Request, res: Response) => {
-  try {
-    const wallet = req.query.wallet as string;
-    if (!wallet) return res.status(400).json({ error: 'wallet query param required' });
-    
-    // Case-insensitive wallet lookup (EIP-55 checksummed vs lowercased)
-    const agents = await prisma.$queryRaw<any[]>`
-      SELECT * FROM ArenaAgent WHERE LOWER(walletAddress) = LOWER(${wallet}) LIMIT 1
-    `;
-    const agent = agents[0] || null;
-    if (!agent) return res.status(404).json({ error: 'No agent found for this wallet' });
-    
-    // Fetch plots separately
-    const plots = await prisma.plot.findMany({
-      where: { ownerId: agent.id },
-      select: { id: true, plotIndex: true, zone: true, status: true, buildingType: true, qualityScore: true, totalInvested: true },
-    });
-    
-    res.json({ agent: { ...agent, ownedPlots: plots } });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
-});
+// NOTE: /agents/me is in arena-api.ts (must be before /agents/:id to avoid Express param matching)
 
 // ============================================
 // World Events API

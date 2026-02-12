@@ -2744,7 +2744,8 @@ export default function Town3D() {
   const simsRef = useRef<Map<string, AgentSim>>(new Map());
 
   // Auto-select user's agent (from onboarding) or fall back to first
-  const myAgentId = useMemo(() => getMyAgentId(), []);
+  // Re-read from localStorage when onboarding dismisses (showOnboarding changes)
+  const myAgentId = useMemo(() => getMyAgentId(), [showOnboarding]);
   useEffect(() => {
     if (!selectedAgentId && agents.length > 0) {
       // Try to find user's spawned agent
@@ -2752,13 +2753,23 @@ export default function Town3D() {
       if (myAgent) {
         setSelectedAgentId(myAgent.id);
       } else {
-        // Try wallet lookup
-        const myWallet = getMyWallet();
-        const walletAgent = myWallet ? agents.find((a: any) => a.walletAddress === myWallet) : null;
+        // Try wallet lookup (case-insensitive)
+        const myWallet = getMyWallet()?.toLowerCase();
+        const walletAgent = myWallet ? agents.find((a: any) => a.walletAddress?.toLowerCase() === myWallet) : null;
         setSelectedAgentId(walletAgent?.id || agents[0].id);
       }
     }
   }, [agents, selectedAgentId, myAgentId]);
+
+  // When onboarding completes, force-select the user's agent
+  useEffect(() => {
+    if (!showOnboarding && agents.length > 0) {
+      const id = getMyAgentId();
+      if (id && agents.find(a => a.id === id)) {
+        setSelectedAgentId(id);
+      }
+    }
+  }, [showOnboarding, agents]);
 
   // Keep active town id in a ref for interval callbacks
   useEffect(() => {

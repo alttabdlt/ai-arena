@@ -25,8 +25,28 @@ function normalizeMode(raw: unknown): AgentCommandMode {
 router.get('/crew-wars/status', async (req: Request, res: Response): Promise<void> => {
   try {
     const battles = Number.parseInt(String(req.query.battles || '8'), 10);
-    const snapshot = await crewWarsService.getDashboard(battles);
+    const snapshot = await crewWarsService.getDashboard(battles, agentLoopService.getCurrentTick());
     res.json(snapshot);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get('/crew-wars/war/status', async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const tick = agentLoopService.getCurrentTick();
+    const snapshot = await crewWarsService.getDashboard(6, tick);
+    res.json({
+      campaign: snapshot.campaign,
+      leaders: snapshot.crews.slice(0, 3).map((crew) => ({
+        id: crew.id,
+        name: crew.name,
+        territory: crew.territoryControl,
+        treasury: crew.treasuryArena,
+        momentum: crew.momentum,
+      })),
+      recentBattles: snapshot.recentBattles,
+    });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -123,6 +143,9 @@ router.post('/crew-wars/orders', async (req: Request, res: Response): Promise<vo
       tickResult = await agentLoopService.processAgent(agentId);
       commandStatus = await agentCommandService.getCommand(command.id);
     }
+    const currentTickAfter = agentLoopService.getCurrentTick();
+    const warStatus = await crewWarsService.getDashboard(3, currentTickAfter).catch(() => null);
+    const counterplayClosesTick = order.expiresAtTick ?? currentTickAfter + 2;
 
     res.status(201).json({
       ok: true,
@@ -138,6 +161,17 @@ router.post('/crew-wars/orders', async (req: Request, res: Response): Promise<vo
             narrative: tickResult.narrative,
           }
         : null,
+      campaignImpact: {
+        objective: warStatus?.campaign?.objective || null,
+        leadingCrew: warStatus?.campaign?.leadingCrewName || null,
+        issuedStrategy: order.strategy,
+        intensity: order.intensity,
+      },
+      counterplayWindow: {
+        opensAtTick: currentTickAfter,
+        closesAtTick: counterplayClosesTick,
+      },
+      cooldownUntilTick: currentTickAfter + Math.max(1, order.intensity),
     });
   } catch (error: any) {
     const message = error instanceof Error ? error.message : String(error);
@@ -148,7 +182,7 @@ router.post('/crew-wars/orders', async (req: Request, res: Response): Promise<vo
 router.post('/crew-wars/sync', async (_req: Request, res: Response): Promise<void> => {
   try {
     const assigned = await crewWarsService.ensureMembershipsForActiveAgents(500);
-    const snapshot = await crewWarsService.getDashboard(6);
+    const snapshot = await crewWarsService.getDashboard(6, agentLoopService.getCurrentTick());
     res.json({
       ok: true,
       assigned,
@@ -166,4 +200,3 @@ router.post('/crew-wars/sync', async (_req: Request, res: Response): Promise<voi
 });
 
 export default router;
-

@@ -3,7 +3,12 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { agentLoopService, type AgentLoopMode, type ManualActionKind } from '../services/agentLoopService';
+import {
+  agentLoopService,
+  type AgentAiProfileId,
+  type AgentLoopMode,
+  type ManualActionKind,
+} from '../services/agentLoopService';
 import { agentCommandService } from '../services/agentCommandService';
 import { smartAiService } from '../services/smartAiService';
 import { prisma } from '../config/database';
@@ -49,6 +54,56 @@ function deriveLoopState(lastActionType: string | null | undefined) {
     phaseIndex: nextIndex,
     phaseName: LOOP_SEQUENCE[nextIndex],
     loopsCompleted: 0,
+  };
+}
+
+type CollapseTier = 'STABLE' | 'STRAINED' | 'COLLAPSED';
+type RecoveryTier = 'NONE' | 'CAUTION' | 'CRITICAL';
+
+function deriveCollapseTier(input: { bankroll: number; reserveBalance: number; health: number }): CollapseTier {
+  const { bankroll, reserveBalance, health } = input;
+  if (health <= 30 || (bankroll <= 20 && reserveBalance <= 10)) {
+    return 'COLLAPSED';
+  }
+  if (health <= 55 || bankroll <= 55 || reserveBalance <= 18) {
+    return 'STRAINED';
+  }
+  return 'STABLE';
+}
+
+function buildRecoveryPlan(
+  collapseTier: CollapseTier,
+  planMap: Record<LoopAction, Awaited<ReturnType<typeof agentLoopService.planDeterministicAction>>>,
+): {
+  tier: RecoveryTier;
+  message: string;
+  chain: LoopAction[];
+  nextBest: LoopAction | null;
+} {
+  const executable = (action: LoopAction) => Boolean(planMap[action]?.ok);
+  const chain = (['trade', 'work', 'build', 'fight'] as LoopAction[]).filter(executable);
+  const nextBest = chain[0] || null;
+  if (collapseTier === 'COLLAPSED') {
+    return {
+      tier: 'CRITICAL',
+      message: 'Economy collapsed. Rotate liquidity immediately, then resume build throughput.',
+      chain,
+      nextBest,
+    };
+  }
+  if (collapseTier === 'STRAINED') {
+    return {
+      tier: 'CAUTION',
+      message: 'Liquidity strained. Stabilize reserve/bankroll before forcing risky fights.',
+      chain,
+      nextBest,
+    };
+  }
+  return {
+    tier: 'NONE',
+    message: 'Economy stable. Continue normal BUILD -> WORK -> FIGHT -> TRADE loop.',
+    chain,
+    nextBest,
   };
 }
 
@@ -136,6 +191,24 @@ function normalizeLoopMode(raw: unknown): AgentLoopMode {
     return value as AgentLoopMode;
   }
   throw new Error('mode must be DEFAULT or DEGEN_LOOP');
+}
+
+function normalizeProfileId(raw: unknown): AgentAiProfileId | undefined {
+  const value = String(raw || '').trim().toUpperCase();
+  if (!value) return undefined;
+  if (value === 'BUDGET' || value === 'BALANCED' || value === 'MAX_AGENCY') {
+    return value as AgentAiProfileId;
+  }
+  throw new Error('profileId must be one of: BUDGET, BALANCED, MAX_AGENCY');
+}
+
+function normalizeOptionalFloat(raw: unknown, label: 'riskTolerance' | 'maxWagerPercent'): number | undefined {
+  if (raw == null || raw === '') return undefined;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`${label} must be numeric`);
+  }
+  return parsed;
 }
 
 function normalizeManualAction(raw: unknown): ManualActionKind {
@@ -268,6 +341,75 @@ router.get('/agent-loop/llm-mode', (_req: Request, res: Response): void => {
   });
 });
 
+// Return available AI gameplay profiles and currently reachable models.
+router.get('/agent-loop/ai-profiles', (_req: Request, res: Response): void => {
+  const enabled = smartAiService.isOpenRouterEnabled();
+  const configured = smartAiService.isOpenRouterConfigured();
+  const ready = smartAiService.isOpenRouterReady();
+  const live = Boolean(enabled && configured && ready);
+  res.json({
+    profiles: agentLoopService.getAiProfilePresets(),
+    models: smartAiService.getAvailableModels(),
+    llmMode: live ? 'LIVE' : 'SIMULATION',
+  });
+});
+
+router.get('/agent-loop/ai-profile/:agentId', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const session = requireAuthenticatedSession(req, res);
+    if (!session) return;
+    const ownership = await ensureWalletOwnsAgent(req.params.agentId, session.wallet);
+    if (!ownership.ok) {
+      res.status(ownership.status).json({
+        ok: false,
+        code: ownership.code,
+        error: ownership.error,
+      });
+      return;
+    }
+    const profile = await agentLoopService.getAgentAiProfile(req.params.agentId);
+    res.json({
+      ok: true,
+      ...profile,
+    });
+  } catch (error: any) {
+    res.status(400).json({ ok: false, error: error.message });
+  }
+});
+
+router.post('/agent-loop/ai-profile/:agentId', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const session = requireAuthenticatedSession(req, res);
+    if (!session) return;
+    const ownership = await ensureWalletOwnsAgent(req.params.agentId, session.wallet);
+    if (!ownership.ok) {
+      res.status(ownership.status).json({
+        ok: false,
+        code: ownership.code,
+        error: ownership.error,
+      });
+      return;
+    }
+    const profileId = normalizeProfileId((req.body as any)?.profileId);
+    const modelId = String((req.body as any)?.modelId || '').trim() || undefined;
+    const riskTolerance = normalizeOptionalFloat((req.body as any)?.riskTolerance, 'riskTolerance');
+    const maxWagerPercent = normalizeOptionalFloat((req.body as any)?.maxWagerPercent, 'maxWagerPercent');
+
+    const updated = await agentLoopService.applyAgentAiProfile(req.params.agentId, {
+      profileId,
+      modelId,
+      riskTolerance,
+      maxWagerPercent,
+    });
+    res.json({
+      ok: true,
+      ...updated,
+    });
+  } catch (error: any) {
+    res.status(400).json({ ok: false, error: error.message });
+  }
+});
+
 // Inspect rescue debt/window telemetry for balancing and debugging.
 router.get('/agent-loop/rescue-stats', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -346,7 +488,7 @@ router.get('/agent-loop/plans/:agentId', async (req: Request, res: Response): Pr
     const [agent] = await Promise.all([
       prisma.arenaAgent.findUnique({
         where: { id: req.params.agentId },
-        select: { lastActionType: true },
+        select: { lastActionType: true, bankroll: true, reserveBalance: true, health: true },
       }),
     ]);
 
@@ -354,6 +496,12 @@ router.get('/agent-loop/plans/:agentId', async (req: Request, res: Response): Pr
     const expectedAction = PHASE_TO_ACTION[loopState.phaseName];
     const planMap = Object.fromEntries(plans) as Record<LoopAction, Awaited<ReturnType<typeof agentLoopService.planDeterministicAction>>>;
     const expectedPlan = planMap[expectedAction];
+    const collapseTier = deriveCollapseTier({
+      bankroll: agent?.bankroll ?? 0,
+      reserveBalance: agent?.reserveBalance ?? 0,
+      health: agent?.health ?? 100,
+    });
+    const recovery = buildRecoveryPlan(collapseTier, planMap);
 
     let recommendedAction: LoopAction | null = expectedAction;
     if (!expectedPlan?.ok) {
@@ -367,6 +515,8 @@ router.get('/agent-loop/plans/:agentId', async (req: Request, res: Response): Pr
         }
       }
     }
+    const recoveryFallback = !recommendedAction && recovery.nextBest ? recovery.nextBest : null;
+    const resolvedFallback = recommendedAction || recoveryFallback;
 
     const blocker = expectedPlan?.ok
       ? null
@@ -375,19 +525,30 @@ router.get('/agent-loop/plans/:agentId', async (req: Request, res: Response): Pr
           message: expectedPlan?.reason || `${describeAction(expectedAction)} is blocked`,
           phase: loopState.phaseName,
           action: expectedAction,
-          fallbackAction: recommendedAction,
+          fallbackAction: resolvedFallback,
         };
 
-    const missionReason = blocker
+    let missionAction: LoopAction = resolvedFallback || expectedAction;
+    const missionReasonBase = blocker
       ? `${describeAction(expectedAction)} is blocked: ${blocker.message}`
       : `${describeAction(expectedAction)} is next in the loop order.`;
-    const missionAction = recommendedAction || expectedAction;
+    const missionReason =
+      recovery.tier === 'NONE'
+        ? missionReasonBase
+        : `${missionReasonBase} ${recovery.message}`;
+    if (!resolvedFallback && recovery.chain.length > 0) {
+      missionAction = recovery.chain[0];
+    }
 
     res.json({
       agentId: req.params.agentId,
       mode: agentLoopService.getLoopMode(req.params.agentId),
       authRequiredForActions: true,
-      loopState,
+      loopState: {
+        ...loopState,
+        collapseTier,
+        recoveryTier: recovery.tier,
+      },
       mission: {
         phase: loopState.phaseName,
         recommendedAction: missionAction,
@@ -395,6 +556,7 @@ router.get('/agent-loop/plans/:agentId', async (req: Request, res: Response): Pr
         successOutcome: describeSuccessOutcome(missionAction),
       },
       blocker,
+      recovery,
       plans: planMap,
     });
   } catch (error: any) {

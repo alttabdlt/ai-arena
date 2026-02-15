@@ -336,7 +336,7 @@ export class CrewWarsService {
     });
   }
 
-  async getDashboard(limitBattles = 8): Promise<{
+  async getDashboard(limitBattles = 8, currentTick = 0): Promise<{
     crews: Array<{
       id: string;
       slug: string;
@@ -363,6 +363,17 @@ export class CrewWarsService {
       createdAt: Date;
     }>;
     epochTicks: number;
+    campaign: {
+      currentTick: number;
+      nextEpochTick: number;
+      ticksUntilEpoch: number;
+      leadingCrewId: string | null;
+      leadingCrewName: string | null;
+      trailingCrewId: string | null;
+      trailingCrewName: string | null;
+      objective: string;
+      counterplayWindowTicks: number;
+    };
   }> {
     await this.bootstrapCrews();
     await this.ensureMembershipsForActiveAgents();
@@ -407,8 +418,7 @@ export class CrewWarsService {
       };
     }
 
-    return {
-      crews: crews.map((crew) => ({
+    const mappedCrews = crews.map((crew) => ({
         id: crew.id,
         slug: crew.slug,
         name: crew.name,
@@ -425,7 +435,18 @@ export class CrewWarsService {
             name: m.agent.name,
             archetype: m.agent.archetype,
           })),
-      })),
+      }));
+    const leadingCrew = mappedCrews[0] || null;
+    const trailingCrew = mappedCrews[mappedCrews.length - 1] || null;
+    const normalizedTick = Math.max(0, Math.trunc(currentTick || 0));
+    const nextEpochTick = Math.floor(normalizedTick / CREW_EPOCH_TICKS) * CREW_EPOCH_TICKS + CREW_EPOCH_TICKS;
+    const ticksUntilEpoch = Math.max(0, nextEpochTick - normalizedTick);
+    const objective = leadingCrew && trailingCrew && leadingCrew.id !== trailingCrew.id
+      ? `${leadingCrew.name} must hold momentum for ${ticksUntilEpoch} tick(s) to lock this epoch.`
+      : 'Crews are initializing. Keep issuing orders to establish control.';
+
+    return {
+      crews: mappedCrews,
       agentCrewById,
       recentBattles: battles.map((battle) => ({
         id: battle.id,
@@ -440,6 +461,17 @@ export class CrewWarsService {
         createdAt: battle.createdAt,
       })),
       epochTicks: CREW_EPOCH_TICKS,
+      campaign: {
+        currentTick: normalizedTick,
+        nextEpochTick,
+        ticksUntilEpoch,
+        leadingCrewId: leadingCrew?.id || null,
+        leadingCrewName: leadingCrew?.name || null,
+        trailingCrewId: trailingCrew?.id || null,
+        trailingCrewName: trailingCrew?.name || null,
+        objective,
+        counterplayWindowTicks: Math.max(1, Math.min(4, ticksUntilEpoch)),
+      },
     };
   }
 
@@ -683,4 +715,3 @@ export class CrewWarsService {
 }
 
 export const crewWarsService = new CrewWarsService();
-

@@ -14,6 +14,7 @@ import { socialGraphService } from '../services/socialGraphService';
 import { agentGoalService } from '../services/agentGoalService';
 import { agentGoalTrackService } from '../services/agentGoalTrackService';
 import { agentLoopService } from '../services/agentLoopService';
+import { smartAiService } from '../services/smartAiService';
 import { prisma } from '../config/database';
 import { isOpenRouterActiveConfig } from '../config/llm';
 
@@ -1129,7 +1130,15 @@ ${result.sprites.map(s => `
 
 router.post('/agents/spawn', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, personality, walletAddress, modelId: reqModelId } = req.body;
+    const {
+      name,
+      personality,
+      walletAddress,
+      modelId: reqModelId,
+      riskTolerance: reqRiskTolerance,
+      maxWagerPercent: reqMaxWagerPercent,
+      aiProfileId,
+    } = req.body;
     
     if (!name || typeof name !== 'string' || name.trim().length < 2 || name.trim().length > 20) {
       res.status(400).json({ error: 'Name must be 2-20 characters' });
@@ -1157,6 +1166,38 @@ router.post('/agents/spawn', async (req: Request, res: Response): Promise<void> 
     
     const validPersonalities = ['SHARK', 'DEGEN', 'CHAMELEON', 'GRINDER', 'VISIONARY'];
     const archetype = validPersonalities.includes(personality?.toUpperCase()) ? personality.toUpperCase() : 'CHAMELEON';
+    const selectedProfile = aiProfileId ? agentLoopService.getAiProfilePresetById(aiProfileId) : null;
+    if (aiProfileId && !selectedProfile) {
+      res.status(400).json({ error: 'aiProfileId must be one of: BUDGET, BALANCED, MAX_AGENCY' });
+      return;
+    }
+
+    const fallbackRisk = archetype === 'DEGEN' ? 0.8 : archetype === 'SHARK' ? 0.3 : 0.5;
+    const parsedRisk = Number(reqRiskTolerance);
+    const parsedMaxWager = Number(reqMaxWagerPercent);
+    const riskTolerance = Math.min(
+      0.95,
+      Math.max(
+        0.05,
+        Number.isFinite(parsedRisk)
+          ? parsedRisk
+          : selectedProfile?.targetRiskTolerance ?? fallbackRisk,
+      ),
+    );
+    const maxWagerPercent = Math.min(
+      0.6,
+      Math.max(
+        0.05,
+        Number.isFinite(parsedMaxWager)
+          ? parsedMaxWager
+          : selectedProfile?.targetMaxWagerPercent ?? 0.15,
+      ),
+    );
+
+    const modelCandidate = typeof reqModelId === 'string' ? reqModelId.trim() : '';
+    const modelId = modelCandidate || (isOpenRouterActiveConfig() ? 'or-gemini-2.0-flash' : 'deepseek-v3');
+    // Keep spawn resilient: unknown models auto-fallback inside SmartAI service.
+    smartAiService.getModelSpec(modelId);
     
     // Find a building town to assign to
     const buildingTown = await prisma.town.findFirst({ where: { status: 'BUILDING' }, orderBy: { level: 'asc' } });
@@ -1165,7 +1206,7 @@ router.post('/agents/spawn', async (req: Request, res: Response): Promise<void> 
       data: {
         name: name.trim(),
         archetype: archetype as any,
-        modelId: reqModelId || (isOpenRouterActiveConfig() ? 'or-gemini-2.0-flash' : 'deepseek-v3'),
+        modelId,
         walletAddress,
         apiKey: `spawn_${Date.now()}_${Math.random().toString(36).slice(2)}`,
         reserveBalance: 100,
@@ -1174,13 +1215,17 @@ router.post('/agents/spawn', async (req: Request, res: Response): Promise<void> 
         isActive: true,
         spawnedByUser: true,
         systemPrompt: '',
-        riskTolerance: archetype === 'DEGEN' ? 0.8 : archetype === 'SHARK' ? 0.3 : 0.5,
-        maxWagerPercent: 0.15,
+        riskTolerance,
+        maxWagerPercent,
       },
     });
     
     console.log(`[Spawn] New agent created: ${agent.name} (${archetype}) by wallet ${walletAddress}`);
-    res.json({ agent, assignedTown: buildingTown?.name || null });
+    res.json({
+      agent,
+      assignedTown: buildingTown?.name || null,
+      aiProfile: agentLoopService.resolveAiProfileFromRisk(agent.riskTolerance, agent.maxWagerPercent),
+    });
     return;
   } catch (error: any) {
     res.status(500).json({ error: error.message });

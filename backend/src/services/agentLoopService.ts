@@ -225,7 +225,47 @@ export type ManualActionPlan =
       reasonCode: string;
       reason: string;
     };
+export type AgentAiProfileId = 'BUDGET' | 'BALANCED' | 'MAX_AGENCY';
+export type AgentAiProfilePreset = {
+  id: AgentAiProfileId;
+  label: string;
+  description: string;
+  llmCadenceTicks: number;
+  targetRiskTolerance: number;
+  targetMaxWagerPercent: number;
+  spendHint: string;
+};
 type DegenLoopNudge = 'build' | 'work' | 'fight' | 'trade';
+
+const AGENT_AI_PROFILE_PRESETS: Record<AgentAiProfileId, AgentAiProfilePreset> = {
+  BUDGET: {
+    id: 'BUDGET',
+    label: 'Budget',
+    description: 'Deterministic loop most ticks, LLM only for inflection points.',
+    llmCadenceTicks: 4,
+    targetRiskTolerance: 0.3,
+    targetMaxWagerPercent: 0.12,
+    spendHint: 'lowest',
+  },
+  BALANCED: {
+    id: 'BALANCED',
+    label: 'Balanced',
+    description: 'Mixed mode: LLM on important moments + regular cadence.',
+    llmCadenceTicks: 2,
+    targetRiskTolerance: 0.5,
+    targetMaxWagerPercent: 0.18,
+    spendHint: 'medium',
+  },
+  MAX_AGENCY: {
+    id: 'MAX_AGENCY',
+    label: 'Max Agency',
+    description: 'LLM-first behavior with deterministic guardrails.',
+    llmCadenceTicks: 1,
+    targetRiskTolerance: 0.78,
+    targetMaxWagerPercent: 0.28,
+    spendHint: 'highest',
+  },
+};
 
 interface WorldObservation {
   town: any;
@@ -307,6 +347,7 @@ export class AgentLoopService {
     string,
     { current: number; best: number; lastRewardedMilestone: number }
   > = new Map();
+  private lastLlmDecisionTickByAgentId: Map<string, number> = new Map();
 
   // ============================================
   // Lifecycle
@@ -347,6 +388,151 @@ export class AgentLoopService {
     const normalizedId = String(agentId || '').trim();
     if (!normalizedId) return 'DEFAULT';
     return this.loopModeByAgentId.get(normalizedId) || 'DEFAULT';
+  }
+
+  getAiProfilePresets(): AgentAiProfilePreset[] {
+    return (Object.keys(AGENT_AI_PROFILE_PRESETS) as AgentAiProfileId[]).map(
+      (id) => AGENT_AI_PROFILE_PRESETS[id],
+    );
+  }
+
+  resolveAiProfileFromRisk(riskTolerance: number, maxWagerPercent: number): AgentAiProfilePreset {
+    if (riskTolerance >= 0.72 || maxWagerPercent >= 0.24) {
+      return AGENT_AI_PROFILE_PRESETS.MAX_AGENCY;
+    }
+    if (riskTolerance <= 0.34 && maxWagerPercent <= 0.14) {
+      return AGENT_AI_PROFILE_PRESETS.BUDGET;
+    }
+    return AGENT_AI_PROFILE_PRESETS.BALANCED;
+  }
+
+  getAiProfilePresetById(profileId: unknown): AgentAiProfilePreset | null {
+    const key = String(profileId || '').trim().toUpperCase() as AgentAiProfileId;
+    return AGENT_AI_PROFILE_PRESETS[key] || null;
+  }
+
+  async getAgentAiProfile(agentId: string): Promise<{
+    agentId: string;
+    modelId: string;
+    riskTolerance: number;
+    maxWagerPercent: number;
+    profile: AgentAiProfilePreset;
+  }> {
+    const normalizedId = safeTrim(agentId, 120);
+    if (!normalizedId) throw new Error('agentId is required');
+    const agent = await prisma.arenaAgent.findUnique({
+      where: { id: normalizedId },
+      select: {
+        id: true,
+        modelId: true,
+        riskTolerance: true,
+        maxWagerPercent: true,
+      },
+    });
+    if (!agent) throw new Error('Agent unavailable');
+
+    const profile = this.resolveAiProfileFromRisk(agent.riskTolerance, agent.maxWagerPercent);
+    return {
+      agentId: agent.id,
+      modelId: agent.modelId,
+      riskTolerance: agent.riskTolerance,
+      maxWagerPercent: agent.maxWagerPercent,
+      profile,
+    };
+  }
+
+  async applyAgentAiProfile(
+    agentId: string,
+    input: {
+      profileId?: AgentAiProfileId | string | null;
+      modelId?: string | null;
+      riskTolerance?: number | null;
+      maxWagerPercent?: number | null;
+    },
+  ): Promise<{
+    agentId: string;
+    modelId: string;
+    riskTolerance: number;
+    maxWagerPercent: number;
+    profile: AgentAiProfilePreset;
+  }> {
+    const normalizedId = safeTrim(agentId, 120);
+    if (!normalizedId) throw new Error('agentId is required');
+
+    const existing = await prisma.arenaAgent.findUnique({
+      where: { id: normalizedId },
+      select: {
+        id: true,
+        modelId: true,
+        riskTolerance: true,
+        maxWagerPercent: true,
+      },
+    });
+    if (!existing) throw new Error('Agent unavailable');
+
+    const selectedPreset = input.profileId ? this.getAiProfilePresetById(input.profileId) : null;
+    if (input.profileId && !selectedPreset) {
+      throw new Error('profileId must be one of: BUDGET, BALANCED, MAX_AGENCY');
+    }
+
+    const parsedRisk =
+      input.riskTolerance != null && Number.isFinite(Number(input.riskTolerance))
+        ? Number(input.riskTolerance)
+        : null;
+    const parsedMaxWager =
+      input.maxWagerPercent != null && Number.isFinite(Number(input.maxWagerPercent))
+        ? Number(input.maxWagerPercent)
+        : null;
+
+    const targetRisk = Math.min(
+      0.95,
+      Math.max(
+        0.05,
+        parsedRisk ??
+          selectedPreset?.targetRiskTolerance ??
+          existing.riskTolerance,
+      ),
+    );
+    const targetMaxWager = Math.min(
+      0.6,
+      Math.max(
+        0.05,
+        parsedMaxWager ??
+          selectedPreset?.targetMaxWagerPercent ??
+          existing.maxWagerPercent,
+      ),
+    );
+
+    let targetModelId = safeTrim(input.modelId, 80);
+    if (!targetModelId) {
+      targetModelId = existing.modelId;
+    }
+    // Validate model now so bad IDs fail fast in UI flow.
+    smartAiService.getModelSpec(targetModelId);
+
+    const updated = await prisma.arenaAgent.update({
+      where: { id: normalizedId },
+      data: {
+        modelId: targetModelId,
+        riskTolerance: targetRisk,
+        maxWagerPercent: targetMaxWager,
+      },
+      select: {
+        id: true,
+        modelId: true,
+        riskTolerance: true,
+        maxWagerPercent: true,
+      },
+    });
+
+    const profile = this.resolveAiProfileFromRisk(updated.riskTolerance, updated.maxWagerPercent);
+    return {
+      agentId: updated.id,
+      modelId: updated.modelId,
+      riskTolerance: updated.riskTolerance,
+      maxWagerPercent: updated.maxWagerPercent,
+      profile,
+    };
   }
 
   async planDeterministicAction(agentId: string, action: ManualActionKind): Promise<ManualActionPlan> {
@@ -1487,19 +1673,58 @@ export class AgentLoopService {
           autonomyRateBefore: this.getOverrideRate(agent.id),
         };
       } else {
-        // 2. Decide what to do (LLM call = proof of inference)
-        const decided = await this.decide(
+        const cadence = this.resolveLlmCadenceDecision(
           agent,
           observation,
           userInstructions,
-          goalStackBefore.goals,
-          goalStackBefore.promptBlock,
           activeCommand,
         );
-        action = decided.action;
-        cost = decided.cost;
-        humanReply = decided.humanReply;
-        policyContext = decided.policyContext;
+        if (cadence.shouldUseLlm) {
+          // 2. Decide what to do (LLM call = proof of inference)
+          const decided = await this.decide(
+            agent,
+            observation,
+            userInstructions,
+            goalStackBefore.goals,
+            goalStackBefore.promptBlock,
+            activeCommand,
+          );
+          action = decided.action;
+          cost = decided.cost;
+          humanReply = decided.humanReply;
+          policyContext = decided.policyContext;
+          this.lastLlmDecisionTickByAgentId.set(agent.id, this.currentTick);
+          policyContext.notes.push({
+            tier: 'strategy_nudge',
+            code: 'AI_PROFILE',
+            message: `AI profile ${cadence.profile.label}: ${cadence.reason}`,
+            applied: false,
+          });
+        } else {
+          const nudge = this.extractDegenLoopNudge(userInstructions || []);
+          action = this.decideDegenLoopAction(agent, observation, nudge);
+          cost = {
+            inputTokens: 0,
+            outputTokens: 0,
+            costCents: 0,
+            model: `policy:${cadence.profile.id.toLowerCase()}`,
+            latencyMs: 0,
+          };
+          humanReply = undefined;
+          policyContext = {
+            notes: [
+              {
+                tier: 'strategy_nudge',
+                code: cadence.reasonCode,
+                message: `${cadence.reason} Executed deterministic ${action.type}.`,
+                applied: true,
+              },
+            ],
+            softPolicyEnabled: false,
+            softPolicyApplied: false,
+            autonomyRateBefore: this.getOverrideRate(agent.id),
+          };
+        }
       }
 
       // 3. Execute the action
@@ -2692,6 +2917,101 @@ export class AgentLoopService {
         reserveBalance: economy.reserveBalance,
         arenaBalance: economy.arenaBalance,
       } : null,
+    };
+  }
+
+  private resolveLlmCadenceDecision(
+    agent: Pick<ArenaAgent, 'id' | 'riskTolerance' | 'maxWagerPercent' | 'health'>,
+    obs: Pick<WorldObservation, 'myBalance' | 'myReserve' | 'myPlots' | 'availablePlots'>,
+    userInstructions?: { text: string; chatId: string; fromUser: string }[],
+    activeCommand?: AgentCommandView | null,
+  ): {
+    profile: AgentAiProfilePreset;
+    shouldUseLlm: boolean;
+    reasonCode: string;
+    reason: string;
+  } {
+    const profile = this.resolveAiProfileFromRisk(agent.riskTolerance, agent.maxWagerPercent);
+    const lastLlmTick = this.lastLlmDecisionTickByAgentId.get(agent.id);
+    const ticksSinceLlm = lastLlmTick == null ? Number.POSITIVE_INFINITY : this.currentTick - lastLlmTick;
+    const cadenceDue = ticksSinceLlm >= Math.max(1, profile.llmCadenceTicks);
+
+    const instructionCount = Array.isArray(userInstructions) ? userInstructions.length : 0;
+    const health = Number(agent.health ?? 100);
+    const myPlots = Array.isArray(obs.myPlots) ? obs.myPlots : [];
+    const availablePlots = Array.isArray(obs.availablePlots) ? obs.availablePlots : [];
+    const underConstruction = myPlots.filter((plot: any) => plot?.status === 'UNDER_CONSTRUCTION');
+    const claimed = myPlots.filter((plot: any) => plot?.status === 'CLAIMED');
+    const bootstrapWindow = myPlots.length === 0 && availablePlots.length > 0;
+    const solvencyCrisis = obs.myBalance <= 35 || obs.myReserve <= 8 || health <= 35;
+    const buildBranchPoint =
+      claimed.length > 0 ||
+      underConstruction.some((plot: any) => Number(plot?.apiCallsUsed || 0) >= 5);
+    const leverageWindow = obs.myBalance >= 170 || obs.myReserve >= 150;
+
+    if (activeCommand) {
+      return {
+        profile,
+        shouldUseLlm: true,
+        reasonCode: 'COMMAND',
+        reason: 'Active command requires interpreted response.',
+      };
+    }
+    if (instructionCount > 0) {
+      return {
+        profile,
+        shouldUseLlm: true,
+        reasonCode: 'HUMAN_MESSAGE',
+        reason: 'Human operator message present.',
+      };
+    }
+    if (bootstrapWindow) {
+      return {
+        profile,
+        shouldUseLlm: true,
+        reasonCode: 'BOOTSTRAP',
+        reason: 'No owned plots yet; opening strategy matters.',
+      };
+    }
+    if (solvencyCrisis) {
+      return {
+        profile,
+        shouldUseLlm: true,
+        reasonCode: 'SOLVENCY',
+        reason: 'Liquidity or health is critical.',
+      };
+    }
+    if (buildBranchPoint) {
+      return {
+        profile,
+        shouldUseLlm: true,
+        reasonCode: 'BUILD_BRANCH',
+        reason: 'Build path branch point needs planning.',
+      };
+    }
+    if (leverageWindow && ticksSinceLlm >= Math.max(1, profile.llmCadenceTicks - 1)) {
+      return {
+        profile,
+        shouldUseLlm: true,
+        reasonCode: 'LEVERAGE_WINDOW',
+        reason: 'High bankroll/reserve window for strategic conversion.',
+      };
+    }
+    if (cadenceDue) {
+      return {
+        profile,
+        shouldUseLlm: true,
+        reasonCode: 'CADENCE_HEARTBEAT',
+        reason: `${profile.label} cadence heartbeat.`,
+      };
+    }
+
+    const ticksRemaining = Math.max(0, profile.llmCadenceTicks - Math.max(0, ticksSinceLlm));
+    return {
+      profile,
+      shouldUseLlm: false,
+      reasonCode: 'CADENCE_SKIP',
+      reason: `${profile.label} cadence skip (${ticksRemaining} tick(s) until heartbeat).`,
     };
   }
 

@@ -188,3 +188,36 @@ Original prompt: "yes, but are we able to implement build/work/fight > crypto lo
   - On-chain recording remains async/best-effort.
 - Validation:
   - `cd backend && npm test` → all passing (`12` files, `94` tests).
+
+### Gameplay clarity pass (2026-02-15)
+
+- Added deterministic action feasibility endpoint:
+  - `GET /api/v1/agent-loop/plans/:agentId`
+  - Returns plan status/reason for `build|work|fight|trade` to drive HUD gating.
+
+- Upgraded DEGEN HUD guidance in `Town3D` + `DegenControlBar`:
+  - Added live `NEXT MISSION` recommendation from loop telemetry + plan feasibility.
+  - Added client-side blocker precheck before sending manual nudges.
+  - Disabled blocked step buttons and surfaced blocker reasons in button tooltips/status.
+  - Added in-HUD explainer block (`HOW THIS LOOP WORKS`) with plain-language step purpose.
+  - Explicitly clarified: Telegram is optional; HUD alone can run the full loop.
+
+- Rewrote onboarding quickstart messaging:
+  - Clear action sequence: AUTO/manual controls + follow mission rail.
+  - Telegram text changed to optional.
+  - Added explicit 402/OpenRouter note: top up backend key credits, then restart backend.
+
+- Verification:
+  - `cd app && npx tsc --noEmit` passed.
+  - `cd backend && npx tsc --noEmit` passed.
+  - `cd backend && npm test` passed (`12` files, `94` tests).
+  - `cd app && npm run build` passed (existing third-party bundle warnings only).
+  - Playwright skill client run:
+    - `artifacts/web-game-clarity-pass/shot-0.png`
+    - `artifacts/web-game-clarity-pass/shot-1.png`
+  - Seeded owned-agent screenshot validation (headed Chromium):
+    - `artifacts/town-clarity-hud.png`
+    - Confirms visible `NEXT MISSION`, `HOW THIS LOOP WORKS`, and `Telegram bot is optional` text in HUD.
+
+- Runtime note:
+  - One console error remains during automated load: a generic `404` resource miss (non-blocking; likely asset/favicon).

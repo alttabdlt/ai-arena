@@ -33,6 +33,8 @@ import {
 const API_BASE = '/api/v1';
 const TOWN_SPACING = 20;
 const ARENA_SPECTATOR_TARGET_ID = '__ARENA_SPECTATOR__';
+const ARENA_PAYOFF_POPUP_LIFE_MS = 6500;
+const ARENA_BEAT_LIFE_MS = 5200;
 const LazyPrivyWalletConnect = lazy(async () => {
   const mod = await import('../components/PrivyWalletConnect');
   return { default: mod.PrivyWalletConnect };
@@ -916,6 +918,63 @@ function SpeechBubble({
   );
 }
 
+function ArenaPayoffPopup({
+  signal,
+}: {
+  signal: ArenaOutcomeSignal;
+}) {
+  const spriteRef = useRef<THREE.Sprite>(null);
+  const bornAtMs = useMemo(() => {
+    const parsed = Date.parse(signal.at);
+    return Number.isFinite(parsed) ? parsed : null;
+  }, [signal.at]);
+
+  const nowMs = Date.now();
+  if (!bornAtMs || nowMs - bornAtMs > ARENA_PAYOFF_POPUP_LIFE_MS) return null;
+
+  const resultPrefix = signal.result === 'WIN' ? '🏆' : signal.result === 'LOSS' ? '💥' : '🤝';
+  const deltaPrefix = signal.delta > 0 ? '+' : '';
+  const text = `${resultPrefix} ${deltaPrefix}${signal.delta} ARENA`;
+  const tone = signal.result === 'WIN'
+    ? { fg: '#bbf7d0', bg: 'rgba(6, 78, 59, 0.9)' }
+    : signal.result === 'LOSS'
+      ? { fg: '#fecaca', bg: 'rgba(127, 29, 29, 0.9)' }
+      : { fg: '#bfdbfe', bg: 'rgba(30, 64, 175, 0.86)' };
+
+  const { texture, width, height } = useMemo(
+    () => drawLabelTexture(text, { fg: tone.fg, bg: tone.bg, fontSize: 18, padX: 14, padY: 8, borderRadius: 10 }),
+    [text, tone.fg, tone.bg],
+  );
+
+  const aspect = width / height;
+  const baseHeight = 0.46;
+  const baseWidth = baseHeight * aspect;
+
+  useFrame((state) => {
+    if (!spriteRef.current || !bornAtMs) return;
+    const age = Date.now() - bornAtMs;
+    if (age < 0 || age > ARENA_PAYOFF_POPUP_LIFE_MS) {
+      spriteRef.current.visible = false;
+      return;
+    }
+    spriteRef.current.visible = true;
+    const life = age / ARENA_PAYOFF_POPUP_LIFE_MS;
+    const fade = life < 0.78 ? 1 : 1 - ((life - 0.78) / 0.22);
+    const rise = 2.9 + life * 1.85 + Math.sin(state.clock.elapsedTime * 7.5) * 0.04;
+    const pulse = 1 + (1 - life) * 0.16 + Math.sin(state.clock.elapsedTime * 9.2) * 0.03;
+    spriteRef.current.position.y = rise;
+    spriteRef.current.scale.set(baseWidth * pulse, baseHeight * pulse, 1);
+    const material = spriteRef.current.material as THREE.SpriteMaterial;
+    material.opacity = 0.97 * Math.max(0, fade);
+  });
+
+  return (
+    <sprite ref={spriteRef} position={[0, 2.9, 0]} scale={[baseWidth, baseHeight, 1]}>
+      <spriteMaterial map={texture} transparent depthWrite={false} opacity={0.97} />
+    </sprite>
+  );
+}
+
 // Thought bubble — shows agent's last reasoning above their head
 function ThoughtBubble({
   agent,
@@ -1560,6 +1619,12 @@ function TownScene({
   const arenaRingRef = useRef<THREE.Mesh>(null);
   const arenaDomeRef = useRef<THREE.Mesh>(null);
   const arenaCoreLightRef = useRef<THREE.PointLight>(null);
+  const arenaCineAngleRef = useRef(Math.PI * 0.22);
+  const arenaBeatRef = useRef<{ activeUntilMs: number; strength: number }>({
+    activeUntilMs: 0,
+    strength: 0,
+  });
+  const lastArenaOutcomeSigRef = useRef<string>('');
   const activeOpportunityRef = useRef<OpportunityWindow | null>(null);
   const resolvedOpportunityIdsRef = useRef<Set<string>>(new Set());
 
@@ -1590,6 +1655,40 @@ function TownScene({
     focusSnapTimerRef.current = 0.42;
     introRef.current.active = false;
   }, [selectedAgentId, introRef]);
+
+  useEffect(() => {
+    const entries = Object.entries(arenaOutcomeByAgentId);
+    if (entries.length === 0) return;
+
+    let latest: [string, ArenaOutcomeSignal] | null = null;
+    let latestTs = 0;
+    for (const entry of entries) {
+      const ts = Date.parse(entry[1].at);
+      if (!Number.isFinite(ts)) continue;
+      if (!latest || ts > latestTs) {
+        latest = entry;
+        latestTs = ts;
+      }
+    }
+    if (!latest) return;
+
+    const [agentId, signal] = latest;
+    const signature = `${agentId}:${signal.at}:${signal.delta}:${signal.result}`;
+    if (signature === lastArenaOutcomeSigRef.current) return;
+    lastArenaOutcomeSigRef.current = signature;
+
+    const age = Date.now() - latestTs;
+    if (age < 0 || age > ARENA_PAYOFF_POPUP_LIFE_MS) return;
+
+    const strength = THREE.MathUtils.clamp(Math.abs(signal.delta) / 20, 0.22, 1.4);
+    arenaBeatRef.current = {
+      activeUntilMs: Date.now() + ARENA_BEAT_LIFE_MS,
+      strength,
+    };
+    if (visualSettings.cameraShake) {
+      cameraShakeRef.current = Math.min(0.95, cameraShakeRef.current + 0.12 + strength * 0.08);
+    }
+  }, [arenaOutcomeByAgentId, visualSettings.cameraShake]);
 
   useEffect(() => {
     const sims = simsRef.current;
@@ -2667,6 +2766,11 @@ function TownScene({
 
       focusSnapTimerRef.current = Math.max(0, focusSnapTimerRef.current - dt);
       cameraShakeRef.current = Math.max(0, cameraShakeRef.current - dt * 1.8);
+      const elapsed = nowMs * 0.001;
+      const isFightActive = (fightingAgentIds?.size ?? 0) > 0;
+      const beatRemainingMs = Math.max(0, arenaBeatRef.current.activeUntilMs - nowMs);
+      const beatLife = beatRemainingMs > 0 ? beatRemainingMs / ARENA_BEAT_LIFE_MS : 0;
+      const beatStrength = beatLife > 0 ? arenaBeatRef.current.strength * beatLife : 0;
 
       // Third-person camera locked behind followed agent
       if (selectedAgentId) {
@@ -2737,26 +2841,47 @@ function TownScene({
           camera.lookAt(new THREE.Vector3(0, 0, 0));
           lookTargetRef.current.set(0, 0, 0);
         }
+      } else if (isFightActive || beatStrength > 0.05) {
+        // Arena cinematic sweep when no agent is selected: orbit active fights and pulse post-fight payoffs.
+        const orbitSpeed = isFightActive ? 0.34 : 0.18;
+        arenaCineAngleRef.current += dt * orbitSpeed;
+        const orbitRadius = (isFightActive ? 31 : 35) - beatStrength * 4.5;
+        const orbitHeight = 14 + Math.sin(elapsed * 0.9) * 0.8 + beatStrength * 2.4;
+        const targetPos = new THREE.Vector3(
+          Math.cos(arenaCineAngleRef.current) * orbitRadius,
+          orbitHeight,
+          Math.sin(arenaCineAngleRef.current) * orbitRadius,
+        );
+        const lookTarget = new THREE.Vector3(0, 3.2 + beatStrength * 0.35, 0);
+        camera.position.lerp(targetPos, Math.min(1, dt * (isFightActive ? 2.1 : 1.4)));
+        if (visualSettings.cameraShake && beatStrength > 0.08) {
+          const jitter = (cameraShakeRef.current + beatStrength * 0.14) * 0.08;
+          camera.position.x += (Math.random() - 0.5) * jitter;
+          camera.position.y += (Math.random() - 0.5) * jitter * 0.45;
+          camera.position.z += (Math.random() - 0.5) * jitter;
+        }
+        camera.lookAt(lookTarget);
+        lookTargetRef.current.copy(lookTarget);
       }
 
-      const elapsed = nowMs * 0.001;
-      const isFightActive = (fightingAgentIds?.size ?? 0) > 0;
       if (arenaRingRef.current) {
-        arenaRingRef.current.rotation.y += dt * (0.35 + (isFightActive ? 0.9 : 0));
+        arenaRingRef.current.rotation.y += dt * (0.35 + (isFightActive ? 0.9 : 0) + beatStrength * 1.15);
         const ringMaterial = arenaRingRef.current.material as THREE.MeshStandardMaterial;
-        const targetIntensity = 0.45 + Math.sin(elapsed * (2.2 + (isFightActive ? 3.6 : 0))) * 0.12 + (isFightActive ? 0.5 : 0);
+        const beatPulse = beatStrength > 0 ? (0.45 + Math.sin(elapsed * 16.5) * 0.25) * beatStrength : 0;
+        const targetIntensity = 0.45 + Math.sin(elapsed * (2.2 + (isFightActive ? 3.6 : 0))) * 0.12 + (isFightActive ? 0.5 : 0) + beatPulse;
         ringMaterial.emissiveIntensity = THREE.MathUtils.lerp(ringMaterial.emissiveIntensity, targetIntensity, 0.16);
       }
       if (arenaDomeRef.current) {
         const domeMaterial = arenaDomeRef.current.material as THREE.MeshStandardMaterial;
-        const targetOpacity = 0.56 + Math.sin(elapsed * 1.8) * 0.035 + (isFightActive ? 0.08 : 0);
+        const targetOpacity = 0.56 + Math.sin(elapsed * 1.8) * 0.035 + (isFightActive ? 0.08 : 0) + beatStrength * 0.11;
         domeMaterial.opacity = THREE.MathUtils.lerp(domeMaterial.opacity, targetOpacity, 0.12);
       }
       if (arenaCoreLightRef.current) {
         const fightBoost = isFightActive ? 2.35 + Math.sin(elapsed * 10.5) * 0.5 : 0;
-        const targetIntensity = 0.45 + Math.sin(elapsed * 2.4) * 0.12 + fightBoost;
+        const beatBoost = beatStrength > 0 ? beatStrength * (2.8 + Math.sin(elapsed * 14.2) * 0.65) : 0;
+        const targetIntensity = 0.45 + Math.sin(elapsed * 2.4) * 0.12 + fightBoost + beatBoost;
         arenaCoreLightRef.current.intensity = THREE.MathUtils.lerp(arenaCoreLightRef.current.intensity, targetIntensity, 0.18);
-        arenaCoreLightRef.current.distance = 12 + (isFightActive ? 6 : 0);
+        arenaCoreLightRef.current.distance = 12 + (isFightActive ? 6 : 0) + beatStrength * 5;
       }
   });
 
@@ -3006,6 +3131,7 @@ function TownScene({
                   arenaOutcome={arenaOutcome}
 	                BillboardLabel={BillboardLabel}
 	              />
+                {arenaOutcome && <ArenaPayoffPopup signal={arenaOutcome} />}
 		              {tradeByAgentId[a.id]?.text && (
 		                <SpeechBubble
 		                  text={tradeByAgentId[a.id].text}

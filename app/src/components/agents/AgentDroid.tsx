@@ -6,6 +6,38 @@ import { ARCHETYPE_GLYPH, getBodyConfig } from './agentVisuals';
 import { ArchetypeAccessories } from './AgentAccessories';
 import { EconomicStateEffect, ChatAura, ActionAura, ArenaOutcomeAura, type ArenaOutcomeResult } from './AgentStateEffects';
 
+const DUEL_MOTION_WINDUP_MS = 220;
+const DUEL_MOTION_IMPACT_MS = 140;
+const DUEL_MOTION_RECOVER_MS = 560;
+const DUEL_MOTION_LIFE_MS = DUEL_MOTION_WINDUP_MS + DUEL_MOTION_IMPACT_MS + DUEL_MOTION_RECOVER_MS;
+
+function getDuelMotionEnvelope(ageMs: number) {
+  if (ageMs < 0 || ageMs > DUEL_MOTION_LIFE_MS) {
+    return { windup: 0, impact: 0, recover: 0 };
+  }
+  if (ageMs <= DUEL_MOTION_WINDUP_MS) {
+    return {
+      windup: THREE.MathUtils.clamp(ageMs / DUEL_MOTION_WINDUP_MS, 0, 1),
+      impact: 0,
+      recover: 0,
+    };
+  }
+  const impactAge = ageMs - DUEL_MOTION_WINDUP_MS;
+  if (impactAge <= DUEL_MOTION_IMPACT_MS) {
+    return {
+      windup: THREE.MathUtils.clamp(1 - (impactAge / DUEL_MOTION_IMPACT_MS), 0, 1),
+      impact: THREE.MathUtils.clamp(impactAge / DUEL_MOTION_IMPACT_MS, 0, 1),
+      recover: 0,
+    };
+  }
+  const recoverAge = impactAge - DUEL_MOTION_IMPACT_MS;
+  return {
+    windup: 0,
+    impact: THREE.MathUtils.clamp(1 - (recoverAge / DUEL_MOTION_RECOVER_MS), 0, 1),
+    recover: THREE.MathUtils.clamp(recoverAge / DUEL_MOTION_RECOVER_MS, 0, 1),
+  };
+}
+
 // Reuse BillboardLabel from Town3D (will be passed via import in Town3D)
 // We accept it as a render prop to avoid circular deps
 interface AgentDroidProps {
@@ -95,7 +127,21 @@ export function AgentDroid({
     const idleWave = Math.sin(phaseT * 1.6);
     const headWave = Math.sin(phaseT * 0.9);
     const blinkGate = Math.sin(phaseT * 0.78 + motionPhase * 3.1);
-    const blinkScale = blinkGate > 0.93 ? 0.16 : 1;
+    let blinkScale = blinkGate > 0.93 ? 0.16 : 1;
+    let duelDirection = 0;
+    let duelStrength = 0;
+    let duelEnvelope = { windup: 0, impact: 0, recover: 0 };
+    if (arenaOutcomeAtMs && arenaOutcome) {
+      const age = Date.now() - arenaOutcomeAtMs;
+      duelEnvelope = getDuelMotionEnvelope(age);
+      duelStrength = THREE.MathUtils.clamp(Math.abs(arenaOutcome.delta) / 24, 0.48, 1.32);
+      duelDirection = arenaOutcome.result === 'LOSS'
+        ? -1
+        : arenaOutcome.result === 'DRAW'
+          ? (Math.sin(motionPhase * 9.1) >= 0 ? 1 : -1)
+          : 1;
+      if (duelEnvelope.impact > 0.62) blinkScale = 0.12;
+    }
 
     // Scale by economic state
     if (innerGroup.current) {
@@ -294,6 +340,37 @@ export function AgentDroid({
     ) {
       innerGroup.current.rotation.z = THREE.MathUtils.lerp(innerGroup.current.rotation.z, 0, 0.1);
       innerGroup.current.position.x = THREE.MathUtils.lerp(innerGroup.current.position.x, 0, 0.1);
+    }
+
+    if (duelStrength > 0 && innerGroup.current) {
+      const windup = duelEnvelope.windup * duelStrength;
+      const impact = duelEnvelope.impact * duelStrength;
+      const recover = duelEnvelope.recover * duelStrength;
+      const xTilt = -0.22 * windup + 0.46 * impact - 0.09 * recover;
+      const zTilt = duelDirection * (0.14 * windup - 0.34 * impact + 0.08 * recover);
+      innerGroup.current.rotation.x = THREE.MathUtils.clamp(innerGroup.current.rotation.x + xTilt, -0.55, 0.88);
+      innerGroup.current.rotation.z = THREE.MathUtils.clamp(innerGroup.current.rotation.z + zTilt, -0.62, 0.62);
+      innerGroup.current.position.z = THREE.MathUtils.lerp(
+        innerGroup.current.position.z,
+        (-0.07 * windup + 0.18 * impact - 0.05 * recover),
+        0.34,
+      );
+
+      if (armL.current) {
+        armL.current.rotation.x += 0.7 * windup - 1.18 * impact + 0.24 * recover;
+      }
+      if (armR.current) {
+        armR.current.rotation.x += 0.92 * windup - 1.34 * impact + 0.28 * recover;
+      }
+      if (body.current) {
+        body.current.position.y += 0.06 * impact;
+      }
+      if (head.current) {
+        head.current.rotation.x += -0.08 * windup + 0.11 * impact;
+        head.current.rotation.y += duelDirection * 0.06 * impact;
+      }
+    } else if (innerGroup.current) {
+      innerGroup.current.position.z = THREE.MathUtils.lerp(innerGroup.current.position.z, 0, 0.12);
     }
 
     if (body.current && selected) {

@@ -5,12 +5,22 @@ import { Line } from '@react-three/drei';
 import { Button } from '@ui/button';
 import { Loader2, Volume2, VolumeX } from 'lucide-react';
 import { playSound, isSoundEnabled, setSoundEnabled } from '../utils/sounds';
+import { HAS_PRIVY } from '../config/privy';
+import type { WalletSessionState } from '../components/PrivyWalletConnect';
 
 import { useWheelStatus } from '../hooks/useWheelStatus';
 
 import { BuildingMesh, preloadBuildingModels } from '../components/buildings';
 import { AgentDroid } from '../components/agents/AgentDroid';
-import { isOnboarded, getMyAgentId, getMyWallet, MY_AGENT_KEY, MY_WALLET_KEY, ONBOARDED_KEY } from '../components/onboarding/storage';
+import {
+  isOnboarded,
+  getMyAgentId,
+  getMyWallet,
+  MY_AGENT_KEY,
+  MY_WALLET_KEY,
+  ONBOARDED_KEY,
+  DEGEN_TOUR_KEY,
+} from '../components/onboarding/storage';
 import { buildRoadGraph, findPath, type RoadGraph, type RoadSegInput } from '../world/roadGraph';
 import { WorldScene } from '../world/WorldScene';
 import { StreetLights } from '../world/StreetLight';
@@ -52,6 +62,24 @@ const ARENA_IMPACT_BURST_CAP = 28;
 const ACTION_BURST_LIFE_MS = 1280;
 const CREW_BATTLE_TOAST_LIFE_MS = 5200;
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
+const MISSION_TOUR_STEPS = [
+  {
+    title: 'Core Loop',
+    body: 'Run BUILD -> WORK -> FIGHT -> TRADE in sequence. The HUD always shows your next mission.',
+  },
+  {
+    title: 'Mission Contract',
+    body: 'Read DO / WHY / IF BLOCKED / SUCCESS. If blocked, the loop auto-redirects and explains the reason.',
+  },
+  {
+    title: 'Controls',
+    body: 'AUTO ON keeps cycling. Manual buttons force one phase when you want tighter control.',
+  },
+  {
+    title: 'Optional Telegram',
+    body: 'Telegram is optional. The in-game HUD can operate the full loop without it.',
+  },
+] as const;
 const LazyPrivyWalletConnect = lazy(async () => {
   const mod = await import('../components/PrivyWalletConnect');
   return { default: mod.PrivyWalletConnect };
@@ -219,9 +247,34 @@ type DegenActionPlan = {
   note?: string;
 };
 
+type DegenMission = {
+  phase: DegenLoopPhase;
+  recommendedAction: DegenNudge;
+  reason: string;
+  successOutcome: string;
+};
+
+type DegenBlocker = {
+  code: string;
+  message: string;
+  phase: DegenLoopPhase;
+  action: DegenNudge;
+  fallbackAction: DegenNudge | null;
+};
+
+type DegenLoopStatePayload = {
+  phaseIndex: number;
+  phaseName: DegenLoopPhase;
+  loopsCompleted: number;
+};
+
 type DegenPlanResponse = {
   agentId: string;
   mode: LoopMode;
+  authRequiredForActions?: boolean;
+  loopState?: DegenLoopStatePayload;
+  mission?: DegenMission;
+  blocker?: DegenBlocker | null;
   plans: Record<DegenNudge, DegenActionPlan>;
 };
 
@@ -4613,6 +4666,15 @@ export default function Town3D() {
   const introRef = useRef({ active: true, t: 0 });
   const simsRef = useRef<Map<string, AgentSim>>(new Map());
   const [showOnboarding, setShowOnboarding] = useState(() => !isOnboarded());
+  const [playerSession, setPlayerSession] = useState<WalletSessionState>({
+    ready: !HAS_PRIVY,
+    authenticated: false,
+    provider: HAS_PRIVY ? 'privy' : 'wallet_fallback',
+  });
+  const [showMissionTour, setShowMissionTour] = useState(false);
+  const [missionTourStep, setMissionTourStep] = useState(0);
+  const missionTourShownRef = useRef(false);
+  const [aiMode, setAiMode] = useState<'LIVE' | 'SIMULATION'>('SIMULATION');
 
   // Auto-select user's agent (from onboarding) or fall back to first
   const myAgentId = getMyAgentId();
@@ -4711,15 +4773,35 @@ export default function Town3D() {
     };
   }, [walletAddress]);
 
+  const normalizedSessionWallet = useMemo(
+    () => normalizeWalletAddress(walletAddress || getMyWallet()),
+    [walletAddress],
+  );
   const ownedAgentId = useMemo(() => {
-    const wallet = normalizeWalletAddress(walletAddress || getMyWallet());
+    const wallet = normalizedSessionWallet;
     if (wallet) {
       const walletAgent = agents.find((agent) => normalizeWalletAddress(agent.walletAddress) === wallet);
       if (walletAgent) return walletAgent.id;
     }
     if (myAgentId && agents.some((agent) => agent.id === myAgentId)) return myAgentId;
     return null;
-  }, [walletAddress, agents, myAgentId]);
+  }, [normalizedSessionWallet, agents, myAgentId]);
+  const isPlayerAuthenticated = useMemo(() => {
+    if (!HAS_PRIVY) return Boolean(normalizedSessionWallet);
+    return Boolean(playerSession.authenticated && normalizedSessionWallet);
+  }, [normalizedSessionWallet, playerSession.authenticated]);
+  const actionLockReason = useMemo(() => {
+    if (!isPlayerAuthenticated) return 'Sign in to unlock Build/Work/Fight/Trade controls.';
+    if (!ownedAgentId) return 'Deploy or select your wallet-linked agent to run the loop.';
+    return null;
+  }, [isPlayerAuthenticated, ownedAgentId]);
+  const buildPlayerHeaders = useCallback((withJson = false): HeadersInit => {
+    const headers: Record<string, string> = {};
+    if (withJson) headers['Content-Type'] = 'application/json';
+    if (isPlayerAuthenticated) headers['x-player-authenticated'] = '1';
+    if (normalizedSessionWallet) headers['x-player-wallet'] = normalizedSessionWallet;
+    return headers;
+  }, [isPlayerAuthenticated, normalizedSessionWallet]);
   const leadingCrew = useMemo(() => crewWarsStatus?.crews?.[0] ?? null, [crewWarsStatus]);
   const ownedCrewLink = useMemo(() => {
     if (!ownedAgentId) return null;
@@ -4729,6 +4811,10 @@ export default function Town3D() {
   const [loopModeUpdating, setLoopModeUpdating] = useState(false);
   const [degenNudgeBusy, setDegenNudgeBusy] = useState(false);
   const [crewOrderBusy, setCrewOrderBusy] = useState(false);
+  const [authRequiredForActions, setAuthRequiredForActions] = useState(true);
+  const [serverMission, setServerMission] = useState<DegenMission | null>(null);
+  const [serverBlocker, setServerBlocker] = useState<DegenBlocker | null>(null);
+  const [serverLoopState, setServerLoopState] = useState<DegenLoopStatePayload | null>(null);
   const [degenStatus, setDegenStatus] = useState<{ message: string; tone: 'neutral' | 'ok' | 'error' } | null>(null);
   const [ownedLoopTelemetry, setOwnedLoopTelemetry] = useState<DegenLoopTelemetry | null>(null);
   const [degenPlans, setDegenPlans] = useState<Record<DegenNudge, DegenActionPlan> | null>(null);
@@ -4755,6 +4841,19 @@ export default function Town3D() {
       }
     };
   }, []);
+  const ensureActionSession = useCallback((contextLabel: string): boolean => {
+    if (!isPlayerAuthenticated) {
+      showDegenStatus(`Sign in required before ${contextLabel}.`, 'error', 3800);
+      setShowOnboarding(true);
+      return false;
+    }
+    if (!ownedAgentId) {
+      showDegenStatus('Deploy or select your agent before issuing loop commands.', 'error', 3800);
+      setShowOnboarding(true);
+      return false;
+    }
+    return true;
+  }, [isPlayerAuthenticated, ownedAgentId, showDegenStatus]);
   useEffect(() => {
     if (!ownedAgentId) {
       setOwnedLoopTelemetry(null);
@@ -4766,21 +4865,38 @@ export default function Town3D() {
   const refreshDegenPlans = useCallback(async () => {
     if (!ownedAgentId) {
       setDegenPlans(null);
+      setServerMission(null);
+      setServerBlocker(null);
+      setServerLoopState(null);
       return;
     }
     setDegenPlansLoading(true);
     try {
-      const res = await apiFetch<DegenPlanResponse>(`/agent-loop/plans/${ownedAgentId}`);
+      const response = await fetch(`${API_BASE}/agent-loop/plans/${ownedAgentId}`, {
+        headers: buildPlayerHeaders(false),
+      });
+      if (!response.ok) throw new Error(`Plans request failed (${response.status})`);
+      const res = await response.json() as DegenPlanResponse;
+      setAuthRequiredForActions(res.authRequiredForActions !== false);
+      setServerMission(res.mission || null);
+      setServerBlocker(res.blocker || null);
+      setServerLoopState(res.loopState || null);
       setDegenPlans(res.plans || null);
     } catch {
       setDegenPlans(null);
+      setServerMission(null);
+      setServerBlocker(null);
+      setServerLoopState(null);
     } finally {
       setDegenPlansLoading(false);
     }
-  }, [ownedAgentId]);
+  }, [buildPlayerHeaders, ownedAgentId]);
   useEffect(() => {
     if (!ownedAgentId) {
       setDegenPlans(null);
+      setServerMission(null);
+      setServerBlocker(null);
+      setServerLoopState(null);
       return;
     }
     void refreshDegenPlans();
@@ -4820,6 +4936,12 @@ export default function Town3D() {
     };
   }, [ownedAgentId]);
   const degenGuidance = useMemo(() => {
+    const defaultSuccess: Record<DegenNudge, string> = {
+      build: 'Infrastructure progresses so future loops unlock more options.',
+      work: 'Reserve/build throughput improves and unblocks expensive actions.',
+      fight: 'Arena duel resolves for potential upside and momentum.',
+      trade: 'Reserve and $ARENA rebalance to keep the next loop solvent.',
+    };
     const blockers: Partial<Record<DegenNudge, string>> = {};
     (Object.keys(DEGEN_NUDGE_LABEL) as DegenNudge[]).forEach((step) => {
       const plan = degenPlans?.[step];
@@ -4830,20 +4952,27 @@ export default function Town3D() {
 
     if (!degenPlans) {
       return {
-        mission: 'Checking next move...',
+        mission: 'Checking next mission...',
+        missionWhy: 'Planner syncing with latest world state.',
+        missionBlocked: null as string | null,
+        missionFallback: null as string | null,
+        missionSuccess: 'Complete the shown step to advance the loop.',
         recommended: null as DegenNudge | null,
         blockers,
       };
     }
 
-    const safeNextIndex = Math.max(0, Math.min(DEGEN_LOOP_SEQUENCE.length - 1, ownedLoopTelemetry?.nextIndex ?? 0));
+    const safeNextIndex = Math.max(
+      0,
+      Math.min(DEGEN_LOOP_SEQUENCE.length - 1, serverLoopState?.phaseIndex ?? ownedLoopTelemetry?.nextIndex ?? 0),
+    );
     const expectedPhase = DEGEN_LOOP_SEQUENCE[safeNextIndex] || 'BUILD';
     const expectedNudge = DEGEN_PHASE_TO_NUDGE[expectedPhase];
     const expectedPlan = degenPlans[expectedNudge];
 
-    let recommended: DegenNudge | null = null;
+    let recommended: DegenNudge | null = serverMission?.recommendedAction || null;
     if (expectedPlan?.ok) {
-      recommended = expectedNudge;
+      recommended = recommended || expectedNudge;
     } else {
       for (let i = 1; i < DEGEN_LOOP_SEQUENCE.length; i += 1) {
         const phase = DEGEN_LOOP_SEQUENCE[(safeNextIndex + i) % DEGEN_LOOP_SEQUENCE.length];
@@ -4857,49 +4986,84 @@ export default function Town3D() {
 
     const expectedLabel = DEGEN_NUDGE_LABEL[expectedNudge];
     const expectedReason = blockers[expectedNudge];
+    let missionWhy = serverMission?.reason || `${expectedLabel} is next in loop order.`;
+    let missionBlocked = serverBlocker?.message || expectedReason || null;
+    const fallbackTarget = serverBlocker?.fallbackAction || null;
+    let missionFallback =
+      fallbackTarget && fallbackTarget !== expectedNudge
+        ? `Auto fallback: ${DEGEN_NUDGE_LABEL[fallbackTarget]} (${serverBlocker?.code || 'REDIRECT'}).`
+        : fallbackTarget
+          ? `Auto fallback stays on ${DEGEN_NUDGE_LABEL[fallbackTarget]}.`
+          : missionBlocked
+            ? 'Auto-redirect triggers when another step is executable.'
+            : null;
+    let missionSuccess = serverMission?.successOutcome || (recommended ? defaultSuccess[recommended] : defaultSuccess[expectedNudge]);
     let mission = recommended
       ? `Do ${DEGEN_NUDGE_LABEL[recommended]} next.`
       : `No executable step right now.`;
 
     if (recommended && recommended !== expectedNudge) {
       mission = `${expectedLabel} blocked${expectedReason ? `: ${expectedReason}` : ''}. Do ${DEGEN_NUDGE_LABEL[recommended]} now.`;
+      if (!missionFallback) {
+        missionFallback = `Auto fallback: ${DEGEN_NUDGE_LABEL[recommended]}.`;
+      }
     } else if (!recommended) {
       mission = `${expectedLabel} blocked${expectedReason ? `: ${expectedReason}` : ''}.`;
+      missionSuccess = defaultSuccess[expectedNudge];
     } else if (ownedLoopMode !== 'DEGEN_LOOP') {
       mission = `Manual mode. Suggested next: ${DEGEN_NUDGE_LABEL[recommended]}.`;
+      missionWhy = `${missionWhy} AUTO is off, so execute manually or toggle AUTO ON.`;
     }
 
-    return { mission, recommended, blockers };
-  }, [degenPlans, ownedLoopTelemetry, ownedLoopMode]);
+    if (serverMission?.recommendedAction) {
+      mission = `Do ${DEGEN_NUDGE_LABEL[serverMission.recommendedAction]} now.`;
+      missionSuccess = serverMission.successOutcome || missionSuccess;
+    }
+    if (serverBlocker?.action && serverBlocker.action === expectedNudge && serverBlocker.fallbackAction) {
+      mission = `${expectedLabel} blocked: ${serverBlocker.message}. Do ${DEGEN_NUDGE_LABEL[serverBlocker.fallbackAction]} now.`;
+    }
+
+    return {
+      mission,
+      missionWhy,
+      missionBlocked,
+      missionFallback,
+      missionSuccess,
+      recommended,
+      blockers,
+    };
+  }, [degenPlans, ownedLoopMode, ownedLoopTelemetry, serverBlocker, serverLoopState, serverMission]);
   const updateOwnedLoopMode = useCallback(async (nextMode: LoopMode) => {
-    if (!ownedAgentId) return;
+    if (!ensureActionSession('toggling AUTO mode')) return;
     setLoopModeUpdating(true);
     showDegenStatus(nextMode === 'DEGEN_LOOP' ? 'Enabling AUTO loop…' : 'Switching to manual mode…', 'neutral');
     try {
       const res = await fetch(`${API_BASE}/agent-loop/mode/${ownedAgentId}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: buildPlayerHeaders(true),
         body: JSON.stringify({ mode: nextMode }),
       });
-      if (!res.ok) throw new Error(`Mode update failed (${res.status})`);
-      const payload = await res.json() as { mode?: LoopMode };
-      setOwnedLoopMode(payload.mode === 'DEGEN_LOOP' ? 'DEGEN_LOOP' : 'DEFAULT');
+      const payload = await res.json().catch(() => null) as { mode?: LoopMode; error?: string } | null;
+      if (!res.ok) throw new Error(payload?.error || `Mode update failed (${res.status})`);
+      const mode = payload?.mode === 'DEGEN_LOOP' ? 'DEGEN_LOOP' : 'DEFAULT';
+      setOwnedLoopMode(mode);
       await fetch(`${API_BASE}/agent-loop/tick/${ownedAgentId}`, { method: 'POST' }).catch(() => null);
       showDegenStatus(
-        payload.mode === 'DEGEN_LOOP'
+        mode === 'DEGEN_LOOP'
           ? 'AUTO loop active (build/work/fight/trade policy).'
           : 'Manual mode active.',
         'ok',
       );
     } catch (err) {
       console.error('[Town3D] Failed to update loop mode', err);
-      showDegenStatus('Loop mode update failed. Check backend connection.', 'error', 3400);
+      const reason = err instanceof Error ? err.message : 'Loop mode update failed. Check backend connection.';
+      showDegenStatus(reason, 'error', 3400);
     } finally {
       setLoopModeUpdating(false);
     }
-  }, [ownedAgentId, showDegenStatus]);
+  }, [buildPlayerHeaders, ensureActionSession, ownedAgentId, showDegenStatus]);
   const sendDegenNudge = useCallback(async (nudge: DegenNudge) => {
-    if (!ownedAgentId) return;
+    if (!ensureActionSession(`running ${nudge.toUpperCase()}`)) return;
     if (degenPlansLoading) {
       showDegenStatus('Checking what is executable right now…', 'neutral', 2200);
       return;
@@ -4914,7 +5078,7 @@ export default function Town3D() {
     try {
       const res = await fetch(`${API_BASE}/agent-loop/action/${ownedAgentId}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: buildPlayerHeaders(true),
         body: JSON.stringify({
           action: nudge,
           source: 'town-ui',
@@ -4929,6 +5093,9 @@ export default function Town3D() {
           statusReason?: string;
           executedActionType?: string | null;
         };
+        wasRedirected?: boolean;
+        redirectReason?: string | null;
+        fallbackExecuted?: string | null;
         result?: {
           action?: string;
         };
@@ -4947,10 +5114,18 @@ export default function Town3D() {
         payload?.receipt?.executedActionType
         || payload?.result?.action
         || nudge;
-      showDegenStatus(
-        `${nudge.toUpperCase()} executed as ${String(executedAction).toUpperCase()}.`,
-        'ok',
-      );
+      if (payload?.wasRedirected && payload?.fallbackExecuted) {
+        showDegenStatus(
+          `${nudge.toUpperCase()} redirected to ${String(payload.fallbackExecuted).toUpperCase()}: ${payload.redirectReason || 'constraint fallback'}`,
+          'ok',
+          4200,
+        );
+      } else {
+        showDegenStatus(
+          `${nudge.toUpperCase()} executed as ${String(executedAction).toUpperCase()}.`,
+          'ok',
+        );
+      }
       void refreshDegenPlans();
     } catch (err) {
       console.error('[Town3D] Failed to execute manual action command', err);
@@ -4960,16 +5135,16 @@ export default function Town3D() {
     } finally {
       setDegenNudgeBusy(false);
     }
-  }, [ownedAgentId, degenPlansLoading, degenGuidance.blockers, refreshDegenPlans, showDegenStatus]);
+  }, [buildPlayerHeaders, degenGuidance.blockers, degenPlansLoading, ensureActionSession, ownedAgentId, refreshDegenPlans, showDegenStatus]);
   const sendCrewOrder = useCallback(async (strategy: CrewOrderStrategy) => {
-    if (!ownedAgentId) return;
+    if (!ensureActionSession(`sending ${strategy} crew order`)) return;
     setCrewOrderBusy(true);
     showDegenStatus(`Dispatching ${strategy} crew order…`, 'neutral');
     try {
       const intensity = strategy === 'RAID' ? 3 : strategy === 'TRADE' ? 1 : 2;
       const res = await fetch(`${API_BASE}/crew-wars/orders`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: buildPlayerHeaders(true),
         body: JSON.stringify({
           agentId: ownedAgentId,
           strategy,
@@ -5019,14 +5194,58 @@ export default function Town3D() {
     } finally {
       setCrewOrderBusy(false);
     }
-  }, [ownedAgentId, showDegenStatus]);
+  }, [buildPlayerHeaders, ensureActionSession, ownedAgentId, showDegenStatus]);
   useEffect(() => {
     if (!showOnboarding) return;
-    if (!ownedAgentId) return;
+    if (!ownedAgentId || !isPlayerAuthenticated) return;
     localStorage.setItem(ONBOARDED_KEY, '1');
     setShowOnboarding(false);
-  }, [showOnboarding, ownedAgentId]);
+  }, [isPlayerAuthenticated, ownedAgentId, showOnboarding]);
+  useEffect(() => {
+    if (showOnboarding) return;
+    if (!isPlayerAuthenticated || !ownedAgentId) return;
+    if (missionTourShownRef.current) return;
+    const seen = localStorage.getItem(DEGEN_TOUR_KEY) === '1';
+    if (seen) return;
+    missionTourShownRef.current = true;
+    setMissionTourStep(0);
+    setShowMissionTour(true);
+  }, [isPlayerAuthenticated, ownedAgentId, showOnboarding]);
+  useEffect(() => {
+    let cancelled = false;
+    const refreshLlmMode = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/agent-loop/llm-mode`);
+        if (!res.ok) throw new Error('llm mode unavailable');
+        const payload = await res.json() as { mode?: 'LIVE' | 'SIMULATION' };
+        if (!cancelled) {
+          setAiMode(payload.mode === 'LIVE' ? 'LIVE' : 'SIMULATION');
+        }
+      } catch {
+        if (!cancelled) setAiMode('SIMULATION');
+      }
+    };
+    void refreshLlmMode();
+    const timer = window.setInterval(() => {
+      void refreshLlmMode();
+    }, 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
   const [showSpawnOverlay, setShowSpawnOverlay] = useState(false);
+  const closeMissionTour = useCallback(() => {
+    localStorage.setItem(DEGEN_TOUR_KEY, '1');
+    setShowMissionTour(false);
+  }, []);
+  const advanceMissionTour = useCallback(() => {
+    if (missionTourStep >= MISSION_TOUR_STEPS.length - 1) {
+      closeMissionTour();
+      return;
+    }
+    setMissionTourStep((step) => Math.min(step + 1, MISSION_TOUR_STEPS.length - 1));
+  }, [closeMissionTour, missionTourStep]);
   const [canvasEpoch, setCanvasEpoch] = useState(0);
   const canvasRecoveryGuardRef = useRef(false);
   const canvasListenerCleanupRef = useRef<(() => void) | null>(null);
@@ -5986,6 +6205,44 @@ export default function Town3D() {
       />
     </Suspense>
   ) : null;
+  const missionTourOverlay = showMissionTour ? (
+    <div className="fixed inset-0 z-[210] flex items-center justify-center px-4 py-6">
+      <div className="absolute inset-0 bg-black/72 backdrop-blur-sm" />
+      <div className="relative z-10 w-full max-w-lg rounded-2xl border border-cyan-500/35 bg-slate-950/92 p-5 shadow-2xl">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div>
+            <div className="text-[11px] uppercase tracking-[0.2em] text-cyan-300">Guided Mission Tour</div>
+            <div className="mt-1 text-xl font-black text-amber-300">{MISSION_TOUR_STEPS[missionTourStep].title}</div>
+          </div>
+          <div className="text-[10px] font-mono text-slate-400">
+            {missionTourStep + 1}/{MISSION_TOUR_STEPS.length}
+          </div>
+        </div>
+        <p className="text-[12px] leading-relaxed text-slate-200">
+          {MISSION_TOUR_STEPS[missionTourStep].body}
+        </p>
+        <div className="mt-4 rounded-lg border border-amber-500/20 bg-slate-900/40 px-3 py-2 text-[11px] text-slate-300">
+          Open the bottom-left DEGEN LOOP HUD and follow the NEXT MISSION card. Telegram is optional.
+        </div>
+        <div className="mt-4 flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={closeMissionTour}
+            className="rounded-lg border border-slate-700/70 px-3 py-1.5 text-[11px] text-slate-400 hover:border-slate-600 hover:text-slate-200"
+          >
+            Skip Tour
+          </button>
+          <button
+            type="button"
+            onClick={advanceMissionTour}
+            className="rounded-lg border border-cyan-400/65 bg-cyan-500/20 px-3 py-1.5 text-[11px] font-semibold text-cyan-100 hover:border-cyan-300 hover:bg-cyan-500/28"
+          >
+            {missionTourStep >= MISSION_TOUR_STEPS.length - 1 ? 'Start Loop' : 'Next'}
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   /* ────────────── MOBILE LAYOUT ────────────── */
   if (isMobile) return (
@@ -5996,12 +6253,20 @@ export default function Town3D() {
         </Suspense>
       )}
       {wheelArenaOverlay}
+      {missionTourOverlay}
       {/* Mobile top bar — compact */}
       <div className="shrink-0 flex items-center justify-between px-3 py-1 bg-slate-950/95 border-b border-slate-800/40 z-50">
         <span className="text-xs font-bold text-amber-400">AI TOWN</span>
         {economy && Number.isFinite(economy.spotPrice) && (
           <span className="text-[10px] text-slate-500 font-mono">$ARENA {economy.spotPrice.toFixed(4)}</span>
         )}
+        <Suspense fallback={null}>
+          <LazyPrivyWalletConnect
+            compact
+            onAddressChange={setWalletAddress}
+            onSessionChange={setPlayerSession}
+          />
+        </Suspense>
         <div className="flex items-center gap-1">
           {ownedAgent && (
             <button
@@ -6041,6 +6306,16 @@ export default function Town3D() {
               ⚔️ {leadingCrew.territoryControl}
             </span>
           )}
+          <span
+            className={`text-[9px] px-1.5 py-0.5 rounded border font-mono ${
+              aiMode === 'LIVE'
+                ? 'border-emerald-500/50 bg-emerald-950/35 text-emerald-200'
+                : 'border-slate-700/70 bg-slate-900/40 text-slate-300'
+            }`}
+            title={aiMode === 'LIVE' ? 'Live model calls enabled' : 'Simulation mode (no live model spend)'}
+          >
+            AI:{aiMode}
+          </span>
           <span className="text-[10px] text-cyan-300/90 uppercase">{mobileVisualQuality}</span>
           {activeOpportunity && opportunityTimeLeft && (
             <span
@@ -6301,6 +6576,7 @@ export default function Town3D() {
         </Suspense>
       )}
       {wheelArenaOverlay}
+      {missionTourOverlay}
       {/* Top Bar: Degen Stats */}
       <div className="shrink-0 flex items-center justify-between px-4 py-1.5 bg-slate-950/90 border-b border-slate-800/40 z-50">
         <div className="flex items-center gap-3">
@@ -6310,6 +6586,16 @@ export default function Town3D() {
           )}
           <span className="text-[10px] text-cyan-300/90 font-mono uppercase">
             {visualSettings.quality === 'auto' ? `AUTO:${resolvedVisualQuality}` : resolvedVisualQuality}
+          </span>
+          <span
+            className={`text-[10px] px-2 py-0.5 rounded-full border font-mono ${
+              aiMode === 'LIVE'
+                ? 'border-emerald-500/55 bg-emerald-950/35 text-emerald-200'
+                : 'border-slate-700/70 bg-slate-900/40 text-slate-300'
+            }`}
+            title={aiMode === 'LIVE' ? 'Live model calls enabled' : 'Simulation mode (no live model spend)'}
+          >
+            AI:{aiMode}
           </span>
           {ownedLoopTelemetry && (
             <span className="text-[10px] bg-amber-900/45 text-amber-200 px-2 py-0.5 rounded-full border border-amber-500/45 font-mono">
@@ -6371,7 +6657,11 @@ export default function Town3D() {
           )}
         </div>
         <Suspense fallback={null}>
-          <LazyPrivyWalletConnect compact onAddressChange={setWalletAddress} />
+          <LazyPrivyWalletConnect
+            compact
+            onAddressChange={setWalletAddress}
+            onSessionChange={setPlayerSession}
+          />
         </Suspense>
         <button
           onClick={() => setShowSpawnOverlay(true)}
@@ -6648,11 +6938,16 @@ export default function Town3D() {
               nudgeBusy={degenNudgeBusy}
               plansLoading={degenPlansLoading}
               guidanceMission={degenGuidance.mission}
+              missionWhy={degenGuidance.missionWhy}
+              missionBlocked={degenGuidance.missionBlocked}
+              missionFallback={degenGuidance.missionFallback}
+              missionSuccess={degenGuidance.missionSuccess}
               recommendedNudge={degenGuidance.recommended}
               blockers={degenGuidance.blockers}
               crewOrderBusy={crewOrderBusy}
               crewName={ownedCrewLink?.crewName || null}
               crewColor={ownedCrewLink?.colorHex || null}
+              actionsLockedReason={authRequiredForActions ? actionLockReason : null}
               loopTelemetry={ownedLoopTelemetry}
               nowMs={uiNowMs}
               statusMessage={degenStatus?.message}

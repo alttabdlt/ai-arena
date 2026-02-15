@@ -6,8 +6,129 @@ import { Router, Request, Response } from 'express';
 import { agentLoopService, type AgentLoopMode, type ManualActionKind } from '../services/agentLoopService';
 import { agentCommandService } from '../services/agentCommandService';
 import { smartAiService } from '../services/smartAiService';
+import { prisma } from '../config/database';
 
 const router = Router();
+const LOOP_SEQUENCE = ['BUILD', 'WORK', 'FIGHT', 'TRADE'] as const;
+type LoopPhase = (typeof LOOP_SEQUENCE)[number];
+type LoopAction = Exclude<ManualActionKind, 'rest'>;
+
+const PHASE_TO_ACTION: Record<LoopPhase, LoopAction> = {
+  BUILD: 'build',
+  WORK: 'work',
+  FIGHT: 'fight',
+  TRADE: 'trade',
+};
+
+function resolveLoopPhaseFromActionType(actionType: string | null | undefined): LoopPhase | null {
+  const normalized = String(actionType || '').trim().toLowerCase();
+  if (!normalized) return null;
+  if (
+    normalized.includes('claim')
+    || normalized.includes('start_build')
+    || normalized.includes('build')
+  ) {
+    return 'BUILD';
+  }
+  if (normalized.includes('work') || normalized.includes('complete') || normalized.includes('mine')) {
+    return 'WORK';
+  }
+  if (normalized.includes('fight') || normalized.includes('arena') || normalized === 'play_arena') {
+    return 'FIGHT';
+  }
+  if (normalized.includes('trade') || normalized.startsWith('buy_') || normalized.startsWith('sell_')) {
+    return 'TRADE';
+  }
+  return null;
+}
+
+function deriveLoopState(lastActionType: string | null | undefined) {
+  const lastPhase = resolveLoopPhaseFromActionType(lastActionType);
+  const nextIndex = lastPhase ? (LOOP_SEQUENCE.indexOf(lastPhase) + 1) % LOOP_SEQUENCE.length : 0;
+  return {
+    phaseIndex: nextIndex,
+    phaseName: LOOP_SEQUENCE[nextIndex],
+    loopsCompleted: 0,
+  };
+}
+
+function describeSuccessOutcome(action: LoopAction): string {
+  if (action === 'build') {
+    return 'You claim/start/progress infrastructure, unlocking future throughput.';
+  }
+  if (action === 'work') {
+    return 'Reserve/build progress increases so future fights and builds become affordable.';
+  }
+  if (action === 'fight') {
+    return 'You take an arena duel for potential $ARENA upside and momentum.';
+  }
+  return 'You rebalance reserve vs $ARENA so the next loop stays solvent.';
+}
+
+function describeAction(action: LoopAction): string {
+  return action.toUpperCase();
+}
+
+function normalizePlayerWallet(raw: unknown): string {
+  return String(raw || '').trim().toLowerCase();
+}
+
+function requireAuthenticatedSession(req: Request, res: Response): { wallet: string | null } | null {
+  const authFlag = String(req.headers['x-player-authenticated'] || '').trim();
+  if (authFlag !== '1') {
+    res.status(401).json({
+      ok: false,
+      code: 'AUTH_REQUIRED',
+      error: 'Sign in required before issuing loop actions.',
+      authRequired: true,
+    });
+    return null;
+  }
+  const wallet = normalizePlayerWallet(req.headers['x-player-wallet']);
+  return { wallet: wallet || null };
+}
+
+async function ensureWalletOwnsAgent(
+  agentId: string,
+  wallet: string | null,
+): Promise<{ ok: true } | { ok: false; status: number; code: string; error: string }> {
+  const target = await prisma.arenaAgent.findUnique({
+    where: { id: agentId },
+    select: { id: true, walletAddress: true, isActive: true },
+  });
+
+  if (!target || !target.isActive) {
+    return {
+      ok: false,
+      status: 404,
+      code: 'TARGET_UNAVAILABLE',
+      error: 'Agent is unavailable',
+    };
+  }
+
+  const targetWallet = normalizePlayerWallet(target.walletAddress);
+  if (!targetWallet) return { ok: true };
+
+  if (!wallet) {
+    return {
+      ok: false,
+      status: 401,
+      code: 'WALLET_REQUIRED',
+      error: 'Signed-in wallet is required for this agent action.',
+    };
+  }
+
+  if (wallet !== targetWallet) {
+    return {
+      ok: false,
+      status: 403,
+      code: 'FORBIDDEN_AGENT_ACCESS',
+      error: 'Signed-in wallet does not control this agent.',
+    };
+  }
+
+  return { ok: true };
+}
 
 function normalizeLoopMode(raw: unknown): AgentLoopMode {
   const value = String(raw || 'DEFAULT').trim().toUpperCase();
@@ -133,6 +254,20 @@ router.get('/agent-loop/llm-status', async (_req: Request, res: Response): Promi
   }
 });
 
+// Lightweight LLM mode probe (no inference call, no credit spend).
+router.get('/agent-loop/llm-mode', (_req: Request, res: Response): void => {
+  const enabled = smartAiService.isOpenRouterEnabled();
+  const configured = smartAiService.isOpenRouterConfigured();
+  const ready = smartAiService.isOpenRouterReady();
+  const live = Boolean(enabled && configured && ready);
+  res.json({
+    mode: live ? 'LIVE' : 'SIMULATION',
+    enabled,
+    configured,
+    ready,
+  });
+});
+
 // Inspect rescue debt/window telemetry for balancing and debugging.
 router.get('/agent-loop/rescue-stats', async (req: Request, res: Response): Promise<void> => {
   try {
@@ -208,10 +343,59 @@ router.get('/agent-loop/plans/:agentId', async (req: Request, res: Response): Pr
       }),
     );
 
+    const [agent] = await Promise.all([
+      prisma.arenaAgent.findUnique({
+        where: { id: req.params.agentId },
+        select: { lastActionType: true },
+      }),
+    ]);
+
+    const loopState = deriveLoopState(agent?.lastActionType);
+    const expectedAction = PHASE_TO_ACTION[loopState.phaseName];
+    const planMap = Object.fromEntries(plans) as Record<LoopAction, Awaited<ReturnType<typeof agentLoopService.planDeterministicAction>>>;
+    const expectedPlan = planMap[expectedAction];
+
+    let recommendedAction: LoopAction | null = expectedAction;
+    if (!expectedPlan?.ok) {
+      recommendedAction = null;
+      for (let i = 1; i <= LOOP_SEQUENCE.length; i += 1) {
+        const phase = LOOP_SEQUENCE[(loopState.phaseIndex + i) % LOOP_SEQUENCE.length];
+        const candidate = PHASE_TO_ACTION[phase];
+        if (planMap[candidate]?.ok) {
+          recommendedAction = candidate;
+          break;
+        }
+      }
+    }
+
+    const blocker = expectedPlan?.ok
+      ? null
+      : {
+          code: expectedPlan?.reasonCode || 'CONSTRAINT_VIOLATION',
+          message: expectedPlan?.reason || `${describeAction(expectedAction)} is blocked`,
+          phase: loopState.phaseName,
+          action: expectedAction,
+          fallbackAction: recommendedAction,
+        };
+
+    const missionReason = blocker
+      ? `${describeAction(expectedAction)} is blocked: ${blocker.message}`
+      : `${describeAction(expectedAction)} is next in the loop order.`;
+    const missionAction = recommendedAction || expectedAction;
+
     res.json({
       agentId: req.params.agentId,
       mode: agentLoopService.getLoopMode(req.params.agentId),
-      plans: Object.fromEntries(plans),
+      authRequiredForActions: true,
+      loopState,
+      mission: {
+        phase: loopState.phaseName,
+        recommendedAction: missionAction,
+        reason: missionReason,
+        successOutcome: describeSuccessOutcome(missionAction),
+      },
+      blocker,
+      plans: planMap,
     });
   } catch (error: any) {
     res.status(400).json({ error: error.message });
@@ -221,6 +405,18 @@ router.get('/agent-loop/plans/:agentId', async (req: Request, res: Response): Pr
 // Execute a deterministic manual action immediately (build/work/fight/trade/rest).
 router.post('/agent-loop/action/:agentId', async (req: Request, res: Response): Promise<void> => {
   try {
+    const session = requireAuthenticatedSession(req, res);
+    if (!session) return;
+    const ownership = await ensureWalletOwnsAgent(req.params.agentId, session.wallet);
+    if (!ownership.ok) {
+      res.status(ownership.status).json({
+        ok: false,
+        code: ownership.code,
+        error: ownership.error,
+      });
+      return;
+    }
+
     const action = normalizeManualAction((req.body as any)?.action);
     const source = String((req.body as any)?.source || 'api').trim().slice(0, 60) || 'api';
     const plan = await agentLoopService.planDeterministicAction(req.params.agentId, action);
@@ -274,6 +470,19 @@ router.post('/agent-loop/action/:agentId', async (req: Request, res: Response): 
     res.json({
       ok: commandState.status === 'EXECUTED',
       action,
+      wasRedirected: Boolean(
+        payloadActionMismatch(action, receipt.executedActionType)
+        || payloadActionMismatch(action, result.action.type),
+      ),
+      redirectReason:
+        payloadActionMismatch(action, receipt.executedActionType) || payloadActionMismatch(action, result.action.type)
+          ? `Planner redirected ${String(action).toUpperCase()} based on current constraints.`
+          : null,
+      fallbackExecuted:
+        payloadActionMismatch(action, receipt.executedActionType)
+        || payloadActionMismatch(action, result.action.type)
+          ? String(receipt.executedActionType || result.action.type || '').toLowerCase()
+          : null,
       plan: {
         intent: plan.intent,
         note: plan.note,
@@ -296,6 +505,16 @@ router.post('/agent-loop/action/:agentId', async (req: Request, res: Response): 
 // Set deterministic loop mode for one agent (DEFAULT | DEGEN_LOOP)
 router.post('/agent-loop/mode/:agentId', async (req: Request, res: Response): Promise<void> => {
   try {
+    const session = requireAuthenticatedSession(req, res);
+    if (!session) return;
+    const ownership = await ensureWalletOwnsAgent(req.params.agentId, session.wallet);
+    if (!ownership.ok) {
+      res.status(ownership.status).json({
+        error: ownership.error,
+        code: ownership.code,
+      });
+      return;
+    }
     const mode = normalizeLoopMode((req.body as any)?.mode);
     const applied = agentLoopService.setLoopMode(req.params.agentId, mode);
     res.json({ agentId: req.params.agentId, mode: applied });
@@ -315,3 +534,17 @@ router.get('/agent-loop/mode/:agentId', async (req: Request, res: Response): Pro
 });
 
 export default router;
+
+function payloadActionMismatch(requested: ManualActionKind, executed: string | null | undefined): boolean {
+  const expectedByRequested: Record<ManualActionKind, string[]> = {
+    build: ['claim_plot', 'start_build', 'do_work'],
+    work: ['do_work'],
+    fight: ['play_arena'],
+    trade: ['buy_arena', 'sell_arena'],
+    rest: ['rest'],
+  };
+  const normalized = String(executed || '').toLowerCase().trim();
+  if (!normalized) return false;
+  const expected = expectedByRequested[requested] || [];
+  return !expected.includes(normalized);
+}

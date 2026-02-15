@@ -23,11 +23,16 @@ interface DegenControlBarProps {
   nudgeBusy: boolean;
   plansLoading?: boolean;
   guidanceMission?: string;
+  missionWhy?: string;
+  missionBlocked?: string | null;
+  missionFallback?: string | null;
+  missionSuccess?: string;
   recommendedNudge?: DegenNudge | null;
   blockers?: Partial<Record<DegenNudge, string>>;
   crewOrderBusy?: boolean;
   crewName?: string | null;
   crewColor?: string | null;
+  actionsLockedReason?: string | null;
   loopTelemetry: DegenLoopTelemetry | null;
   nowMs: number;
   statusMessage?: string;
@@ -64,11 +69,16 @@ export function DegenControlBar({
   nudgeBusy,
   plansLoading = false,
   guidanceMission = 'Checking next move...',
+  missionWhy = 'Waiting for planner state...',
+  missionBlocked = null,
+  missionFallback = null,
+  missionSuccess = 'Complete this step to advance the loop.',
   recommendedNudge = null,
   blockers,
   crewOrderBusy = false,
   crewName = null,
   crewColor = null,
+  actionsLockedReason = null,
   loopTelemetry,
   nowMs,
   statusMessage,
@@ -77,9 +87,20 @@ export function DegenControlBar({
   onNudge,
   onCrewOrder,
 }: DegenControlBarProps) {
-  if (!ownedAgent) return null;
+  if (!ownedAgent) {
+    return (
+      <div className="w-[420px] max-w-[calc(100vw-24px)] rounded-xl border border-cyan-500/35 bg-slate-950/88 p-3 backdrop-blur-md shadow-lg shadow-black/35">
+        <div className="text-[11px] font-semibold text-amber-300">DEGEN LOOP</div>
+        <div className="text-[10px] text-cyan-200/85">Build &gt; Work &gt; Fight &gt; Trade cycle</div>
+        <div className="mt-2 rounded-lg border border-slate-700/70 bg-slate-900/45 px-2 py-2 text-[10px] leading-tight text-slate-300">
+          {actionsLockedReason || 'Sign in and spawn/select your wallet-linked agent to unlock loop controls.'}
+        </div>
+      </div>
+    );
+  }
 
   const loopOn = loopMode === 'DEGEN_LOOP';
+  const controlsLocked = Boolean(actionsLockedReason);
   const safeNextIndex = Math.max(0, Math.min(LOOP_STEPS.length - 1, loopTelemetry?.nextIndex ?? 0));
   const elapsedMs = loopTelemetry?.lastAdvanceAt != null ? Math.max(0, nowMs - loopTelemetry.lastAdvanceAt) : Number.POSITIVE_INFINITY;
   const heat = Number.isFinite(elapsedMs) ? Math.max(0, 1 - elapsedMs / 9000) : 0;
@@ -94,19 +115,20 @@ export function DegenControlBar({
       <div className="mb-2 flex items-center justify-between gap-2">
         <div className="min-w-0">
           <div className="text-[11px] font-semibold text-amber-300">DEGEN LOOP</div>
+          <div className="text-[10px] text-cyan-200/85">Build &gt; Work &gt; Fight &gt; Trade cycle</div>
           <div className="truncate text-[10px] text-slate-400">
             {ownedAgent.name} · {ownedAgent.archetype}
           </div>
         </div>
         <button
           type="button"
-          disabled={loopUpdating}
+          disabled={loopUpdating || controlsLocked}
           onClick={() => onToggleLoop(loopOn ? 'DEFAULT' : 'DEGEN_LOOP')}
           className={`rounded-lg border px-2 py-1 text-[10px] font-mono transition-colors ${
             loopOn
               ? 'border-emerald-500/60 bg-emerald-950/40 text-emerald-300 hover:bg-emerald-900/45'
               : 'border-slate-700/70 bg-slate-900/40 text-slate-300 hover:bg-slate-800/45'
-          } ${loopUpdating ? 'cursor-not-allowed opacity-60' : ''}`}
+          } ${loopUpdating || controlsLocked ? 'cursor-not-allowed opacity-60' : ''}`}
           title="Toggle deterministic build/work/fight/trade loop"
         >
           {loopUpdating ? 'SYNC…' : loopOn ? 'AUTO ON' : 'AUTO OFF'}
@@ -150,14 +172,20 @@ export function DegenControlBar({
           <span className="font-mono text-cyan-200">NEXT MISSION</span>
           <span className="font-mono text-slate-500">{plansLoading ? 'SYNC…' : recommendedLabel ? `DO ${recommendedLabel.toUpperCase()}` : 'BLOCKED'}</span>
         </div>
-        <div className="text-[10px] leading-tight text-slate-300">
-          {guidanceMission}
+        <div className="space-y-1 text-[10px] leading-tight">
+          <div className="text-slate-200"><span className="font-mono text-cyan-300/90">DO</span> {guidanceMission}</div>
+          <div className="text-slate-400"><span className="font-mono text-slate-300">WHY</span> {missionWhy}</div>
+          <div className="text-slate-400">
+            <span className="font-mono text-slate-300">IF BLOCKED</span>{' '}
+            {missionFallback || missionBlocked || 'Auto-redirect to the best executable fallback.'}
+          </div>
+          <div className="text-emerald-300/90"><span className="font-mono text-emerald-300">SUCCESS</span> {missionSuccess}</div>
         </div>
       </div>
       <div className="grid grid-cols-4 gap-1.5">
         {NUDGES.map((nudge) => {
           const blocker = blockers?.[nudge.key];
-          const disabled = nudgeBusy || plansLoading || Boolean(blocker);
+          const disabled = controlsLocked || nudgeBusy || plansLoading || Boolean(blocker);
           const recommended = recommendedNudge === nudge.key && !blocker;
           return (
             <button
@@ -174,6 +202,8 @@ export function DegenControlBar({
               } ${disabled && !blocker ? 'cursor-not-allowed opacity-60' : ''}`}
               title={blocker
                 ? `${nudge.label} blocked: ${blocker}`
+                : controlsLocked
+                  ? actionsLockedReason || 'Sign in first to run commands'
                 : `Execute deterministic ${nudge.label.toLowerCase()} command for ${ownedAgent.name}`}
             >
               <span>{nudge.emoji}</span> {nudge.label}
@@ -207,10 +237,10 @@ export function DegenControlBar({
               <button
                 key={action.key}
                 type="button"
-                disabled={crewOrderBusy}
+                disabled={crewOrderBusy || controlsLocked}
                 onClick={() => onCrewOrder(action.key)}
                 className={`rounded-md border border-slate-700/70 bg-slate-900/35 px-1 py-1 text-[10px] text-slate-200 transition-colors hover:border-cyan-400/50 hover:bg-slate-800/55 ${
-                  crewOrderBusy ? 'cursor-not-allowed opacity-60' : ''
+                  crewOrderBusy || controlsLocked ? 'cursor-not-allowed opacity-60' : ''
                 }`}
                 title={`Issue ${action.label.toUpperCase()} crew order for ${ownedAgent.name}`}
               >
@@ -231,6 +261,11 @@ export function DegenControlBar({
           }`}
         >
           {statusMessage}
+        </div>
+      )}
+      {!statusMessage && controlsLocked && (
+        <div className="mt-2 text-[10px] leading-tight text-amber-200">
+          {actionsLockedReason}
         </div>
       )}
     </div>

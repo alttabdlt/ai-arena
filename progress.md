@@ -412,3 +412,25 @@ Original prompt: "yes, but are we able to implement build/work/fight > crypto lo
 
 - Commit:
   - `c89b868` — `town-ui: add explicit app loading and canvas recovery indicators`
+
+### Onboarding auth gate cleanup (2026-02-16)
+
+- Reworked sign-in onboarding to remove distracting background gameplay visuals:
+  - Backdrop is now fully opaque (`slate` gradient), so no agents/canvas bleed through during auth.
+- Removed spectator bypass actions from onboarding:
+  - Removed `Skip — just spectate` from wallet step.
+  - Removed `👀 Just Spectate` from choose step.
+- Updated `60s Quick Start` to current flow:
+  - Wallet/email/social sign-in.
+  - Auto-detect wallet-linked agent, deploy if missing.
+  - Confirm connected agent bankroll in HUD.
+  - Run AUTO/manual loop actions.
+  - Fund path via nad.fun tx hash.
+
+- Validation:
+  - `cd app && npm run build` passed.
+  - Local browser screenshot confirms pure auth gate with no visible town background:
+    - `/tmp/ai-arena-onboarding-auth-gate.png`
+
+- Commit:
+  - `50443df` — `onboarding: make auth gate opaque and remove spectator skip`

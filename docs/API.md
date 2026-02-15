@@ -29,6 +29,7 @@ Operator routes authenticate through Telegram identity + linked wallet ownership
 
 Deterministic manual action behavior:
 - `fight` maps to strict `play_arena` and now runs a real turbo poker duel (live opponent, wagered bankroll delta, persisted match outcome).
+- Repeated `fight` outcomes feed rivalry progression in the social graph (can unlock `RIVAL` status).
 - Strict command receipts return explicit reject reasons (for example `INSUFFICIENT_ARENA` when bankroll is below duel minimum).
 
 ## 3. Arena API

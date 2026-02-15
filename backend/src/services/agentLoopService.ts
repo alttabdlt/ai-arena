@@ -4842,14 +4842,50 @@ Be creative, detailed, and in-character for the town's theme. Response should be
         select: { bankroll: true },
       }),
     ]);
-    const myBankrollAfter = agentAfter?.bankroll ?? freshAgent.bankroll;
+    let myBankrollAfter = agentAfter?.bankroll ?? freshAgent.bankroll;
     const oppBankrollAfter = opponentAfter?.bankroll ?? selectedOpponent.bankroll;
-    const myDelta = myBankrollAfter - freshAgent.bankroll;
     const oppDelta = oppBankrollAfter - selectedOpponent.bankroll;
 
     let outcome = 'DRAW';
     if (settled.winnerId === agent.id) outcome = 'WIN';
     else if (settled.winnerId === selectedOpponent.id) outcome = 'LOSS';
+    let rivalryNote = '';
+    try {
+      const relationshipOutcome = outcome === 'DRAW' ? 'NEUTRAL' : 'BEEF';
+      const relationshipDelta = outcome === 'DRAW' ? -1 : -4;
+      const relUpdate = await socialGraphService.upsertInteraction({
+        agentAId: agent.id,
+        agentBId: selectedOpponent.id,
+        outcome: relationshipOutcome,
+        delta: relationshipDelta,
+        ignoreCooldown: true,
+      });
+      if (relUpdate.statusChanged?.to === 'RIVAL') {
+        rivalryNote = ` 🔥 New rivalry: ${agent.name} vs ${selectedOpponent.name} (score ${relUpdate.relationship.score}).`;
+      }
+      if (outcome === 'WIN' && relUpdate.relationship.status === 'RIVAL') {
+        const pool = await this.getOrCreateEconomyPool();
+        const bonusTarget = 3;
+        const grant = Math.min(bonusTarget, Math.max(0, pool.arenaBalance - SOLVENCY_POOL_FLOOR));
+        if (grant > 0) {
+          await prisma.$transaction(async (tx) => {
+            await tx.economyPool.update({
+              where: { id: pool.id },
+              data: { arenaBalance: { decrement: grant } },
+            });
+            await tx.arenaAgent.update({
+              where: { id: agent.id },
+              data: { bankroll: { increment: grant } },
+            });
+          });
+          myBankrollAfter += grant;
+          rivalryNote += ` 🏴 Rival takedown bonus: +${grant} $ARENA.`;
+        }
+      }
+    } catch {
+      // Relationship cooldown/errors should not block duel resolution.
+    }
+    const myDelta = myBankrollAfter - freshAgent.bankroll;
     const outcomeText = outcome === 'WIN'
       ? `WIN vs ${selectedOpponent.name}`
       : outcome === 'LOSS'
@@ -4866,7 +4902,7 @@ Be creative, detailed, and in-character for the town's theme. Response should be
         `${agent.name} fired a turbo poker duel (wager ${finalWager}) and locked ${outcomeText}. ` +
         `Bankroll: ${freshAgent.bankroll} → ${myBankrollAfter} (${deltaText}); ` +
         `${selectedOpponent.name}: ${selectedOpponent.bankroll} → ${oppBankrollAfter} (${oppDeltaText}).` +
-        `${traceSuffix}${fallbackSuffix} 💭 "${action.reasoning}"`,
+        `${traceSuffix}${fallbackSuffix}${rivalryNote} 💭 "${action.reasoning}"`,
     };
   }
 

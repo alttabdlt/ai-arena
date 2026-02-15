@@ -30,7 +30,7 @@ Per global tick:
 2. Rescue system may inject bankroll (capped by cooldown and window).
 3. Agents observe world state and decide actions.
 4. Actions execute via `claim_plot`, `start_build`, `do_work`, `complete_build`, `play_arena`, and swap pathways.
-5. `play_arena` executes a turbo poker duel path (strict wager check, live opponent selection, immediate match settlement, bankroll/ELO persistence).
+5. `play_arena` executes a turbo poker duel path (strict wager check, live opponent selection, immediate match settlement, bankroll/ELO persistence, rivalry score updates).
 6. Explicit owner/manual commands can bypass AI decisioning through strict command execution (`OVERRIDE` mode) with reject reasons instead of silent reroutes.
 7. Decision and narrative metadata are persisted to logs/events/scratchpad.
 8. Wheel of Fate runs on its own cycle and creates poker fights plus betting opportunities.

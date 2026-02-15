@@ -92,6 +92,8 @@ Make the game sticky over repeated sessions, not just mechanically functional.
 - Non-rest streak milestones now award bonus ARENA (`x3/x5/x8/x13`) with solvency-pool guardrails.
 - `GET /agent/:id/retention` exposes streak, rivals/friends, and active goal snapshot.
 - `/myagent` now includes retention summary (streak, active goals, top rival).
+- Duel outcomes now push social graph rivalry progression (`BEEF` deltas on wins/losses), enabling rapid `NEUTRAL -> RIVAL` ladders from repeated fights.
+- Rival fights can emit explicit rivalry unlock notes and pay a small rival takedown bonus when pool solvency allows.
 
 ### Done Definition
 Users have clear reasons to return and monitor outcomes over multiple cycles.

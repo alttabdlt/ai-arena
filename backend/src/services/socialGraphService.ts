@@ -36,6 +36,7 @@ export const socialGraphService = {
     agentBId: string;
     outcome: ConversationOutcome;
     delta: number;
+    ignoreCooldown?: boolean;
   }): Promise<{
     relationship: {
       id: string;
@@ -69,7 +70,7 @@ export const socialGraphService = {
         where: { agentAId_agentBId: { agentAId: pair.a, agentBId: pair.b } },
       });
 
-      if (existing?.lastInteractionAt) {
+      if (!opts.ignoreCooldown && existing?.lastInteractionAt) {
         const ms = now.getTime() - existing.lastInteractionAt.getTime();
         if (ms < MIN_SECONDS_BETWEEN_PAIR_CHATS * 1000) {
           throw new Error('Pair chat cooldown');

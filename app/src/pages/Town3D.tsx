@@ -61,6 +61,7 @@ const ARENA_IMPACT_BURST_LIFE_MS = 620;
 const ARENA_IMPACT_BURST_CAP = 28;
 const ACTION_BURST_LIFE_MS = 1280;
 const CREW_BATTLE_TOAST_LIFE_MS = 5200;
+const UI_MODE_KEY = 'ai_arena_ui_mode';
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const MISSION_TOUR_STEPS = [
   {
@@ -464,6 +465,7 @@ interface CrewWarsStatusPayload {
 
 type LoopMode = 'DEFAULT' | 'DEGEN_LOOP';
 type CrewOrderStrategy = 'RAID' | 'DEFEND' | 'FARM' | 'TRADE';
+type UiMode = 'default' | 'pro';
 
 type CrewBattleToast = {
   id: string;
@@ -4696,6 +4698,10 @@ preloadBuildingModels();
 export default function Town3D() {
   const isMobile = useIsMobile();
   const [mobilePanel, setMobilePanel] = useState<'none' | 'info' | 'feed' | 'chat' | 'agent' | 'spawn'>('none');
+  const [uiMode, setUiMode] = useState<UiMode>(() => {
+    const stored = safeTrim(localStorage.getItem(UI_MODE_KEY), 24).toLowerCase();
+    return stored === 'pro' ? 'pro' : 'default';
+  });
   const [towns, setTowns] = useState<TownSummary[]>([]);
   const [town, setTown] = useState<Town | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -4749,6 +4755,9 @@ export default function Town3D() {
   const [missionTourStep, setMissionTourStep] = useState(0);
   const missionTourShownRef = useRef(false);
   const [aiMode, setAiMode] = useState<'LIVE' | 'SIMULATION'>('SIMULATION');
+  useEffect(() => {
+    localStorage.setItem(UI_MODE_KEY, uiMode);
+  }, [uiMode]);
 
   // Auto-select user's agent (from onboarding) or fall back to first
   const myAgentId = getMyAgentId();
@@ -5298,6 +5307,7 @@ export default function Town3D() {
   }, [isPlayerAuthenticated, ownedAgentId, showOnboarding]);
   useEffect(() => {
     if (showOnboarding) return;
+    if (uiMode !== 'pro') return;
     if (!isPlayerAuthenticated || !ownedAgentId) return;
     if (missionTourShownRef.current) return;
     const seen = localStorage.getItem(DEGEN_TOUR_KEY) === '1';
@@ -5305,7 +5315,12 @@ export default function Town3D() {
     missionTourShownRef.current = true;
     setMissionTourStep(0);
     setShowMissionTour(true);
-  }, [isPlayerAuthenticated, ownedAgentId, showOnboarding]);
+  }, [isPlayerAuthenticated, ownedAgentId, showOnboarding, uiMode]);
+  useEffect(() => {
+    if (uiMode === 'pro') return;
+    if (!showMissionTour) return;
+    setShowMissionTour(false);
+  }, [showMissionTour, uiMode]);
   useEffect(() => {
     let cancelled = false;
     const refreshLlmMode = async () => {
@@ -6249,6 +6264,10 @@ export default function Town3D() {
     if (!ownedAgentId) return null;
     return agents.find((a) => a.id === ownedAgentId) ?? null;
   }, [agents, ownedAgentId]);
+  const ownedRuntimeAgent = useMemo(() => {
+    if (!ownedAgentId) return null;
+    return runtimeAgents.find((agent) => agent.agentId === ownedAgentId) || null;
+  }, [runtimeAgents, ownedAgentId]);
   const recentSwaps = useMemo(() => swaps.slice(0, 8), [swaps]);
 
   // Latest thought payload for the wallet-owned agent
@@ -6355,7 +6374,7 @@ export default function Town3D() {
       />
     </Suspense>
   ) : null;
-  const missionTourOverlay = showMissionTour ? (
+  const missionTourOverlay = uiMode === 'pro' && showMissionTour ? (
     <div className="fixed inset-0 z-[210] flex items-center justify-center px-4 py-6">
       <div className="absolute inset-0 bg-black/72 backdrop-blur-sm" />
       <div className="relative z-10 w-full max-w-lg rounded-2xl border border-cyan-500/35 bg-slate-950/92 p-5 shadow-2xl">
@@ -6739,90 +6758,119 @@ export default function Town3D() {
               <div className="text-[9px] font-mono uppercase text-slate-400">Agent Arena Live</div>
             </div>
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-              {economy && Number.isFinite(economy.spotPrice) && (
-                <span className="rounded-full border border-slate-700/70 bg-slate-900/50 px-2 py-0.5 text-[10px] font-mono text-slate-300">
-                  $ARENA {economy.spotPrice.toFixed(4)}
-                </span>
-              )}
-              <span className="rounded-full border border-slate-700/70 bg-slate-900/45 px-2 py-0.5 text-[10px] font-mono uppercase text-cyan-300/90">
-                {visualSettings.quality === 'auto' ? `AUTO:${resolvedVisualQuality}` : resolvedVisualQuality}
-              </span>
-              <span
-                className={`rounded-full border px-2 py-0.5 text-[10px] font-mono ${
-                  aiMode === 'LIVE'
-                    ? 'border-emerald-500/55 bg-emerald-950/35 text-emerald-200'
-                    : 'border-slate-700/70 bg-slate-900/40 text-slate-300'
-                }`}
-                title={aiMode === 'LIVE' ? 'Live model calls enabled' : 'Simulation mode (no live model spend)'}
-              >
-                AI:{aiMode}
-              </span>
-              {ownedLoopTelemetry && (
-                <span
-                  className="rounded-full border border-amber-500/45 bg-amber-900/45 px-2 py-0.5 text-[10px] font-mono text-amber-200"
-                  title="Loop Heat = consecutive non-rest actions. Streak toasts: WIN STREAK = consecutive duel wins, LOSS STREAK = consecutive duel losses."
-                >
-                  🔥 LOOP HEAT x{Math.max(1, ownedLoopTelemetry.chain)} · loops {Math.max(0, ownedLoopTelemetry.loopsCompleted)}
-                </span>
-              )}
-              <span
-                className="rounded-full border border-slate-700/65 bg-slate-900/35 px-2 py-0.5 text-[10px] font-mono text-slate-300"
-                title="Definitions: LOOP HEAT tracks non-rest loop momentum. WIN/LOSS STREAK toasts track consecutive duel outcomes."
-              >
-                ℹ HEAT = loop momentum · STREAK = duel run
-              </span>
-              {ownedCrewLink && (
-                <span
-                  className="rounded-full border px-2 py-0.5 text-[10px] font-mono"
-                  style={{
-                    color: ownedCrewLink.colorHex,
-                    borderColor: `${ownedCrewLink.colorHex}66`,
-                    backgroundColor: `${ownedCrewLink.colorHex}1f`,
-                  }}
-                  title={`Crew role: ${ownedCrewLink.role}`}
-                >
-                  ⚑ {ownedCrewLink.crewName}
-                </span>
-              )}
-              {leadingCrew && (
-                <span className="rounded-full border border-rose-400/35 bg-rose-950/30 px-2 py-0.5 text-[10px] font-mono text-rose-200">
-                  ⚔️ {leadingCrew.name} · terr {leadingCrew.territoryControl} · score {leadingCrew.warScore}
-                </span>
-              )}
-              {activeOpportunity && opportunityTimeLeft && (
-                <span
-                  className="rounded-full border px-2 py-0.5 text-[10px] font-mono animate-pulse"
-                  style={{
-                    color: activeOpportunity.objective.color,
-                    borderColor: `${activeOpportunity.objective.color}66`,
-                    backgroundColor: `${activeOpportunity.objective.color}1f`,
-                  }}
-                  title={`${activeOpportunity.label}: ${activeOpportunity.subtitle}`}
-                >
-                  ⏱ {activeOpportunity.label} {opportunityTimeLeft}
-                </span>
-              )}
-              {displayObjective && (
-                <span
-                  className="rounded-full border px-2 py-0.5 text-[10px] font-mono"
-                  style={{
-                    color: displayObjective.color,
-                    borderColor: `${displayObjective.color}66`,
-                    backgroundColor: `${displayObjective.color}1f`,
-                  }}
-                  title={`Objective from ${displayObjective.sourceType || 'system'}: ${displayObjective.label}`}
-                >
-                  {displayObjective.emoji} {displayObjective.label}
-                </span>
-              )}
-              {wheel.status?.phase === 'ANNOUNCING' && (
-                <span className="rounded-full border border-fuchsia-400/45 bg-fuchsia-950/35 px-2 py-0.5 text-[10px] text-fuchsia-200 animate-pulse">🎰 Betting Open</span>
-              )}
-              {wheel.status?.phase === 'FIGHTING' && (
-                <span className="rounded-full border border-red-400/45 bg-red-950/35 px-2 py-0.5 text-[10px] text-red-200 animate-pulse">⚔️ Fight!</span>
-              )}
-              {wheel.status?.phase === 'AFTERMATH' && (
-                <span className="rounded-full border border-amber-400/45 bg-amber-950/35 px-2 py-0.5 text-[10px] text-amber-200">🏆 Result</span>
+              {uiMode === 'default' ? (
+                <>
+                  <span
+                    className={`rounded-full border px-2 py-0.5 text-[10px] font-mono ${
+                      runtimeLoopRunning
+                        ? 'border-emerald-500/55 bg-emerald-950/35 text-emerald-200'
+                        : 'border-rose-500/50 bg-rose-950/30 text-rose-200'
+                    }`}
+                  >
+                    AGENT {runtimeLoopRunning ? 'RUNNING' : 'PAUSED'}
+                  </span>
+                  {ownedAgent && (
+                    <span className="rounded-full border border-slate-700/70 bg-slate-900/45 px-2 py-0.5 text-[10px] font-mono text-slate-200">
+                      BAL ${Math.round(ownedAgent.bankroll)}A / {Math.round(ownedAgent.reserveBalance)}R
+                    </span>
+                  )}
+                  <span className="rounded-full border border-cyan-500/45 bg-cyan-950/30 px-2 py-0.5 text-[10px] font-mono text-cyan-100">
+                    {ownedRuntimeAgent?.action || 'WAIT'} · {ownedRuntimeAgent?.targetLabel || 'Awaiting target'}
+                  </span>
+                  {ownedRuntimeAgent?.lastOutcome && (
+                    <span className="rounded-full border border-amber-400/45 bg-amber-950/35 px-2 py-0.5 text-[10px] font-mono text-amber-100">
+                      LAST {ownedRuntimeAgent.lastOutcome}
+                    </span>
+                  )}
+                </>
+              ) : (
+                <>
+                  {economy && Number.isFinite(economy.spotPrice) && (
+                    <span className="rounded-full border border-slate-700/70 bg-slate-900/50 px-2 py-0.5 text-[10px] font-mono text-slate-300">
+                      $ARENA {economy.spotPrice.toFixed(4)}
+                    </span>
+                  )}
+                  <span className="rounded-full border border-slate-700/70 bg-slate-900/45 px-2 py-0.5 text-[10px] font-mono uppercase text-cyan-300/90">
+                    {visualSettings.quality === 'auto' ? `AUTO:${resolvedVisualQuality}` : resolvedVisualQuality}
+                  </span>
+                  <span
+                    className={`rounded-full border px-2 py-0.5 text-[10px] font-mono ${
+                      aiMode === 'LIVE'
+                        ? 'border-emerald-500/55 bg-emerald-950/35 text-emerald-200'
+                        : 'border-slate-700/70 bg-slate-900/40 text-slate-300'
+                    }`}
+                    title={aiMode === 'LIVE' ? 'Live model calls enabled' : 'Simulation mode (no live model spend)'}
+                  >
+                    AI:{aiMode}
+                  </span>
+                  {ownedLoopTelemetry && (
+                    <span
+                      className="rounded-full border border-amber-500/45 bg-amber-900/45 px-2 py-0.5 text-[10px] font-mono text-amber-200"
+                      title="Loop Heat = consecutive non-rest actions. Streak toasts: WIN STREAK = consecutive duel wins, LOSS STREAK = consecutive duel losses."
+                    >
+                      🔥 LOOP HEAT x{Math.max(1, ownedLoopTelemetry.chain)} · loops {Math.max(0, ownedLoopTelemetry.loopsCompleted)}
+                    </span>
+                  )}
+                  <span
+                    className="rounded-full border border-slate-700/65 bg-slate-900/35 px-2 py-0.5 text-[10px] font-mono text-slate-300"
+                    title="Definitions: LOOP HEAT tracks non-rest loop momentum. WIN/LOSS STREAK toasts track consecutive duel outcomes."
+                  >
+                    ℹ HEAT = loop momentum · STREAK = duel run
+                  </span>
+                  {ownedCrewLink && (
+                    <span
+                      className="rounded-full border px-2 py-0.5 text-[10px] font-mono"
+                      style={{
+                        color: ownedCrewLink.colorHex,
+                        borderColor: `${ownedCrewLink.colorHex}66`,
+                        backgroundColor: `${ownedCrewLink.colorHex}1f`,
+                      }}
+                      title={`Crew role: ${ownedCrewLink.role}`}
+                    >
+                      ⚑ {ownedCrewLink.crewName}
+                    </span>
+                  )}
+                  {leadingCrew && (
+                    <span className="rounded-full border border-rose-400/35 bg-rose-950/30 px-2 py-0.5 text-[10px] font-mono text-rose-200">
+                      ⚔️ {leadingCrew.name} · terr {leadingCrew.territoryControl} · score {leadingCrew.warScore}
+                    </span>
+                  )}
+                  {activeOpportunity && opportunityTimeLeft && (
+                    <span
+                      className="rounded-full border px-2 py-0.5 text-[10px] font-mono animate-pulse"
+                      style={{
+                        color: activeOpportunity.objective.color,
+                        borderColor: `${activeOpportunity.objective.color}66`,
+                        backgroundColor: `${activeOpportunity.objective.color}1f`,
+                      }}
+                      title={`${activeOpportunity.label}: ${activeOpportunity.subtitle}`}
+                    >
+                      ⏱ {activeOpportunity.label} {opportunityTimeLeft}
+                    </span>
+                  )}
+                  {displayObjective && (
+                    <span
+                      className="rounded-full border px-2 py-0.5 text-[10px] font-mono"
+                      style={{
+                        color: displayObjective.color,
+                        borderColor: `${displayObjective.color}66`,
+                        backgroundColor: `${displayObjective.color}1f`,
+                      }}
+                      title={`Objective from ${displayObjective.sourceType || 'system'}: ${displayObjective.label}`}
+                    >
+                      {displayObjective.emoji} {displayObjective.label}
+                    </span>
+                  )}
+                  {wheel.status?.phase === 'ANNOUNCING' && (
+                    <span className="rounded-full border border-fuchsia-400/45 bg-fuchsia-950/35 px-2 py-0.5 text-[10px] text-fuchsia-200 animate-pulse">🎰 Betting Open</span>
+                  )}
+                  {wheel.status?.phase === 'FIGHTING' && (
+                    <span className="rounded-full border border-red-400/45 bg-red-950/35 px-2 py-0.5 text-[10px] text-red-200 animate-pulse">⚔️ Fight!</span>
+                  )}
+                  {wheel.status?.phase === 'AFTERMATH' && (
+                    <span className="rounded-full border border-amber-400/45 bg-amber-950/35 px-2 py-0.5 text-[10px] text-amber-200">🏆 Result</span>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -6834,6 +6882,17 @@ export default function Town3D() {
                 onSessionChange={setPlayerSession}
               />
             </Suspense>
+            <button
+              onClick={() => setUiMode((current) => (current === 'default' ? 'pro' : 'default'))}
+              className={`rounded-lg border px-2.5 py-1 text-[10px] font-mono uppercase transition-colors ${
+                uiMode === 'pro'
+                  ? 'border-cyan-400/65 bg-cyan-500/20 text-cyan-100 hover:bg-cyan-500/28'
+                  : 'border-slate-700/70 bg-slate-900/45 text-slate-300 hover:border-slate-600/80 hover:text-slate-100'
+              }`}
+              title="Toggle between default readability mode and advanced pro mode"
+            >
+              {uiMode === 'pro' ? 'Pro Mode' : 'Default Mode'}
+            </button>
             <button
               onClick={openDeployFlow}
               className="rounded-lg border border-amber-500/65 bg-gradient-to-r from-amber-600/80 to-orange-600/80 px-3 py-1 text-xs font-bold text-white transition-all hover:from-amber-500 hover:to-orange-500"
@@ -6922,6 +6981,8 @@ export default function Town3D() {
         />
       </Canvas>
 
+      {uiMode === 'pro' && (
+      <>
       {/* Swap Notifications - floating toasts (center-top) */}
       <div className="pointer-events-none absolute top-14 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 z-50">
         {swapNotifications.slice(0, 3).map((notif) => {
@@ -7049,6 +7110,8 @@ export default function Town3D() {
           }}
         />
       )}
+      </>
+      )}
 
       {/* (world event banner and build completion banners removed) */}
 
@@ -7071,87 +7134,95 @@ export default function Town3D() {
             {soundOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
           </Button>
 
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-8 px-2 text-[10px] font-mono text-slate-300 hover:text-slate-100 hover:bg-slate-900/40 backdrop-blur-md bg-slate-950/70 rounded-lg border border-slate-800/40 uppercase"
-            onClick={cycleVisualQuality}
-            title="Cycle visual quality"
-          >
-            {visualSettings.quality === 'auto' ? `auto:${resolvedVisualQuality}` : resolvedVisualQuality}
-          </Button>
+          {uiMode === 'pro' && (
+            <>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-8 px-2 text-[10px] font-mono text-slate-300 hover:text-slate-100 hover:bg-slate-900/40 backdrop-blur-md bg-slate-950/70 rounded-lg border border-slate-800/40 uppercase"
+                onClick={cycleVisualQuality}
+                title="Cycle visual quality"
+              >
+                {visualSettings.quality === 'auto' ? `auto:${resolvedVisualQuality}` : resolvedVisualQuality}
+              </Button>
 
-          <Button
-            size="sm"
-            variant="ghost"
-            className={`h-8 px-2 text-[10px] font-mono hover:text-slate-100 hover:bg-slate-900/40 backdrop-blur-md rounded-lg border ${
-              visualSettings.postFx
-                ? 'text-cyan-300 border-cyan-800/50 bg-slate-950/70'
-                : 'text-slate-500 border-slate-800/40 bg-slate-950/70'
-            }`}
-            onClick={() => setVisualSettings((prev) => ({ ...prev, postFx: !prev.postFx }))}
-            title="Toggle post effects"
-          >
-            FX {visualSettings.postFx ? 'ON' : 'OFF'}
-          </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className={`h-8 px-2 text-[10px] font-mono hover:text-slate-100 hover:bg-slate-900/40 backdrop-blur-md rounded-lg border ${
+                  visualSettings.postFx
+                    ? 'text-cyan-300 border-cyan-800/50 bg-slate-950/70'
+                    : 'text-slate-500 border-slate-800/40 bg-slate-950/70'
+                }`}
+                onClick={() => setVisualSettings((prev) => ({ ...prev, postFx: !prev.postFx }))}
+                title="Toggle post effects"
+              >
+                FX {visualSettings.postFx ? 'ON' : 'OFF'}
+              </Button>
+            </>
+          )}
         </div>
 
-        <Suspense fallback={null}>
-          <LazyDesktopAgentHudPanel
-            selectedAgent={selectedAgent}
-            myAgentId={myAgentId}
-            recentOutcomes={selectedAgentOutcomes}
-            archetypeColors={ARCHETYPE_COLORS}
-            archetypeGlyph={ARCHETYPE_GLYPH}
-            timeAgo={timeAgo}
-          />
-        </Suspense>
-
-        {/* (minimap removed) */}
-
-        <div className="pointer-events-auto absolute left-3 bottom-3 flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end max-w-[calc(100vw-24px)]">
+        {uiMode === 'pro' && (
           <Suspense fallback={null}>
-          <LazyDegenControlBar
-              ownedAgent={ownedAgent ? { id: ownedAgent.id, name: ownedAgent.name, archetype: ownedAgent.archetype } : null}
-              loopMode={ownedLoopMode}
-              loopUpdating={loopModeUpdating}
-              nudgeBusy={degenNudgeBusy}
-              plansLoading={degenPlansLoading}
-              guidanceMission={degenGuidance.mission}
-              missionWhy={degenGuidance.missionWhy}
-              missionBlocked={degenGuidance.missionBlocked}
-              missionFallback={degenGuidance.missionFallback}
-              missionSuccess={degenGuidance.missionSuccess}
-              recommendedNudge={degenGuidance.recommended}
-              blockers={degenGuidance.blockers}
-              crewOrderBusy={crewOrderBusy}
-              crewName={ownedCrewLink?.crewName || null}
-              crewColor={ownedCrewLink?.colorHex || null}
-              actionsLockedReason={authRequiredForActions ? actionLockReason : null}
-              loopTelemetry={ownedLoopTelemetry}
-              nowMs={uiNowMs}
-              statusMessage={degenStatus?.message}
-              statusTone={degenStatus?.tone || 'neutral'}
-              onToggleLoop={updateOwnedLoopMode}
-              onNudge={sendDegenNudge}
-              onCrewOrder={sendCrewOrder}
-            />
-          </Suspense>
-          <Suspense fallback={null}>
-            <LazyDesktopActivityPanel
-              activityFeed={activityFeed}
-              recentSwapsCount={recentSwaps.length}
-              ownedAgentId={ownedAgentId}
-              agentById={agentById}
-              latestThoughts={latestThoughts}
+            <LazyDesktopAgentHudPanel
+              selectedAgent={selectedAgent}
+              myAgentId={myAgentId}
+              recentOutcomes={selectedAgentOutcomes}
               archetypeColors={ARCHETYPE_COLORS}
               archetypeGlyph={ARCHETYPE_GLYPH}
               timeAgo={timeAgo}
-              safeTrim={safeTrim}
-              formatTimeLeft={formatTimeLeft}
             />
           </Suspense>
-        </div>
+        )}
+
+        {/* (minimap removed) */}
+
+        {uiMode === 'pro' && (
+          <div className="pointer-events-auto absolute left-3 bottom-3 flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end max-w-[calc(100vw-24px)]">
+            <Suspense fallback={null}>
+            <LazyDegenControlBar
+                ownedAgent={ownedAgent ? { id: ownedAgent.id, name: ownedAgent.name, archetype: ownedAgent.archetype } : null}
+                loopMode={ownedLoopMode}
+                loopUpdating={loopModeUpdating}
+                nudgeBusy={degenNudgeBusy}
+                plansLoading={degenPlansLoading}
+                guidanceMission={degenGuidance.mission}
+                missionWhy={degenGuidance.missionWhy}
+                missionBlocked={degenGuidance.missionBlocked}
+                missionFallback={degenGuidance.missionFallback}
+                missionSuccess={degenGuidance.missionSuccess}
+                recommendedNudge={degenGuidance.recommended}
+                blockers={degenGuidance.blockers}
+                crewOrderBusy={crewOrderBusy}
+                crewName={ownedCrewLink?.crewName || null}
+                crewColor={ownedCrewLink?.colorHex || null}
+                actionsLockedReason={authRequiredForActions ? actionLockReason : null}
+                loopTelemetry={ownedLoopTelemetry}
+                nowMs={uiNowMs}
+                statusMessage={degenStatus?.message}
+                statusTone={degenStatus?.tone || 'neutral'}
+                onToggleLoop={updateOwnedLoopMode}
+                onNudge={sendDegenNudge}
+                onCrewOrder={sendCrewOrder}
+              />
+            </Suspense>
+            <Suspense fallback={null}>
+              <LazyDesktopActivityPanel
+                activityFeed={activityFeed}
+                recentSwapsCount={recentSwaps.length}
+                ownedAgentId={ownedAgentId}
+                agentById={agentById}
+                latestThoughts={latestThoughts}
+                archetypeColors={ARCHETYPE_COLORS}
+                archetypeGlyph={ARCHETYPE_GLYPH}
+                timeAgo={timeAgo}
+                safeTrim={safeTrim}
+                formatTimeLeft={formatTimeLeft}
+              />
+            </Suspense>
+          </div>
+        )}
 
         <div className="pointer-events-auto absolute right-3 bottom-3 z-[57] hidden lg:block">
           <Suspense fallback={null}>
@@ -7169,7 +7240,7 @@ export default function Town3D() {
         </div>
 
         {/* Wheel of Fate Banner (centered floating overlay) */}
-        {wheel.status && wheel.status.phase !== 'IDLE' && wheel.status.phase !== 'PREP' && (
+        {uiMode === 'pro' && wheel.status && wheel.status.phase !== 'IDLE' && wheel.status.phase !== 'PREP' && (
           <div className="pointer-events-auto absolute bottom-4 left-1/2 -translate-x-1/2 z-50 w-full max-w-xl px-3">
             <Suspense fallback={null}>
               <LazyWheelBanner

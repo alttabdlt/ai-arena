@@ -35,6 +35,7 @@ const TOWN_SPACING = 20;
 const ARENA_SPECTATOR_TARGET_ID = '__ARENA_SPECTATOR__';
 const ARENA_PAYOFF_POPUP_LIFE_MS = 6500;
 const ARENA_BEAT_LIFE_MS = 5200;
+const ARENA_OUTCOME_TOAST_LIFE_MS = 3400;
 const LazyPrivyWalletConnect = lazy(async () => {
   const mod = await import('../components/PrivyWalletConnect');
   return { default: mod.PrivyWalletConnect };
@@ -914,63 +915,6 @@ function SpeechBubble({
   return (
     <sprite position={position} scale={[worldWidth, worldHeight, 1]}>
       <spriteMaterial map={texture} transparent depthWrite={false} />
-    </sprite>
-  );
-}
-
-function ArenaPayoffPopup({
-  signal,
-}: {
-  signal: ArenaOutcomeSignal;
-}) {
-  const spriteRef = useRef<THREE.Sprite>(null);
-  const bornAtMs = useMemo(() => {
-    const parsed = Date.parse(signal.at);
-    return Number.isFinite(parsed) ? parsed : null;
-  }, [signal.at]);
-
-  const nowMs = Date.now();
-  if (!bornAtMs || nowMs - bornAtMs > ARENA_PAYOFF_POPUP_LIFE_MS) return null;
-
-  const resultPrefix = signal.result === 'WIN' ? '🏆' : signal.result === 'LOSS' ? '💥' : '🤝';
-  const deltaPrefix = signal.delta > 0 ? '+' : '';
-  const text = `${resultPrefix} ${deltaPrefix}${signal.delta} ARENA`;
-  const tone = signal.result === 'WIN'
-    ? { fg: '#bbf7d0', bg: 'rgba(6, 78, 59, 0.9)' }
-    : signal.result === 'LOSS'
-      ? { fg: '#fecaca', bg: 'rgba(127, 29, 29, 0.9)' }
-      : { fg: '#bfdbfe', bg: 'rgba(30, 64, 175, 0.86)' };
-
-  const { texture, width, height } = useMemo(
-    () => drawLabelTexture(text, { fg: tone.fg, bg: tone.bg, fontSize: 18, padX: 14, padY: 8, borderRadius: 10 }),
-    [text, tone.fg, tone.bg],
-  );
-
-  const aspect = width / height;
-  const baseHeight = 0.46;
-  const baseWidth = baseHeight * aspect;
-
-  useFrame((state) => {
-    if (!spriteRef.current || !bornAtMs) return;
-    const age = Date.now() - bornAtMs;
-    if (age < 0 || age > ARENA_PAYOFF_POPUP_LIFE_MS) {
-      spriteRef.current.visible = false;
-      return;
-    }
-    spriteRef.current.visible = true;
-    const life = age / ARENA_PAYOFF_POPUP_LIFE_MS;
-    const fade = life < 0.78 ? 1 : 1 - ((life - 0.78) / 0.22);
-    const rise = 2.9 + life * 1.85 + Math.sin(state.clock.elapsedTime * 7.5) * 0.04;
-    const pulse = 1 + (1 - life) * 0.16 + Math.sin(state.clock.elapsedTime * 9.2) * 0.03;
-    spriteRef.current.position.y = rise;
-    spriteRef.current.scale.set(baseWidth * pulse, baseHeight * pulse, 1);
-    const material = spriteRef.current.material as THREE.SpriteMaterial;
-    material.opacity = 0.97 * Math.max(0, fade);
-  });
-
-  return (
-    <sprite ref={spriteRef} position={[0, 2.9, 0]} scale={[baseWidth, baseHeight, 1]}>
-      <spriteMaterial map={texture} transparent depthWrite={false} opacity={0.97} />
     </sprite>
   );
 }
@@ -3131,7 +3075,6 @@ function TownScene({
                   arenaOutcome={arenaOutcome}
 	                BillboardLabel={BillboardLabel}
 	              />
-                {arenaOutcome && <ArenaPayoffPopup signal={arenaOutcome} />}
 		              {tradeByAgentId[a.id]?.text && (
 		                <SpeechBubble
 		                  text={tradeByAgentId[a.id].text}
@@ -3184,6 +3127,16 @@ interface SwapNotification {
   createdAt: number;
 }
 
+interface ArenaOutcomeToast {
+  id: string;
+  agentId: string;
+  agentName: string;
+  archetype: string;
+  result: ArenaOutcomeSignal['result'];
+  delta: number;
+  createdAt: number;
+}
+
 // Preload building GLB models as soon as module is imported
 preloadBuildingModels();
 
@@ -3201,8 +3154,10 @@ export default function Town3D() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [swapNotifications, setSwapNotifications] = useState<SwapNotification[]>([]);
+  const [arenaOutcomeToasts, setArenaOutcomeToasts] = useState<ArenaOutcomeToast[]>([]);
   const [eventNotifications, setEventNotifications] = useState<TownEvent[]>([]);
   const seenSwapIdsRef = useRef<Set<string>>(new Set());
+  const seenArenaOutcomeIdsRef = useRef<Set<string>>(new Set());
   const swapsPrimedRef = useRef(false);
   const seenEventIdsRef = useRef<Set<string>>(new Set());
   const seenTradeEventIdsRef = useRef<Set<string>>(new Set());
@@ -3705,6 +3660,13 @@ export default function Town3D() {
     pushTradeText(agentId, isBuy, `${isBuy ? 'BUY' : 'SELL'} ${amt.toLocaleString()} ARENA`);
   }, [pushTradeText]);
 
+  const pushArenaOutcomeToast = useCallback((toast: ArenaOutcomeToast) => {
+    setArenaOutcomeToasts((prev) => [toast, ...prev.filter((item) => item.id !== toast.id)].slice(0, 4));
+    window.setTimeout(() => {
+      setArenaOutcomeToasts((prev) => prev.filter((item) => item.id !== toast.id));
+    }, ARENA_OUTCOME_TOAST_LIFE_MS + 250);
+  }, []);
+
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
   const agentByIdRef = useRef<Map<string, Agent>>(new Map());
   useEffect(() => {
@@ -3715,6 +3677,7 @@ export default function Town3D() {
     const previousMap = previousAgentBalanceRef.current;
     const nextMap = new Map<string, AgentBalanceSnapshot>();
     const newOutcomes: Array<{ agentId: string; entry: AgentOutcomeEntry }> = [];
+    const newArenaToasts: ArenaOutcomeToast[] = [];
 
     for (const agent of nextAgents) {
       const previous = previousMap.get(agent.id);
@@ -3723,19 +3686,36 @@ export default function Town3D() {
       const tickChanged = !!currentTickAt && currentTickAt !== previousTickAt;
 
       if (previous && tickChanged) {
+        const actionType = agent.lastActionType || 'rest';
         const bankrollDelta = agent.bankroll - previous.bankroll;
         const reserveDelta = agent.reserveBalance - previous.reserveBalance;
         newOutcomes.push({
           agentId: agent.id,
           entry: {
             id: `${agent.id}:${currentTickAt}:${agent.lastActionType || 'rest'}`,
-            actionType: agent.lastActionType || 'rest',
+            actionType,
             reasoning: safeTrim(agent.lastReasoning || agent.lastNarrative || 'No reasoning provided.', 180),
             bankrollDelta,
             reserveDelta,
             at: currentTickAt,
           },
         });
+        if (actionType === 'play_arena') {
+          const toastId = `${agent.id}:${currentTickAt}:play_arena`;
+          if (!seenArenaOutcomeIdsRef.current.has(toastId)) {
+            seenArenaOutcomeIdsRef.current.add(toastId);
+            const result: ArenaOutcomeSignal['result'] = bankrollDelta > 0 ? 'WIN' : bankrollDelta < 0 ? 'LOSS' : 'DRAW';
+            newArenaToasts.push({
+              id: toastId,
+              agentId: agent.id,
+              agentName: agent.name,
+              archetype: agent.archetype,
+              result,
+              delta: bankrollDelta,
+              createdAt: Date.now(),
+            });
+          }
+        }
       }
 
       nextMap.set(agent.id, {
@@ -3758,7 +3738,10 @@ export default function Town3D() {
       }
       return next;
     });
-  }, []);
+    if (newArenaToasts.length > 0) {
+      newArenaToasts.forEach((toast) => pushArenaOutcomeToast(toast));
+    }
+  }, [pushArenaOutcomeToast]);
 
 
 
@@ -4575,6 +4558,38 @@ export default function Town3D() {
                 </span>
                 <span className="font-mono text-xs font-semibold">
                   {Math.round(notif.amount).toLocaleString()}
+                </span>
+                <span className="text-[10px] opacity-80">$ARENA</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Arena Outcome Notifications - floating toasts (top-right) */}
+      <div className="pointer-events-none absolute top-14 right-3 flex flex-col items-end gap-1.5 z-50">
+        {arenaOutcomeToasts.slice(0, 4).map((toast) => {
+          const glyph = ARCHETYPE_GLYPH[toast.archetype] || '●';
+          const color = ARCHETYPE_COLORS[toast.archetype] || '#93c5fd';
+          const deltaPrefix = toast.delta > 0 ? '+' : '';
+          const resultTone = toast.result === 'WIN'
+            ? 'bg-emerald-950/80 border-emerald-700/50 text-emerald-200'
+            : toast.result === 'LOSS'
+              ? 'bg-rose-950/80 border-rose-700/50 text-rose-200'
+              : 'bg-sky-950/80 border-sky-700/50 text-sky-200';
+          return (
+            <div
+              key={toast.id}
+              className="animate-in slide-in-from-right-2 fade-in duration-300"
+            >
+              <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border backdrop-blur-md shadow-lg ${resultTone}`}>
+                <span className="text-sm">⚔️</span>
+                <span style={{ color }} className="font-mono text-xs">
+                  {glyph} {toast.agentName}
+                </span>
+                <span className="text-[10px] uppercase tracking-wide opacity-85">{toast.result}</span>
+                <span className="font-mono text-xs font-semibold">
+                  {deltaPrefix}{Math.round(toast.delta).toLocaleString()}
                 </span>
                 <span className="text-[10px] opacity-80">$ARENA</span>
               </div>

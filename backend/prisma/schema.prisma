@@ -817,6 +817,11 @@ model ArenaAgent {
   // Social graph (AI Town)
   relationshipsAsA  AgentRelationship[] @relation("AgentRelationshipA")
   relationshipsAsB  AgentRelationship[] @relation("AgentRelationshipB")
+  goalTracks        AgentGoalTrack[]
+  operatorLinks     AgentOperatorLink[]
+  commands          AgentCommand[]
+  crewMembership    CrewMembership?
+  crewOrders        CrewOrder[]
   
   @@index([elo])
   @@index([isActive])
@@ -1050,6 +1055,7 @@ model Town {
   plots           Plot[]
   contributions   TownContribution[]
   events          TownEvent[]
+  goalTracks      AgentGoalTrack[]
   
   @@index([status])
   @@index([level])
@@ -1181,6 +1187,275 @@ model TownEvent {
   @@index([townId])
   @@index([eventType])
   @@index([createdAt])
+}
+
+model AgentGoalTrack {
+  id               String           @id @default(cuid())
+  agentId          String
+  townId           String?
+  horizon          AgentGoalHorizon
+  status           AgentGoalStatus  @default(ACTIVE)
+  templateKey      String
+  title            String
+  description      String
+  metric           AgentGoalMetric
+  focusZone        PlotZone?
+  targetValue      Int
+  progressValue    Int              @default(0)
+  startedTick      Int
+  deadlineTick     Int?
+  lastEvaluatedTick Int?
+  completedTick    Int?
+  failedTick       Int?
+  rewardProfile    String           @default("{}")
+  penaltyProfile   String           @default("{}")
+  lastProgressLabel String          @default("")
+  notes            String           @default("")
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  agent            ArenaAgent       @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  town             Town?            @relation(fields: [townId], references: [id], onDelete: Cascade)
+
+  @@index([agentId, status])
+  @@index([agentId, horizon, status])
+  @@index([townId])
+  @@index([deadlineTick])
+}
+
+model TelegramIdentity {
+  id                  String                  @id @default(cuid())
+  telegramUserId      String                  @unique
+  username            String?
+  linkedWalletAddress String?
+  verificationState   TelegramVerificationState @default(UNVERIFIED)
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+
+  operatorLinks       AgentOperatorLink[]
+  issuedCommands      AgentCommand[]          @relation("commandIssuerIdentity")
+  issuedCrewOrders    CrewOrder[]             @relation("crewOrderIssuerIdentity")
+
+  @@index([linkedWalletAddress])
+  @@index([verificationState])
+}
+
+model AgentOperatorLink {
+  id                 String            @id @default(cuid())
+  agentId            String
+  walletAddress      String
+  telegramIdentityId String
+  role               OperatorLinkRole  @default(OWNER)
+  isActive           Boolean           @default(true)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  agent              ArenaAgent        @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  telegramIdentity   TelegramIdentity  @relation(fields: [telegramIdentityId], references: [id], onDelete: Cascade)
+
+  @@unique([agentId, telegramIdentityId, role])
+  @@index([agentId, role, isActive])
+  @@index([walletAddress, isActive])
+  @@index([telegramIdentityId, isActive])
+}
+
+model AgentCommand {
+  id               String                 @id @default(cuid())
+  agentId          String
+  issuerType       AgentCommandIssuerType @default(TELEGRAM)
+  issuerIdentityId String?
+  issuerLabel      String?
+  mode             AgentCommandMode       @default(SUGGEST)
+  intent           String
+  paramsJson       String                 @default("{}")
+  constraintsJson  String                 @default("{}")
+  auditMetaJson    String                 @default("{}")
+  priority         Int                    @default(50)
+  createdTick      Int?
+  expiresAtTick    Int?
+  status           AgentCommandStatus     @default(QUEUED)
+  statusReason     String                 @default("")
+  resultJson       String                 @default("{}")
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+  acceptedAt       DateTime?
+  executedAt       DateTime?
+  rejectedAt       DateTime?
+  cancelledAt      DateTime?
+  expiredAt        DateTime?
+
+  agent            ArenaAgent             @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  issuerIdentity   TelegramIdentity?      @relation("commandIssuerIdentity", fields: [issuerIdentityId], references: [id], onDelete: SetNull)
+
+  @@index([agentId, status, priority, createdAt])
+  @@index([status, createdAt])
+  @@index([expiresAtTick])
+  @@index([issuerIdentityId])
+}
+
+model Crew {
+  id               String           @id @default(cuid())
+  slug             String           @unique
+  name             String
+  colorHex         String           @default("#22d3ee")
+  description      String           @default("")
+  treasuryArena    Int              @default(0)
+  territoryControl Int              @default(0)
+  momentum         Int              @default(0)
+  warScore         Int              @default(0)
+  lastResolvedTick Int              @default(0)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  memberships      CrewMembership[]
+  orders           CrewOrder[]
+  wonBattles       CrewBattleEvent[] @relation("CrewBattleWinner")
+  lostBattles      CrewBattleEvent[] @relation("CrewBattleLoser")
+
+  @@index([warScore, updatedAt])
+}
+
+model CrewMembership {
+  id         String           @id @default(cuid())
+  crewId     String
+  agentId    String           @unique
+  role       CrewMemberRole   @default(MEMBER)
+  isActive   Boolean          @default(true)
+  joinedAt   DateTime         @default(now())
+  leftAt     DateTime?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  crew       Crew             @relation(fields: [crewId], references: [id], onDelete: Cascade)
+  agent      ArenaAgent       @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([crewId, isActive])
+  @@index([agentId, isActive])
+}
+
+model CrewOrder {
+  id               String            @id @default(cuid())
+  crewId           String
+  agentId          String
+  strategy         CrewStrategy
+  intensity        Int               @default(1)
+  source           String            @default("telegram")
+  note             String            @default("")
+  paramsJson       String            @default("{}")
+  issuerIdentityId String?
+  issuerLabel      String?
+  createdTick      Int               @default(0)
+  expiresAtTick    Int?
+  status           CrewOrderStatus   @default(QUEUED)
+  statusReason     String            @default("")
+  appliedAt        DateTime?
+  expiredAt        DateTime?
+  cancelledAt      DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  crew             Crew              @relation(fields: [crewId], references: [id], onDelete: Cascade)
+  agent            ArenaAgent        @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  issuerIdentity   TelegramIdentity? @relation("crewOrderIssuerIdentity", fields: [issuerIdentityId], references: [id], onDelete: SetNull)
+
+  @@index([crewId, status, createdAt])
+  @@index([agentId, status, createdAt])
+  @@index([expiresAtTick])
+  @@index([issuerIdentityId])
+}
+
+model CrewBattleEvent {
+  id             String   @id @default(cuid())
+  tick           Int
+  winnerCrewId   String
+  loserCrewId    String
+  territorySwing Int      @default(0)
+  treasurySwing  Int      @default(0)
+  summary        String   @default("")
+  metadataJson   String   @default("{}")
+  createdAt      DateTime @default(now())
+
+  winnerCrew     Crew     @relation("CrewBattleWinner", fields: [winnerCrewId], references: [id], onDelete: Cascade)
+  loserCrew      Crew     @relation("CrewBattleLoser", fields: [loserCrewId], references: [id], onDelete: Cascade)
+
+  @@index([tick, createdAt])
+  @@index([winnerCrewId, createdAt])
+  @@index([loserCrewId, createdAt])
+}
+
+enum AgentGoalHorizon {
+  SHORT
+  MID
+  LONG
+}
+
+enum AgentGoalStatus {
+  ACTIVE
+  COMPLETED
+  FAILED
+  EXPIRED
+}
+
+enum AgentGoalMetric {
+  CLAIMED_OR_UC_TOTAL
+  BUILT_IN_ZONE
+  BUILT_TOTAL
+  BANKROLL
+  WINS_TOTAL
+  API_CALLS_TOTAL
+}
+
+enum TelegramVerificationState {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  REVOKED
+}
+
+enum OperatorLinkRole {
+  OWNER
+  DELEGATE
+  VIEWER
+}
+
+enum AgentCommandMode {
+  SUGGEST
+  STRONG
+  OVERRIDE
+}
+
+enum AgentCommandIssuerType {
+  TELEGRAM
+  API
+  SYSTEM
+}
+
+enum AgentCommandStatus {
+  QUEUED
+  ACCEPTED
+  EXECUTED
+  REJECTED
+  EXPIRED
+  CANCELLED
+}
+
+enum CrewMemberRole {
+  CAPTAIN
+  MEMBER
+}
+
+enum CrewStrategy {
+  RAID
+  DEFEND
+  FARM
+  TRADE
+}
+
+enum CrewOrderStatus {
+  QUEUED
+  APPLIED
+  EXPIRED
+  CANCELLED
 }
 
 enum TownStatus {

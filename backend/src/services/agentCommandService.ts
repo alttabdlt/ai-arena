@@ -27,6 +27,10 @@ const SUPPORTED_INTENTS = new Set([
   'buy_skill',
   'rest',
   'trade',
+  'crew_raid',
+  'crew_defend',
+  'crew_farm',
+  'crew_trade',
 ]);
 
 const INTENT_ACTION_MAP: Record<string, string> = {
@@ -50,6 +54,10 @@ const INTENT_ACTION_MAP: Record<string, string> = {
   buyskill: 'buy_skill',
   rest: 'rest',
   trade: 'buy_arena',
+  crew_raid: 'play_arena',
+  crew_defend: 'do_work',
+  crew_farm: 'buy_arena',
+  crew_trade: 'sell_arena',
 };
 
 export type AgentCommandView = {

@@ -33,7 +33,6 @@ const ENABLE_ENERGY = FAST_STARTUP ? false : process.env.ENABLE_ENERGY !== 'fals
 const ENABLE_STAKING = FAST_STARTUP ? false : process.env.ENABLE_STAKING !== 'false';
 const ENABLE_FILE_LOGGING = FAST_STARTUP ? false : process.env.ENABLE_FILE_LOGGING !== 'false';
 const ENABLE_CUSTOM_WS = FAST_STARTUP ? false : process.env.ENABLE_CUSTOM_WS !== 'false';
-const ENABLE_MEMORY_MONITOR = FAST_STARTUP ? false : process.env.ENABLE_MEMORY_MONITOR !== 'false';
 const ENABLE_TOURNAMENTS = FAST_STARTUP ? false : process.env.ENABLE_TOURNAMENTS === 'true';
 
 if (FAST_STARTUP) {
@@ -332,6 +331,20 @@ async function startServer() {
   const wheelApiRouter = (await import('./routes/wheel-api')).default;
   app.use('/api/v1', cors<cors.CorsRequest>({ origin: '*' }), wheelApiRouter);
   console.log('🎡 Wheel of Fate API ready at /api/v1');
+
+  // ============================================
+  // Operator REST API (Telegram-linked owner controls)
+  // ============================================
+  const operatorApiRouter = (await import('./routes/operator-api')).default;
+  app.use('/api/v1', cors<cors.CorsRequest>({ origin: '*' }), operatorApiRouter);
+  console.log('🕹️ Operator API ready at /api/v1/operator');
+
+  // ============================================
+  // Crew Wars REST API (persistent faction conflict loop)
+  // ============================================
+  const crewWarsApiRouter = (await import('./routes/crew-wars-api')).default;
+  app.use('/api/v1', cors<cors.CorsRequest>({ origin: '*' }), crewWarsApiRouter);
+  console.log('⚔️ Crew Wars API ready at /api/v1/crew-wars');
 
   // ============================================
   // Market Pulse (demo dopamine)

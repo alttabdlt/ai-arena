@@ -50,6 +50,7 @@ const ARENA_STRIKE_COOLDOWN_MAX_MS = 760;
 const ARENA_IMPACT_BURST_LIFE_MS = 620;
 const ARENA_IMPACT_BURST_CAP = 28;
 const ACTION_BURST_LIFE_MS = 1280;
+const CREW_BATTLE_TOAST_LIFE_MS = 5200;
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const LazyPrivyWalletConnect = lazy(async () => {
   const mod = await import('../components/PrivyWalletConnect');
@@ -292,7 +293,51 @@ interface OpportunityWindow {
   penaltyDrag: number;
 }
 
+interface CrewStanding {
+  id: string;
+  slug: string;
+  name: string;
+  colorHex: string;
+  territoryControl: number;
+  treasuryArena: number;
+  momentum: number;
+  warScore: number;
+  memberCount: number;
+}
+
+interface CrewAgentLink {
+  crewId: string;
+  crewName: string;
+  colorHex: string;
+  role: string;
+}
+
+interface CrewWarsStatusPayload {
+  crews: CrewStanding[];
+  agentCrewById: Record<string, CrewAgentLink>;
+  recentBattles: Array<{
+    id: string;
+    tick: number;
+    winnerCrewName: string;
+    loserCrewName: string;
+    territorySwing: number;
+    treasurySwing: number;
+    createdAt: string;
+  }>;
+  epochTicks: number;
+}
+
 type LoopMode = 'DEFAULT' | 'DEGEN_LOOP';
+type CrewOrderStrategy = 'RAID' | 'DEFEND' | 'FARM' | 'TRADE';
+
+type CrewBattleToast = {
+  id: string;
+  winnerCrewName: string;
+  loserCrewName: string;
+  territorySwing: number;
+  treasurySwing: number;
+  createdAt: number;
+};
 
 const URGENCY_VISUALS: Record<UrgencyKind, { emoji: string; color: string }> = {
   ARENA: { emoji: '⚔️', color: '#fb7185' },
@@ -1964,6 +2009,51 @@ function ClaimedMarker({ position, color }: { position: [number, number, number]
   );
 }
 
+function CrewTerritoryPulse({
+  position,
+  color,
+  seed,
+}: {
+  position: [number, number, number];
+  color: string;
+  seed: number;
+}) {
+  const ringRef = useRef<THREE.Mesh>(null);
+  const haloRef = useRef<THREE.Mesh>(null);
+  const phase = (seed % 360) * (Math.PI / 180);
+
+  useFrame((state) => {
+    const t = state.clock.elapsedTime;
+    const pulse = (Math.sin(t * 2.8 + phase) + 1) * 0.5;
+    if (ringRef.current) {
+      const scale = 1 + pulse * 0.18;
+      ringRef.current.scale.set(scale, scale, 1);
+      ringRef.current.rotation.z = t * 0.55 + phase * 0.2;
+      const ringMat = ringRef.current.material as THREE.MeshBasicMaterial;
+      ringMat.opacity = 0.12 + pulse * 0.16;
+    }
+    if (haloRef.current) {
+      const haloScale = 1 + pulse * 0.22;
+      haloRef.current.scale.set(haloScale, haloScale, 1);
+      const haloMat = haloRef.current.material as THREE.MeshBasicMaterial;
+      haloMat.opacity = 0.04 + pulse * 0.08;
+    }
+  });
+
+  return (
+    <group position={position}>
+      <mesh ref={ringRef} position={[0, 0.11, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[6.9, 7.8, 36]} />
+        <meshBasicMaterial color={color} transparent opacity={0.22} depthWrite={false} />
+      </mesh>
+      <mesh ref={haloRef} position={[0, 0.1, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[13.4, 13.4]} />
+        <meshBasicMaterial color={color} transparent opacity={0.08} depthWrite={false} />
+      </mesh>
+    </group>
+  );
+}
+
 function ObjectiveBeacon({
   position,
   color,
@@ -2160,11 +2250,16 @@ function useGroundTexture() {
   }, []);
 }
 
-function zoneMaterial(zone: PlotZone, selected: boolean) {
+function zoneMaterial(zone: PlotZone, selected: boolean, crewColorHex?: string | null) {
   const base = new THREE.Color('#2a3328'); // earthy base (not pure black)
   const tint = new THREE.Color(ZONE_COLORS[zone]);
   const color = base.lerp(tint, 0.35);
-  const emissive = selected ? tint.clone().multiplyScalar(0.3) : new THREE.Color('#000000');
+  let emissive = selected ? tint.clone().multiplyScalar(0.3) : new THREE.Color('#000000');
+  if (crewColorHex) {
+    const crew = new THREE.Color(crewColorHex);
+    color.lerp(crew, selected ? 0.46 : 0.28);
+    emissive = selected ? crew.clone().multiplyScalar(0.42) : crew.clone().multiplyScalar(0.15);
+  }
   return { color, emissive };
 }
 
@@ -2435,6 +2530,7 @@ function Minimap({
 function TownScene({
   town,
   agents,
+  agentCrewById,
   ownedAgentId,
   ownedLoopTelemetry,
   selectedPlotId,
@@ -2466,6 +2562,7 @@ function TownScene({
 }: {
   town: Town;
   agents: Agent[];
+  agentCrewById: Record<string, CrewAgentLink>;
   ownedAgentId: string | null;
   ownedLoopTelemetry: DegenLoopTelemetry | null;
   selectedPlotId: string | null;
@@ -4219,11 +4316,19 @@ function TownScene({
         const wx = (p.x - bounds.centerX) * spacing;
         const wz = (p.y - bounds.centerY) * spacing;
         const selected = p.id === selectedPlotId;
-        const { color, emissive } = zoneMaterial(p.zone, selected);
+        const ownerCrew = p.ownerId ? agentCrewById[p.ownerId] ?? null : null;
+        const { color, emissive } = zoneMaterial(p.zone, selected, ownerCrew?.colorHex);
         const name = p.buildingName?.trim() || (p.status === 'EMPTY' ? 'Available' : p.status.replace(/_/g, ' '));
 
         return (
           <group key={p.id}>
+            {ownerCrew && p.status !== 'EMPTY' && (
+              <CrewTerritoryPulse
+                position={[wx, 0, wz]}
+                color={ownerCrew.colorHex}
+                seed={hashToSeed(`${p.id}:${ownerCrew.crewId}`)}
+              />
+            )}
             <mesh
               receiveShadow
               position={[wx, 0.02, wz]}
@@ -4242,7 +4347,10 @@ function TownScene({
 
             {/* Claimed marker for claimed but not yet building */}
             {p.status === 'CLAIMED' && (
-              <ClaimedMarker position={[wx + 6.5, 0, wz + 6.5]} color={ZONE_COLORS[p.zone]} />
+              <ClaimedMarker
+                position={[wx + 6.5, 0, wz + 6.5]}
+                color={ownerCrew?.colorHex || ZONE_COLORS[p.zone]}
+              />
             )}
 
             {(p.status === 'UNDER_CONSTRUCTION' || p.status === 'BUILT') && (
@@ -4252,7 +4360,7 @@ function TownScene({
             <BillboardLabel
               text={name.length > 18 ? `${name.slice(0, 18)}…` : name}
               position={[wx, 3.6, wz]}
-              color={selected ? '#e2e8f0' : '#cbd5e1'}
+              color={selected ? '#e2e8f0' : ownerCrew?.colorHex || '#cbd5e1'}
             />
           </group>
         );
@@ -4449,16 +4557,19 @@ export default function Town3D() {
   const [swaps, setSwaps] = useState<EconomySwapRow[]>([]);
   const [events, setEvents] = useState<TownEvent[]>([]);
   const [worldEvents, setWorldEvents] = useState<ActiveWorldEvent[]>([]);
+  const [crewWarsStatus, setCrewWarsStatus] = useState<CrewWarsStatusPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [swapNotifications, setSwapNotifications] = useState<SwapNotification[]>([]);
   const [arenaOutcomeToasts, setArenaOutcomeToasts] = useState<ArenaOutcomeToast[]>([]);
   const [arenaMomentumToasts, setArenaMomentumToasts] = useState<ArenaMomentumToast[]>([]);
+  const [crewBattleToasts, setCrewBattleToasts] = useState<CrewBattleToast[]>([]);
   const [arenaImpactFlash, setArenaImpactFlash] = useState<ArenaImpactFlash | null>(null);
   const [eventNotifications, setEventNotifications] = useState<TownEvent[]>([]);
   const seenSwapIdsRef = useRef<Set<string>>(new Set());
   const seenArenaOutcomeIdsRef = useRef<Set<string>>(new Set());
   const seenArenaMomentumIdsRef = useRef<Set<string>>(new Set());
+  const seenCrewBattleIdsRef = useRef<Set<string>>(new Set());
   const swapsPrimedRef = useRef(false);
   const seenEventIdsRef = useRef<Set<string>>(new Set());
   const seenTradeEventIdsRef = useRef<Set<string>>(new Set());
@@ -4582,9 +4693,15 @@ export default function Town3D() {
     if (myAgentId && agents.some((agent) => agent.id === myAgentId)) return myAgentId;
     return null;
   }, [walletAddress, agents, myAgentId]);
+  const leadingCrew = useMemo(() => crewWarsStatus?.crews?.[0] ?? null, [crewWarsStatus]);
+  const ownedCrewLink = useMemo(() => {
+    if (!ownedAgentId) return null;
+    return crewWarsStatus?.agentCrewById?.[ownedAgentId] ?? null;
+  }, [ownedAgentId, crewWarsStatus]);
   const [ownedLoopMode, setOwnedLoopMode] = useState<LoopMode>('DEFAULT');
   const [loopModeUpdating, setLoopModeUpdating] = useState(false);
   const [degenNudgeBusy, setDegenNudgeBusy] = useState(false);
+  const [crewOrderBusy, setCrewOrderBusy] = useState(false);
   const [degenStatus, setDegenStatus] = useState<{ message: string; tone: 'neutral' | 'ok' | 'error' } | null>(null);
   const [ownedLoopTelemetry, setOwnedLoopTelemetry] = useState<DegenLoopTelemetry | null>(null);
   const degenLoopTelemetryByAgentIdRef = useRef<Map<string, DegenLoopTelemetry>>(new Map());
@@ -4721,6 +4838,65 @@ export default function Town3D() {
       showDegenStatus(reason, 'error', 3600);
     } finally {
       setDegenNudgeBusy(false);
+    }
+  }, [ownedAgentId, showDegenStatus]);
+  const sendCrewOrder = useCallback(async (strategy: CrewOrderStrategy) => {
+    if (!ownedAgentId) return;
+    setCrewOrderBusy(true);
+    showDegenStatus(`Dispatching ${strategy} crew order…`, 'neutral');
+    try {
+      const intensity = strategy === 'RAID' ? 3 : strategy === 'TRADE' ? 1 : 2;
+      const res = await fetch(`${API_BASE}/crew-wars/orders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentId: ownedAgentId,
+          strategy,
+          intensity,
+          source: 'town-ui',
+          immediate: true,
+        }),
+      });
+      const payload = await res.json().catch(() => null) as {
+        ok?: boolean;
+        error?: string;
+        commandStatus?: string;
+        commandReceipt?: {
+          status?: string;
+          statusReason?: string;
+          executedActionType?: string | null;
+        };
+        tickResult?: {
+          action?: string;
+        };
+      } | null;
+      const failReason =
+        payload?.error
+        || payload?.commandReceipt?.statusReason
+        || (res.ok ? '' : `Crew order failed (${res.status})`);
+      if (!res.ok || payload?.ok === false) {
+        throw new Error(failReason || `${strategy} order failed`);
+      }
+      if (String(payload?.commandStatus || '').toUpperCase() === 'REJECTED') {
+        throw new Error(payload?.commandReceipt?.statusReason || `${strategy} order rejected`);
+      }
+      const executedAction =
+        payload?.commandReceipt?.executedActionType
+        || payload?.tickResult?.action
+        || strategy.toLowerCase();
+      showDegenStatus(
+        `${strategy} order executed as ${String(executedAction).toUpperCase()}.`,
+        'ok',
+        3600,
+      );
+      const refreshed = await apiFetch<CrewWarsStatusPayload>('/crew-wars/status').catch(() => null);
+      if (refreshed) setCrewWarsStatus(refreshed);
+    } catch (err) {
+      console.error('[Town3D] Failed to execute crew order', err);
+      const reason = err instanceof Error ? err.message : `Failed to execute ${strategy} order`;
+      showDegenStatus(reason, 'error', 3800);
+    } finally {
+      setCrewOrderBusy(false);
     }
   }, [ownedAgentId, showDegenStatus]);
   useEffect(() => {
@@ -5044,6 +5220,30 @@ export default function Town3D() {
     }, ARENA_IMPACT_FLASH_LIFE_MS);
   }, []);
 
+  const pushCrewBattleToast = useCallback((toast: CrewBattleToast) => {
+    setCrewBattleToasts((prev) => [toast, ...prev.filter((item) => item.id !== toast.id)].slice(0, 3));
+    window.setTimeout(() => {
+      setCrewBattleToasts((prev) => prev.filter((item) => item.id !== toast.id));
+    }, CREW_BATTLE_TOAST_LIFE_MS + 280);
+  }, []);
+  useEffect(() => {
+    if (!crewWarsStatus?.recentBattles?.length) return;
+    const ordered = [...crewWarsStatus.recentBattles].reverse();
+    for (const battle of ordered) {
+      if (!battle?.id || seenCrewBattleIdsRef.current.has(battle.id)) continue;
+      seenCrewBattleIdsRef.current.add(battle.id);
+      const createdAtMs = Number.isFinite(Date.parse(battle.createdAt)) ? Date.parse(battle.createdAt) : Date.now();
+      pushCrewBattleToast({
+        id: battle.id,
+        winnerCrewName: battle.winnerCrewName,
+        loserCrewName: battle.loserCrewName,
+        territorySwing: battle.territorySwing,
+        treasurySwing: battle.treasurySwing,
+        createdAt: createdAtMs,
+      });
+    }
+  }, [crewWarsStatus?.recentBattles, pushCrewBattleToast]);
+
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
   const agentByIdRef = useRef<Map<string, Agent>>(new Map());
   useEffect(() => {
@@ -5241,17 +5441,19 @@ export default function Town3D() {
         setLoading(true);
         setError(null);
 
-        const [townsRes, activeTownRes, agentsRes, poolRes] = await Promise.all([
+        const [townsRes, activeTownRes, agentsRes, poolRes, crewRes] = await Promise.all([
           apiFetch<{ towns: TownSummary[] }>('/towns'),
           apiFetch<{ town: Town | null }>('/town'),
           apiFetch<Agent[]>('/agents'),
           apiFetch<{ pool: EconomyPoolSummary | null }>('/economy/pool').catch(() => ({ pool: null })),
+          apiFetch<CrewWarsStatusPayload>('/crew-wars/status').catch(() => null),
         ]);
 
         if (cancelled) return;
         setTowns(townsRes.towns);
         applyAgentSnapshot(agentsRes);
         if (poolRes.pool) setEconomy(poolRes.pool);
+        if (crewRes) setCrewWarsStatus(crewRes);
 
         const activeId = activeTownRes.town?.id ?? townsRes.towns[0]?.id ?? null;
         const nextSelected = userSelectedTownIdRef.current ?? activeId;
@@ -5325,6 +5527,25 @@ export default function Town3D() {
     loadWorldEvents();
     const t = setInterval(loadWorldEvents, 10000);
     return () => { cancelled = true; clearInterval(t); };
+  }, []);
+
+  // Poll crew wars scoreboard (territory + treasury race)
+  useEffect(() => {
+    let cancelled = false;
+    async function loadCrewWars() {
+      try {
+        const res = await apiFetch<CrewWarsStatusPayload>('/crew-wars/status');
+        if (!cancelled) setCrewWarsStatus(res);
+      } catch {
+        // ignore transient polling failures
+      }
+    }
+    void loadCrewWars();
+    const t = setInterval(loadCrewWars, 9000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
   }, []);
 
   useEffect(() => {
@@ -5681,6 +5902,24 @@ export default function Town3D() {
               🔥x{Math.max(1, ownedLoopTelemetry.chain)}
             </span>
           )}
+          {ownedCrewLink && (
+            <span
+              className="text-[9px] px-1.5 py-0.5 rounded border font-mono"
+              style={{
+                color: ownedCrewLink.colorHex,
+                borderColor: `${ownedCrewLink.colorHex}66`,
+                backgroundColor: `${ownedCrewLink.colorHex}1f`,
+              }}
+              title={`Crew: ${ownedCrewLink.crewName}`}
+            >
+              ⚑ {ownedCrewLink.crewName.split(' ')[0]}
+            </span>
+          )}
+          {leadingCrew && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded border border-rose-400/35 bg-rose-950/30 text-rose-200 font-mono">
+              ⚔️ {leadingCrew.territoryControl}
+            </span>
+          )}
           <span className="text-[10px] text-cyan-300/90 uppercase">{mobileVisualQuality}</span>
           {activeOpportunity && opportunityTimeLeft && (
             <span
@@ -5739,6 +5978,7 @@ export default function Town3D() {
           <TownScene
             town={town}
             agents={agents}
+            agentCrewById={crewWarsStatus?.agentCrewById ?? {}}
             ownedAgentId={ownedAgentId}
             ownedLoopTelemetry={ownedLoopTelemetry}
             selectedPlotId={selectedPlotId}
@@ -5800,6 +6040,16 @@ export default function Town3D() {
               </div>
             );
           })}
+        </div>
+
+        <div className="pointer-events-none absolute top-2 left-2 flex flex-col items-start gap-1 z-[56]">
+          {crewBattleToasts.slice(0, 1).map((toast) => (
+            <div key={toast.id} className="animate-in slide-in-from-left-2 fade-in duration-300">
+              <div className="rounded-lg border border-cyan-500/35 bg-slate-950/84 px-2 py-1 text-[10px] font-mono text-cyan-100">
+                ⚔ {toast.winnerCrewName} +{toast.territorySwing} terr
+              </div>
+            </div>
+          ))}
         </div>
 
         {/* (mobile town info removed) */}
@@ -5945,6 +6195,24 @@ export default function Town3D() {
               🔥 x{Math.max(1, ownedLoopTelemetry.chain)} · loops {Math.max(0, ownedLoopTelemetry.loopsCompleted)}
             </span>
           )}
+          {ownedCrewLink && (
+            <span
+              className="text-[10px] px-2 py-0.5 rounded-full border font-mono"
+              style={{
+                color: ownedCrewLink.colorHex,
+                borderColor: `${ownedCrewLink.colorHex}66`,
+                backgroundColor: `${ownedCrewLink.colorHex}1f`,
+              }}
+              title={`Crew role: ${ownedCrewLink.role}`}
+            >
+              ⚑ {ownedCrewLink.crewName}
+            </span>
+          )}
+          {leadingCrew && (
+            <span className="text-[10px] px-2 py-0.5 rounded-full border border-rose-400/35 bg-rose-950/30 text-rose-200 font-mono">
+              ⚔️ {leadingCrew.name} · terr {leadingCrew.territoryControl} · score {leadingCrew.warScore}
+            </span>
+          )}
           {activeOpportunity && opportunityTimeLeft && (
             <span
               className="text-[10px] px-2 py-0.5 rounded-full border font-mono animate-pulse"
@@ -6032,6 +6300,7 @@ export default function Town3D() {
         <TownScene
           town={town}
           agents={agents}
+          agentCrewById={crewWarsStatus?.agentCrewById ?? {}}
           ownedAgentId={ownedAgentId}
           ownedLoopTelemetry={ownedLoopTelemetry}
           selectedPlotId={selectedPlotId}
@@ -6089,6 +6358,28 @@ export default function Town3D() {
                   {Math.round(notif.amount).toLocaleString()}
                 </span>
                 <span className="text-[10px] opacity-80">$ARENA</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Crew Wars epoch toasts (top-left) */}
+      <div className="pointer-events-none absolute top-14 left-3 flex flex-col items-start gap-2 z-[52]">
+        {crewBattleToasts.slice(0, 3).map((toast) => {
+          const winnerColor = crewWarsStatus?.crews?.find((crew) => crew.name === toast.winnerCrewName)?.colorHex || '#22d3ee';
+          return (
+            <div key={toast.id} className="animate-in slide-in-from-left-2 fade-in duration-300">
+              <div className="rounded-xl border border-cyan-500/35 bg-slate-950/84 px-3 py-2 backdrop-blur-md shadow-xl">
+                <div className="text-[9px] uppercase tracking-[0.18em] text-cyan-200/80">Crew Wars Epoch</div>
+                <div className="mt-0.5 text-[11px] font-mono leading-tight">
+                  <span style={{ color: winnerColor }}>⚔ {toast.winnerCrewName}</span>
+                  <span className="text-slate-300"> over </span>
+                  <span className="text-slate-200">{toast.loserCrewName}</span>
+                </div>
+                <div className="mt-1 text-[10px] font-mono text-slate-400">
+                  +{toast.territorySwing} terr · +{Math.round(toast.treasurySwing)} $ARENA
+                </div>
               </div>
             </div>
           );
@@ -6234,12 +6525,16 @@ export default function Town3D() {
               loopMode={ownedLoopMode}
               loopUpdating={loopModeUpdating}
               nudgeBusy={degenNudgeBusy}
+              crewOrderBusy={crewOrderBusy}
+              crewName={ownedCrewLink?.crewName || null}
+              crewColor={ownedCrewLink?.colorHex || null}
               loopTelemetry={ownedLoopTelemetry}
               nowMs={uiNowMs}
               statusMessage={degenStatus?.message}
               statusTone={degenStatus?.tone || 'neutral'}
               onToggleLoop={updateOwnedLoopMode}
               onNudge={sendDegenNudge}
+              onCrewOrder={sendCrewOrder}
             />
           </Suspense>
           <Suspense fallback={null}>

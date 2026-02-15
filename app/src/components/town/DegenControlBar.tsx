@@ -1,4 +1,14 @@
 type DegenNudge = 'build' | 'work' | 'fight' | 'trade';
+type DegenLoopPhase = 'BUILD' | 'WORK' | 'FIGHT' | 'TRADE';
+type CrewOrderStrategy = 'RAID' | 'DEFEND' | 'FARM' | 'TRADE';
+
+interface DegenLoopTelemetry {
+  nextIndex: number;
+  chain: number;
+  loopsCompleted: number;
+  lastPhase: DegenLoopPhase | null;
+  lastAdvanceAt: number | null;
+}
 
 interface OwnedAgentLite {
   id: string;
@@ -11,10 +21,16 @@ interface DegenControlBarProps {
   loopMode: 'DEFAULT' | 'DEGEN_LOOP';
   loopUpdating: boolean;
   nudgeBusy: boolean;
+  crewOrderBusy?: boolean;
+  crewName?: string | null;
+  crewColor?: string | null;
+  loopTelemetry: DegenLoopTelemetry | null;
+  nowMs: number;
   statusMessage?: string;
   statusTone?: 'neutral' | 'ok' | 'error';
   onToggleLoop: (nextMode: 'DEFAULT' | 'DEGEN_LOOP') => void;
   onNudge: (nudge: DegenNudge) => void;
+  onCrewOrder?: (strategy: CrewOrderStrategy) => void;
 }
 
 const NUDGES: Array<{ key: DegenNudge; label: string; emoji: string }> = [
@@ -23,20 +39,40 @@ const NUDGES: Array<{ key: DegenNudge; label: string; emoji: string }> = [
   { key: 'fight', label: 'Fight', emoji: '⚔️' },
   { key: 'trade', label: 'Trade', emoji: '💱' },
 ];
+const LOOP_STEPS: DegenLoopPhase[] = ['BUILD', 'WORK', 'FIGHT', 'TRADE'];
+const CREW_ORDER_ACTIONS: Array<{ key: CrewOrderStrategy; label: string; emoji: string }> = [
+  { key: 'RAID', label: 'Raid', emoji: '⚔️' },
+  { key: 'DEFEND', label: 'Defend', emoji: '🛡️' },
+  { key: 'FARM', label: 'Farm', emoji: '💰' },
+  { key: 'TRADE', label: 'Trade', emoji: '📈' },
+];
 
 export function DegenControlBar({
   ownedAgent,
   loopMode,
   loopUpdating,
   nudgeBusy,
+  crewOrderBusy = false,
+  crewName = null,
+  crewColor = null,
+  loopTelemetry,
+  nowMs,
   statusMessage,
   statusTone = 'neutral',
   onToggleLoop,
   onNudge,
+  onCrewOrder,
 }: DegenControlBarProps) {
   if (!ownedAgent) return null;
 
   const loopOn = loopMode === 'DEGEN_LOOP';
+  const safeNextIndex = Math.max(0, Math.min(LOOP_STEPS.length - 1, loopTelemetry?.nextIndex ?? 0));
+  const elapsedMs = loopTelemetry?.lastAdvanceAt != null ? Math.max(0, nowMs - loopTelemetry.lastAdvanceAt) : Number.POSITIVE_INFINITY;
+  const heat = Number.isFinite(elapsedMs) ? Math.max(0, 1 - elapsedMs / 9000) : 0;
+  const heatPct = Math.round(heat * 100);
+  const chain = Math.max(1, loopTelemetry?.chain ?? 0);
+  const loopsCompleted = Math.max(0, loopTelemetry?.loopsCompleted ?? 0);
+  const lastPhase = loopTelemetry?.lastPhase;
 
   return (
     <div className="w-[420px] max-w-[calc(100vw-24px)] rounded-xl border border-amber-500/30 bg-slate-950/85 p-3 backdrop-blur-md shadow-lg shadow-black/35">
@@ -61,6 +97,39 @@ export function DegenControlBar({
           {loopUpdating ? 'SYNC…' : loopOn ? 'AUTO ON' : 'AUTO OFF'}
         </button>
       </div>
+      <div className="mb-2 rounded-lg border border-amber-500/25 bg-slate-900/45 px-2 py-1.5">
+        <div className="mb-1 flex items-center justify-between text-[10px]">
+          <span className="font-mono text-amber-200">HEAT x{chain}</span>
+          <span className="font-mono text-slate-400">LOOPS {loopsCompleted}</span>
+        </div>
+        <div className="grid grid-cols-4 gap-1">
+          {LOOP_STEPS.map((step, index) => {
+            const isDone = loopTelemetry ? index < safeNextIndex : false;
+            const isNext = loopTelemetry ? index === safeNextIndex : index === 0;
+            const tone = isNext
+              ? 'border-amber-400/70 bg-amber-500/18 text-amber-100'
+              : isDone
+                ? 'border-emerald-500/55 bg-emerald-500/14 text-emerald-200'
+                : 'border-slate-700/70 bg-slate-900/35 text-slate-500';
+            return (
+              <div key={step} className={`rounded border px-1 py-0.5 text-center text-[9px] font-mono ${tone}`}>
+                {step}
+              </div>
+            );
+          })}
+        </div>
+        <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-slate-800/80">
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-amber-500 via-orange-400 to-rose-400 transition-[width] duration-200"
+            style={{ width: `${heatPct}%` }}
+          />
+        </div>
+        <div className="mt-1 text-[9px] text-slate-500">
+          {loopTelemetry
+            ? `Last ${lastPhase || '—'} · Next ${LOOP_STEPS[safeNextIndex]}`
+            : 'Run BUILD → WORK → FIGHT → TRADE to start your chain'}
+        </div>
+      </div>
       <div className="grid grid-cols-4 gap-1.5">
         {NUDGES.map((nudge) => (
           <button
@@ -77,6 +146,32 @@ export function DegenControlBar({
           </button>
         ))}
       </div>
+      {crewName && onCrewOrder && (
+        <div className="mt-2 rounded-lg border border-cyan-500/25 bg-slate-900/45 px-2 py-1.5">
+          <div className="mb-1 flex items-center justify-between text-[10px]">
+            <span className="font-mono" style={{ color: crewColor || '#67e8f9' }}>
+              ⚑ {crewName}
+            </span>
+            <span className="font-mono text-slate-500">Crew Orders</span>
+          </div>
+          <div className="grid grid-cols-4 gap-1">
+            {CREW_ORDER_ACTIONS.map((action) => (
+              <button
+                key={action.key}
+                type="button"
+                disabled={crewOrderBusy}
+                onClick={() => onCrewOrder(action.key)}
+                className={`rounded-md border border-slate-700/70 bg-slate-900/35 px-1 py-1 text-[10px] text-slate-200 transition-colors hover:border-cyan-400/50 hover:bg-slate-800/55 ${
+                  crewOrderBusy ? 'cursor-not-allowed opacity-60' : ''
+                }`}
+                title={`Issue ${action.label.toUpperCase()} crew order for ${ownedAgent.name}`}
+              >
+                <span>{action.emoji}</span> {action.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {statusMessage && (
         <div
           className={`mt-2 text-[10px] leading-tight ${

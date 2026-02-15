@@ -16,9 +16,10 @@ import { townService } from './townService';
 import { agentLoopService, AgentTickResult, type ManualActionKind } from './agentLoopService';
 import { prisma } from '../config/database';
 import OpenAI from 'openai';
-import { AgentCommandMode } from '@prisma/client';
+import { AgentCommandMode, CrewStrategy } from '@prisma/client';
 import { agentCommandService } from './agentCommandService';
 import { operatorIdentityService } from './operatorIdentityService';
+import { crewWarsService } from './crewWarsService';
 
 // Escape HTML special chars for Telegram HTML parse mode
 function esc(s: string): string {
@@ -27,6 +28,10 @@ function esc(s: string): string {
 
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + '…' : s;
+}
+
+function safeTrim(value: string | null | undefined, max: number): string {
+  return truncate(String(value ?? '').trim(), max);
 }
 
 type ParsedOperatorCommand = {
@@ -237,6 +242,44 @@ const ROUTER_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'show_crew_wars',
+      description: 'Show Crew Wars standings — territory control, treasury, and recent battles',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'crew_order_my_agent',
+      description: 'Issue a Crew Wars order to your linked agent. Use for raid/defend/farm/trade strategy calls.',
+      parameters: {
+        type: 'object',
+        properties: {
+          strategy: {
+            type: 'string',
+            enum: ['RAID', 'DEFEND', 'FARM', 'TRADE'],
+            description: 'Crew strategy to run now',
+          },
+          intensity: {
+            type: 'number',
+            description: 'Optional order intensity from 1 (light) to 3 (max pressure)',
+          },
+          agentName: {
+            type: 'string',
+            description: 'Optional linked agent name when user has multiple linked agents',
+          },
+          note: {
+            type: 'string',
+            description: 'Optional note or tactical framing for this order',
+          },
+        },
+        required: ['strategy'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'general_chat',
       description: 'Just chatting, greeting, or asking about AI Town in general — no specific action needed. Use this for greetings, questions about how AI Town works, or casual conversation.',
       parameters: {
@@ -256,6 +299,7 @@ Key context:
 - AI Town has autonomous AI agents (AlphaShark, MorphBot, YoloDegen, MathEngine, Sophia the Wise) that build buildings, trade $ARENA, and fight in Wheel of Fate poker duels
 - $ARENA is the in-game token on Monad blockchain
 - Wheel of Fate randomly pits 2 agents against each other every ~15 minutes
+- Crew Wars is a persistent faction rivalry layer: crews compete for territory and treasury through raid/defend/farm/trade orders
 - Users can bet on fights, talk to agents, and watch the action
 - Each agent has a personality: SHARK (aggressive), CHAMELEON (adaptive), DEGEN (chaotic), GRINDER (mathematical)
 - "Proof of Inference" — every building step costs a real LLM API call
@@ -263,6 +307,7 @@ Key context:
 When users ask about agents, fights, buildings, or the town — use the appropriate tool.
 When users want to talk to a specific named agent — use tell_agent.
 When users say "my agent", "my bot", or "the agent I linked" — use tell_my_agent.
+When users ask about crews, factions, raids, defense, or territory — use show_crew_wars or crew_order_my_agent.
 When it's just casual chat or questions about AI Town — use general_chat with a friendly, informative response.
 
 Keep responses punchy and fun. This is a crypto degen entertainment product.`;
@@ -455,6 +500,30 @@ export class TelegramBotService {
       const username = ctx.from?.username || ctx.from?.first_name || null;
       this.handleOwnerQuickAction(ctx.chat.id, telegramUserId, username, 'trade', preferredAgentName);
     });
+    this.bot.command('crew', (ctx) => {
+      this.handleShowCrewWars(ctx.chat.id);
+    });
+    this.bot.command('raid', (ctx) => {
+      const raw = ctx.message.text.replace(/^\/raid\s*/i, '').trim();
+      const parsed = this.parseCrewOrderInput(raw);
+      const telegramUserId = ctx.from?.id?.toString() || '';
+      const username = ctx.from?.username || ctx.from?.first_name || null;
+      this.handleCrewOrder(ctx.chat.id, telegramUserId, username, 'RAID', parsed.agentName, parsed.intensity, parsed.note);
+    });
+    this.bot.command('defend', (ctx) => {
+      const raw = ctx.message.text.replace(/^\/defend\s*/i, '').trim();
+      const parsed = this.parseCrewOrderInput(raw);
+      const telegramUserId = ctx.from?.id?.toString() || '';
+      const username = ctx.from?.username || ctx.from?.first_name || null;
+      this.handleCrewOrder(ctx.chat.id, telegramUserId, username, 'DEFEND', parsed.agentName, parsed.intensity, parsed.note);
+    });
+    this.bot.command('farm', (ctx) => {
+      const raw = ctx.message.text.replace(/^\/farm\s*/i, '').trim();
+      const parsed = this.parseCrewOrderInput(raw);
+      const telegramUserId = ctx.from?.id?.toString() || '';
+      const username = ctx.from?.username || ctx.from?.first_name || null;
+      this.handleCrewOrder(ctx.chat.id, telegramUserId, username, 'FARM', parsed.agentName, parsed.intensity, parsed.note);
+    });
 
     // ============================================
     // Inline button callbacks
@@ -568,9 +637,28 @@ export class TelegramBotService {
       case 'show_map': await this.handleShowMap(chatId); break;
       case 'show_wheel': await this.handleShowWheel(chatId); break;
       case 'show_events': await this.handleShowEvents(chatId); break;
+      case 'show_crew_wars': await this.handleShowCrewWars(chatId); break;
       case 'place_bet': await this.handlePlaceBet(chatId, userId, args.agentName, args.amount); break;
       case 'tell_agent': await this.handleTellAgent(chatId, args.agentName, args.message, fromUser); break;
       case 'tell_my_agent': await this.handleTellMyAgent(chatId, userId, args.message, fromUser, args.agentName); break;
+      case 'crew_order_my_agent':
+        {
+          const strategyRaw = String(args.strategy || 'RAID').toUpperCase();
+          const strategy: CrewStrategy =
+            strategyRaw === 'DEFEND' || strategyRaw === 'FARM' || strategyRaw === 'TRADE'
+              ? (strategyRaw as CrewStrategy)
+              : 'RAID';
+        await this.handleCrewOrder(
+          chatId,
+          userId,
+          fromUser,
+            strategy,
+          args.agentName,
+          Number(args.intensity || 2),
+          typeof args.note === 'string' ? args.note : undefined,
+        );
+        }
+        break;
       case 'start_agents': await this.handleStartAgents(chatId); break;
       case 'stop_agents': await this.handleStopAgents(chatId); break;
       case 'run_tick': await this.handleRunTick(chatId); break;
@@ -612,6 +700,20 @@ export class TelegramBotService {
     }
 
     // Keyword fallback
+    if (/\bcrew\b|\bfaction\b|\bterritory\b|\bwar score\b|\bcrew wars?\b/i.test(lower)) {
+      await this.handleShowCrewWars(chatId);
+      return;
+    }
+    if (/^\s*(raid|defend|farm)\b/i.test(lower)) {
+      const keyword = lower.match(/^\s*(raid|defend|farm)\b/i)?.[1]?.toUpperCase() || 'RAID';
+      const strategy = keyword === 'DEFEND' || keyword === 'FARM'
+        ? (keyword as CrewStrategy)
+        : 'RAID';
+      const suffix = text.replace(/^\s*(raid|defend|farm)\b[:\s-]*/i, '').trim();
+      const parsed = this.parseCrewOrderInput(suffix);
+      await this.handleCrewOrder(chatId, telegramUserId, fromUser, strategy, parsed.agentName, parsed.intensity, parsed.note);
+      return;
+    }
     if (/\bagents?\b|\bwho.*win|\bleaderboard|\branking/i.test(lower)) { await this.handleShowAgents(chatId); return; }
     if (/\btown\b|\bprogress\b/i.test(lower)) { await this.handleShowTown(chatId); return; }
     if (/\bbuild/i.test(lower)) { await this.handleShowBuildings(chatId); return; }
@@ -669,7 +771,8 @@ export class TelegramBotService {
       '• "who\'s winning?"\n' +
       '• "tell AlphaShark to attack someone"\n' +
       '• "my agent focus on work for 2 ticks"\n' +
-      '• "bet 100 on MorphBot"\n\n' +
+      '• "bet 100 on MorphBot"\n' +
+      '• "raid with my agent x3"\n\n' +
       'The agents have personalities. They might listen to you... or not 😏';
 
     // Send with inline buttons
@@ -1039,6 +1142,196 @@ export class TelegramBotService {
     return { message: input };
   }
 
+  private parseCrewOrderInput(raw: string): {
+    agentName?: string;
+    intensity: number;
+    note?: string;
+  } {
+    const input = safeTrim(raw, 220);
+    if (!input) {
+      return { intensity: 2 };
+    }
+
+    const compact = input.replace(/\s+/g, ' ').trim();
+    const intensityMatch = compact.match(/\b(?:x)?([1-3])\b$/i);
+    const intensity = intensityMatch ? Math.max(1, Math.min(3, Number(intensityMatch[1]))) : 2;
+    const withoutIntensity = intensityMatch
+      ? compact.slice(0, intensityMatch.index).trim()
+      : compact;
+
+    const colonIdx = withoutIntensity.indexOf(':');
+    if (colonIdx > 0 && colonIdx < 50) {
+      const left = withoutIntensity.slice(0, colonIdx).trim();
+      const right = withoutIntensity.slice(colonIdx + 1).trim();
+      if (left && right) {
+        return {
+          agentName: left,
+          intensity,
+          note: safeTrim(right, 140),
+        };
+      }
+    }
+
+    if (!withoutIntensity) {
+      return { intensity };
+    }
+
+    return {
+      agentName: withoutIntensity,
+      intensity,
+    };
+  }
+
+  private strategyEmoji(strategy: CrewStrategy): string {
+    if (strategy === 'RAID') return '⚔️';
+    if (strategy === 'DEFEND') return '🛡️';
+    if (strategy === 'FARM') return '💰';
+    return '📈';
+  }
+
+  private async handleShowCrewWars(chatId: number | string): Promise<void> {
+    try {
+      const snapshot = await crewWarsService.getDashboard(6);
+      if (snapshot.crews.length === 0) {
+        await this.send(chatId, '⚔️ Crew Wars not initialized yet.');
+        return;
+      }
+
+      const leader = snapshot.crews[0];
+      const lines = snapshot.crews
+        .slice(0, 3)
+        .map((crew, idx) => {
+          const rankEmoji = idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉';
+          return (
+            `${rankEmoji} <b>${esc(crew.name)}</b>` +
+            ` | territory ${crew.territoryControl}` +
+            ` | treasury ${crew.treasuryArena}` +
+            ` | score ${crew.warScore}` +
+            ` | members ${crew.memberCount}`
+          );
+        })
+        .join('\n');
+
+      const battle = snapshot.recentBattles[0];
+      const battleLine = battle
+        ? `\n\n🧨 Last epoch: <b>${esc(battle.winnerCrewName)}</b> hit <b>${esc(battle.loserCrewName)}</b> ` +
+          `(territory ${battle.territorySwing}, treasury ${battle.treasurySwing})`
+        : '\n\n🧨 No epoch battles resolved yet.';
+
+      await this.send(
+        chatId,
+        `⚔️ <b>Crew Wars</b>\n` +
+          `Leader: <b>${esc(leader.name)}</b>\n` +
+          `${lines}` +
+          `${battleLine}\n\n` +
+          `Use <code>/raid</code>, <code>/defend</code>, or <code>/farm</code> with your linked agent.`,
+      );
+    } catch (err: any) {
+      await this.send(chatId, `❌ Could not load Crew Wars: ${esc(err.message || 'unknown error')}`);
+    }
+  }
+
+  private async handleCrewOrder(
+    chatId: number | string,
+    telegramUserId: string,
+    username: string | null,
+    strategy: CrewStrategy,
+    preferredAgentName?: string,
+    intensityRaw?: number,
+    note?: string,
+  ): Promise<void> {
+    if (!telegramUserId) {
+      await this.send(chatId, '❌ Telegram identity unavailable in this chat.');
+      return;
+    }
+
+    try {
+      const agent = await this.resolveLinkedAgentForTelegram(telegramUserId, preferredAgentName);
+      const intensity = Math.max(1, Math.min(3, Number.isFinite(Number(intensityRaw)) ? Math.round(Number(intensityRaw)) : 2));
+      const mode: AgentCommandMode = 'STRONG';
+      await operatorIdentityService.assertCommandAuthority({
+        telegramUserId,
+        agentId: agent.id,
+        mode,
+      });
+      const identity = await operatorIdentityService.getIdentityByTelegramUserId(telegramUserId, true);
+      const currentTick = agentLoopService.getCurrentTick();
+
+      const order = await crewWarsService.queueOrder({
+        agentId: agent.id,
+        strategy,
+        intensity,
+        source: 'telegram',
+        note: note || '',
+        issuerIdentityId: identity.id,
+        issuerLabel: username || telegramUserId,
+        createdTick: currentTick,
+        expiresInTicks: 3,
+        params: {
+          intensity,
+          note: note || '',
+        },
+      });
+
+      const command = await agentCommandService.createCommand({
+        agentId: agent.id,
+        issuerType: 'TELEGRAM',
+        issuerTelegramUserId: telegramUserId,
+        issuerLabel: username || telegramUserId,
+        mode,
+        intent: crewWarsService.intentForStrategy(strategy),
+        params: {
+          intensity,
+          ...(note ? { note } : {}),
+        },
+        priority: 90,
+        expiresInTicks: 3,
+        currentTick,
+        auditMeta: {
+          source: 'telegram-crew-order',
+          strategy,
+          crewOrderId: order.id,
+          chatId: String(chatId),
+        },
+      });
+
+      const result = await agentLoopService.processAgent(agent.id);
+      const commandState = await agentCommandService.getCommand(command.id);
+      const receipt =
+        result.commandReceipt?.commandId === command.id
+          ? result.commandReceipt
+          : {
+              status: commandState.status === 'EXECUTED' ? 'EXECUTED' : 'REJECTED',
+              statusReason: commandState.statusReason,
+              executedActionType: result.action.type,
+            };
+
+      const crew = await crewWarsService.getAgentCrew(agent.id);
+      const marker = this.strategyEmoji(strategy);
+      if (receipt.status === 'EXECUTED') {
+        await this.send(
+          chatId,
+          `${marker} <b>Crew order executed</b>\n` +
+            `agent: <b>${esc(agent.name)}</b>\n` +
+            `crew: <b>${esc(crew.crewName || 'Unassigned')}</b>\n` +
+            `strategy: <b>${strategy}</b> x${intensity}\n` +
+            `appliedAs: <b>${esc(receipt.executedActionType || result.action.type)}</b>\n` +
+            `result: ${esc(truncate(result.narrative, 200))}`,
+        );
+      } else {
+        await this.send(
+          chatId,
+          `⛔ <b>Crew order rejected</b>\n` +
+            `agent: <b>${esc(agent.name)}</b>\n` +
+            `strategy: <b>${strategy}</b> x${intensity}\n` +
+            `reason: ${esc(receipt.statusReason || 'Command rejected')}`,
+        );
+      }
+    } catch (err: any) {
+      await this.send(chatId, `❌ Could not issue crew order: ${esc(err.message || 'unknown error')}`);
+    }
+  }
+
   private async resolveLinkedAgentForTelegram(
     telegramUserId: string,
     preferredAgentName?: string,
@@ -1391,10 +1684,13 @@ export class TelegramBotService {
       for (const link of activeLinks.slice(0, 3)) {
         try {
           const snapshot = await agentLoopService.getRetentionSnapshot(link.agentId);
+          const crew = await crewWarsService.getAgentCrew(link.agentId);
+          const crewLabel = crew.crewName ? `${crew.crewName}` : 'Unassigned';
           const topRival = snapshot.rivals[0]?.name || 'none';
           retentionLines.push(
             `• <b>${esc(link.agentName)}</b> streak x${snapshot.streak.currentNonRest} (best x${snapshot.streak.bestNonRest})` +
               ` | goals ${snapshot.goals.active} active` +
+              ` | crew: ${esc(crewLabel)}` +
               ` | rival: ${esc(topRival)}`,
           );
         } catch {

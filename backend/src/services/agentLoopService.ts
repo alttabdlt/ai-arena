@@ -23,6 +23,7 @@ import { agentGoalTrackService, type GoalStackSnapshot, type PersistentGoalView 
 import { worldEventService } from './worldEventService';
 import { agentCommandService, type AgentCommandView } from './agentCommandService';
 import { wheelOfFateService } from './wheelOfFateService';
+import { crewWarsService } from './crewWarsService';
 
 function safeTrim(s: unknown, maxLen: number): string {
   return String(s ?? '')
@@ -1335,8 +1336,11 @@ export class AgentLoopService {
 
     let commandReceipt: AgentTickResult['commandReceipt'] | undefined;
     let forcedCommandAction: AgentAction | null = null;
-    const commandRequiresStrict = activeCommand?.mode === 'STRONG' || activeCommand?.mode === 'OVERRIDE';
-    if (activeCommand && commandRequiresStrict) {
+    const commandIsCrewIntent = !!activeCommand && activeCommand.intent.startsWith('crew_');
+    const commandRequiresStrict =
+      (activeCommand?.mode === 'STRONG' || activeCommand?.mode === 'OVERRIDE') && !commandIsCrewIntent;
+    const commandForcesAction = !!activeCommand && (commandRequiresStrict || commandIsCrewIntent);
+    if (activeCommand && commandForcesAction) {
       const forced = this.buildForcedActionFromCommand(activeCommand, observation);
       if (!forced.action) {
         try {
@@ -1621,6 +1625,21 @@ export class AgentLoopService {
       }
     }
 
+    try {
+      await crewWarsService.recordActionOutcome({
+        agentId: agent.id,
+        actionType: effectiveAction.type,
+        success,
+        delta: economyDelta,
+        tick: this.currentTick,
+        commandMetadata: {
+          intent: activeCommand?.intent || null,
+        },
+      });
+    } catch (crewErr: any) {
+      console.warn(`[AgentLoop] Crew war contribution update failed (${agent.id}): ${crewErr?.message || crewErr}`);
+    }
+
     const decisionMetadata = this.buildDecisionMetadata(action, effectiveAction, success, {
       ...policyContext,
       autonomyRateAfter,
@@ -1886,6 +1905,88 @@ export class AgentLoopService {
           details: {
             gameType,
             wager,
+          },
+        },
+      };
+    }
+
+    if (intent === 'crew_raid') {
+      const intensity = Math.max(1, Math.min(3, mustInt(params.intensity) || 2));
+      const wagerByIntensity = intensity === 1 ? 20 : intensity === 2 ? 35 : 50;
+      return {
+        action: {
+          type: 'play_arena',
+          reasoning: `${reasonPrefix} Crew RAID order engaged at intensity ${intensity}.`,
+          details: {
+            gameType: safeTrim(params.gameType || 'POKER', 16).toUpperCase() || 'POKER',
+            wager: mustInt(params.wager) || wagerByIntensity,
+            crewStrategy: 'RAID',
+            intensity,
+          },
+        },
+      };
+    }
+
+    if (intent === 'crew_defend') {
+      const target = pickTargetPlot();
+      if (target) {
+        return {
+          action: {
+            type: 'do_work',
+            reasoning: `${reasonPrefix} Crew DEFEND order: fortify plot ${target.plotIndex}.`,
+            details: {
+              plotId: target.plotId,
+              plotIndex: target.plotIndex,
+              stepDescription: safeTrim(
+                params.stepDescription || 'Fortify and stabilize owned territory.',
+                220,
+              ),
+              crewStrategy: 'DEFEND',
+            },
+          },
+        };
+      }
+      return {
+        action: {
+          type: 'rest',
+          reasoning: `${reasonPrefix} Crew DEFEND order: hold position until a defendable plot exists.`,
+          details: {
+            thought: 'No owned plots available for defense; maintaining readiness.',
+            crewStrategy: 'DEFEND',
+          },
+        },
+      };
+    }
+
+    if (intent === 'crew_farm') {
+      const amountIn = Math.max(8, mustInt(params.amountIn) || 18);
+      return {
+        action: {
+          type: 'buy_arena',
+          reasoning: `${reasonPrefix} Crew FARM order: harvest liquidity edge.`,
+          details: {
+            amountIn,
+            minAmountOut: mustInt(params.minAmountOut) || undefined,
+            why: safeTrim(params.why || 'Crew farm order', 180),
+            nextAction: safeTrim(params.nextAction || 'do_work', 120),
+            crewStrategy: 'FARM',
+          },
+        },
+      };
+    }
+
+    if (intent === 'crew_trade') {
+      const amountIn = Math.max(10, mustInt(params.amountIn) || 25);
+      return {
+        action: {
+          type: 'sell_arena',
+          reasoning: `${reasonPrefix} Crew TRADE order: rotate bankroll into reserve for treasury stability.`,
+          details: {
+            amountIn,
+            minAmountOut: mustInt(params.minAmountOut) || undefined,
+            why: safeTrim(params.why || 'Crew trade order', 180),
+            nextAction: safeTrim(params.nextAction || 'play_arena', 120),
+            crewStrategy: 'TRADE',
           },
         },
       };

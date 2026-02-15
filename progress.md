@@ -134,3 +134,45 @@ Original prompt: "yes, but are we able to implement build/work/fight > crypto lo
 ### LLM runtime check
 
 - After user topped up credits, active agent ticks no longer show `AUTO-FALLBACK / 402` for current active agent states during this pass.
+
+### Crew Wars implementation + HUD controls (2026-02-15)
+
+- Backend Crew Wars runtime validation:
+  - Applied migration to `backend/prisma/dev.db` with `npx prisma migrate deploy`.
+  - Booted backend (`FAST_STARTUP=true npx tsx src/index.ts`) and confirmed routes up.
+  - Smoked endpoints:
+    - `POST /api/v1/crew-wars/sync` assigned active agents to crews.
+    - `GET /api/v1/crew-wars/status` returned crews + mappings.
+    - `POST /api/v1/crew-wars/orders` executed with `commandReceipt`.
+    - `GET /api/v1/crew-wars/agent/:agentId` showed recent orders and status updates (`APPLIED` observed).
+
+- New frontend Crew control surface and territory feedback:
+  - Extended degen HUD with `Crew Orders` command deck (`Raid`, `Defend`, `Farm`, `Trade`).
+  - Added `sendCrewOrder` client path to call `/api/v1/crew-wars/orders` and show status receipts inline.
+  - Added crew-aware plot presentation:
+    - Crew-color lot tinting.
+    - Animated crew territory pulse ring/halo on owned plots.
+    - Crew-color claimed marker + label tinting.
+  - Added Crew Wars epoch toasts fed by `recentBattles` from `/crew-wars/status`.
+
+- Files updated in this chunk:
+  - `app/src/components/town/DegenControlBar.tsx`
+  - `app/src/pages/Town3D.tsx`
+
+- Verification:
+  - `cd backend && npm run build` passed.
+  - `cd app && npm run build` passed.
+  - `cd backend && npm test` ran; current unrelated failures remain:
+    - `src/services/__tests__/degen-staking-flow.integration.test.ts`
+    - `src/services/__tests__/town-lifecycle.integration.test.ts`
+  - Playwright-driven live checks:
+    - Skill client artifacts:
+      - `artifacts/web-game-crew-pass/`
+      - `artifacts/web-game-crew-pass2/`
+      - `artifacts/web-game-crew-pass3/`
+    - Headless Chromium still intermittently black/limited due WebGL context constraints.
+    - Headed Chromium validation (stable):
+      - `artifacts/playwright-crew-live-owned/town-initial.png`
+      - `artifacts/playwright-crew-live-owned/town-after-raid.png`
+      - `artifacts/playwright-crew-live-owned/summary.json`
+      - Confirmed visible + interactive: `DEGEN LOOP`, `Crew Orders`, `Raid`, crew badge, raid status line, and zero console errors in headed run.

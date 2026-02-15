@@ -518,6 +518,105 @@ function actionBurstVisual(kind: ActionBurstKind, polarity: -1 | 0 | 1) {
   }
 }
 
+type TrailVisual = {
+  lineColor: string;
+  beadColor: string;
+  lineOpacity: number;
+  beadOpacity: number;
+  lineWidth: number;
+  dash: boolean;
+  pulse: number;
+  beadSize: number;
+};
+
+function resolveTrailVisual(actionType: string | null | undefined, fallbackColor: string): TrailVisual {
+  const normalized = String(actionType || '').trim().toLowerCase();
+  const kind = resolveActionBurstKind(normalized);
+  if (kind === 'FIGHT') {
+    return {
+      lineColor: '#fb7185',
+      beadColor: '#fecdd3',
+      lineOpacity: 0.42,
+      beadOpacity: 0.5,
+      lineWidth: 3.2,
+      dash: false,
+      pulse: 1.35,
+      beadSize: 0.11,
+    };
+  }
+  if (kind === 'TRADE') {
+    const isSell = normalized.startsWith('sell_') || normalized.includes('sell');
+    return {
+      lineColor: isSell ? '#fb7185' : '#22d3ee',
+      beadColor: isSell ? '#fda4af' : '#a5f3fc',
+      lineOpacity: 0.38,
+      beadOpacity: 0.44,
+      lineWidth: 2.85,
+      dash: true,
+      pulse: 1.25,
+      beadSize: 0.098,
+    };
+  }
+  if (kind === 'BUILD' || kind === 'WORK') {
+    return {
+      lineColor: '#fb923c',
+      beadColor: '#fed7aa',
+      lineOpacity: 0.34,
+      beadOpacity: 0.38,
+      lineWidth: 2.65,
+      dash: false,
+      pulse: 1.08,
+      beadSize: 0.092,
+    };
+  }
+  if (kind === 'CLAIM') {
+    return {
+      lineColor: '#facc15',
+      beadColor: '#fef08a',
+      lineOpacity: 0.32,
+      beadOpacity: 0.34,
+      lineWidth: 2.55,
+      dash: true,
+      pulse: 0.96,
+      beadSize: 0.086,
+    };
+  }
+  if (kind === 'MINE') {
+    return {
+      lineColor: '#a78bfa',
+      beadColor: '#ddd6fe',
+      lineOpacity: 0.33,
+      beadOpacity: 0.36,
+      lineWidth: 2.6,
+      dash: false,
+      pulse: 1.02,
+      beadSize: 0.09,
+    };
+  }
+  if (kind === 'IDLE') {
+    return {
+      lineColor: '#64748b',
+      beadColor: '#94a3b8',
+      lineOpacity: 0.18,
+      beadOpacity: 0.2,
+      lineWidth: 2.0,
+      dash: true,
+      pulse: 0.7,
+      beadSize: 0.076,
+    };
+  }
+  return {
+    lineColor: fallbackColor,
+    beadColor: '#bfdbfe',
+    lineOpacity: 0.26,
+    beadOpacity: 0.28,
+    lineWidth: 2.3,
+    dash: false,
+    pulse: 0.85,
+    beadSize: 0.082,
+  };
+}
+
 function fallbackObjective(
   weather: 'clear' | 'rain' | 'storm',
   sentiment: 'bull' | 'bear' | 'neutral',
@@ -1654,16 +1753,23 @@ function AgentTrail({
   agentId,
   simsRef,
   color,
+  actionType,
+  selected = false,
 }: {
   agentId: string;
   simsRef: React.MutableRefObject<Map<string, AgentSim>>;
   color: string;
+  actionType?: string | null;
+  selected?: boolean;
 }) {
   const trailRef = useRef<THREE.Vector3[]>([]);
+  const beadRefs = useRef<Array<THREE.Mesh | null>>([]);
   const [points, setPoints] = useState<THREE.Vector3[]>([]);
   const maxLength = 15;
+  const style = useMemo(() => resolveTrailVisual(actionType, color), [actionType, color]);
+  const pulseSeed = useMemo(() => hashToSeed(`${agentId}:${actionType || 'none'}:trail`), [agentId, actionType]);
 
-  useFrame(() => {
+  useFrame((state) => {
     const sim = simsRef.current.get(agentId);
     if (!sim || sim.state === 'DEAD') return;
 
@@ -1678,19 +1784,67 @@ function AgentTrail({
       if (trail.length > maxLength) trail.shift();
       setPoints([...trail]);
     }
+
+    const beadCount = Math.min(trail.length, 10);
+    const pulseRate = 4.2 + style.pulse * 1.9;
+    for (let index = 0; index < beadCount; index++) {
+      const bead = beadRefs.current[index];
+      const source = trail[trail.length - 1 - index];
+      if (!bead || !source) continue;
+      bead.visible = true;
+      bead.position.set(source.x, source.y + 0.07 + index * 0.003, source.z);
+      const tail = index / Math.max(1, beadCount - 1);
+      const headWeight = 1 - tail;
+      const pulse = 0.75 + (Math.sin(state.clock.elapsedTime * pulseRate + pulseSeed * 0.0009 + index * 0.7) + 1) * 0.27;
+      const scale = style.beadSize * pulse * (0.72 + headWeight * 0.72) * (selected ? 1.22 : 1);
+      bead.scale.setScalar(scale);
+      const beadMaterial = bead.material as THREE.MeshStandardMaterial;
+      beadMaterial.opacity = THREE.MathUtils.clamp(style.beadOpacity * (0.5 + headWeight * 0.72) * pulse, 0.03, 0.88);
+      beadMaterial.emissiveIntensity = THREE.MathUtils.clamp(0.3 + headWeight * 0.6 + style.pulse * 0.28 + (selected ? 0.22 : 0), 0.2, 2);
+    }
+    for (let index = beadCount; index < beadRefs.current.length; index++) {
+      const bead = beadRefs.current[index];
+      if (bead) bead.visible = false;
+    }
   });
 
   if (points.length < 2) return null;
 
   return (
-    <Line
-      key={`${agentId}-trail-${points.length}`}
-      points={points}
-      color={color}
-      lineWidth={2}
-      transparent
-      opacity={0.2}
-    />
+    <group>
+      <Line
+        key={`${agentId}-trail-${points.length}`}
+        points={points}
+        color={style.lineColor}
+        lineWidth={style.lineWidth + (selected ? 0.6 : 0)}
+        transparent
+        opacity={Math.min(0.78, style.lineOpacity + (selected ? 0.14 : 0))}
+        dashed={style.dash}
+        dashSize={0.34}
+        gapSize={0.24}
+      />
+      {Array.from({ length: Math.min(points.length, 10) }).map((_, index) => (
+        <mesh
+          key={`trail-bead:${agentId}:${index}`}
+          ref={(node) => {
+            beadRefs.current[index] = node;
+          }}
+          position={[0, 0.1, 0]}
+        >
+          <sphereGeometry args={[1, 8, 8]} />
+          <meshStandardMaterial
+            color={style.beadColor}
+            emissive={style.lineColor}
+            emissiveIntensity={0.7}
+            transparent
+            opacity={style.beadOpacity}
+            depthWrite={false}
+            roughness={0.26}
+            metalness={0.08}
+          />
+        </mesh>
+      ))}
+    </group>
   );
 }
 function useGroundTexture() {
@@ -3959,6 +4113,8 @@ function TownScene({
           agentId={a.id}
           simsRef={simsRef}
           color={ARCHETYPE_COLORS[a.archetype] || '#93c5fd'}
+          actionType={a.lastActionType}
+          selected={a.id === selectedAgentId}
         />
       ))}
 

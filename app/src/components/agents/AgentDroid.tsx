@@ -479,7 +479,11 @@ export function AgentDroid({
         {/* Activity-specific effects */}
         {activity === 'CHATTING' && <ChatAura />}
         <ActionAura state={activity} />
-        <ArenaOutcomeAura outcome={arenaOutcome?.result ?? null} triggeredAtMs={arenaOutcomeAtMs} />
+        <ArenaOutcomeAura
+          outcome={arenaOutcome?.result ?? null}
+          triggeredAtMs={arenaOutcomeAtMs}
+          momentum={duelMomentum}
+        />
 
         {/* Economic state effects */}
         <EconomicStateEffect state={economicState} />

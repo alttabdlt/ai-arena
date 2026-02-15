@@ -997,6 +997,21 @@ function safeTrim(s: unknown, maxLen: number): string {
     .slice(0, maxLen);
 }
 
+function cleanRuntimeReason(reason: unknown, maxLen: number): string {
+  const raw = String(reason ?? '')
+    .replace(/\[AUTO\]\s*/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!raw) return 'No reason emitted yet.';
+  return safeTrim(raw, maxLen);
+}
+
+function formatRuntimeEta(etaSec: number | null | undefined): string {
+  if (!Number.isFinite(Number(etaSec))) return '';
+  const eta = Math.max(0, Math.round(Number(etaSec)));
+  return ` · ${eta}s`;
+}
+
 function formatTimeLeft(ms: number): string {
   const sec = Math.max(0, Math.floor(ms / 1000));
   const m = Math.floor(sec / 60);
@@ -1895,10 +1910,14 @@ function DestinationLine({
   agentId,
   simsRef,
   color,
+  targetLabel,
+  etaSec,
 }: {
   agentId: string;
   simsRef: React.MutableRefObject<Map<string, AgentSim>>;
   color: string;
+  targetLabel?: string | null;
+  etaSec?: number | null;
 }) {
   const [points, setPoints] = useState<THREE.Vector3[]>([]);
   const lastSigRef = useRef<{ len: number; start: THREE.Vector3; end: THREE.Vector3 } | null>(null);
@@ -1933,19 +1952,33 @@ function DestinationLine({
   });
 
   if (points.length < 2) return null;
+  const endpoint = points[points.length - 1];
+  const destinationLabel = safeTrim(targetLabel || '', 20);
+  const endpointText = destinationLabel
+    ? `TO ${destinationLabel}${formatRuntimeEta(etaSec)}`
+    : '';
 
   return (
-    <Line
-      key={`${agentId}-dest-${points.length}`}
-      points={points}
-      color={color}
-      lineWidth={1.5}
-      transparent
-      opacity={0.3}
-      dashed
-      dashSize={0.3}
-      gapSize={0.2}
-    />
+    <group>
+      <Line
+        key={`${agentId}-dest-${points.length}`}
+        points={points}
+        color={color}
+        lineWidth={1.5}
+        transparent
+        opacity={0.3}
+        dashed
+        dashSize={0.3}
+        gapSize={0.2}
+      />
+      <mesh position={[endpoint.x, 0.12, endpoint.z]}>
+        <sphereGeometry args={[0.2, 8, 8]} />
+        <meshBasicMaterial color={color} transparent opacity={0.72} />
+      </mesh>
+      {endpointText && (
+        <BillboardLabel text={endpointText} position={[endpoint.x, 2.2, endpoint.z]} color={color} />
+      )}
+    </group>
   );
 }
 
@@ -2680,6 +2713,10 @@ function TownScene({
   town,
   agents,
   agentCrewById,
+  runtimeAgents,
+  runtimeCrews,
+  runtimeBuildings,
+  runtimeFeed,
   ownedAgentId,
   ownedLoopTelemetry,
   selectedPlotId,
@@ -2712,6 +2749,10 @@ function TownScene({
   town: Town;
   agents: Agent[];
   agentCrewById: Record<string, CrewAgentLink>;
+  runtimeAgents: RuntimeAgentCard[];
+  runtimeCrews: RuntimeCrewCard[];
+  runtimeBuildings: RuntimeBuildingCard[];
+  runtimeFeed: RuntimeFeedCard[];
   ownedAgentId: string | null;
   ownedLoopTelemetry: DegenLoopTelemetry | null;
   selectedPlotId: string | null;
@@ -3009,6 +3050,38 @@ function TownScene({
     for (const plot of plots) map.set(plot.id, plot);
     return map;
   }, [plots]);
+  const runtimeAgentById = useMemo(() => {
+    const map = new Map<string, RuntimeAgentCard>();
+    for (const runtimeAgent of runtimeAgents) {
+      map.set(runtimeAgent.agentId, runtimeAgent);
+    }
+    return map;
+  }, [runtimeAgents]);
+  const runtimeBuildingByPlotId = useMemo(() => {
+    const map = new Map<string, RuntimeBuildingCard>();
+    for (const building of runtimeBuildings) {
+      map.set(building.plotId, building);
+    }
+    return map;
+  }, [runtimeBuildings]);
+  const crewOpsBeacons = useMemo(() => {
+    const prioritized = [...runtimeCrews]
+      .sort((a, b) => (b.activeMembers.length - a.activeMembers.length))
+      .slice(0, 3);
+    return prioritized.map((crew, index) => {
+      const total = Math.max(1, prioritized.length);
+      const angle = (index / total) * Math.PI * 2 - Math.PI / 2;
+      const radius = 18;
+      return {
+        crew,
+        position: [Math.cos(angle) * radius, 0.08, Math.sin(angle) * radius] as [number, number, number],
+      };
+    });
+  }, [runtimeCrews]);
+  const latestFeedSignal = useMemo(
+    () => runtimeFeed.find((item) => safeTrim(item.line, 80).length > 0) || null,
+    [runtimeFeed],
+  );
   const builtPlots = useMemo(() => plots.filter((p) => p.status === 'BUILT' || p.status === 'UNDER_CONSTRUCTION'), [plots]);
   const underConstructionPlots = useMemo(() => plots.filter((p) => p.status === 'UNDER_CONSTRUCTION'), [plots]);
   const entertainmentPlots = useMemo(() => plots.filter((p) => p.status === 'BUILT' && p.zone === 'ENTERTAINMENT'), [plots]);
@@ -4337,10 +4410,15 @@ function TownScene({
     () => agents.filter((a) => !fightingAgentIds?.has(a.id)),
     [agents, fightingAgentIds],
   );
-  const destinationLineAgents = useMemo(
-    () => navigationAgents.slice(0, visualProfile.destinationLineAgentLimit),
-    [navigationAgents, visualProfile.destinationLineAgentLimit],
-  );
+  const destinationLineAgents = useMemo(() => {
+    const seeded = navigationAgents.slice(0, visualProfile.destinationLineAgentLimit);
+    const pinned = navigationAgents.filter((agent) => agent.id === ownedAgentId || agent.id === selectedAgentId);
+    const unique = new Map<string, Agent>();
+    for (const agent of [...seeded, ...pinned]) {
+      unique.set(agent.id, agent);
+    }
+    return Array.from(unique.values());
+  }, [navigationAgents, ownedAgentId, selectedAgentId, visualProfile.destinationLineAgentLimit]);
   const trailAgents = useMemo(
     () => navigationAgents.slice(0, visualProfile.trailAgentLimit),
     [navigationAgents, visualProfile.trailAgentLimit],
@@ -4466,6 +4544,19 @@ function TownScene({
         const wz = (p.y - bounds.centerY) * spacing;
         const selected = p.id === selectedPlotId;
         const ownerCrew = p.ownerId ? agentCrewById[p.ownerId] ?? null : null;
+        const runtimeBuilding = runtimeBuildingByPlotId.get(p.id) ?? null;
+        const taskLabel = runtimeBuilding ? safeTrim(runtimeBuilding.task || 'IDLE', 22).toUpperCase() : '';
+        const hasTaskSignal = taskLabel.length > 0 && taskLabel !== 'IDLE';
+        const occupantCount = runtimeBuilding?.occupants.length ?? 0;
+        const hasBuildingSignal = Boolean(
+          runtimeBuilding && (
+            hasTaskSignal
+            || occupantCount > 0
+            || runtimeBuilding.status !== 'BUILT'
+          ),
+        );
+        const primaryOccupants = runtimeBuilding?.occupants.slice(0, 2).map((o) => safeTrim(o.name, 10)) ?? [];
+        const extraOccupants = Math.max(0, occupantCount - primaryOccupants.length);
         const { color, emissive } = zoneMaterial(p.zone, selected, ownerCrew?.colorHex);
         const name = p.buildingName?.trim() || (p.status === 'EMPTY' ? 'Available' : p.status.replace(/_/g, ' '));
 
@@ -4511,6 +4602,24 @@ function TownScene({
               position={[wx, 3.6, wz]}
               color={selected ? '#e2e8f0' : ownerCrew?.colorHex || '#cbd5e1'}
             />
+            {hasBuildingSignal && runtimeBuilding && (
+              <>
+                <BillboardLabel
+                  text={`TASK ${taskLabel || runtimeBuilding.status} · ${Math.round(runtimeBuilding.progressPct)}%${formatRuntimeEta(runtimeBuilding.etaSec)}`}
+                  position={[wx, 4.05, wz]}
+                  color={hasTaskSignal ? '#fcd34d' : '#a5b4fc'}
+                />
+                <BillboardLabel
+                  text={
+                    occupantCount > 0
+                      ? `👥 ${occupantCount} inside: ${primaryOccupants.join(', ')}${extraOccupants > 0 ? ` +${extraOccupants}` : ''}`
+                      : '👥 0 inside'
+                  }
+                  position={[wx, 4.48, wz]}
+                  color="#bae6fd"
+                />
+              </>
+            )}
           </group>
         );
       })}
@@ -4568,20 +4677,54 @@ function TownScene({
       <ActionBursts bursts={actionBursts} />
       <OwnedLoopAura ownedAgentId={ownedAgentId} loopTelemetry={ownedLoopTelemetry} simsRef={simsRef} />
 
-        {objectiveBeacon && (
-          <ObjectiveBeacon
-            position={objectiveBeacon.position}
-            color={objectiveBeacon.color}
-            label={objectiveBeacon.label}
-          />
-        )}
+	      {objectiveBeacon && (
+	          <ObjectiveBeacon
+	            position={objectiveBeacon.position}
+	            color={objectiveBeacon.color}
+	            label={objectiveBeacon.label}
+	          />
+	        )}
+
+	      {crewOpsBeacons.map(({ crew, position }) => {
+	        const activeOp = safeTrim(crew.activeOperation || 'Holding position', 28);
+	        const objective = safeTrim(crew.objective || 'No objective', 30);
+	        return (
+	          <group key={`crew-ops-${crew.crewId}`} position={position}>
+	            <mesh position={[0, 0.08, 0]} rotation={[Math.PI / 2, 0, 0]}>
+	              <ringGeometry args={[3.8, 4.4, 28]} />
+	              <meshBasicMaterial color={crew.colorHex} transparent opacity={0.18} depthWrite={false} />
+	            </mesh>
+	            <pointLight position={[0, 3.4, 0]} color={crew.colorHex} intensity={0.4} distance={9} />
+	            <BillboardLabel text={`⚑ ${crew.name}: ${activeOp}`} position={[0, 4.6, 0]} color={crew.colorHex} />
+	            <BillboardLabel
+	              text={`OBJ ${objective} · ${crew.activeMembers.length} active`}
+	              position={[0, 4.18, 0]}
+	              color="#dbeafe"
+	            />
+	          </group>
+	        );
+	      })}
+
+	      {latestFeedSignal && (
+	        <BillboardLabel
+	          text={`LIVE ${safeTrim(latestFeedSignal.line, 48)}`}
+	          position={[0, 8.6, -10.4]}
+	          color={
+	            latestFeedSignal.severity === 'HIGH'
+	              ? '#fda4af'
+	              : latestFeedSignal.severity === 'MEDIUM'
+	                ? '#fcd34d'
+	                : '#bae6fd'
+	          }
+	        />
+	      )}
 
 	      {/* Agents */}
 	      <group>
-	        {sceneAgents.map((a) => {
-	          const baseColor = ARCHETYPE_COLORS[a.archetype] || '#93c5fd';
-	          const economicState = getEconomicState(a.bankroll + a.reserveBalance, false);
-	          const isDead = false; // Death is now only from combat, not bankroll
+        {sceneAgents.map((a) => {
+          const baseColor = ARCHETYPE_COLORS[a.archetype] || '#93c5fd';
+          const economicState = getEconomicState(a.bankroll + a.reserveBalance, false);
+          const isDead = false; // Death is now only from combat, not bankroll
 	          // Color reflects economic state: thriving=bright, broke=desaturated
 	          const economicColorMod = economicState === 'THRIVING' ? 1.15 : 
 	                                   economicState === 'COMFORTABLE' ? 1.0 :
@@ -4589,13 +4732,23 @@ function TownScene({
 	                                   economicState === 'BROKE' ? 0.7 :
 	                                   economicState === 'HOMELESS' ? 0.5 : 1.0;
 	          const baseColorObj = new THREE.Color(baseColor);
-	          const modColor = baseColorObj.multiplyScalar(economicColorMod);
-	          const color = isDead ? '#4b5563' : `#${modColor.getHexString()}`;
-	          const selected = a.id === selectedAgentId;
-	          const arenaOutcome = arenaOutcomeByAgentId[a.id] ?? null;
-	          return (
-	            <group
-	              key={a.id}
+          const modColor = baseColorObj.multiplyScalar(economicColorMod);
+          const color = isDead ? '#4b5563' : `#${modColor.getHexString()}`;
+          const selected = a.id === selectedAgentId;
+          const isOwned = a.id === ownedAgentId;
+          const runtimeAgent = runtimeAgentById.get(a.id) ?? null;
+          const intentLine = runtimeAgent
+            ? `${safeTrim(runtimeAgent.action || runtimeAgent.state || 'IDLE', 14)} -> ${safeTrim(runtimeAgent.targetLabel || 'No target', 18)}${formatRuntimeEta(runtimeAgent.etaSec)}`
+            : '';
+          const reasonLine = runtimeAgent
+            ? runtimeAgent.blockedCode
+              ? `⛔ ${safeTrim(runtimeAgent.blockedCode, 22)}`
+              : `WHY ${cleanRuntimeReason(runtimeAgent.reason, isOwned || selected ? 44 : 30)}`
+            : '';
+          const arenaOutcome = arenaOutcomeByAgentId[a.id] ?? null;
+          return (
+            <group
+              key={a.id}
 	              ref={(ref) => {
 	                if (ref) agentGroupRefs.current.set(a.id, ref);
 	                else agentGroupRefs.current.delete(a.id);
@@ -4622,6 +4775,27 @@ function TownScene({
 		              )}
 		              <StateIndicator agentId={a.id} simsRef={simsRef} />
 		              <HealthBar agentId={a.id} simsRef={simsRef} />
+		              {runtimeAgent?.crewName && (
+		                <BillboardLabel
+		                  text={`⚑ ${safeTrim(runtimeAgent.crewName, 16)}`}
+		                  position={[0, 2.88, 0]}
+		                  color={agentCrewById[a.id]?.colorHex || '#a5b4fc'}
+		                />
+		              )}
+		              {intentLine && (
+		                <BillboardLabel
+		                  text={`🎯 ${intentLine}`}
+		                  position={[0, 3.24, 0]}
+		                  color={runtimeAgent?.blockedCode ? '#fda4af' : isOwned || selected ? '#67e8f9' : '#cbd5e1'}
+		                />
+		              )}
+		              {reasonLine && (isOwned || selected || Boolean(runtimeAgent?.blockedCode)) && (
+		                <BillboardLabel
+		                  text={reasonLine}
+		                  position={[0, 3.62, 0]}
+		                  color={runtimeAgent?.blockedCode ? '#fb7185' : '#94a3b8'}
+		                />
+		              )}
 		            </group>
 	          );
 	        })}
@@ -4634,6 +4808,8 @@ function TownScene({
           agentId={a.id}
           simsRef={simsRef}
           color={ARCHETYPE_COLORS[a.archetype] || '#93c5fd'}
+          targetLabel={runtimeAgentById.get(a.id)?.targetLabel || null}
+          etaSec={runtimeAgentById.get(a.id)?.etaSec ?? null}
         />
       ))}
 
@@ -6951,6 +7127,10 @@ export default function Town3D() {
           town={town}
           agents={agents}
           agentCrewById={crewWarsStatus?.agentCrewById ?? {}}
+          runtimeAgents={runtimeAgents}
+          runtimeCrews={runtimeCrews}
+          runtimeBuildings={runtimeBuildings}
+          runtimeFeed={runtimeFeed}
           ownedAgentId={ownedAgentId}
           ownedLoopTelemetry={ownedLoopTelemetry}
           selectedPlotId={selectedPlotId}

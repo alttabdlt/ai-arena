@@ -49,6 +49,7 @@ const ARENA_STRIKE_COOLDOWN_MIN_MS = 420;
 const ARENA_STRIKE_COOLDOWN_MAX_MS = 760;
 const ARENA_IMPACT_BURST_LIFE_MS = 620;
 const ARENA_IMPACT_BURST_CAP = 28;
+const ACTION_BURST_LIFE_MS = 1280;
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const LazyPrivyWalletConnect = lazy(async () => {
   const mod = await import('../components/PrivyWalletConnect');
@@ -182,6 +183,20 @@ type ArenaImpactBurst = {
   createdAt: number;
   intensity: number;
   tone: 'ROSE' | 'CYAN';
+};
+
+type ActionBurstKind = 'CLAIM' | 'BUILD' | 'WORK' | 'TRADE' | 'FIGHT' | 'MINE' | 'IDLE' | 'OTHER';
+
+type ActionBurst = {
+  id: string;
+  agentId: string;
+  position: [number, number, number];
+  actionType: string;
+  kind: ActionBurstKind;
+  polarity: -1 | 0 | 1;
+  intensity: number;
+  createdAt: number;
+  isOwned: boolean;
 };
 
 interface EconomyPoolSummary {
@@ -460,6 +475,47 @@ function summarizeArenaMomentum(entries: AgentOutcomeEntry[]) {
     if (streak >= 6) break;
   }
   return { streak, direction };
+}
+
+function resolveActionBurstKind(actionType: string): ActionBurstKind {
+  const normalized = String(actionType || '').trim().toLowerCase();
+  if (normalized.includes('claim')) return 'CLAIM';
+  if (normalized.includes('build')) return 'BUILD';
+  if (normalized.includes('work') || normalized.includes('complete')) return 'WORK';
+  if (normalized.includes('trade') || normalized.startsWith('buy_') || normalized.startsWith('sell_')) return 'TRADE';
+  if (normalized.includes('fight') || normalized.includes('arena') || normalized === 'play_arena') return 'FIGHT';
+  if (normalized.includes('mine')) return 'MINE';
+  if (normalized === 'rest' || normalized === 'idle') return 'IDLE';
+  return 'OTHER';
+}
+
+function actionBurstVisual(kind: ActionBurstKind, polarity: -1 | 0 | 1) {
+  switch (kind) {
+    case 'CLAIM':
+      return { emoji: '📍', color: '#facc15', accent: '#fde047' };
+    case 'BUILD':
+      return { emoji: '🏗️', color: '#fb923c', accent: '#fdba74' };
+    case 'WORK':
+      return { emoji: '🔨', color: '#f97316', accent: '#fdba74' };
+    case 'TRADE':
+      return {
+        emoji: polarity < 0 ? '📉' : '📈',
+        color: polarity < 0 ? '#fb7185' : '#22d3ee',
+        accent: polarity < 0 ? '#fda4af' : '#67e8f9',
+      };
+    case 'FIGHT':
+      return {
+        emoji: polarity < 0 ? '💥' : '⚔️',
+        color: polarity < 0 ? '#ef4444' : '#fb7185',
+        accent: polarity < 0 ? '#fca5a5' : '#fda4af',
+      };
+    case 'MINE':
+      return { emoji: '⛏️', color: '#a78bfa', accent: '#c4b5fd' };
+    case 'IDLE':
+      return { emoji: '💤', color: '#64748b', accent: '#94a3b8' };
+    default:
+      return { emoji: '✨', color: '#38bdf8', accent: '#7dd3fc' };
+  }
 }
 
 function fallbackObjective(
@@ -1141,6 +1197,143 @@ function ArenaImpactBursts({ bursts }: { bursts: ArenaImpactBurst[] }) {
     <group>
       {bursts.map((burst) => (
         <ArenaImpactBurstFx key={burst.id} burst={burst} />
+      ))}
+    </group>
+  );
+}
+
+function ActionBurstFx({ burst }: { burst: ActionBurst }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const ringRef = useRef<THREE.Mesh>(null);
+  const haloRef = useRef<THREE.Mesh>(null);
+  const spriteRef = useRef<THREE.Sprite>(null);
+  const shardRefs = useRef<Array<THREE.Mesh | null>>([]);
+  const seededPhase = useMemo(() => hashToSeed(burst.id), [burst.id]);
+  const visual = useMemo(() => actionBurstVisual(burst.kind, burst.polarity), [burst.kind, burst.polarity]);
+  const iconTexture = useMemo(() => getEmojiTexture(visual.emoji), [visual.emoji]);
+  const shardCount = 4;
+
+  useFrame((state) => {
+    const group = groupRef.current;
+    const ring = ringRef.current;
+    const halo = haloRef.current;
+    const sprite = spriteRef.current;
+    if (!group || !ring || !halo || !sprite) return;
+
+    const ageMs = Date.now() - burst.createdAt;
+    if (ageMs < 0 || ageMs > ACTION_BURST_LIFE_MS) {
+      group.visible = false;
+      return;
+    }
+    group.visible = true;
+
+    const life = THREE.MathUtils.clamp(ageMs / ACTION_BURST_LIFE_MS, 0, 1);
+    const fade = 1 - life;
+    const pop = 1 - Math.pow(1 - life, 3);
+    const pulse = (Math.sin(state.clock.elapsedTime * 20 + seededPhase * 0.001) + 1) * 0.5;
+    const intensity = THREE.MathUtils.clamp(burst.intensity, 0.55, 2.25);
+    const baseScale = 0.52 + pop * (0.96 + intensity * 0.24);
+    const lift = 0.1 + pop * (0.44 + intensity * 0.22);
+
+    group.position.set(burst.position[0], burst.position[1] + lift, burst.position[2]);
+    ring.scale.set(baseScale, baseScale, 1);
+    halo.scale.set(baseScale * 0.84, baseScale * 0.84, 1);
+    sprite.position.set(0, 0.2 + pop * 0.26, 0);
+    const iconScale = 0.24 + pop * 0.18 + (burst.isOwned ? 0.05 : 0);
+    sprite.scale.set(iconScale, iconScale, 1);
+
+    const ringMat = ring.material as THREE.MeshStandardMaterial;
+    ringMat.color.set(visual.color);
+    ringMat.emissive.set(visual.color);
+    ringMat.opacity = THREE.MathUtils.clamp((0.58 + pulse * 0.22) * fade, 0, 0.78);
+    ringMat.emissiveIntensity = THREE.MathUtils.clamp((0.78 + intensity * 0.45 + pulse * 0.4) * fade, 0, 2.4);
+
+    const haloMat = halo.material as THREE.MeshBasicMaterial;
+    haloMat.color.set(visual.accent);
+    haloMat.opacity = THREE.MathUtils.clamp((0.24 + pulse * 0.14) * fade, 0, 0.45);
+
+    const spriteMat = sprite.material as THREE.SpriteMaterial;
+    spriteMat.opacity = THREE.MathUtils.clamp((0.92 - life * 0.35) * fade, 0, 0.98);
+
+    for (let index = 0; index < shardCount; index++) {
+      const shard = shardRefs.current[index];
+      if (!shard) continue;
+      const theta = (index / shardCount) * Math.PI * 2 + seededPhase * 0.00023;
+      const radial = 0.2 + pop * (0.62 + intensity * 0.24);
+      shard.position.set(
+        Math.cos(theta) * radial,
+        0.08 + pop * (0.15 + (index % 2) * 0.06),
+        Math.sin(theta) * radial,
+      );
+      shard.rotation.y = -theta + life * 0.6;
+      shard.scale.y = 0.55 + pop * 0.35;
+      const shardMat = shard.material as THREE.MeshStandardMaterial;
+      shardMat.color.set(visual.accent);
+      shardMat.emissive.set(visual.color);
+      shardMat.opacity = THREE.MathUtils.clamp((0.22 + pulse * 0.18) * fade, 0, 0.45);
+      shardMat.emissiveIntensity = THREE.MathUtils.clamp((0.42 + intensity * 0.22) * fade, 0, 1.3);
+    }
+  });
+
+  return (
+    <group ref={groupRef} position={burst.position}>
+      <mesh ref={haloRef} rotation={[Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.36, 0.58, 34]} />
+        <meshBasicMaterial color={visual.accent} transparent opacity={0.3} depthWrite={false} />
+      </mesh>
+      <mesh ref={ringRef} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[0.62, 0.045, 10, 38]} />
+        <meshStandardMaterial
+          color={visual.color}
+          emissive={visual.color}
+          emissiveIntensity={1}
+          transparent
+          opacity={0.6}
+          roughness={0.22}
+          metalness={0.26}
+          depthWrite={false}
+        />
+      </mesh>
+      {Array.from({ length: shardCount }).map((_, index) => (
+        <mesh
+          key={`action-shard:${burst.id}:${index}`}
+          ref={(node) => {
+            shardRefs.current[index] = node;
+          }}
+          position={[0, 0.12, 0]}
+        >
+          <boxGeometry args={[0.03, 0.2, 0.03]} />
+          <meshStandardMaterial
+            color={visual.accent}
+            emissive={visual.color}
+            emissiveIntensity={0.6}
+            transparent
+            opacity={0.32}
+            roughness={0.24}
+            metalness={0.18}
+            depthWrite={false}
+          />
+        </mesh>
+      ))}
+      <sprite ref={spriteRef} position={[0, 0.22, 0]} scale={[0.28, 0.28, 1]}>
+        <spriteMaterial
+          map={iconTexture}
+          color={burst.isOwned ? '#ffffff' : '#dbeafe'}
+          transparent
+          opacity={0.94}
+          depthWrite={false}
+        />
+      </sprite>
+    </group>
+  );
+}
+
+function ActionBursts({ bursts }: { bursts: ActionBurst[] }) {
+  if (bursts.length === 0) return null;
+  return (
+    <group>
+      {bursts.map((burst) => (
+        <ActionBurstFx key={burst.id} burst={burst} />
       ))}
     </group>
   );
@@ -1835,6 +2028,7 @@ function TownScene({
   setDeathEffects,
   spawnEffects,
   setSpawnEffects,
+  actionBursts,
   relationshipsRef,
   urgencyObjective,
   opportunityWindow,
@@ -1863,6 +2057,7 @@ function TownScene({
   setDeathEffects: React.Dispatch<React.SetStateAction<{ id: string; position: [number, number, number] }[]>>;
   spawnEffects: { id: string; position: [number, number, number]; color: string }[];
   setSpawnEffects: React.Dispatch<React.SetStateAction<{ id: string; position: [number, number, number]; color: string }[]>>;
+  actionBursts: ActionBurst[];
   relationshipsRef: React.MutableRefObject<{ agentAId: string; agentBId: string; status: string; score: number }[]>;
   urgencyObjective: UrgencyObjective | null;
   opportunityWindow: OpportunityWindow | null;
@@ -3290,6 +3485,38 @@ function TownScene({
               }
             }
           }
+          let latestActionBurst: ActionBurst | null = null;
+          for (let index = actionBursts.length - 1; index >= 0; index--) {
+            const burst = actionBursts[index];
+            if (burst.agentId === selectedAgentId) {
+              latestActionBurst = burst;
+              break;
+            }
+          }
+          if (latestActionBurst) {
+            const actionAgeMs = nowMs - latestActionBurst.createdAt;
+            const actionWindow = ACTION_BURST_LIFE_MS * 0.42;
+            if (actionAgeMs >= 0 && actionAgeMs <= actionWindow) {
+              const hitLife = 1 - actionAgeMs / actionWindow;
+              const kindBoost =
+                latestActionBurst.kind === 'FIGHT'
+                  ? 1.35
+                  : latestActionBurst.kind === 'TRADE'
+                    ? 1.18
+                    : latestActionBurst.kind === 'BUILD' || latestActionBurst.kind === 'WORK'
+                      ? 1.12
+                      : 1;
+              const hitStrength = THREE.MathUtils.clamp(hitLife * latestActionBurst.intensity * 0.055 * kindBoost, 0, 0.22);
+              const actionViewDir = new THREE.Vector3();
+              camera.getWorldDirection(actionViewDir);
+              camera.position.addScaledVector(actionViewDir, hitStrength);
+              camera.position.y += hitStrength * 0.22;
+              lookTargetRef.current.y += hitStrength * 0.65;
+              if (visualSettings.cameraShake) {
+                cameraShakeRef.current = Math.min(0.7, cameraShakeRef.current + hitStrength * 0.55);
+              }
+            }
+          }
 
           const camPos = camera.position;
           const simHeading = sim.heading.lengthSq() > 0.0001
@@ -3654,6 +3881,7 @@ function TownScene({
 	      </group>
       <ArenaDuelBeam fighterIds={arenaFighterIds} simsRef={simsRef} active={arenaFighterIds.length >= 2} />
       <ArenaImpactBursts bursts={arenaImpactBursts} />
+      <ActionBursts bursts={actionBursts} />
 
         {objectiveBeacon && (
           <ObjectiveBeacon
@@ -4173,16 +4401,33 @@ export default function Town3D() {
   const [coinBursts, setCoinBursts] = useState<{ id: string; position: [number, number, number]; isBuy: boolean }[]>([]);
   const [deathEffects, setDeathEffects] = useState<{ id: string; position: [number, number, number] }[]>([]);
   const [spawnEffects, setSpawnEffects] = useState<{ id: string; position: [number, number, number]; color: string }[]>([]);
+  const [actionBursts, setActionBursts] = useState<ActionBurst[]>([]);
   const [opportunityWindow, setOpportunityWindow] = useState<OpportunityWindow | null>(null);
   const [uiNowMs, setUiNowMs] = useState(() => Date.now());
   const nextOpportunityAtRef = useRef<number>(Date.now() + randomRange(16_000, 30_000));
   const transientFxCap = isMobile ? mobileVisualProfile.maxTransientEffects : desktopVisualProfile.maxTransientEffects;
+  const actionBurstCap = Math.max(40, transientFxCap * 4);
 
   useEffect(() => {
     setCoinBursts((prev) => prev.slice(-transientFxCap));
     setDeathEffects((prev) => prev.slice(-transientFxCap));
     setSpawnEffects((prev) => prev.slice(-transientFxCap));
-  }, [transientFxCap]);
+    setActionBursts((prev) => prev.slice(-actionBurstCap));
+  }, [actionBurstCap, transientFxCap]);
+
+  useEffect(() => {
+    const t = window.setInterval(() => {
+      const nowMs = Date.now();
+      setActionBursts((prev) => {
+        if (prev.length === 0) return prev;
+        const next = prev.filter((burst) => nowMs - burst.createdAt <= ACTION_BURST_LIFE_MS + 120);
+        return next.length === prev.length ? prev : next;
+      });
+    }, 180);
+    return () => {
+      window.clearInterval(t);
+    };
+  }, []);
 
   // Economic indicators derived from town state
   const economicState = useMemo(() => {
@@ -4341,6 +4586,7 @@ export default function Town3D() {
     const newOutcomes: Array<{ agentId: string; entry: AgentOutcomeEntry }> = [];
     const newArenaToasts: ArenaOutcomeToast[] = [];
     const newMomentumToasts: ArenaMomentumToast[] = [];
+    const newActionBursts: ActionBurst[] = [];
 
     for (const agent of nextAgents) {
       const previous = previousMap.get(agent.id);
@@ -4379,6 +4625,44 @@ export default function Town3D() {
             agentId: agent.id,
             entry,
           });
+          const deltaNet = bankrollDelta + reserveDelta;
+          const burstPolarity = deltaNet > 0.001 ? 1 : deltaNet < -0.001 ? -1 : 0;
+          const shouldEmitBurst =
+            actionType !== 'rest'
+            && actionType !== 'idle'
+            && (actionChanged || bankrollChanged || reserveChanged);
+          if (shouldEmitBurst) {
+            const sim = simsRef.current.get(agent.id);
+            if (sim) {
+              const kind = resolveActionBurstKind(actionType);
+              const spreadSeed = hashToSeed(`${agent.id}:${signature}:burst`);
+              const spreadAngle = ((spreadSeed % 360) / 360) * Math.PI * 2;
+              const spreadRadius = 0.16 + ((spreadSeed >>> 8) % 1000) / 1000 * 0.42;
+              const intensity = THREE.MathUtils.clamp(
+                0.62
+                  + (Math.abs(deltaNet) / 20)
+                  + (kind === 'FIGHT' ? 0.26 : 0)
+                  + (kind === 'TRADE' ? 0.12 : 0),
+                0.5,
+                2.3,
+              );
+              newActionBursts.push({
+                id: `action:${agent.id}:${signature}`,
+                agentId: agent.id,
+                actionType,
+                kind,
+                polarity: burstPolarity,
+                intensity,
+                createdAt: Date.now(),
+                isOwned: ownedAgentId === agent.id,
+                position: [
+                  sim.position.x + Math.cos(spreadAngle) * spreadRadius,
+                  1.04 + (kind === 'FIGHT' ? 0.16 : 0),
+                  sim.position.z + Math.sin(spreadAngle) * spreadRadius,
+                ],
+              });
+            }
+          }
           if (actionType === 'play_arena') {
             const toastId = `${agent.id}:${signature}:play_arena`;
             if (!seenArenaOutcomeIdsRef.current.has(toastId)) {
@@ -4450,7 +4734,10 @@ export default function Town3D() {
     if (newMomentumToasts.length > 0) {
       newMomentumToasts.forEach((toast) => pushArenaMomentumToast(toast));
     }
-  }, [pushArenaOutcomeToast, pushArenaMomentumToast]);
+    if (newActionBursts.length > 0) {
+      setActionBursts((prev) => [...prev, ...newActionBursts].slice(-actionBurstCap));
+    }
+  }, [actionBurstCap, ownedAgentId, pushArenaOutcomeToast, pushArenaMomentumToast]);
 
 
 
@@ -4972,6 +5259,7 @@ export default function Town3D() {
             setDeathEffects={setDeathEffects}
             spawnEffects={spawnEffects}
             setSpawnEffects={setSpawnEffects}
+            actionBursts={actionBursts}
             relationshipsRef={relationshipsRef}
             urgencyObjective={urgencyObjective}
             opportunityWindow={activeOpportunity}
@@ -5257,6 +5545,7 @@ export default function Town3D() {
           setDeathEffects={setDeathEffects}
           spawnEffects={spawnEffects}
           setSpawnEffects={setSpawnEffects}
+          actionBursts={actionBursts}
           relationshipsRef={relationshipsRef}
           urgencyObjective={urgencyObjective}
           opportunityWindow={activeOpportunity}

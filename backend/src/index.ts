@@ -348,6 +348,13 @@ async function startServer() {
   console.log('⚔️ Crew Wars API ready at /api/v1/crew-wars');
 
   // ============================================
+  // Runtime Readability API (default HUD payloads)
+  // ============================================
+  const runtimeApiRouter = (await import('./routes/runtime-api')).default;
+  app.use('/api/v1', cors<cors.CorsRequest>({ origin: '*' }), runtimeApiRouter);
+  console.log('🛰️ Runtime API ready at /api/v1/runtime');
+
+  // ============================================
   // Market Pulse (demo dopamine)
   // ============================================
   // Disabled by default: it creates high-frequency buy/sell swaps that can drown out the actual town sim.

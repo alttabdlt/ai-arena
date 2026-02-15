@@ -8,11 +8,11 @@
  *   4. Wallet exists, no agent → Sign in → Deploy/Connect → Play
  *   5. OpenClaw/external agent → Reads /skill.md → REST API (no overlay)
  *   6. API agent, now wants browser → Sign in → Connect via API key → Play
- *   7. Spectator → Skip → Watch only
  */
 import { useState, useCallback, useEffect } from 'react';
 import { usePrivy, useWallets, useLogin } from '@privy-io/react-auth';
 import { HAS_PRIVY } from '../../config/privy';
+import { API_BASE } from '../../lib/api-base';
 import { ONBOARDED_KEY, MY_AGENT_KEY, MY_WALLET_KEY } from './storage';
 
 type EthereumProvider = { request: (args: { method: string; params?: unknown[] | object }) => Promise<unknown> };
@@ -35,7 +35,6 @@ type LlmStatus = {
 };
 
 const TELEGRAM_BOT = 'https://t.me/Ai_Town_Bot';
-const API_BASE = '/api/v1';
 
 const PERSONALITIES = [
   { type: 'SHARK', emoji: '🦈', label: 'Shark', desc: 'Ruthless optimizer. Dominates markets.' },
@@ -100,11 +99,11 @@ const FALLBACK_PROFILES: AiProfileChoice[] = [
   },
 ];
 const QUICKSTART_STEPS = [
-  'Sign in, then deploy or connect one agent.',
-  'Use the bottom-left DEGEN LOOP HUD: hit AUTO ON or tap manual buttons.',
-  'Follow NEXT MISSION and cycle BUILD → WORK → FIGHT → TRADE.',
-  'Telegram nudges are optional. You can run everything from the HUD.',
-  'If you see 402 credits, top up OpenRouter for the backend key, then restart backend.',
+  'Sign in with wallet/email/social.',
+  'We auto-detect your wallet agent. If none exists, deploy one.',
+  'Enter town and confirm your agent + bankroll in the HUD.',
+  'Run AUTO loop or manual BUILD → WORK → FIGHT → TRADE.',
+  'Low bankroll? Hit Fund and paste your nad.fun transaction hash.',
 ];
 
 function toModelChoices(
@@ -244,7 +243,7 @@ function FallbackOnboarding({ onComplete }: OnboardingOverlayProps) {
 
   return (
     <div className="fixed inset-0 z-[200] flex items-center justify-center px-4 overflow-y-auto py-6">
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />
+      <div className="absolute inset-0 bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900" />
       <div className="relative z-10 w-full max-w-md">
         <div className="text-center mb-5">
           <div className="text-4xl sm:text-5xl font-black bg-gradient-to-r from-amber-300 via-orange-400 to-red-400 bg-clip-text text-transparent mb-1">AI TOWN</div>
@@ -261,11 +260,6 @@ function FallbackOnboarding({ onComplete }: OnboardingOverlayProps) {
               🦊 Connect MetaMask
             </button>
             <QuickstartCard compact />
-            <div className="border-t border-slate-800/50 pt-3">
-              <button onClick={() => { void finishWith(); }} className="w-full text-xs text-slate-600 hover:text-slate-400 transition-colors py-1">
-                Skip — just spectate
-              </button>
-            </div>
           </div>
         )}
 
@@ -478,7 +472,7 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
   }, [apiKey, finishWith]);
 
   // ── Shared backdrop ──
-  const Backdrop = () => <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" />;
+  const Backdrop = () => <div className="absolute inset-0 bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900" />;
 
   // ── SUCCESS ──
   if (view === 'success') {
@@ -531,12 +525,6 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
             </div>
 
             <QuickstartCard compact />
-
-            <div className="border-t border-slate-800/50 pt-3">
-              <button onClick={() => finishWith()} className="w-full text-xs text-slate-600 hover:text-slate-400 transition-colors py-1">
-                Skip — just spectate
-              </button>
-            </div>
           </div>
         )}
 
@@ -658,21 +646,15 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
             </button>
 
             {/* Bottom row */}
-            <div className="flex gap-2">
+            <div>
               <a
                 href={TELEGRAM_BOT}
                 target="_blank"
                 rel="noreferrer"
-                className="flex-1 py-2.5 bg-[#229ED9]/20 border border-[#229ED9]/30 hover:bg-[#229ED9]/30 text-[#229ED9] font-medium rounded-xl transition-all text-xs text-center"
+                className="block w-full py-2.5 bg-[#229ED9]/20 border border-[#229ED9]/30 hover:bg-[#229ED9]/30 text-[#229ED9] font-medium rounded-xl transition-all text-xs text-center"
               >
                 💬 Telegram (Optional)
               </a>
-              <button
-                onClick={() => finishWith()}
-                className="flex-1 py-2.5 border border-slate-700/50 hover:border-slate-600 text-slate-500 hover:text-slate-300 rounded-xl transition-all text-xs"
-              >
-                👀 Just Spectate
-              </button>
             </div>
 
             <LlmStatusCard status={llmStatus} />

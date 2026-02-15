@@ -241,3 +241,49 @@ Original prompt: "yes, but are we able to implement build/work/fight > crypto lo
 - Validation:
   - `cd backend && npx tsc --noEmit` passed.
   - `cd backend && npm test` passed (`12` files, `94` tests).
+
+### External agent secure onboarding + edge-case pass (2026-02-15)
+
+- Added signed-claim onboarding/session service:
+  - `backend/src/services/externalAgentAuthService.ts`
+  - Ed25519 challenge/claim verification (`tweetnacl`)
+  - One-time enrollment challenges with TTL
+  - Access + refresh token session lifecycle with refresh rotation
+  - Optional legacy API-key compatibility flags
+
+- External API upgraded:
+  - `POST /api/v1/external/join` now supports `authPubkey` and returns signed-claim onboarding metadata.
+  - New `POST /api/v1/external/claim` exchanges signed challenge for access/refresh tokens.
+  - New `POST /api/v1/external/session/refresh` rotates session tokens.
+  - New `GET /api/v1/external/discovery` exposes machine-readable onboarding/auth contract.
+  - Protected routes now accept bearer access tokens; legacy API key bearer auth remains optional via env.
+
+- New env flags in `backend/.env.example`:
+  - `EXTERNAL_REQUIRE_SIGNED_CLAIM`
+  - `EXTERNAL_ALLOW_LEGACY_API_KEY_AUTH`
+  - `EXTERNAL_JOIN_INCLUDE_API_KEY`
+  - `EXTERNAL_ENROLLMENT_TTL_MS`
+  - `EXTERNAL_ACCESS_TTL_MS`
+  - `EXTERNAL_REFRESH_TTL_MS`
+
+- Updated OpenClaw skill contract:
+  - `backend/ai-town-skill/SKILL.md` now documents signed challenge onboarding (no raw API key required by default).
+
+- Added automated edge-case tests:
+  - `backend/src/services/externalAgentAuthService.test.ts`
+  - Coverage includes multi-agent concurrent onboarding, invalid signature/mismatch, replay prevention, refresh rotation, and TTL expiry.
+
+- Validation:
+  - `cd backend && npx tsc --noEmit` passed.
+  - `cd backend && npm test` passed (`13` files, `98` tests).
+  - Live multi-agent onboarding edge-case script against running backend passed:
+    - join without pubkey rejected in secure mode
+    - two agents onboarded/claimed in parallel successfully
+    - invalid signatures and pubkey mismatch rejected
+    - replay claim rejected
+    - refresh token rotation works; old refresh token rejected
+    - invalid access token rejected
+
+- OpenRouter burn control during E2E:
+  - E2E backend run used `OPENROUTER_ENABLED=0`
+  - Runtime logs confirmed OpenRouter was disabled throughout test and process was stopped after validation.

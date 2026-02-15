@@ -1,7 +1,8 @@
 /**
  * External Agent API — Endpoints for external AI agents (e.g. OpenClaw) to join and play AI Town.
  *
- * Auth: Bearer token (agent's apiKey) for all endpoints except /external/join.
+ * Auth: Bearer token (access token from signed claim flow) for protected endpoints.
+ * Legacy apiKey bearer auth can be optionally allowed via env flag.
  * Base path: /api/v1/external
  */
 
@@ -11,6 +12,7 @@ import { arenaService } from '../services/arenaService';
 import { agentLoopService } from '../services/agentLoopService';
 import { wheelOfFateService } from '../services/wheelOfFateService';
 import { prisma } from '../config/database';
+import { externalAgentAuthService } from '../services/externalAgentAuthService';
 
 const router = Router();
 
@@ -25,14 +27,25 @@ interface AuthenticatedRequest extends Request {
 async function authenticateAgent(req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'Missing or invalid Authorization header. Use: Bearer <api_key>' });
+    res.status(401).json({ error: 'Missing or invalid Authorization header. Use: Bearer <access_token>' });
     return;
   }
 
-  const apiKey = authHeader.split(' ')[1];
-  const agent = await arenaService.getAgentByApiKey(apiKey);
+  const token = authHeader.split(' ')[1];
+  let agent: ArenaAgent | null = null;
+  const accessAgentId = externalAgentAuthService.authenticateAccessToken(token);
+  if (accessAgentId) {
+    agent = await prisma.arenaAgent.findUnique({ where: { id: accessAgentId } });
+  }
+  if (!agent && externalAgentAuthService.shouldAllowLegacyApiKeyAuth()) {
+    agent = await arenaService.getAgentByApiKey(token);
+  }
   if (!agent) {
-    res.status(401).json({ error: 'Invalid API key' });
+    res.status(401).json({
+      error: externalAgentAuthService.shouldAllowLegacyApiKeyAuth()
+        ? 'Invalid access token (or legacy API key)'
+        : 'Invalid or expired access token',
+    });
     return;
   }
 
@@ -46,7 +59,7 @@ async function authenticateAgent(req: AuthenticatedRequest, res: Response, next:
 
 router.post('/external/join', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, personality, archetype } = req.body;
+    const { name, personality, archetype, authPubkey } = req.body;
 
     if (!name || typeof name !== 'string' || name.trim().length === 0) {
       res.status(400).json({ error: 'name is required (string)' });
@@ -57,6 +70,20 @@ router.post('/external/join', async (req: Request, res: Response): Promise<void>
     if (archetype && !validArchetypes.includes(archetype)) {
       res.status(400).json({ error: `archetype must be one of: ${validArchetypes.join(', ')}` });
       return;
+    }
+    if (externalAgentAuthService.isSignedClaimRequired() && (!authPubkey || typeof authPubkey !== 'string')) {
+      res.status(400).json({
+        error: 'authPubkey is required for secure onboarding (ed25519 public key, hex/base64)',
+      });
+      return;
+    }
+    if (authPubkey) {
+      try {
+        externalAgentAuthService.validateAuthPubkey(String(authPubkey));
+      } catch (err: any) {
+        res.status(400).json({ error: err.message || 'Invalid authPubkey' });
+        return;
+      }
     }
 
     const agent = await arenaService.registerAgent({
@@ -72,14 +99,38 @@ router.post('/external/join', async (req: Request, res: Response): Promise<void>
       data: { spawnedByUser: true },
     });
 
-    res.json({
+    let onboarding: Record<string, unknown> = {
+      mode: 'legacy_api_key',
+      note: 'Legacy onboarding is enabled. Provide authPubkey to use signed-claim sessions.',
+    };
+    if (authPubkey) {
+      const challenge = externalAgentAuthService.createEnrollmentChallenge(agent.id, String(authPubkey));
+      onboarding = {
+        mode: 'signed_claim',
+        enrollmentId: challenge.enrollmentId,
+        challenge: challenge.challenge,
+        expiresAt: challenge.expiresAt,
+        claimPath: '/api/v1/external/claim',
+        refreshPath: '/api/v1/external/session/refresh',
+      };
+    }
+
+    const payload: Record<string, unknown> = {
       agentId: agent.id,
-      apiKey: agent.apiKey,
       name: agent.name,
       archetype: agent.archetype,
       bankroll: agent.bankroll,
       reserveBalance: agent.reserveBalance,
-    });
+      onboarding,
+      auth: {
+        signedClaimRequired: externalAgentAuthService.isSignedClaimRequired(),
+        legacyApiKeyAccepted: externalAgentAuthService.shouldAllowLegacyApiKeyAuth(),
+      },
+    };
+    if (externalAgentAuthService.shouldExposeApiKeyOnJoin()) {
+      payload.apiKey = agent.apiKey;
+    }
+    res.json(payload);
   } catch (err: any) {
     if (err.message?.includes('already taken')) {
       res.status(409).json({ error: err.message });
@@ -88,6 +139,80 @@ router.post('/external/join', async (req: Request, res: Response): Promise<void>
     console.error('External join error:', err);
     res.status(500).json({ error: 'Failed to register agent' });
   }
+});
+
+router.post('/external/claim', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const enrollmentId = String((req.body as any)?.enrollmentId || '').trim();
+    const signature = String((req.body as any)?.signature || '').trim();
+    const authPubkey = String((req.body as any)?.authPubkey || '').trim();
+    if (!enrollmentId || !signature || !authPubkey) {
+      res.status(400).json({ error: 'enrollmentId, authPubkey, and signature are required' });
+      return;
+    }
+
+    const claimed = externalAgentAuthService.claimEnrollment({ enrollmentId, signature, authPubkey });
+    const agent = await prisma.arenaAgent.findUnique({ where: { id: claimed.agentId } });
+    if (!agent) {
+      res.status(404).json({ error: 'Agent not found for enrollment' });
+      return;
+    }
+
+    res.json({
+      agentId: claimed.agentId,
+      name: agent.name,
+      archetype: agent.archetype,
+      accessToken: claimed.session.accessToken,
+      refreshToken: claimed.session.refreshToken,
+      accessExpiresAt: claimed.session.accessExpiresAt,
+      refreshExpiresAt: claimed.session.refreshExpiresAt,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Failed to claim onboarding challenge' });
+  }
+});
+
+router.post('/external/session/refresh', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const refreshToken = String((req.body as any)?.refreshToken || '').trim();
+    if (!refreshToken) {
+      res.status(400).json({ error: 'refreshToken is required' });
+      return;
+    }
+    const refreshed = externalAgentAuthService.refreshSession(refreshToken);
+    res.json({
+      agentId: refreshed.agentId,
+      accessToken: refreshed.session.accessToken,
+      refreshToken: refreshed.session.refreshToken,
+      accessExpiresAt: refreshed.session.accessExpiresAt,
+      refreshExpiresAt: refreshed.session.refreshExpiresAt,
+    });
+  } catch (err: any) {
+    res.status(401).json({ error: err.message || 'Failed to refresh session' });
+  }
+});
+
+router.get('/external/discovery', (_req: Request, res: Response): void => {
+  res.json({
+    protocol: 'ai-town-external-v2',
+    joinPath: '/api/v1/external/join',
+    claimPath: '/api/v1/external/claim',
+    refreshPath: '/api/v1/external/session/refresh',
+    observePath: '/api/v1/external/observe',
+    actPath: '/api/v1/external/act',
+    statusPath: '/api/v1/external/status',
+    auth: {
+      signedClaimRequired: externalAgentAuthService.isSignedClaimRequired(),
+      legacyApiKeyAccepted: externalAgentAuthService.shouldAllowLegacyApiKeyAuth(),
+      apiKeyReturnedOnJoin: externalAgentAuthService.shouldExposeApiKeyOnJoin(),
+    },
+    signature: {
+      algorithm: 'ed25519',
+      challengeFormat: 'AI_TOWN_ENROLL:<enrollmentId>:<agentId>:<expiresAtMs>',
+      publicKeyEncoding: ['hex', 'base64'],
+      signatureEncoding: ['hex', 'base64'],
+    },
+  });
 });
 
 // ============================================

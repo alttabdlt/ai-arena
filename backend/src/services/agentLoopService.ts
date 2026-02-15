@@ -73,13 +73,13 @@ const MAX_MEMORY_REASON_CHARS = 260;
 const MAX_MEMORY_CALC_CHARS = 420;
 const SOFT_POLICY_WINDOW = 24;
 const SOFT_POLICY_MAX_OVERRIDE_RATE = 0.4;
-const SOLVENCY_RESCUE_TRIGGER_BANKROLL = 45;
+const SOLVENCY_RESCUE_TRIGGER_BANKROLL = 35;
 const SOLVENCY_RESCUE_TRIGGER_RESERVE = 5;
-const SOLVENCY_RESCUE_ARENA = 35;
-const SOLVENCY_RESCUE_COOLDOWN_TICKS = 2;
+const SOLVENCY_RESCUE_ARENA = 30;
+const SOLVENCY_RESCUE_COOLDOWN_TICKS = 3;
 const SOLVENCY_RESCUE_HEALTH_BUMP = 3;
 const SOLVENCY_RESCUE_WINDOW_TICKS = 16;
-const SOLVENCY_RESCUE_MAX_PER_WINDOW = 3;
+const SOLVENCY_RESCUE_MAX_PER_WINDOW = 2;
 const SOLVENCY_RESCUE_REPAYMENT_BPS = 2500;
 const SOLVENCY_RESCUE_REPAYMENT_FLOOR = 90;
 const SOLVENCY_POOL_FLOOR = 1000;
@@ -397,6 +397,177 @@ export class AgentLoopService {
       totalDebt: debtEntries.reduce((sum, entry) => sum + entry.debtArena, 0),
       indebtedAgents: debtEntries.length,
       agents,
+    };
+  }
+
+  async getEconomyMetrics(limit: number = 250): Promise<{
+    currentTick: number;
+    sampleSize: number;
+    actionMix: Record<string, number>;
+    restRate: number;
+    nonRestRate: number;
+    positiveDeltaHitRate: number;
+    medianTicksToFirstPositiveDelta: number | null;
+    commandReceipts: {
+      queued: number;
+      accepted: number;
+      executed: number;
+      rejected: number;
+      expired: number;
+      cancelled: number;
+      executionRate: number;
+      rejectRate: number;
+    };
+    rescue: {
+      totalDebt: number;
+      indebtedAgents: number;
+      topAgents: Array<{ agentId: string; name: string; debtArena: number; rescuesInWindow: number }>;
+    };
+    pool: {
+      spotPrice: number | null;
+      feeBps: number | null;
+      reserveBalance: number | null;
+      arenaBalance: number | null;
+    };
+    warnings: string[];
+  }> {
+    const maxRows = Math.max(50, Math.min(1000, Math.floor(limit || 250)));
+    const events = await prisma.townEvent.findMany({
+      where: { agentId: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      take: maxRows,
+      select: {
+        agentId: true,
+        metadata: true,
+      },
+    });
+
+    const actionRows: Array<{ agentId: string; action: string; tick: number | null; arenaDelta: number }> = [];
+    for (const row of events) {
+      try {
+        const parsed = JSON.parse(row.metadata || '{}') as Record<string, any>;
+        const action = safeTrim(parsed?.action, 64);
+        if (!action) continue;
+        const tickRaw = Number(parsed?.decision?.tick);
+        const arenaDeltaRaw = Number(parsed?.decision?.economyDelta?.arenaDelta);
+        const tick = Number.isFinite(tickRaw) ? Math.max(0, Math.round(tickRaw)) : null;
+        const arenaDelta = Number.isFinite(arenaDeltaRaw) ? Math.round(arenaDeltaRaw) : 0;
+        actionRows.push({
+          agentId: String(row.agentId || ''),
+          action,
+          tick,
+          arenaDelta,
+        });
+      } catch {
+        // Ignore malformed metadata
+      }
+    }
+
+    const actionMix: Record<string, number> = {};
+    for (const row of actionRows) {
+      actionMix[row.action] = (actionMix[row.action] || 0) + 1;
+    }
+    const actionCount = actionRows.length;
+    const restCount = actionMix.rest || 0;
+    const nonRestRate = actionCount > 0 ? (actionCount - restCount) / actionCount : 0;
+    const restRate = actionCount > 0 ? restCount / actionCount : 0;
+
+    const rowsByAgent = new Map<string, Array<{ tick: number | null; arenaDelta: number }>>();
+    for (const row of actionRows) {
+      if (!row.agentId) continue;
+      const list = rowsByAgent.get(row.agentId) || [];
+      list.push({ tick: row.tick, arenaDelta: row.arenaDelta });
+      rowsByAgent.set(row.agentId, list);
+    }
+
+    const firstPositiveDurations: number[] = [];
+    for (const rows of rowsByAgent.values()) {
+      const ordered = [...rows].sort((a, b) => {
+        const at = a.tick ?? Number.MAX_SAFE_INTEGER;
+        const bt = b.tick ?? Number.MAX_SAFE_INTEGER;
+        return at - bt;
+      });
+      if (ordered.length === 0) continue;
+      const baselineTick = ordered.find((r) => r.tick != null)?.tick ?? 0;
+      const firstPositive = ordered.find((r) => r.arenaDelta > 0 && r.tick != null);
+      if (!firstPositive || firstPositive.tick == null) continue;
+      firstPositiveDurations.push(Math.max(0, firstPositive.tick - baselineTick));
+    }
+    const sortedDurations = [...firstPositiveDurations].sort((a, b) => a - b);
+    const medianTicksToFirstPositiveDelta =
+      sortedDurations.length === 0
+        ? null
+        : sortedDurations.length % 2 === 1
+          ? sortedDurations[(sortedDurations.length - 1) / 2]
+          : Math.round(
+              (sortedDurations[sortedDurations.length / 2 - 1] + sortedDurations[sortedDurations.length / 2]) / 2,
+            );
+    const positiveDeltaHitRate = rowsByAgent.size > 0 ? firstPositiveDurations.length / rowsByAgent.size : 0;
+
+    const commandRows = await prisma.agentCommand.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: maxRows,
+      select: { status: true },
+    });
+    const commandReceipts = {
+      queued: 0,
+      accepted: 0,
+      executed: 0,
+      rejected: 0,
+      expired: 0,
+      cancelled: 0,
+      executionRate: 0,
+      rejectRate: 0,
+    };
+    for (const cmd of commandRows) {
+      if (cmd.status === 'QUEUED') commandReceipts.queued += 1;
+      else if (cmd.status === 'ACCEPTED') commandReceipts.accepted += 1;
+      else if (cmd.status === 'EXECUTED') commandReceipts.executed += 1;
+      else if (cmd.status === 'REJECTED') commandReceipts.rejected += 1;
+      else if (cmd.status === 'EXPIRED') commandReceipts.expired += 1;
+      else if (cmd.status === 'CANCELLED') commandReceipts.cancelled += 1;
+    }
+    const settledCommands = commandReceipts.executed + commandReceipts.rejected;
+    if (settledCommands > 0) {
+      commandReceipts.executionRate = commandReceipts.executed / settledCommands;
+      commandReceipts.rejectRate = commandReceipts.rejected / settledCommands;
+    }
+
+    const rescueSnapshot = await this.getRescueTelemetry(10);
+    const pool = await offchainAmmService.getPoolSummary().catch(() => null);
+
+    const warnings: string[] = [];
+    if (nonRestRate < 0.8) warnings.push(`non_rest_rate low (${(nonRestRate * 100).toFixed(1)}%)`);
+    if (commandReceipts.rejectRate > 0.25) warnings.push(`command reject rate elevated (${(commandReceipts.rejectRate * 100).toFixed(1)}%)`);
+    if (rescueSnapshot.totalDebt > 200) warnings.push(`rescue debt elevated (${rescueSnapshot.totalDebt} ARENA)`);
+    if ((pool?.arenaBalance || 0) < SOLVENCY_POOL_FLOOR + 200) warnings.push('pool arena balance near solvency floor');
+
+    return {
+      currentTick: this.currentTick,
+      sampleSize: actionCount,
+      actionMix,
+      restRate,
+      nonRestRate,
+      positiveDeltaHitRate,
+      medianTicksToFirstPositiveDelta,
+      commandReceipts,
+      rescue: {
+        totalDebt: rescueSnapshot.totalDebt,
+        indebtedAgents: rescueSnapshot.indebtedAgents,
+        topAgents: rescueSnapshot.agents.map((agent) => ({
+          agentId: agent.agentId,
+          name: agent.name,
+          debtArena: agent.debtArena,
+          rescuesInWindow: agent.rescuesInWindow,
+        })),
+      },
+      pool: {
+        spotPrice: pool?.spotPrice ?? null,
+        feeBps: pool?.feeBps ?? null,
+        reserveBalance: pool?.reserveBalance ?? null,
+        arenaBalance: pool?.arenaBalance ?? null,
+      },
+      warnings,
     };
   }
 
@@ -832,6 +1003,11 @@ export class AgentLoopService {
     let error: string | undefined;
     let actualAction: AgentAction | undefined;
     const loopMode = this.getLoopMode(agent.id);
+    const preActionEconomy = {
+      bankroll: agent.bankroll,
+      reserveBalance: agent.reserveBalance,
+      health: agent.health ?? 100,
+    };
     const useDegenLoopPolicy = loopMode === 'DEGEN_LOOP' && !forcedCommandAction && !activeCommand;
     const degenNudge = useDegenLoopPolicy ? this.extractDegenLoopNudge(userInstructions) : null;
     try {
@@ -925,6 +1101,13 @@ export class AgentLoopService {
     // Use the actual action (post-redirect) for logging/memory, but keep original for cost tracking
     const effectiveAction = actualAction || action;
     const refreshedAfterAction = await prisma.arenaAgent.findUnique({ where: { id: agent.id } });
+    const economyDelta = refreshedAfterAction
+      ? {
+          arenaDelta: refreshedAfterAction.bankroll - preActionEconomy.bankroll,
+          reserveDelta: refreshedAfterAction.reserveBalance - preActionEconomy.reserveBalance,
+          healthDelta: (refreshedAfterAction.health ?? 100) - preActionEconomy.health,
+        }
+      : { arenaDelta: 0, reserveDelta: 0, healthDelta: 0 };
     const postActionObservation = refreshedAfterAction
       ? await this.observe(refreshedAfterAction)
       : observation;
@@ -1041,6 +1224,8 @@ export class AgentLoopService {
       goalStackBefore: goalStackBefore.goals,
       goalStackAfter: goalStackAfter.goals,
       goalTransitions: combinedGoalTransitions,
+      economyDelta,
+      tick: this.currentTick,
       command: commandMetadata || undefined,
     });
 
@@ -1768,6 +1953,12 @@ export class AgentLoopService {
       goalStackBefore?: PersistentGoalView[];
       goalStackAfter?: PersistentGoalView[];
       goalTransitions?: GoalStackSnapshot['transitions'];
+      economyDelta?: {
+        arenaDelta: number;
+        reserveDelta: number;
+        healthDelta: number;
+      };
+      tick?: number;
       command?: {
         commandId: string;
         mode: AgentCommandView['mode'];
@@ -1802,6 +1993,8 @@ export class AgentLoopService {
       goalStackBefore: policy?.goalStackBefore || [],
       goalStackAfter: policy?.goalStackAfter || [],
       goalTransitions: policy?.goalTransitions || [],
+      economyDelta: policy?.economyDelta || { arenaDelta: 0, reserveDelta: 0, healthDelta: 0 },
+      tick: policy?.tick ?? this.currentTick,
       command: policy?.command || null,
       chosenReasoning,
       executedReasoning,
@@ -3512,7 +3705,7 @@ Be creative, detailed, and in-character for the town's theme. Response should be
     // Work wage: pay from pool for each completed inference step to keep early loop solvent.
     const minCallsForPlot = Math.max(1, this.minCallsForZone(plot.zone));
     const baseFromBuildCost = Math.ceil(Math.max(8, plot.buildCostArena || 10) / (minCallsForPlot * 2));
-    const targetWorkReward = Math.max(2, Math.min(5, baseFromBuildCost));
+    const targetWorkReward = Math.max(3, Math.min(6, baseFromBuildCost));
     let workReward = 0;
     try {
       const pool = await this.getOrCreateEconomyPool();
@@ -3558,7 +3751,7 @@ Be creative, detailed, and in-character for the town's theme. Response should be
 
     let completionBonusNote = '';
     try {
-      const completionBonusTarget = Math.max(4, Math.min(20, Math.round(Math.max(10, plot.buildCostArena || 10) * 0.4)));
+      const completionBonusTarget = Math.max(6, Math.min(24, Math.round(Math.max(10, plot.buildCostArena || 10) * 0.45)));
       const pool = await this.getOrCreateEconomyPool();
       const grant = Math.min(completionBonusTarget, Math.max(0, pool.arenaBalance - SOLVENCY_POOL_FLOOR));
       if (grant > 0) {

@@ -3,9 +3,17 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { agentLoopService } from '../services/agentLoopService';
+import { agentLoopService, type AgentLoopMode } from '../services/agentLoopService';
 
 const router = Router();
+
+function normalizeLoopMode(raw: unknown): AgentLoopMode {
+  const value = String(raw || 'DEFAULT').trim().toUpperCase();
+  if (value === 'DEFAULT' || value === 'DEGEN_LOOP') {
+    return value as AgentLoopMode;
+  }
+  throw new Error('mode must be DEFAULT or DEGEN_LOOP');
+}
 
 // Start the agent loop
 router.post('/agent-loop/start', async (req: Request, res: Response): Promise<void> => {
@@ -39,6 +47,30 @@ router.get('/agent-loop/status', async (_req: Request, res: Response): Promise<v
     running: agentLoopService.isRunning(),
     currentTick: agentLoopService.getCurrentTick(),
   });
+});
+
+// Inspect rescue debt/window telemetry for balancing and debugging.
+router.get('/agent-loop/rescue-stats', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const rawLimit = Number.parseInt(String(req.query.limit ?? '25'), 10);
+    const limit = Number.isFinite(rawLimit) ? rawLimit : 25;
+    const snapshot = await agentLoopService.getRescueTelemetry(limit);
+    res.json(snapshot);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Economy pacing and loop health snapshot for balancing decisions.
+router.get('/agent-loop/economy-metrics', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const rawLimit = Number.parseInt(String(req.query.limit ?? '250'), 10);
+    const limit = Number.isFinite(rawLimit) ? rawLimit : 250;
+    const snapshot = await agentLoopService.getEconomyMetrics(limit);
+    res.json(snapshot);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // Manually trigger one tick (process all agents once)
@@ -78,6 +110,27 @@ router.post('/agent-loop/tell/:agentId', async (req: Request, res: Response): Pr
     res.json({ status: 'queued', agentId: req.params.agentId, message });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Set deterministic loop mode for one agent (DEFAULT | DEGEN_LOOP)
+router.post('/agent-loop/mode/:agentId', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const mode = normalizeLoopMode((req.body as any)?.mode);
+    const applied = agentLoopService.setLoopMode(req.params.agentId, mode);
+    res.json({ agentId: req.params.agentId, mode: applied });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Get loop mode for one agent
+router.get('/agent-loop/mode/:agentId', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const mode = agentLoopService.getLoopMode(req.params.agentId);
+    res.json({ agentId: req.params.agentId, mode });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
   }
 });
 

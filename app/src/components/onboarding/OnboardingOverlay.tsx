@@ -53,9 +53,10 @@ const MODELS = [
 ];
 const QUICKSTART_STEPS = [
   'Sign in, then deploy or connect one agent.',
-  'Bottom-left DEGEN LOOP panel: run BUILD → WORK → FIGHT → TRADE.',
-  'Use Telegram to send live nudges to your agent.',
-  'If AI fallback mentions 402 credits, check OpenRouter billing.',
+  'Use the bottom-left DEGEN LOOP HUD: hit AUTO ON or tap manual buttons.',
+  'Follow NEXT MISSION and cycle BUILD → WORK → FIGHT → TRADE.',
+  'Telegram nudges are optional. You can run everything from the HUD.',
+  'If you see 402 credits, top up OpenRouter for the backend key, then restart backend.',
 ];
 
 type View = 'wallet' | 'checking' | 'welcome-back' | 'choose' | 'deploy' | 'connect-api' | 'success';
@@ -102,7 +103,7 @@ function LlmStatusCard({ status }: { status: LlmStatus }) {
       </div>
       {status.ok !== true && (
         <div className="mt-1 text-[9px] text-slate-400">
-          This is provider billing/connectivity, not in-game $ARENA.
+          This is provider billing/connectivity, not in-game $ARENA. Restart backend after topping up.
         </div>
       )}
     </div>
@@ -474,7 +475,7 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
               rel="noreferrer"
               className="block w-full py-2 bg-[#229ED9]/20 border border-[#229ED9]/30 hover:bg-[#229ED9]/30 text-[#229ED9] font-medium rounded-xl transition-all text-xs text-center"
             >
-              💬 Chat on Telegram
+              💬 Telegram (Optional)
             </a>
             <LlmStatusCard status={llmStatus} />
             <QuickstartCard compact />
@@ -537,7 +538,7 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
                 rel="noreferrer"
                 className="flex-1 py-2.5 bg-[#229ED9]/20 border border-[#229ED9]/30 hover:bg-[#229ED9]/30 text-[#229ED9] font-medium rounded-xl transition-all text-xs text-center"
               >
-                💬 Telegram Bot
+                💬 Telegram (Optional)
               </a>
               <button
                 onClick={() => finishWith()}

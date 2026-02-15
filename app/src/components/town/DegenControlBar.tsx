@@ -50,6 +50,12 @@ const CREW_ORDER_ACTIONS: Array<{ key: CrewOrderStrategy; label: string; emoji: 
   { key: 'FARM', label: 'Farm', emoji: '💰' },
   { key: 'TRADE', label: 'Trade', emoji: '📈' },
 ];
+const LOOP_PLAYBOOK: Array<{ key: DegenNudge; label: string; brief: string }> = [
+  { key: 'build', label: 'BUILD', brief: 'Spend reserve to claim/upgrade plots.' },
+  { key: 'work', label: 'WORK', brief: 'Refill reserve when bankroll is thin.' },
+  { key: 'fight', label: 'FIGHT', brief: 'Take arena duels for $ARENA upside.' },
+  { key: 'trade', label: 'TRADE', brief: 'Rebalance reserve and $ARENA for next loop.' },
+];
 
 export function DegenControlBar({
   ownedAgent,
@@ -174,6 +180,19 @@ export function DegenControlBar({
             </button>
           );
         })}
+      </div>
+      <div className="mt-2 rounded-lg border border-slate-700/60 bg-slate-900/35 px-2 py-1.5">
+        <div className="mb-1 text-[10px] font-mono text-slate-300">HOW THIS LOOP WORKS</div>
+        <div className="space-y-1">
+          {LOOP_PLAYBOOK.map((step) => (
+            <div key={step.key} className="text-[9px] leading-snug text-slate-400">
+              <span className="font-mono text-slate-200">{step.label}</span> {step.brief}
+            </div>
+          ))}
+        </div>
+        <div className="mt-1 text-[9px] text-cyan-200/80">
+          Telegram bot is optional. This HUD can run the full loop.
+        </div>
       </div>
       {crewName && onCrewOrder && (
         <div className="mt-2 rounded-lg border border-cyan-500/25 bg-slate-900/45 px-2 py-1.5">

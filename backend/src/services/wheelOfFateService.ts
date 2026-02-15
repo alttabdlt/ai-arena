@@ -194,6 +194,40 @@ class WheelOfFateService {
   private sessionCrowdCorrect = 0;
   private sessionCrowdTotal = 0;
 
+  // Keep scratchpad text SQLite-safe by dropping malformed UTF-16 surrogates,
+  // then trim by Unicode code points (not code units) to avoid reintroducing splits.
+  private normalizeScratchpadText(input: string): string {
+    let out = '';
+    for (let i = 0; i < input.length; i++) {
+      const code = input.charCodeAt(i);
+      // High surrogate
+      if (code >= 0xd800 && code <= 0xdbff) {
+        const next = input.charCodeAt(i + 1);
+        if (next >= 0xdc00 && next <= 0xdfff) {
+          out += input[i] + input[i + 1];
+          i++;
+        } else {
+          out += '\uFFFD';
+        }
+        continue;
+      }
+      // Lone low surrogate
+      if (code >= 0xdc00 && code <= 0xdfff) {
+        out += '\uFFFD';
+        continue;
+      }
+      out += input[i];
+    }
+    return out;
+  }
+
+  private trimScratchpad(input: string, maxCodePoints: number): string {
+    const normalized = this.normalizeScratchpadText(input);
+    const points = Array.from(normalized);
+    if (points.length <= maxCodePoints) return normalized;
+    return points.slice(points.length - maxCodePoints).join('');
+  }
+
   // ---- Lifecycle ----
 
   start() {
@@ -1007,16 +1041,17 @@ class WheelOfFateService {
         .map(m => `${m.action}${m.amount ? ` $${m.amount}` : ''}`)
         .join(', ');
 
-      const memoryLine = won
+      const memoryLineRaw = won
         ? `[WHEEL] ⚔️ ${gameType} vs ${opponent.name} (${opponent.archetype}) | WON +${wager * 2 - Math.floor(wager * 2 * 0.05)} $ARENA | Their moves: ${opponentMoves || 'n/a'}`
         : `[WHEEL] ⚔️ ${gameType} vs ${opponent.name} (${opponent.archetype}) | LOST -${wager} $ARENA | Their moves: ${opponentMoves || 'n/a'}`;
+      const memoryLine = this.normalizeScratchpadText(memoryLineRaw);
 
       // Append to scratchpad
-      const existingPad = agent.scratchpad || '';
+      const existingPad = this.normalizeScratchpadText(agent.scratchpad || '');
       const newPad = existingPad + '\n' + memoryLine;
 
-      // Trim if too long (keep last ~4000 chars)
-      const trimmed = newPad.length > 4000 ? newPad.slice(-4000) : newPad;
+      // Keep last ~4000 Unicode code points without splitting surrogate pairs.
+      const trimmed = this.trimScratchpad(newPad, 4000);
 
       await prisma.arenaAgent.update({
         where: { id: agentId },

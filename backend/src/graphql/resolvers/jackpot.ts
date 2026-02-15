@@ -39,7 +39,7 @@ export const jackpotResolvers = {
         throw new Error('Jackpot not initialized');
       }
 
-      const totalPaidOut = history.reduce((sum, win) => sum + win.amount, 0);
+      const totalPaidOut = history.reduce((sum: number, win: { amount: number }) => sum + win.amount, 0);
       const averageWin = history.length > 0 ? Math.floor(totalPaidOut / history.length) : 0;
 
       return {

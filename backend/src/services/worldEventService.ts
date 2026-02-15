@@ -6,6 +6,7 @@
  */
 
 import { prisma } from '../config/database';
+import { PlotZone } from '@prisma/client';
 
 // ============================================
 // Types
@@ -35,7 +36,7 @@ export interface WorldEvent {
   tickExpires: number;
   targetTownId?: string;
   targetTownName?: string;
-  targetZone?: string;
+  targetZone?: PlotZone;
   targetPlotId?: string;
   targetAgentId?: string;
   targetAgentName?: string;
@@ -202,7 +203,7 @@ class WorldEventService {
   /**
    * Check if gold rush is active for a zone
    */
-  getGoldRushZone(): string | null {
+  getGoldRushZone(): PlotZone | null {
     const gr = this.activeEvents.find(e => e.type === 'GOLD_RUSH' && e.impactApplied);
     return gr?.targetZone || null;
   }
@@ -236,7 +237,7 @@ class WorldEventService {
 
     // Pick random town and zone for targeting
     const randomTown = towns[Math.floor(Math.random() * towns.length)];
-    const zones = ['RESIDENTIAL', 'COMMERCIAL', 'CIVIC', 'INDUSTRIAL', 'ENTERTAINMENT'];
+    const zones: PlotZone[] = ['RESIDENTIAL', 'COMMERCIAL', 'CIVIC', 'INDUSTRIAL', 'ENTERTAINMENT'];
     const randomZone = zones[Math.floor(Math.random() * zones.length)];
     const magnitude = 0.15 + Math.random() * 0.15; // 15-30%
 

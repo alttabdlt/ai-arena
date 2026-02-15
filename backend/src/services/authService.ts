@@ -8,6 +8,10 @@
 export class AuthService {
   constructor(_prisma: any, _redis: any) {}
 
+  async verifyAccessToken(_token: string): Promise<{ userId: string } | null> {
+    return null;
+  }
+
   async generateNonce(_address: string): Promise<string> {
     return Math.random().toString(36).substring(2);
   }

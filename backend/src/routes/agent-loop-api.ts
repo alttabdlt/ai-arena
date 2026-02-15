@@ -5,6 +5,7 @@
 import { Router, Request, Response } from 'express';
 import { agentLoopService, type AgentLoopMode, type ManualActionKind } from '../services/agentLoopService';
 import { agentCommandService } from '../services/agentCommandService';
+import { smartAiService } from '../services/smartAiService';
 
 const router = Router();
 
@@ -56,6 +57,60 @@ router.get('/agent-loop/status', async (_req: Request, res: Response): Promise<v
     running: agentLoopService.isRunning(),
     currentTick: agentLoopService.getCurrentTick(),
   });
+});
+
+// Probe LLM health so frontend can distinguish stale fallback logs from live billing/provider issues.
+router.get('/agent-loop/llm-status', async (_req: Request, res: Response): Promise<void> => {
+  const configured = Boolean(process.env.OPENROUTER_API_KEY);
+  if (!configured) {
+    res.status(503).json({
+      ok: false,
+      configured: false,
+      code: 'OPENROUTER_NOT_CONFIGURED',
+      message: 'OPENROUTER_API_KEY missing on backend',
+    });
+    return;
+  }
+
+  try {
+    const spec = smartAiService.getModelSpec('or-gemini-2.0-flash');
+    const startedAt = Date.now();
+    const response = await smartAiService.callModel(
+      spec,
+      [
+        { role: 'system', content: 'Reply with exactly OK.' },
+        { role: 'user', content: 'Health check' },
+      ],
+      0,
+      true,
+    );
+    const latencyMs = Date.now() - startedAt;
+    res.json({
+      ok: true,
+      configured: true,
+      code: 'OPENROUTER_OK',
+      message: 'LLM provider reachable',
+      latencyMs,
+      usage: {
+        inputTokens: response.inputTokens,
+        outputTokens: response.outputTokens,
+      },
+      checkedAt: new Date().toISOString(),
+    });
+  } catch (error: any) {
+    const rawMessage = String(error?.message || 'LLM health probe failed').replace(/\s+/g, ' ').trim();
+    const shortMessage = rawMessage.slice(0, 180);
+    const isBilling = /insufficient credits|payment required|402/i.test(rawMessage);
+    const code = isBilling ? 'OPENROUTER_INSUFFICIENT_CREDITS' : 'OPENROUTER_UNAVAILABLE';
+
+    res.status(isBilling ? 402 : 503).json({
+      ok: false,
+      configured: true,
+      code,
+      message: isBilling ? 'OpenRouter credits are insufficient for inference.' : shortMessage,
+      checkedAt: new Date().toISOString(),
+    });
+  }
 });
 
 // Inspect rescue debt/window telemetry for balancing and debugging.

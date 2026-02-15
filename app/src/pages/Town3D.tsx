@@ -7064,7 +7064,7 @@ export default function Town3D() {
               <span className="rounded border border-slate-700/70 bg-slate-900/55 px-2 py-0.5 text-[10px] font-mono text-slate-400">
                 ONBOARDING
               </span>
-            ) : (
+            ) : isPlayerAuthenticated ? (
               <Suspense fallback={null}>
                 <LazyPrivyWalletConnect
                   compact
@@ -7072,6 +7072,10 @@ export default function Town3D() {
                   onSessionChange={setPlayerSession}
                 />
               </Suspense>
+            ) : (
+              <span className="rounded border border-slate-700/70 bg-slate-900/55 px-2 py-0.5 text-[10px] font-mono text-slate-400">
+                SPECTATOR
+              </span>
             )}
             <button
               onClick={() => setUiMode((current) => (current === 'default' ? 'pro' : 'default'))}

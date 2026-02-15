@@ -338,3 +338,22 @@ Original prompt: "yes, but are we able to implement build/work/fight > crypto lo
 
 - Runtime note:
   - Vite dev server was initially serving stale transformed module for `DegenControlBar`; restarted frontend process and revalidated on fresh runtime.
+
+### Phase 4 implementation chunk (2026-02-16)
+
+- Added world-embedded readability indicators directly in `Town3D` scene render:
+  - Agent intent stack above units (`doing -> target -> eta`).
+  - Agent WHY/blocked line for owned/selected agents.
+  - Destination endpoint marker + `TO <target>` label tied to route lines.
+  - Building runtime badges above lots (`TASK/progress/eta` + occupant count/names).
+  - Crew operation beacons in-world with active op + objective + active member count.
+  - Live runtime feed banner rendered in-world near arena.
+- Kept destination line visibility pinned for owned/selected agent even when crowd limit clips others.
+- Validation (phase 4):
+  - `cd app && npx tsc --noEmit` passed cleanly.
+  - `cd app && npm run build` passed; only non-blocking Rollup warnings (`/*#__PURE__*/` annotations and chunk-size notice).
+  - Scripted Playwright run completed:
+    - `node "$HOME/.codex/skills/develop-web-game/scripts/web_game_playwright_client.js" --url http://localhost:8080/town --actions-file "$HOME/.codex/skills/develop-web-game/references/action_payloads.json" --iterations 2 --pause-ms 300 --screenshot-dir artifacts/phase4-playwright`
+    - Artifacts: `artifacts/phase4-playwright/runtime-indicators-full.png`, `artifacts/phase4-playwright/shot-0.png`, `artifacts/phase4-playwright/shot-1.png`.
+  - Interactive runtime inspection confirmed all new in-game indicator groups render in live UI: `MY AGENT`, `CREW OPS`, `BUILDING OCCUPANCY`, `LIVE FEED`, `OTHER AGENTS`.
+  - Runtime console note: transient `THREE.WebGLRenderer: Context Lost` observed during load, then scene recovered and rendered with indicators.

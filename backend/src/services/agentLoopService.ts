@@ -200,6 +200,21 @@ type ExecutionResult = {
 };
 
 export type AgentLoopMode = 'DEFAULT' | 'DEGEN_LOOP';
+export type ManualActionKind = 'build' | 'work' | 'fight' | 'trade' | 'rest';
+export type ManualActionPlan =
+  | {
+      ok: true;
+      action: ManualActionKind;
+      intent: string;
+      params: Record<string, unknown>;
+      note: string;
+    }
+  | {
+      ok: false;
+      action: ManualActionKind;
+      reasonCode: string;
+      reason: string;
+    };
 type DegenLoopNudge = 'build' | 'work' | 'fight' | 'trade';
 
 interface WorldObservation {
@@ -322,6 +337,192 @@ export class AgentLoopService {
     const normalizedId = String(agentId || '').trim();
     if (!normalizedId) return 'DEFAULT';
     return this.loopModeByAgentId.get(normalizedId) || 'DEFAULT';
+  }
+
+  async planDeterministicAction(agentId: string, action: ManualActionKind): Promise<ManualActionPlan> {
+    const normalizedId = safeTrim(agentId, 120);
+    const normalizedAction = String(action || '').toLowerCase().trim() as ManualActionKind;
+
+    if (!normalizedId) {
+      return {
+        ok: false,
+        action: normalizedAction || 'rest',
+        reasonCode: 'TARGET_UNAVAILABLE',
+        reason: 'agentId is required',
+      };
+    }
+
+    if (!['build', 'work', 'fight', 'trade', 'rest'].includes(normalizedAction)) {
+      return {
+        ok: false,
+        action: normalizedAction || 'rest',
+        reasonCode: 'INVALID_INTENT',
+        reason: `Unsupported action "${action}"`,
+      };
+    }
+
+    const agent = await prisma.arenaAgent.findUnique({ where: { id: normalizedId } });
+    if (!agent || !agent.isActive) {
+      return {
+        ok: false,
+        action: normalizedAction,
+        reasonCode: 'TARGET_UNAVAILABLE',
+        reason: 'Agent is unavailable',
+      };
+    }
+
+    const obs = await this.observe(agent);
+    const myUnderConstruction = (obs.myPlots || []).filter((plot: any) => plot?.status === 'UNDER_CONSTRUCTION');
+    const myClaimed = (obs.myPlots || []).filter((plot: any) => plot?.status === 'CLAIMED');
+    const available = obs.availablePlots || [];
+
+    if (normalizedAction === 'rest') {
+      return {
+        ok: true,
+        action: normalizedAction,
+        intent: 'rest',
+        params: {
+          thought: 'Holding position by explicit operator request.',
+        },
+        note: 'Manual rest command',
+      };
+    }
+
+    if (normalizedAction === 'fight') {
+      const wheel = wheelOfFateService.getStatus();
+      return {
+        ok: true,
+        action: normalizedAction,
+        intent: 'play_arena',
+        params: {
+          gameType: wheel.currentMatch?.gameType || 'POKER',
+          wager: wheel.currentMatch?.wager || 25,
+        },
+        note: 'Manual fight command',
+      };
+    }
+
+    if (normalizedAction === 'work') {
+      if (myUnderConstruction.length === 0) {
+        return {
+          ok: false,
+          action: normalizedAction,
+          reasonCode: 'CONSTRAINT_VIOLATION',
+          reason: 'No active construction to work on',
+        };
+      }
+      const target = [...myUnderConstruction].sort(
+        (a: any, b: any) => Number(b?.apiCallsUsed || 0) - Number(a?.apiCallsUsed || 0),
+      )[0];
+      return {
+        ok: true,
+        action: normalizedAction,
+        intent: 'do_work',
+        params: {
+          plotId: target.id,
+          plotIndex: target.plotIndex,
+          stepDescription: 'Manual WORK command: push construction throughput.',
+        },
+        note: `Manual work command on plot ${target.plotIndex}`,
+      };
+    }
+
+    if (normalizedAction === 'build') {
+      if (myUnderConstruction.length > 0) {
+        const target = [...myUnderConstruction].sort(
+          (a: any, b: any) => Number(b?.apiCallsUsed || 0) - Number(a?.apiCallsUsed || 0),
+        )[0];
+        return {
+          ok: true,
+          action: normalizedAction,
+          intent: 'do_work',
+          params: {
+            plotId: target.id,
+            plotIndex: target.plotIndex,
+            stepDescription: 'Manual BUILD command: continue active construction.',
+          },
+          note: `Manual build command mapped to do_work on plot ${target.plotIndex}`,
+        };
+      }
+
+      if (myClaimed.length > 0) {
+        const target = myClaimed[0];
+        return {
+          ok: true,
+          action: normalizedAction,
+          intent: 'start_build',
+          params: {
+            plotId: target.id,
+            plotIndex: target.plotIndex,
+            buildingType: this.pickDegenBuildingType(target.zone),
+            why: 'Manual BUILD command',
+          },
+          note: `Manual build command mapped to start_build on plot ${target.plotIndex}`,
+        };
+      }
+
+      const claimTarget = this.pickDegenClaimTarget(available);
+      if (!claimTarget || !Number.isFinite(Number(claimTarget.plotIndex))) {
+        return {
+          ok: false,
+          action: normalizedAction,
+          reasonCode: 'TARGET_UNAVAILABLE',
+          reason: 'No claimable plots available for bootstrap build',
+        };
+      }
+      const claimCost = this.estimateClaimCost(obs);
+      if (obs.myBalance < claimCost) {
+        return {
+          ok: false,
+          action: normalizedAction,
+          reasonCode: 'INSUFFICIENT_ARENA',
+          reason: `Need about ${claimCost} $ARENA to claim first plot`,
+        };
+      }
+      return {
+        ok: true,
+        action: normalizedAction,
+        intent: 'claim_plot',
+        params: {
+          plotIndex: Number(claimTarget.plotIndex),
+          why: 'Manual BUILD bootstrap claim',
+        },
+        note: `Manual build bootstrap claim on plot ${claimTarget.plotIndex}`,
+      };
+    }
+
+    if (obs.myReserve >= 12 && obs.myBalance <= 130) {
+      return {
+        ok: true,
+        action: normalizedAction,
+        intent: 'buy_arena',
+        params: {
+          amountIn: Math.max(10, Math.min(70, Math.floor(obs.myReserve))),
+          why: 'Manual TRADE command: rotate reserve into liquid ARENA.',
+          nextAction: 'play_arena',
+        },
+        note: 'Manual trade mapped to reserve->ARENA swap',
+      };
+    }
+    if (obs.myBalance >= 40) {
+      return {
+        ok: true,
+        action: normalizedAction,
+        intent: 'sell_arena',
+        params: {
+          amountIn: Math.max(20, Math.min(80, Math.floor(obs.myBalance - 20))),
+          why: 'Manual TRADE command: de-risk bankroll into reserve.',
+          nextAction: 'start_build',
+        },
+        note: 'Manual trade mapped to ARENA->reserve swap',
+      };
+    }
+    return {
+      ok: false,
+      action: normalizedAction,
+      reasonCode: 'CONSTRAINT_VIOLATION',
+      reason: 'No executable trade edge: reserve and bankroll are both too low',
+    };
   }
 
   async getRescueTelemetry(limit: number = 25): Promise<{
@@ -1247,7 +1448,9 @@ export class AgentLoopService {
       }
 
       // 3. Execute the action
-      const executed = await this.execute(agent, action, observation);
+      const executed = await this.execute(agent, action, observation, {
+        strict: !!activeCommand && commandRequiresStrict,
+      });
       success = executed.success;
       narrative = executed.narrative;
       error = executed.error;
@@ -1986,33 +2189,21 @@ export class AgentLoopService {
     }
 
     if (available.length > 0 && !hasClaimBudget) {
-      if (obs.myReserve > 15) {
-        return {
-          type: 'buy_arena',
-          reasoning: `[AUTO] DEGEN loop: bankroll below claim floor (${claimBootstrapFloor}), topping up before bootstrap claim.`,
-          details: {
-            amountIn: Math.max(10, Math.min(70, Math.floor(obs.myReserve))),
-            why: 'Need buffered claim bankroll',
-            nextAction: 'claim_plot',
-          },
-        };
-      }
       return {
         type: 'rest',
-        reasoning: '[AUTO] DEGEN loop: skipping forced claim while bankroll is thin.',
+        reasoning: '[AUTO] DEGEN loop: first claim is manual now; skipping bankroll prep unless BUILD is requested.',
         details: {
-          thought: `Need ~${claimBootstrapFloor} $ARENA before first claim. Holding and waiting for better setup.`,
+          thought: `Bootstrap claim is gated to explicit BUILD command. Need ~${claimBootstrapFloor} $ARENA when you trigger it.`,
         },
       };
     }
 
     if (available.length > 0 && claimTarget && Number.isFinite(Number(claimTarget.plotIndex))) {
       return {
-        type: 'claim_plot',
-        reasoning: `[AUTO] DEGEN loop: bootstrap claim on high-heat district plot ${claimTarget.plotIndex} (${claimTarget.zone}).`,
+        type: 'rest',
+        reasoning: '[AUTO] DEGEN loop: bootstrap claim is reserved for explicit BUILD command.',
         details: {
-          plotIndex: Number(claimTarget.plotIndex),
-          why: `Bootstrap into build/work loop (est. claim cost ${estimatedClaimCost})`,
+          thought: `Plot ${claimTarget.plotIndex} is available, but passive loop mode no longer auto-claims.`,
         },
       };
     }
@@ -3156,8 +3347,12 @@ What do you want to do?`;
     agent: ArenaAgent,
     action: AgentAction,
     obs: WorldObservation,
+    options?: { strict?: boolean },
   ): Promise<ExecutionResult> {
     try {
+      if (options?.strict) {
+        return this.executeStrict(agent, action, obs);
+      }
       const autoTopUpNarrative = '';
 
       switch (action.type) {
@@ -3306,6 +3501,205 @@ What do you want to do?`;
     }
   }
 
+  private estimateBuildStartCost(zoneRaw: unknown): number {
+    const zone = String(zoneRaw || '').toUpperCase();
+    if (zone === 'COMMERCIAL') return 20;
+    if (zone === 'CIVIC') return 35;
+    if (zone === 'INDUSTRIAL') return 20;
+    if (zone === 'ENTERTAINMENT') return 25;
+    return 10;
+  }
+
+  private async executeStrict(agent: ArenaAgent, action: AgentAction, obs: WorldObservation): Promise<ExecutionResult> {
+    switch (action.type) {
+      case 'claim_plot':
+        return this.executeClaimStrict(agent, action, obs);
+      case 'start_build':
+        return this.executeStartBuildStrict(agent, action, obs);
+      case 'do_work':
+        return this.executeDoWorkStrict(agent, action, obs);
+      case 'complete_build':
+        return this.executeCompleteBuildStrict(agent, action, obs);
+      case 'buy_arena':
+        return this.executeBuyArena(agent, action, obs, true);
+      case 'sell_arena':
+        return this.executeSellArena(agent, action, obs, true);
+      case 'play_arena':
+        return this.executePlayArena(agent, action);
+      case 'rest':
+        return {
+          success: true,
+          narrative: `${agent.name} is holding position by explicit command.`,
+        };
+      case 'transfer_arena':
+        return this.executeTransferArena(agent, action, obs);
+      case 'buy_skill':
+        return this.executeBuySkill(agent, action, obs);
+      default:
+        return {
+          success: false,
+          narrative: `${agent.name} cannot execute strict action: ${action.type}`,
+          error: `Unsupported strict action ${action.type}`,
+        };
+    }
+  }
+
+  private async executeClaimStrict(agent: ArenaAgent, action: AgentAction, obs: WorldObservation): Promise<ExecutionResult> {
+    if (!obs.town) {
+      return { success: false, narrative: `${agent.name} cannot claim: no active town`, error: 'NO_TOWN' };
+    }
+    const plotIndex = Number.parseInt(String(action.details.plotIndex ?? ''), 10);
+    if (!Number.isFinite(plotIndex)) {
+      return { success: false, narrative: `${agent.name} cannot claim: plotIndex is required`, error: 'INVALID_PLOT_INDEX' };
+    }
+    const target = (obs.availablePlots || []).find((plot: any) => Number(plot?.plotIndex) === plotIndex);
+    if (!target) {
+      return { success: false, narrative: `${agent.name} cannot claim plot ${plotIndex}: not available`, error: 'TARGET_UNAVAILABLE' };
+    }
+    const freshAgent = await prisma.arenaAgent.findUnique({ where: { id: agent.id } });
+    const claimCost = this.estimateClaimCost(obs);
+    if ((freshAgent?.bankroll ?? agent.bankroll) < claimCost) {
+      return {
+        success: false,
+        narrative: `${agent.name} cannot claim plot ${plotIndex}: need about ${claimCost} $ARENA.`,
+        error: 'INSUFFICIENT_ARENA',
+      };
+    }
+    try {
+      await townService.claimPlot(agent.id, obs.town.id, plotIndex);
+      return {
+        success: true,
+        narrative: `${agent.name} claimed plot ${plotIndex} by explicit command.`,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        narrative: `${agent.name} claim failed: ${safeTrim(err?.message || 'unknown error', 180)}`,
+        error: safeTrim(err?.message || 'CLAIM_FAILED', 180),
+      };
+    }
+  }
+
+  private async executeStartBuildStrict(agent: ArenaAgent, action: AgentAction, obs: WorldObservation): Promise<ExecutionResult> {
+    const details = action.details || {};
+    const requestedPlotId = safeTrim(details.plotId, 120);
+    const requestedPlotIndex = Number.parseInt(String(details.plotIndex ?? ''), 10);
+    let target = (obs.myPlots || []).find((plot: any) => plot.status === 'CLAIMED' && requestedPlotId && plot.id === requestedPlotId);
+    if (!target && Number.isFinite(requestedPlotIndex)) {
+      target = (obs.myPlots || []).find(
+        (plot: any) => plot.status === 'CLAIMED' && Number(plot.plotIndex) === requestedPlotIndex,
+      );
+    }
+    if (!target) {
+      target = (obs.myPlots || []).find((plot: any) => plot.status === 'CLAIMED');
+    }
+    if (!target) {
+      return {
+        success: false,
+        narrative: `${agent.name} cannot start build: no claimed plot is ready.`,
+        error: 'NO_CLAIMED_PLOT',
+      };
+    }
+
+    const buildingType = safeTrim(details.buildingType || this.pickDegenBuildingType(target.zone), 60).toUpperCase() || 'HOUSE';
+    const freshAgent = await prisma.arenaAgent.findUnique({ where: { id: agent.id } });
+    const startCost = this.estimateBuildStartCost(target.zone);
+    if ((freshAgent?.bankroll ?? agent.bankroll) < startCost) {
+      return {
+        success: false,
+        narrative: `${agent.name} cannot start build on plot ${target.plotIndex}: need ~${startCost} $ARENA.`,
+        error: 'INSUFFICIENT_ARENA',
+      };
+    }
+    try {
+      const plot = await townService.startBuild(agent.id, target.id, buildingType);
+      return {
+        success: true,
+        narrative: `${agent.name} started building ${buildingType} on plot ${plot.plotIndex} by explicit command.`,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        narrative: `${agent.name} start_build failed: ${safeTrim(err?.message || 'unknown error', 180)}`,
+        error: safeTrim(err?.message || 'START_BUILD_FAILED', 180),
+      };
+    }
+  }
+
+  private async executeDoWorkStrict(agent: ArenaAgent, action: AgentAction, obs: WorldObservation): Promise<ExecutionResult> {
+    const details = action.details || {};
+    const requestedPlotId = safeTrim(details.plotId, 120);
+    const requestedPlotIndex = Number.parseInt(String(details.plotIndex ?? ''), 10);
+    let target = (obs.myPlots || []).find(
+      (plot: any) => plot.status === 'UNDER_CONSTRUCTION' && requestedPlotId && plot.id === requestedPlotId,
+    );
+    if (!target && Number.isFinite(requestedPlotIndex)) {
+      target = (obs.myPlots || []).find(
+        (plot: any) => plot.status === 'UNDER_CONSTRUCTION' && Number(plot.plotIndex) === requestedPlotIndex,
+      );
+    }
+    if (!target) {
+      target = (obs.myPlots || []).find((plot: any) => plot.status === 'UNDER_CONSTRUCTION');
+    }
+    if (!target) {
+      return {
+        success: false,
+        narrative: `${agent.name} cannot work: no under-construction plot is owned.`,
+        error: 'NO_ACTIVE_BUILD',
+      };
+    }
+    const strictWorkAction: AgentAction = {
+      ...action,
+      details: {
+        ...action.details,
+        plotId: target.id,
+        plotIndex: target.plotIndex,
+      },
+    };
+    return this.executeDoWork(agent, strictWorkAction, obs);
+  }
+
+  private async executeCompleteBuildStrict(agent: ArenaAgent, action: AgentAction, obs: WorldObservation): Promise<ExecutionResult> {
+    const details = action.details || {};
+    const requestedPlotId = safeTrim(details.plotId, 120);
+    const requestedPlotIndex = Number.parseInt(String(details.plotIndex ?? ''), 10);
+    let target = (obs.myPlots || []).find(
+      (plot: any) => plot.status === 'UNDER_CONSTRUCTION' && requestedPlotId && plot.id === requestedPlotId,
+    );
+    if (!target && Number.isFinite(requestedPlotIndex)) {
+      target = (obs.myPlots || []).find(
+        (plot: any) => plot.status === 'UNDER_CONSTRUCTION' && Number(plot.plotIndex) === requestedPlotIndex,
+      );
+    }
+    if (!target) {
+      target = (obs.myPlots || []).find((plot: any) => plot.status === 'UNDER_CONSTRUCTION');
+    }
+    if (!target) {
+      return {
+        success: false,
+        narrative: `${agent.name} cannot complete build: no under-construction plot found.`,
+        error: 'NO_ACTIVE_BUILD',
+      };
+    }
+    const minCalls = this.minCallsForZone(target.zone);
+    if (Number(target.apiCallsUsed || 0) < minCalls) {
+      return {
+        success: false,
+        narrative: `${agent.name} cannot complete plot ${target.plotIndex}: only ${target.apiCallsUsed}/${minCalls} work steps done.`,
+        error: 'NOT_READY',
+      };
+    }
+    const strictCompleteAction: AgentAction = {
+      ...action,
+      details: {
+        ...action.details,
+        plotId: target.id,
+        plotIndex: target.plotIndex,
+      },
+    };
+    return this.executeCompleteBuild(agent, strictCompleteAction, obs);
+  }
+
   private async executeClaim(agent: ArenaAgent, action: AgentAction, obs: WorldObservation) {
     const plotIndex = action.details.plotIndex;
     if (plotIndex === undefined) throw new Error('No plotIndex specified');
@@ -3374,9 +3768,16 @@ What do you want to do?`;
     }
   }
 
-  private async executeBuyArena(agent: ArenaAgent, action: AgentAction, obs: WorldObservation) {
+  private async executeBuyArena(agent: ArenaAgent, action: AgentAction, obs: WorldObservation, strict = false) {
     const requestedAmountIn = Number.parseInt(String(action.details.amountIn || '0'), 10);
     if (!Number.isFinite(requestedAmountIn) || requestedAmountIn <= 0) {
+      if (strict) {
+        return {
+          success: false,
+          narrative: `${agent.name} cannot buy $ARENA: invalid amountIn.`,
+          error: 'INVALID_AMOUNT',
+        };
+      }
       return {
         success: true,
         narrative: `${agent.name} skipped reserve swap because amountIn was invalid.`,
@@ -3388,6 +3789,13 @@ What do you want to do?`;
     const freshAgent = await prisma.arenaAgent.findUnique({ where: { id: agent.id } });
     const availableReserve = Math.max(0, Math.floor(freshAgent?.reserveBalance ?? agent.reserveBalance ?? 0));
     if (availableReserve <= 0) {
+      if (strict) {
+        return {
+          success: false,
+          narrative: `${agent.name} cannot buy $ARENA: reserve balance is empty.`,
+          error: 'NO_RESERVE',
+        };
+      }
       return {
         success: true,
         narrative: `${agent.name} tried to buy $ARENA but has no reserve to swap.`,
@@ -3404,6 +3812,13 @@ What do you want to do?`;
     } catch (err: any) {
       const msg = String(err?.message || '');
       if (/Insufficient reserve balance|amountOut would be 0|amountIn too small|Slippage/i.test(msg)) {
+        if (strict) {
+          return {
+            success: false,
+            narrative: `${agent.name} cannot buy $ARENA: ${msg}.`,
+            error: safeTrim(msg, 180),
+          };
+        }
         return {
           success: true,
           narrative: `${agent.name} skipped reserve swap this tick: ${msg}.`,
@@ -3461,9 +3876,16 @@ What do you want to do?`;
     };
   }
 
-  private async executeSellArena(agent: ArenaAgent, action: AgentAction, obs: WorldObservation) {
+  private async executeSellArena(agent: ArenaAgent, action: AgentAction, obs: WorldObservation, strict = false) {
     const requestedAmountIn = Number.parseInt(String(action.details.amountIn || '0'), 10);
     if (!Number.isFinite(requestedAmountIn) || requestedAmountIn <= 0) {
+      if (strict) {
+        return {
+          success: false,
+          narrative: `${agent.name} cannot sell $ARENA: invalid amountIn.`,
+          error: 'INVALID_AMOUNT',
+        };
+      }
       return {
         success: true,
         narrative: `${agent.name} skipped $ARENA sell because amountIn was invalid.`,
@@ -3475,6 +3897,13 @@ What do you want to do?`;
     const freshAgent = await prisma.arenaAgent.findUnique({ where: { id: agent.id } });
     const availableArena = Math.max(0, Math.floor(freshAgent?.bankroll ?? agent.bankroll ?? 0));
     if (availableArena <= 0) {
+      if (strict) {
+        return {
+          success: false,
+          narrative: `${agent.name} cannot sell $ARENA: bankroll is empty.`,
+          error: 'NO_ARENA',
+        };
+      }
       return {
         success: true,
         narrative: `${agent.name} tried to sell $ARENA but bankroll is empty.`,
@@ -3491,6 +3920,13 @@ What do you want to do?`;
     } catch (err: any) {
       const msg = String(err?.message || '');
       if (/Insufficient \$ARENA balance|amountOut would be 0|amountIn too small|Slippage/i.test(msg)) {
+        if (strict) {
+          return {
+            success: false,
+            narrative: `${agent.name} cannot sell $ARENA: ${msg}.`,
+            error: safeTrim(msg, 180),
+          };
+        }
         return {
           success: true,
           narrative: `${agent.name} skipped $ARENA sell this tick: ${msg}.`,

@@ -3,7 +3,8 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { agentLoopService, type AgentLoopMode } from '../services/agentLoopService';
+import { agentLoopService, type AgentLoopMode, type ManualActionKind } from '../services/agentLoopService';
+import { agentCommandService } from '../services/agentCommandService';
 
 const router = Router();
 
@@ -13,6 +14,14 @@ function normalizeLoopMode(raw: unknown): AgentLoopMode {
     return value as AgentLoopMode;
   }
   throw new Error('mode must be DEFAULT or DEGEN_LOOP');
+}
+
+function normalizeManualAction(raw: unknown): ManualActionKind {
+  const value = String(raw || '').trim().toLowerCase();
+  if (value === 'build' || value === 'work' || value === 'fight' || value === 'trade' || value === 'rest') {
+    return value;
+  }
+  throw new Error('action must be one of: build, work, fight, trade, rest');
 }
 
 // Start the agent loop
@@ -110,6 +119,81 @@ router.post('/agent-loop/tell/:agentId', async (req: Request, res: Response): Pr
     res.json({ status: 'queued', agentId: req.params.agentId, message });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// Execute a deterministic manual action immediately (build/work/fight/trade/rest).
+router.post('/agent-loop/action/:agentId', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const action = normalizeManualAction((req.body as any)?.action);
+    const source = String((req.body as any)?.source || 'api').trim().slice(0, 60) || 'api';
+    const plan = await agentLoopService.planDeterministicAction(req.params.agentId, action);
+    if (!plan.ok) {
+      res.status(409).json({
+        ok: false,
+        action,
+        code: plan.reasonCode,
+        error: plan.reason,
+      });
+      return;
+    }
+
+    await agentCommandService.cancelQueuedCommands({
+      agentId: req.params.agentId,
+      issuerType: 'API',
+      reason: 'Superseded by newer manual action',
+    });
+
+    const command = await agentCommandService.createCommand({
+      agentId: req.params.agentId,
+      issuerType: 'API',
+      issuerLabel: source,
+      mode: 'OVERRIDE',
+      intent: plan.intent,
+      params: plan.params,
+      priority: 100,
+      expiresInTicks: 2,
+      currentTick: agentLoopService.getCurrentTick(),
+      auditMeta: {
+        source: 'agent-loop-action',
+        action,
+      },
+    });
+
+    const result = await agentLoopService.processAgent(req.params.agentId);
+    const commandState = await agentCommandService.getCommand(command.id);
+    const receipt = result.commandReceipt?.commandId === command.id
+      ? result.commandReceipt
+      : {
+          commandId: commandState.id,
+          mode: commandState.mode,
+          intent: commandState.intent,
+          expectedActionType: commandState.expectedActionType,
+          executedActionType: null,
+          compliance: 'PARTIAL' as const,
+          status: commandState.status === 'EXECUTED' ? 'EXECUTED' : 'REJECTED',
+          statusReason: commandState.statusReason,
+        };
+
+    res.json({
+      ok: commandState.status === 'EXECUTED',
+      action,
+      plan: {
+        intent: plan.intent,
+        note: plan.note,
+      },
+      commandId: command.id,
+      commandStatus: commandState.status,
+      receipt,
+      result: {
+        tick: result.tick,
+        action: result.action.type,
+        narrative: result.narrative,
+        success: result.success,
+      },
+    });
+  } catch (error: any) {
+    res.status(400).json({ ok: false, error: error.message });
   }
 });
 

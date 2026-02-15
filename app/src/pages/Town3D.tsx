@@ -39,8 +39,8 @@ import {
   type VisualSettings,
   VISUAL_PROFILES,
 } from '../world/visual/townVisualTuning';
+import { API_BASE, apiUrl } from '../lib/api-base';
 
-const API_BASE = '/api/v1';
 const TOWN_SPACING = 20;
 const ARENA_SPECTATOR_TARGET_ID = '__ARENA_SPECTATOR__';
 const ARENA_PAYOFF_POPUP_LIFE_MS = 6500;
@@ -981,7 +981,7 @@ function createOpportunityWindow(
 }
 
 async function apiFetch<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`);
+  const res = await fetch(apiUrl(path));
   if (!res.ok) throw new Error(`API error (${res.status}): ${res.statusText}`);
   return res.json() as Promise<T>;
 }
@@ -5054,6 +5054,7 @@ export default function Town3D() {
     if (!ownedAgentId) return 'Deploy or select your wallet-linked agent to run the loop.';
     return null;
   }, [isPlayerAuthenticated, ownedAgentId]);
+  const onboardingEntryLock = showOnboarding;
   const buildPlayerHeaders = useCallback((withJson = false): HeadersInit => {
     const headers: Record<string, string> = {};
     if (withJson) headers['Content-Type'] = 'application/json';
@@ -6515,7 +6516,9 @@ export default function Town3D() {
       <div className="h-[100svh] w-full grid place-items-center bg-slate-950">
         <div className="max-w-lg text-center text-slate-200">
           <p className="font-mono text-sm text-red-300">{error}</p>
-          <p className="mt-2 text-xs text-slate-400">Make sure the backend is running on `localhost:4000`.</p>
+          <p className="mt-2 text-xs text-slate-400">
+            Backend unreachable at <code>{API_BASE}</code>. Set <code>VITE_BACKEND_URL</code> or <code>VITE_API_BASE_URL</code> for production.
+          </p>
           <div className="mt-4 flex justify-center gap-2">
             <Button onClick={() => window.location.reload()} variant="secondary">
               Reload
@@ -6531,7 +6534,7 @@ export default function Town3D() {
       <div className="h-[100svh] w-full grid place-items-center bg-slate-950 text-slate-200">
         <div className="text-center">
           <p className="text-sm">No town found.</p>
-          <p className="mt-1 text-xs text-slate-400">Create one via `POST /api/v1/town/next` or restart the backend.</p>
+          <p className="mt-1 text-xs text-slate-400">Create one via <code>POST {apiUrl('/town/next')}</code> or restart the backend.</p>
         </div>
       </div>
     );
@@ -6605,13 +6608,19 @@ export default function Town3D() {
         {economy && Number.isFinite(economy.spotPrice) && (
           <span className="text-[10px] text-slate-500 font-mono">$ARENA {economy.spotPrice.toFixed(4)}</span>
         )}
-        <Suspense fallback={null}>
-          <LazyPrivyWalletConnect
-            compact
-            onAddressChange={setWalletAddress}
-            onSessionChange={setPlayerSession}
-          />
-        </Suspense>
+        {onboardingEntryLock ? (
+          <span className="rounded border border-slate-700/70 bg-slate-900/55 px-2 py-0.5 text-[10px] font-mono text-slate-400">
+            ONBOARDING
+          </span>
+        ) : (
+          <Suspense fallback={null}>
+            <LazyPrivyWalletConnect
+              compact
+              onAddressChange={setWalletAddress}
+              onSessionChange={setPlayerSession}
+            />
+          </Suspense>
+        )}
         <div className="flex items-center gap-1">
           {ownedAgent && (
             <button
@@ -7051,13 +7060,19 @@ export default function Town3D() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Suspense fallback={null}>
-              <LazyPrivyWalletConnect
-                compact
-                onAddressChange={setWalletAddress}
-                onSessionChange={setPlayerSession}
-              />
-            </Suspense>
+            {onboardingEntryLock ? (
+              <span className="rounded border border-slate-700/70 bg-slate-900/55 px-2 py-0.5 text-[10px] font-mono text-slate-400">
+                ONBOARDING
+              </span>
+            ) : (
+              <Suspense fallback={null}>
+                <LazyPrivyWalletConnect
+                  compact
+                  onAddressChange={setWalletAddress}
+                  onSessionChange={setPlayerSession}
+                />
+              </Suspense>
+            )}
             <button
               onClick={() => setUiMode((current) => (current === 'default' ? 'pro' : 'default'))}
               className={`rounded-lg border px-2.5 py-1 text-[10px] font-mono uppercase transition-colors ${
@@ -7069,18 +7084,22 @@ export default function Town3D() {
             >
               {uiMode === 'pro' ? 'Pro Mode' : 'Default Mode'}
             </button>
-            <button
-              onClick={openDeployFlow}
-              className="rounded-lg border border-amber-500/65 bg-gradient-to-r from-amber-600/80 to-orange-600/80 px-3 py-1 text-xs font-bold text-white transition-all hover:from-amber-500 hover:to-orange-500"
-            >
-              {isPlayerAuthenticated ? '🤖 Deploy Agent' : '✨ Sign In & Deploy'}
-            </button>
+            {!onboardingEntryLock && (
+              <button
+                onClick={openDeployFlow}
+                className="rounded-lg border border-amber-500/65 bg-gradient-to-r from-amber-600/80 to-orange-600/80 px-3 py-1 text-xs font-bold text-white transition-all hover:from-amber-500 hover:to-orange-500"
+              >
+                {isPlayerAuthenticated ? '🤖 Deploy Agent' : '✨ Sign In & Deploy'}
+              </button>
+            )}
           </div>
         </div>
         {!ownedAgentId && (
           <div className="mt-2 rounded-xl border border-cyan-500/25 bg-cyan-500/8 px-3 py-1.5">
             <div className="text-[11px] text-cyan-100/90">
-              Spectator mode: deploy from top-right when ready.
+              {onboardingEntryLock
+                ? 'Sign in from the center panel to unlock deploy.'
+                : 'Spectator mode: deploy from top-right when ready.'}
             </div>
           </div>
         )}

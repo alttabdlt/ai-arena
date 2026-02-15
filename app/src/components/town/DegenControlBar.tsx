@@ -21,6 +21,10 @@ interface DegenControlBarProps {
   loopMode: 'DEFAULT' | 'DEGEN_LOOP';
   loopUpdating: boolean;
   nudgeBusy: boolean;
+  plansLoading?: boolean;
+  guidanceMission?: string;
+  recommendedNudge?: DegenNudge | null;
+  blockers?: Partial<Record<DegenNudge, string>>;
   crewOrderBusy?: boolean;
   crewName?: string | null;
   crewColor?: string | null;
@@ -52,6 +56,10 @@ export function DegenControlBar({
   loopMode,
   loopUpdating,
   nudgeBusy,
+  plansLoading = false,
+  guidanceMission = 'Checking next move...',
+  recommendedNudge = null,
+  blockers,
   crewOrderBusy = false,
   crewName = null,
   crewColor = null,
@@ -73,6 +81,7 @@ export function DegenControlBar({
   const chain = Math.max(1, loopTelemetry?.chain ?? 0);
   const loopsCompleted = Math.max(0, loopTelemetry?.loopsCompleted ?? 0);
   const lastPhase = loopTelemetry?.lastPhase;
+  const recommendedLabel = NUDGES.find((nudge) => nudge.key === recommendedNudge)?.label ?? null;
 
   return (
     <div className="w-[420px] max-w-[calc(100vw-24px)] rounded-xl border border-amber-500/30 bg-slate-950/85 p-3 backdrop-blur-md shadow-lg shadow-black/35">
@@ -130,21 +139,41 @@ export function DegenControlBar({
             : 'Run BUILD → WORK → FIGHT → TRADE to start your chain'}
         </div>
       </div>
+      <div className="mb-2 rounded-lg border border-cyan-500/20 bg-slate-900/40 px-2 py-1.5">
+        <div className="mb-1 flex items-center justify-between text-[10px]">
+          <span className="font-mono text-cyan-200">NEXT MISSION</span>
+          <span className="font-mono text-slate-500">{plansLoading ? 'SYNC…' : recommendedLabel ? `DO ${recommendedLabel.toUpperCase()}` : 'BLOCKED'}</span>
+        </div>
+        <div className="text-[10px] leading-tight text-slate-300">
+          {guidanceMission}
+        </div>
+      </div>
       <div className="grid grid-cols-4 gap-1.5">
-        {NUDGES.map((nudge) => (
-          <button
-            key={nudge.key}
-            type="button"
-            disabled={nudgeBusy}
-            onClick={() => onNudge(nudge.key)}
-            className={`rounded-md border border-slate-700/70 bg-slate-900/30 px-1 py-1 text-[10px] text-slate-200 transition-colors hover:border-amber-500/50 hover:bg-slate-800/50 ${
-              nudgeBusy ? 'cursor-not-allowed opacity-60' : ''
-            }`}
-            title={`Execute deterministic ${nudge.label.toLowerCase()} command for ${ownedAgent.name}`}
-          >
-            <span>{nudge.emoji}</span> {nudge.label}
-          </button>
-        ))}
+        {NUDGES.map((nudge) => {
+          const blocker = blockers?.[nudge.key];
+          const disabled = nudgeBusy || plansLoading || Boolean(blocker);
+          const recommended = recommendedNudge === nudge.key && !blocker;
+          return (
+            <button
+              key={nudge.key}
+              type="button"
+              disabled={disabled}
+              onClick={() => onNudge(nudge.key)}
+              className={`rounded-md border px-1 py-1 text-[10px] transition-colors ${
+                blocker
+                  ? 'cursor-not-allowed border-rose-500/35 bg-rose-950/20 text-rose-200/80'
+                  : recommended
+                    ? 'border-cyan-400/70 bg-cyan-500/20 text-cyan-100 hover:border-cyan-300/80 hover:bg-cyan-500/24'
+                    : 'border-slate-700/70 bg-slate-900/30 text-slate-200 hover:border-amber-500/50 hover:bg-slate-800/50'
+              } ${disabled && !blocker ? 'cursor-not-allowed opacity-60' : ''}`}
+              title={blocker
+                ? `${nudge.label} blocked: ${blocker}`
+                : `Execute deterministic ${nudge.label.toLowerCase()} command for ${ownedAgent.name}`}
+            >
+              <span>{nudge.emoji}</span> {nudge.label}
+            </button>
+          );
+        })}
       </div>
       {crewName && onCrewOrder && (
         <div className="mt-2 rounded-lg border border-cyan-500/25 bg-slate-900/45 px-2 py-1.5">

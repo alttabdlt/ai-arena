@@ -177,6 +177,27 @@ router.post('/agent-loop/tell/:agentId', async (req: Request, res: Response): Pr
   }
 });
 
+// Explain which deterministic degen steps are currently executable for one agent.
+router.get('/agent-loop/plans/:agentId', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const actions: ManualActionKind[] = ['build', 'work', 'fight', 'trade'];
+    const plans = await Promise.all(
+      actions.map(async (action) => {
+        const plan = await agentLoopService.planDeterministicAction(req.params.agentId, action);
+        return [action, plan] as const;
+      }),
+    );
+
+    res.json({
+      agentId: req.params.agentId,
+      mode: agentLoopService.getLoopMode(req.params.agentId),
+      plans: Object.fromEntries(plans),
+    });
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 // Execute a deterministic manual action immediately (build/work/fight/trade/rest).
 router.post('/agent-loop/action/:agentId', async (req: Request, res: Response): Promise<void> => {
   try {

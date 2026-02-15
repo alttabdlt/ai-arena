@@ -188,6 +188,7 @@ type ArenaImpactBurst = {
 
 type ActionBurstKind = 'CLAIM' | 'BUILD' | 'WORK' | 'TRADE' | 'FIGHT' | 'MINE' | 'IDLE' | 'OTHER';
 type DegenLoopPhase = 'BUILD' | 'WORK' | 'FIGHT' | 'TRADE';
+type DegenNudge = 'build' | 'work' | 'fight' | 'trade';
 
 type ActionBurst = {
   id: string;
@@ -208,6 +209,20 @@ type DegenLoopTelemetry = {
   loopsCompleted: number;
   lastPhase: DegenLoopPhase | null;
   lastAdvanceAt: number | null;
+};
+
+type DegenActionPlan = {
+  ok: boolean;
+  reasonCode?: string;
+  reason?: string;
+  intent?: string;
+  note?: string;
+};
+
+type DegenPlanResponse = {
+  agentId: string;
+  mode: LoopMode;
+  plans: Record<DegenNudge, DegenActionPlan>;
 };
 
 interface EconomyPoolSummary {
@@ -533,6 +548,18 @@ function summarizeArenaMomentum(entries: AgentOutcomeEntry[]) {
 }
 
 const DEGEN_LOOP_SEQUENCE: DegenLoopPhase[] = ['BUILD', 'WORK', 'FIGHT', 'TRADE'];
+const DEGEN_PHASE_TO_NUDGE: Record<DegenLoopPhase, DegenNudge> = {
+  BUILD: 'build',
+  WORK: 'work',
+  FIGHT: 'fight',
+  TRADE: 'trade',
+};
+const DEGEN_NUDGE_LABEL: Record<DegenNudge, string> = {
+  build: 'BUILD',
+  work: 'WORK',
+  fight: 'FIGHT',
+  trade: 'TRADE',
+};
 const EMPTY_DEGEN_LOOP_TELEMETRY: DegenLoopTelemetry = {
   nextIndex: 0,
   chain: 0,
@@ -4704,6 +4731,8 @@ export default function Town3D() {
   const [crewOrderBusy, setCrewOrderBusy] = useState(false);
   const [degenStatus, setDegenStatus] = useState<{ message: string; tone: 'neutral' | 'ok' | 'error' } | null>(null);
   const [ownedLoopTelemetry, setOwnedLoopTelemetry] = useState<DegenLoopTelemetry | null>(null);
+  const [degenPlans, setDegenPlans] = useState<Record<DegenNudge, DegenActionPlan> | null>(null);
+  const [degenPlansLoading, setDegenPlansLoading] = useState(false);
   const degenLoopTelemetryByAgentIdRef = useRef<Map<string, DegenLoopTelemetry>>(new Map());
   const degenStatusTimerRef = useRef<number | null>(null);
   const showDegenStatus = useCallback((message: string, tone: 'neutral' | 'ok' | 'error', ttlMs = 2600) => {
@@ -4734,9 +4763,38 @@ export default function Town3D() {
     const snapshot = degenLoopTelemetryByAgentIdRef.current.get(ownedAgentId);
     setOwnedLoopTelemetry(snapshot ? { ...snapshot } : { ...EMPTY_DEGEN_LOOP_TELEMETRY });
   }, [ownedAgentId]);
+  const refreshDegenPlans = useCallback(async () => {
+    if (!ownedAgentId) {
+      setDegenPlans(null);
+      return;
+    }
+    setDegenPlansLoading(true);
+    try {
+      const res = await apiFetch<DegenPlanResponse>(`/agent-loop/plans/${ownedAgentId}`);
+      setDegenPlans(res.plans || null);
+    } catch {
+      setDegenPlans(null);
+    } finally {
+      setDegenPlansLoading(false);
+    }
+  }, [ownedAgentId]);
+  useEffect(() => {
+    if (!ownedAgentId) {
+      setDegenPlans(null);
+      return;
+    }
+    void refreshDegenPlans();
+    const interval = window.setInterval(() => {
+      void refreshDegenPlans();
+    }, 12000);
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [ownedAgentId, refreshDegenPlans]);
   useEffect(() => {
     if (!ownedAgentId) {
       setOwnedLoopMode('DEFAULT');
+      setDegenPlans(null);
       if (degenStatusTimerRef.current != null) {
         window.clearTimeout(degenStatusTimerRef.current);
         degenStatusTimerRef.current = null;
@@ -4761,6 +4819,58 @@ export default function Town3D() {
       cancelled = true;
     };
   }, [ownedAgentId]);
+  const degenGuidance = useMemo(() => {
+    const blockers: Partial<Record<DegenNudge, string>> = {};
+    (Object.keys(DEGEN_NUDGE_LABEL) as DegenNudge[]).forEach((step) => {
+      const plan = degenPlans?.[step];
+      if (plan && !plan.ok) {
+        blockers[step] = safeTrim(plan.reason || 'Blocked right now', 96);
+      }
+    });
+
+    if (!degenPlans) {
+      return {
+        mission: 'Checking next move...',
+        recommended: null as DegenNudge | null,
+        blockers,
+      };
+    }
+
+    const safeNextIndex = Math.max(0, Math.min(DEGEN_LOOP_SEQUENCE.length - 1, ownedLoopTelemetry?.nextIndex ?? 0));
+    const expectedPhase = DEGEN_LOOP_SEQUENCE[safeNextIndex] || 'BUILD';
+    const expectedNudge = DEGEN_PHASE_TO_NUDGE[expectedPhase];
+    const expectedPlan = degenPlans[expectedNudge];
+
+    let recommended: DegenNudge | null = null;
+    if (expectedPlan?.ok) {
+      recommended = expectedNudge;
+    } else {
+      for (let i = 1; i < DEGEN_LOOP_SEQUENCE.length; i += 1) {
+        const phase = DEGEN_LOOP_SEQUENCE[(safeNextIndex + i) % DEGEN_LOOP_SEQUENCE.length];
+        const candidate = DEGEN_PHASE_TO_NUDGE[phase];
+        if (degenPlans[candidate]?.ok) {
+          recommended = candidate;
+          break;
+        }
+      }
+    }
+
+    const expectedLabel = DEGEN_NUDGE_LABEL[expectedNudge];
+    const expectedReason = blockers[expectedNudge];
+    let mission = recommended
+      ? `Do ${DEGEN_NUDGE_LABEL[recommended]} next.`
+      : `No executable step right now.`;
+
+    if (recommended && recommended !== expectedNudge) {
+      mission = `${expectedLabel} blocked${expectedReason ? `: ${expectedReason}` : ''}. Do ${DEGEN_NUDGE_LABEL[recommended]} now.`;
+    } else if (!recommended) {
+      mission = `${expectedLabel} blocked${expectedReason ? `: ${expectedReason}` : ''}.`;
+    } else if (ownedLoopMode !== 'DEGEN_LOOP') {
+      mission = `Manual mode. Suggested next: ${DEGEN_NUDGE_LABEL[recommended]}.`;
+    }
+
+    return { mission, recommended, blockers };
+  }, [degenPlans, ownedLoopTelemetry, ownedLoopMode]);
   const updateOwnedLoopMode = useCallback(async (nextMode: LoopMode) => {
     if (!ownedAgentId) return;
     setLoopModeUpdating(true);
@@ -4788,8 +4898,17 @@ export default function Town3D() {
       setLoopModeUpdating(false);
     }
   }, [ownedAgentId, showDegenStatus]);
-  const sendDegenNudge = useCallback(async (nudge: 'build' | 'work' | 'fight' | 'trade') => {
+  const sendDegenNudge = useCallback(async (nudge: DegenNudge) => {
     if (!ownedAgentId) return;
+    if (degenPlansLoading) {
+      showDegenStatus('Checking what is executable right now…', 'neutral', 2200);
+      return;
+    }
+    const blocker = degenGuidance.blockers[nudge];
+    if (blocker) {
+      showDegenStatus(`${nudge.toUpperCase()} blocked: ${blocker}`, 'error', 3600);
+      return;
+    }
     setDegenNudgeBusy(true);
     showDegenStatus(`Executing ${nudge.toUpperCase()} command…`, 'neutral');
     try {
@@ -4832,14 +4951,16 @@ export default function Town3D() {
         `${nudge.toUpperCase()} executed as ${String(executedAction).toUpperCase()}.`,
         'ok',
       );
+      void refreshDegenPlans();
     } catch (err) {
       console.error('[Town3D] Failed to execute manual action command', err);
       const reason = err instanceof Error ? err.message : `Failed to execute ${nudge.toUpperCase()}`;
       showDegenStatus(reason, 'error', 3600);
+      void refreshDegenPlans();
     } finally {
       setDegenNudgeBusy(false);
     }
-  }, [ownedAgentId, showDegenStatus]);
+  }, [ownedAgentId, degenPlansLoading, degenGuidance.blockers, refreshDegenPlans, showDegenStatus]);
   const sendCrewOrder = useCallback(async (strategy: CrewOrderStrategy) => {
     if (!ownedAgentId) return;
     setCrewOrderBusy(true);
@@ -6525,6 +6646,10 @@ export default function Town3D() {
               loopMode={ownedLoopMode}
               loopUpdating={loopModeUpdating}
               nudgeBusy={degenNudgeBusy}
+              plansLoading={degenPlansLoading}
+              guidanceMission={degenGuidance.mission}
+              recommendedNudge={degenGuidance.recommended}
+              blockers={degenGuidance.blockers}
               crewOrderBusy={crewOrderBusy}
               crewName={ownedCrewLink?.crewName || null}
               crewColor={ownedCrewLink?.colorHex || null}

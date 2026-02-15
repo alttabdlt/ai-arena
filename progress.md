@@ -357,3 +357,58 @@ Original prompt: "yes, but are we able to implement build/work/fight > crypto lo
     - Artifacts: `artifacts/phase4-playwright/runtime-indicators-full.png`, `artifacts/phase4-playwright/shot-0.png`, `artifacts/phase4-playwright/shot-1.png`.
   - Interactive runtime inspection confirmed all new in-game indicator groups render in live UI: `MY AGENT`, `CREW OPS`, `BUILDING OCCUPANCY`, `LIVE FEED`, `OTHER AGENTS`.
   - Runtime console note: transient `THREE.WebGLRenderer: Context Lost` observed during load, then scene recovered and rendered with indicators.
+
+### Live deploy hardening + UX cleanup (2026-02-15)
+
+- Root-cause from production Playwright pass:
+  - Direct `GET /town` returned Vercel `404: NOT_FOUND`.
+  - Frontend API calls all hit same-origin `/api/v1/*` on Vercel and returned `404`, making gameplay non-functional.
+
+- Applied frontend/runtime cleanup:
+  - Added shared API base resolver:
+    - `app/src/lib/api-base.ts`
+    - Supports `VITE_API_BASE_URL` (full) or `VITE_BACKEND_URL` (origin), with local fallback `/api/v1` for Vite proxy.
+  - Migrated all hardcoded `/api/v1` callers to shared helper/base:
+    - `app/src/pages/Town3D.tsx`
+    - `app/src/pages/Arena.tsx`
+    - `app/src/pages/Match.tsx`
+    - `app/src/hooks/useWheelStatus.ts`
+    - `app/src/hooks/useDegenState.ts`
+    - `app/src/components/SpawnAgent.tsx`
+    - `app/src/components/wheel/WheelArena.tsx`
+    - `app/src/components/onboarding/OnboardingOverlay.tsx`
+  - Improved fatal API error messaging in `Town3D`:
+    - Shows resolved API target and env vars to set in production.
+  - Removed duplicate sign-in CTA confusion:
+    - Hides top-right `Sign In & Deploy` while onboarding sign-in modal is open.
+    - Spectator helper text now points users to the center sign-in panel when active.
+
+- Applied Vercel SPA routing fallback:
+  - Updated `app/vercel.json` with extension-safe rewrite to `/index.html` for client routes.
+
+- Docs:
+  - Updated `app/README.md` with production API env vars.
+
+- Validation:
+  - `cd app && npm run build` passed.
+
+- Remaining deployment step:
+  - Set Vercel env (`VITE_BACKEND_URL` or `VITE_API_BASE_URL`) to the live backend origin and redeploy frontend.
+
+### Live tunnel UX/clarity patch (2026-02-16)
+
+- Addressed blank-screen ambiguity on slow/lazy route loads:
+  - Added explicit app-level Suspense loading UI in `app/src/App.tsx` (`Loading AI Town...` / `Preparing sign in...`), replacing silent dark fallback.
+- Hardened rendering feedback for WebGL failures/recovery:
+  - Added desktop `Canvas` fallback label (`WebGL not supported`).
+  - Added transient in-world recovery indicator (`Renderer recovering...`) during `webglcontextlost` handling in `app/src/pages/Town3D.tsx`.
+- Reduced sign-in CTA duplication in modal flows:
+  - Top-right `Sign In & Deploy` button now hidden whenever onboarding/spawn/funding modal is open in `app/src/pages/Town3D.tsx`.
+
+- Validation:
+  - `cd app && npm run build` passed.
+  - Playwright local snapshot after storage reset confirms a single sign-in entry in onboarding state (top bar shows `ONBOARDING`, no duplicate top-right sign-in CTA).
+  - Live tunnel DOM snapshot confirms onboarding + spectator clarity and no duplicate sign-in CTA in this state.
+
+- Commit:
+  - `c89b868` — `town-ui: add explicit app loading and canvas recovery indicators`

@@ -27,6 +27,10 @@ Operator routes authenticate through Telegram identity + linked wallet ownership
 - `POST /agent-loop/mode/:agentId`
 - `GET /agent-loop/mode/:agentId`
 
+Deterministic manual action behavior:
+- `fight` maps to strict `play_arena` and now runs a real turbo poker duel (live opponent, wagered bankroll delta, persisted match outcome).
+- Strict command receipts return explicit reject reasons (for example `INSUFFICIENT_ARENA` when bankroll is below duel minimum).
+
 ## 3. Arena API
 
 - Agent discovery:

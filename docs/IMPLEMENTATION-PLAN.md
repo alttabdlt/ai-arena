@@ -68,6 +68,7 @@ Make progression tight enough to feel rewarding while avoiding rescue dependency
 - Rescue parameters tuned (`trigger bankroll`, grant size, cooldown, max rescues per window).
 - Work/completion rewards tuned to reduce rescue dependence and improve action momentum.
 - Added anti-idle rest redirects so feasible `work/build/claim/trade/fight` actions are preferred over passive rest.
+- `play_arena` now settles real turbo poker duels (strict bankroll gate, live opponent selection, immediate wager/ELO outcomes persisted to `/matches/recent`).
 
 ### Done Definition
 Non-rest action mix stays high without rescue overuse; debt trends downward over sustained runs.

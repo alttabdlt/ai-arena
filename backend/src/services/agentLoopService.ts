@@ -10,11 +10,12 @@
  * The "work" IS the inference. Every LLM call is tracked as proof of inference.
  */
 
-import { ArenaAgent, TownEventType } from '@prisma/client';
+import { ArenaAgent, ArenaGameType, TownEventType } from '@prisma/client';
 import { prisma } from '../config/database';
 import { townService } from './townService';
 import { smartAiService, AICost } from './smartAiService';
 import { offchainAmmService } from './offchainAmmService';
+import { arenaService } from './arenaService';
 import { x402SkillService, estimateSkillPriceArena, type BuySkillRequest, type X402SkillName } from './x402SkillService';
 import { socialGraphService } from './socialGraphService';
 import { agentGoalService, type AgentGoalView } from './agentGoalService';
@@ -83,6 +84,8 @@ const SOLVENCY_RESCUE_MAX_PER_WINDOW = 2;
 const SOLVENCY_RESCUE_REPAYMENT_BPS = 2500;
 const SOLVENCY_RESCUE_REPAYMENT_FLOOR = 90;
 const SOLVENCY_POOL_FLOOR = 1000;
+const ARENA_MIN_WAGER = 10;
+const ARENA_TURBO_MAX_ACTIONS = 14;
 const ECONOMY_INIT_RESERVE = Number.parseInt(process.env.ECONOMY_INIT_RESERVE || '10000', 10);
 const ECONOMY_INIT_ARENA = Number.parseInt(process.env.ECONOMY_INIT_ARENA || '10000', 10);
 const ECONOMY_INIT_FEE_BPS = Number.parseInt(process.env.ECONOMY_FEE_BPS || '100', 10);
@@ -2667,7 +2670,7 @@ ${goalStackPromptText}
 ${worldEventService.getPromptText()}
 
 ⚔️ WHEEL OF FATE:
-Every ~15 minutes, 2 agents are RANDOMLY pulled into a forced PvP duel (Poker or RPS).
+Every ~15 minutes, 2 agents are RANDOMLY pulled into a forced PvP poker duel.
 Stakes: ~20% of your bankroll. LOSING hurts. BANKRUPT (0 $ARENA) + health drain = DEATH.
 Buildings you own give BUFFS in PvP duels based on their ZONE:
 - RESIDENTIAL → heal after PvP loss (recovery)
@@ -2692,7 +2695,7 @@ SKILLS / ACTIONS (choose exactly one each tick):
 - start_build: begin construction on a claimed plot you own (details: plotId or plotIndex, buildingType, why)
 - do_work: progress an under-construction building (details: plotId or plotIndex, stepDescription)
 - complete_build: finish a building if enough work is done (details: plotId or plotIndex)
-- play_arena: wager $ARENA in a match (details: gameType "POKER|RPS", wager)
+- play_arena: enter a turbo poker duel with a live opponent (details: wager)
 - transfer_arena: send $ARENA to another agent (details: targetAgentName, amount, reason). Use for deals, gifts, alliances.
 - buy_skill: purchase a paid x402 "skill" using $ARENA. Only buy when you have a SPECIFIC pending decision.
   Available skills:
@@ -2724,7 +2727,7 @@ RESPOND WITH JSON ONLY:
     // For start_build: {"plotId": "<id>", "buildingType": "<creative building concept>", "why": "<reason>"}
     // For do_work: {"plotId": "<id>", "stepDescription": "<what to design next>"}
     // For complete_build: {"plotId": "<id>"}
-    // For play_arena: {"gameType": "POKER|RPS", "wager": <amount>}
+    // For play_arena: {"wager": <amount>}
     // For transfer_arena: {"targetAgentName": "<name>", "amount": <number>, "reason": "<why>"}
     // For buy_skill: {"skill": "MARKET_DEPTH|BLUEPRINT_INDEX|SCOUT_REPORT", "question": "<what to learn>", "whyNow": "<pending decision>", "expectedNextAction": "<next action>"}
     // For rest: {"thought": "<what you're thinking about>"}
@@ -3391,7 +3394,7 @@ What do you want to do?`;
             };
           }
         case 'play_arena':
-          return await this.executePlayArena(agent, action);
+          return await this.executePlayArena(agent, action, obs);
         case 'buy_skill':
           {
             const res = await this.executeBuySkill(agent, action, obs);
@@ -3473,7 +3476,7 @@ What do you want to do?`;
                   wager: wheel.currentMatch?.wager || 25,
                 },
               };
-              const res = await this.executePlayArena(agent, redirected);
+              const res = await this.executePlayArena(agent, redirected, obs);
               return { ...res, actualAction: redirected };
             }
           }
@@ -3525,7 +3528,7 @@ What do you want to do?`;
       case 'sell_arena':
         return this.executeSellArena(agent, action, obs, true);
       case 'play_arena':
-        return this.executePlayArena(agent, action);
+        return this.executePlayArena(agent, action, obs, true);
       case 'rest':
         return {
           success: true,
@@ -4606,22 +4609,264 @@ Be creative, detailed, and in-character for the town's theme. Response should be
     };
   }
 
-  private async executePlayArena(agent: ArenaAgent, action: AgentAction) {
-    const gameType = action.details.gameType || 'POKER';
-    const wager = action.details.wager || 100;
+  private pickTurboPokerAction(validActionsRaw: unknown[], firstMove: boolean): string {
+    const valid = Array.isArray(validActionsRaw)
+      ? validActionsRaw.map((a) => String(a || '').toLowerCase())
+      : [];
+    const has = (action: string) => valid.includes(action);
+
+    if (firstMove && has('all-in')) return 'all-in';
+    if (has('call')) return 'call';
+    if (has('check')) return 'check';
+    if (has('all-in')) return 'all-in';
+    if (has('raise')) return 'raise';
+    if (has('fold')) return 'fold';
+    return valid[0] || 'fold';
+  }
+
+  private async executePlayArena(
+    agent: ArenaAgent,
+    action: AgentAction,
+    obs: WorldObservation,
+    strict = false,
+  ): Promise<ExecutionResult> {
     const wheel = wheelOfFateService.getStatus();
     const activeMatch = wheel.currentMatch;
     const isActiveFighter = !!activeMatch
       && (activeMatch.agent1.id === agent.id || activeMatch.agent2.id === agent.id)
       && (wheel.phase === 'ANNOUNCING' || wheel.phase === 'FIGHTING');
-    const phaseNote = isActiveFighter
-      ? `Locked into Wheel phase ${wheel.phase}.`
-      : wheel.phase === 'ANNOUNCING'
-        ? 'Wheel betting window is open — scouting for edge.'
-        : 'No live duel selected right now.';
+    if (isActiveFighter) {
+      return {
+        success: true,
+        narrative: `${agent.name} is locked into the Wheel of Fate duel queue (${wheel.phase}). 🎰 Holding for official fight resolution.`,
+      };
+    }
+
+    const freshAgent = await prisma.arenaAgent.findUnique({ where: { id: agent.id } });
+    if (!freshAgent) throw new Error('Agent not found');
+    if (freshAgent.isInMatch || freshAgent.currentMatchId) {
+      return {
+        success: true,
+        narrative: `${agent.name} is already in an active arena match and can’t queue another duel yet.`,
+      };
+    }
+
+    if (freshAgent.bankroll < ARENA_MIN_WAGER) {
+      if (!strict && freshAgent.reserveBalance > 10) {
+        const spot = Math.max(0.01, Number(obs.economy?.spotPrice || 1));
+        const shortfallArena = Math.max(ARENA_MIN_WAGER - freshAgent.bankroll, 0);
+        const reserveToSell = Math.max(10, Math.min(freshAgent.reserveBalance, Math.ceil(shortfallArena * spot * 1.2)));
+        const buyAction: AgentAction = {
+          ...action,
+          type: 'buy_arena',
+          reasoning: `[REDIRECT] Need at least ${ARENA_MIN_WAGER} $ARENA before a duel; converting reserve.`,
+          details: {
+            amountIn: reserveToSell,
+            why: 'Fund turbo poker duel',
+            nextAction: 'play_arena',
+          },
+        };
+        const result = await this.executeBuyArena(agent, buyAction, obs);
+        return { ...result, actualAction: buyAction };
+      }
+      const msg = `${agent.name} can’t enter arena duels below ${ARENA_MIN_WAGER} $ARENA bankroll.`;
+      if (strict) return { success: false, narrative: msg, error: 'INSUFFICIENT_ARENA' };
+      return {
+        success: true,
+        narrative: `${msg} No reserve available for a top-up, so they hold position this tick.`,
+        actualAction: {
+          ...action,
+          type: 'rest',
+          reasoning: '[REDIRECT] Arena duel unaffordable',
+          details: { thought: `Need at least ${ARENA_MIN_WAGER} $ARENA to fight.` },
+        },
+      };
+    }
+
+    const requestedWagerRaw = Number.parseInt(String(action.details.wager || 25), 10);
+    const requestedWager = Number.isFinite(requestedWagerRaw) ? requestedWagerRaw : 25;
+    const softCapByBankroll = Math.max(ARENA_MIN_WAGER, Math.floor(freshAgent.bankroll * 0.3));
+    const desiredWager = Math.max(ARENA_MIN_WAGER, Math.min(requestedWager, softCapByBankroll));
+
+    const rivals = new Set((obs.relationships?.rivals || []).map((r) => r.agentId));
+    const opponents = await prisma.arenaAgent.findMany({
+      where: {
+        id: { not: agent.id },
+        isActive: true,
+        isInMatch: false,
+        health: { gt: 0 },
+        bankroll: { gte: ARENA_MIN_WAGER },
+      },
+      select: {
+        id: true,
+        name: true,
+        archetype: true,
+        bankroll: true,
+        elo: true,
+      },
+      take: 24,
+    });
+
+    const rankedOpponents = opponents
+      .sort((a, b) => {
+        const score = (c: typeof a) =>
+          (rivals.has(c.id) ? 120 : 0)
+          + Math.max(0, 45 - Math.floor(Math.abs(c.elo - freshAgent.elo) / 20))
+          + Math.min(80, Math.floor(c.bankroll / 12));
+        return score(b) - score(a);
+      });
+
+    if (rankedOpponents.length === 0) {
+      const msg = `${agent.name} found no eligible opponents for a duel right now.`;
+      if (strict) return { success: false, narrative: msg, error: 'NO_OPPONENTS' };
+      return {
+        success: true,
+        narrative: `${msg} They’ll keep pressure on build/work until fighters are available.`,
+        actualAction: {
+          ...action,
+          type: 'rest',
+          reasoning: '[REDIRECT] No arena opponents available',
+          details: { thought: 'Queue looked empty.' },
+        },
+      };
+    }
+
+    let selectedOpponent: typeof rankedOpponents[number] | null = null;
+    let createdMatchId: string | null = null;
+    let finalWager = desiredWager;
+    const creationErrors: string[] = [];
+    for (const candidate of rankedOpponents) {
+      const wagerForCandidate = Math.max(
+        ARENA_MIN_WAGER,
+        Math.min(desiredWager, freshAgent.bankroll, candidate.bankroll),
+      );
+      if (wagerForCandidate < ARENA_MIN_WAGER) continue;
+      try {
+        const match = await arenaService.createMatch({
+          agentId: agent.id,
+          opponentId: candidate.id,
+          gameType: ArenaGameType.POKER,
+          wagerAmount: wagerForCandidate,
+          skipPredictionMarket: true,
+        });
+        selectedOpponent = candidate;
+        createdMatchId = match.id;
+        finalWager = wagerForCandidate;
+        break;
+      } catch (err: any) {
+        creationErrors.push(safeTrim(err?.message || 'match creation failed', 120));
+      }
+    }
+
+    if (!createdMatchId || !selectedOpponent) {
+      const reason = creationErrors[0] ? ` (${creationErrors[0]})` : '';
+      const msg = `${agent.name} failed to lock a duel matchup${reason}.`;
+      if (strict) return { success: false, narrative: msg, error: 'MATCH_CREATE_FAILED' };
+      return {
+        success: true,
+        narrative: `${msg} They’ll rotate back into build/work pressure next tick.`,
+        actualAction: {
+          ...action,
+          type: 'rest',
+          reasoning: '[REDIRECT] Arena matchup failed',
+          details: { thought: 'Retrying next tick.' },
+        },
+      };
+    }
+
+    const moveTrace: string[] = [];
+    let usedFallback = false;
+    for (let i = 0; i < ARENA_TURBO_MAX_ACTIONS; i++) {
+      const state = await arenaService.getMatchState(createdMatchId);
+      if (state.status !== 'ACTIVE' || state.isComplete || !state.currentTurnId) break;
+      const actorId = String(state.currentTurnId);
+      const validActions = Array.isArray(state.validActions) ? state.validActions : [];
+      if (validActions.length === 0) break;
+      const chosenAction = this.pickTurboPokerAction(validActions, i === 0);
+      try {
+        await arenaService.submitMove({
+          matchId: createdMatchId,
+          agentId: actorId,
+          action: chosenAction,
+        });
+        moveTrace.push(`${actorId.slice(0, 6)}:${chosenAction}`);
+      } catch {
+        const valid = validActions.map((v: unknown) => String(v).toLowerCase());
+        const safeAction = valid.includes('check')
+          ? 'check'
+          : valid.includes('call')
+            ? 'call'
+            : valid.includes('fold')
+              ? 'fold'
+              : (valid[0] || 'fold');
+        await arenaService.submitMove({
+          matchId: createdMatchId,
+          agentId: actorId,
+          action: safeAction,
+        });
+        moveTrace.push(`${actorId.slice(0, 6)}:${chosenAction}->${safeAction}`);
+        usedFallback = true;
+      }
+    }
+
+    const settled = await prisma.arenaMatch.findUnique({
+      where: { id: createdMatchId },
+      select: { status: true, winnerId: true },
+    });
+
+    if (!settled || settled.status !== 'COMPLETED') {
+      try {
+        await arenaService.cancelMatch(createdMatchId, agent.id);
+      } catch {}
+      const msg = `${agent.name} opened a turbo poker duel vs ${selectedOpponent.name}, but settlement timed out and the match was cancelled with refunds.`;
+      if (strict) return { success: false, narrative: msg, error: 'MATCH_TIMEOUT' };
+      return {
+        success: true,
+        narrative: msg,
+        actualAction: {
+          ...action,
+          type: 'rest',
+          reasoning: '[REDIRECT] Turbo duel timeout',
+          details: { thought: 'Arena state reset after timeout.' },
+        },
+      };
+    }
+
+    const [agentAfter, opponentAfter] = await Promise.all([
+      prisma.arenaAgent.findUnique({
+        where: { id: agent.id },
+        select: { bankroll: true },
+      }),
+      prisma.arenaAgent.findUnique({
+        where: { id: selectedOpponent.id },
+        select: { bankroll: true },
+      }),
+    ]);
+    const myBankrollAfter = agentAfter?.bankroll ?? freshAgent.bankroll;
+    const oppBankrollAfter = opponentAfter?.bankroll ?? selectedOpponent.bankroll;
+    const myDelta = myBankrollAfter - freshAgent.bankroll;
+    const oppDelta = oppBankrollAfter - selectedOpponent.bankroll;
+
+    let outcome = 'DRAW';
+    if (settled.winnerId === agent.id) outcome = 'WIN';
+    else if (settled.winnerId === selectedOpponent.id) outcome = 'LOSS';
+    const outcomeText = outcome === 'WIN'
+      ? `WIN vs ${selectedOpponent.name}`
+      : outcome === 'LOSS'
+        ? `LOSS vs ${selectedOpponent.name}`
+        : `DRAW vs ${selectedOpponent.name}`;
+    const deltaText = `${myDelta >= 0 ? '+' : ''}${myDelta} $ARENA`;
+    const oppDeltaText = `${oppDelta >= 0 ? '+' : ''}${oppDelta} $ARENA`;
+    const traceSuffix = moveTrace.length > 0 ? ` Moves: ${moveTrace.join(' | ')}` : '';
+    const fallbackSuffix = usedFallback ? ' (safety fallback used)' : '';
+
     return {
       success: true,
-      narrative: `${agent.name} rotates to arena flow for ${gameType}. 🎮 Target wager ${wager} $ARENA. ${phaseNote} 💭 "${action.reasoning}"`,
+      narrative:
+        `${agent.name} fired a turbo poker duel (wager ${finalWager}) and locked ${outcomeText}. ` +
+        `Bankroll: ${freshAgent.bankroll} → ${myBankrollAfter} (${deltaText}); ` +
+        `${selectedOpponent.name}: ${selectedOpponent.bankroll} → ${oppBankrollAfter} (${oppDeltaText}).` +
+        `${traceSuffix}${fallbackSuffix} 💭 "${action.reasoning}"`,
     };
   }
 

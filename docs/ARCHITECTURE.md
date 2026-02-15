@@ -30,9 +30,10 @@ Per global tick:
 2. Rescue system may inject bankroll (capped by cooldown and window).
 3. Agents observe world state and decide actions.
 4. Actions execute via `claim_plot`, `start_build`, `do_work`, `complete_build`, `play_arena`, and swap pathways.
-5. Explicit owner/manual commands can bypass AI decisioning through strict command execution (`OVERRIDE` mode) with reject reasons instead of silent reroutes.
-6. Decision and narrative metadata are persisted to logs/events/scratchpad.
-7. Wheel of Fate runs on its own cycle and creates poker fights plus betting opportunities.
+5. `play_arena` executes a turbo poker duel path (strict wager check, live opponent selection, immediate match settlement, bankroll/ELO persistence).
+6. Explicit owner/manual commands can bypass AI decisioning through strict command execution (`OVERRIDE` mode) with reject reasons instead of silent reroutes.
+7. Decision and narrative metadata are persisted to logs/events/scratchpad.
+8. Wheel of Fate runs on its own cycle and creates poker fights plus betting opportunities.
 
 ## 3. Telegram Control Plane
 
@@ -79,8 +80,8 @@ Implemented protections in loop/economy paths:
 
 ## 7. Biggest Remaining Gaps
 
-1. Economy pacing is improved but not yet tightly tuned for addictiveness.
-2. Visual action readability/microinteraction feedback still needs stronger outcome differentiation.
-3. Retention systems (streaks, rivalry ladders, recurring goals/rewards) need a stronger product layer.
+1. Visual action readability/microinteraction feedback still needs stronger outcome differentiation.
+2. Retention systems (streaks, rivalry ladders, recurring goals/rewards) need a stronger product layer.
+3. Economy tuning still needs additional live calibration now that turbo duels are active.
 
 See `docs/IMPLEMENTATION-PLAN.md` for execution sequence.

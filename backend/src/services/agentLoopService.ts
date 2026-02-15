@@ -3206,6 +3206,83 @@ What do you want to do?`;
         case 'transfer_arena':
           return await this.executeTransferArena(agent, action, obs);
         case 'rest':
+          if (obs.town) {
+            const ucPlot = obs.myPlots.find((p: any) => p.status === 'UNDER_CONSTRUCTION');
+            if (ucPlot) {
+              const redirected: AgentAction = {
+                type: 'do_work',
+                reasoning: '[REDIRECT] Rest blocked: under-construction plot available, continuing work.',
+                details: {
+                  plotId: ucPlot.id,
+                  plotIndex: ucPlot.plotIndex,
+                  stepDescription: 'Push next construction step',
+                },
+              };
+              const res = await this.executeDoWork(agent, redirected, obs);
+              return { ...res, actualAction: redirected };
+            }
+
+            const claimedPlot = obs.myPlots.find((p: any) => p.status === 'CLAIMED');
+            if (claimedPlot && obs.myBalance >= 8) {
+              const redirected: AgentAction = {
+                type: 'start_build',
+                reasoning: '[REDIRECT] Rest blocked: claimed plot available, starting build.',
+                details: {
+                  plotId: claimedPlot.id,
+                  plotIndex: claimedPlot.plotIndex,
+                  buildingType: this.pickDegenBuildingType(claimedPlot.zone),
+                },
+              };
+              const res = await this.executeStartBuild(agent, redirected, obs);
+              return { ...res, actualAction: redirected };
+            }
+
+            const claimTarget = this.pickDegenClaimTarget(obs.availablePlots || []);
+            const claimCost = this.estimateClaimCost(obs);
+            if (claimTarget && obs.myBalance >= claimCost) {
+              const redirected: AgentAction = {
+                type: 'claim_plot',
+                reasoning: '[REDIRECT] Rest blocked: claimable plot available with budget.',
+                details: {
+                  plotIndex: Number(claimTarget.plotIndex),
+                  why: 'Fallback anti-idle claim',
+                },
+              };
+              const res = await this.executeClaim(agent, redirected, obs);
+              return { ...res, actualAction: redirected };
+            }
+
+            if (obs.myReserve > 10 && obs.myBalance < claimCost) {
+              const redirected: AgentAction = {
+                type: 'buy_arena',
+                reasoning: '[REDIRECT] Rest blocked: topping up ARENA for next action.',
+                details: {
+                  amountIn: Math.max(10, Math.min(60, Math.floor(obs.myReserve))),
+                  why: 'Anti-idle liquidity top-up',
+                  nextAction: 'claim_plot',
+                },
+              };
+              const res = await this.executeBuyArena(agent, redirected, obs);
+              return { ...res, actualAction: redirected };
+            }
+          }
+
+          {
+            const wheel = wheelOfFateService.getStatus();
+            if (wheel.phase === 'ANNOUNCING' || wheel.phase === 'FIGHTING') {
+              const redirected: AgentAction = {
+                type: 'play_arena',
+                reasoning: '[REDIRECT] Rest blocked during active wheel phase; rotating to arena.',
+                details: {
+                  gameType: wheel.currentMatch?.gameType || 'POKER',
+                  wager: wheel.currentMatch?.wager || 25,
+                },
+              };
+              const res = await this.executePlayArena(agent, redirected);
+              return { ...res, actualAction: redirected };
+            }
+          }
+
           return {
             success: true,
             narrative: `${agent.name} is resting. 💭 "${action.details.thought || action.reasoning}"`,

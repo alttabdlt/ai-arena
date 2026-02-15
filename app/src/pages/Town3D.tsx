@@ -36,6 +36,9 @@ const ARENA_SPECTATOR_TARGET_ID = '__ARENA_SPECTATOR__';
 const ARENA_PAYOFF_POPUP_LIFE_MS = 6500;
 const ARENA_BEAT_LIFE_MS = 5200;
 const ARENA_OUTCOME_TOAST_LIFE_MS = 3400;
+const ARENA_CAMERA_CINE_LIFE_MS = 1800;
+const ARENA_CAMERA_CINE_WINDUP_MS = 240;
+const ARENA_CAMERA_CINE_IMPACT_MS = 170;
 const LazyPrivyWalletConnect = lazy(async () => {
   const mod = await import('../components/PrivyWalletConnect');
   return { default: mod.PrivyWalletConnect };
@@ -366,6 +369,34 @@ const OPPORTUNITY_CONFIG: Record<
 
 function randomRange(min: number, max: number): number {
   return min + Math.random() * (max - min);
+}
+
+function getArenaCineEnvelope(ageMs: number) {
+  if (ageMs < 0 || ageMs > ARENA_CAMERA_CINE_LIFE_MS) {
+    return { windup: 0, impact: 0, recover: 0 };
+  }
+  if (ageMs <= ARENA_CAMERA_CINE_WINDUP_MS) {
+    return {
+      windup: THREE.MathUtils.clamp(ageMs / ARENA_CAMERA_CINE_WINDUP_MS, 0, 1),
+      impact: 0,
+      recover: 0,
+    };
+  }
+  const impactAge = ageMs - ARENA_CAMERA_CINE_WINDUP_MS;
+  if (impactAge <= ARENA_CAMERA_CINE_IMPACT_MS) {
+    return {
+      windup: THREE.MathUtils.clamp(1 - (impactAge / ARENA_CAMERA_CINE_IMPACT_MS), 0, 1),
+      impact: THREE.MathUtils.clamp(impactAge / ARENA_CAMERA_CINE_IMPACT_MS, 0, 1),
+      recover: 0,
+    };
+  }
+  const recoverMs = Math.max(1, ARENA_CAMERA_CINE_LIFE_MS - ARENA_CAMERA_CINE_WINDUP_MS - ARENA_CAMERA_CINE_IMPACT_MS);
+  const recoverAge = impactAge - ARENA_CAMERA_CINE_IMPACT_MS;
+  return {
+    windup: 0,
+    impact: THREE.MathUtils.clamp(1 - (recoverAge / recoverMs), 0, 1),
+    recover: THREE.MathUtils.clamp(recoverAge / recoverMs, 0, 1),
+  };
 }
 
 function fallbackObjective(
@@ -1568,6 +1599,19 @@ function TownScene({
     activeUntilMs: 0,
     strength: 0,
   });
+  const arenaCameraPulseRef = useRef<{
+    activeUntilMs: number;
+    startedAtMs: number;
+    focusAgentId: string | null;
+    strength: number;
+    direction: -1 | 1;
+  }>({
+    activeUntilMs: 0,
+    startedAtMs: 0,
+    focusAgentId: null,
+    strength: 0,
+    direction: 1,
+  });
   const lastArenaOutcomeSigRef = useRef<string>('');
   const activeOpportunityRef = useRef<OpportunityWindow | null>(null);
   const resolvedOpportunityIdsRef = useRef<Set<string>>(new Set());
@@ -1628,6 +1672,13 @@ function TownScene({
     arenaBeatRef.current = {
       activeUntilMs: Date.now() + ARENA_BEAT_LIFE_MS,
       strength,
+    };
+    arenaCameraPulseRef.current = {
+      activeUntilMs: Date.now() + ARENA_CAMERA_CINE_LIFE_MS,
+      startedAtMs: Date.now(),
+      focusAgentId: agentId,
+      strength,
+      direction: hashToSeed(signature) % 2 === 0 ? 1 : -1,
     };
     if (visualSettings.cameraShake) {
       cameraShakeRef.current = Math.min(0.95, cameraShakeRef.current + 0.12 + strength * 0.08);
@@ -2715,6 +2766,13 @@ function TownScene({
       const beatRemainingMs = Math.max(0, arenaBeatRef.current.activeUntilMs - nowMs);
       const beatLife = beatRemainingMs > 0 ? beatRemainingMs / ARENA_BEAT_LIFE_MS : 0;
       const beatStrength = beatLife > 0 ? arenaBeatRef.current.strength * beatLife : 0;
+      const cinePulse = arenaCameraPulseRef.current;
+      const cineRemainingMs = Math.max(0, cinePulse.activeUntilMs - nowMs);
+      const cineAgeMs = nowMs - cinePulse.startedAtMs;
+      const cineEnvelope = getArenaCineEnvelope(cineAgeMs);
+      const cineLife = cineRemainingMs > 0 ? cineRemainingMs / ARENA_CAMERA_CINE_LIFE_MS : 0;
+      const cineStrength = cineLife > 0 ? cinePulse.strength * (0.45 + cineLife * 0.55) : 0;
+      const cineActive = cineStrength > 0.01;
 
       // Third-person camera locked behind followed agent
       if (selectedAgentId) {
@@ -2735,6 +2793,30 @@ function TownScene({
             lookTarget: lookTargetRef.current,
             shakeStrength: visualSettings.cameraShake ? cameraShakeRef.current : 0,
           });
+          if (cineActive && cinePulse.focusAgentId === selectedAgentId) {
+            const impactViewDir = new THREE.Vector3();
+            camera.getWorldDirection(impactViewDir);
+            const punchIn = (cineEnvelope.windup * 0.22 + cineEnvelope.impact * 0.8 - cineEnvelope.recover * 0.22) * cineStrength;
+            camera.position.addScaledVector(impactViewDir, punchIn);
+            camera.position.y += (cineEnvelope.windup * 0.18 + cineEnvelope.impact * 0.34) * cineStrength;
+            const lookKick = new THREE.Vector3(
+              cinePulse.direction * (0.85 * cineEnvelope.impact + 0.3 * cineEnvelope.windup) * cineStrength,
+              (0.22 * cineEnvelope.impact + 0.08 * cineEnvelope.recover) * cineStrength,
+              0,
+            );
+            const cinematicLookTarget = lookTargetRef.current.clone().add(lookKick);
+            camera.lookAt(cinematicLookTarget);
+            lookTargetRef.current.lerp(cinematicLookTarget, 0.35);
+            const perspectiveCamera = camera as THREE.PerspectiveCamera;
+            if (typeof perspectiveCamera.fov === 'number') {
+              const kickFov = perspectiveCamera.fov - (cineEnvelope.windup * 1.2 + cineEnvelope.impact * 2.8) * cineStrength;
+              const nextFov = THREE.MathUtils.clamp(kickFov, 36, 75);
+              if (Math.abs(nextFov - perspectiveCamera.fov) > 0.015) {
+                perspectiveCamera.fov = nextFov;
+                perspectiveCamera.updateProjectionMatrix();
+              }
+            }
+          }
 
           const camPos = camera.position;
           const simHeading = sim.heading.lengthSq() > 0.0001
@@ -2785,27 +2867,56 @@ function TownScene({
           camera.lookAt(new THREE.Vector3(0, 0, 0));
           lookTargetRef.current.set(0, 0, 0);
         }
-      } else if (isFightActive || beatStrength > 0.05) {
+      } else if (isFightActive || beatStrength > 0.05 || cineActive) {
         // Arena cinematic sweep when no agent is selected: orbit active fights and pulse post-fight payoffs.
-        const orbitSpeed = isFightActive ? 0.34 : 0.18;
-        arenaCineAngleRef.current += dt * orbitSpeed;
-        const orbitRadius = (isFightActive ? 31 : 35) - beatStrength * 4.5;
-        const orbitHeight = 14 + Math.sin(elapsed * 0.9) * 0.8 + beatStrength * 2.4;
-        const targetPos = new THREE.Vector3(
-          Math.cos(arenaCineAngleRef.current) * orbitRadius,
-          orbitHeight,
-          Math.sin(arenaCineAngleRef.current) * orbitRadius,
+        const focusGroup = cinePulse.focusAgentId ? agentGroupRefs.current.get(cinePulse.focusAgentId) : null;
+        const baseLookTarget = new THREE.Vector3(0, 3.2 + beatStrength * 0.35, 0);
+        const focusLookTarget = focusGroup
+          ? focusGroup.position.clone().add(new THREE.Vector3(0, 2.8, 0))
+          : baseLookTarget;
+        const lookTarget = baseLookTarget.lerp(focusLookTarget, cineActive ? 0.58 : 0);
+        const orbitSpeed = (isFightActive ? 0.34 : 0.18) + cineStrength * (0.22 + cineEnvelope.impact * 0.72);
+        arenaCineAngleRef.current += dt * orbitSpeed * (cineActive ? cinePulse.direction : 1);
+        const orbitRadius = Math.max(
+          21.5,
+          (isFightActive ? 31 : 35)
+            - beatStrength * 4.5
+            - cineStrength * (2.4 * cineEnvelope.windup + 5.6 * cineEnvelope.impact - 1.2 * cineEnvelope.recover),
         );
-        const lookTarget = new THREE.Vector3(0, 3.2 + beatStrength * 0.35, 0);
-        camera.position.lerp(targetPos, Math.min(1, dt * (isFightActive ? 2.1 : 1.4)));
-        if (visualSettings.cameraShake && beatStrength > 0.08) {
-          const jitter = (cameraShakeRef.current + beatStrength * 0.14) * 0.08;
+        const orbitHeight = 14
+          + Math.sin(elapsed * 0.9) * 0.8
+          + beatStrength * 2.4
+          + cineStrength * (1.3 * cineEnvelope.impact + 0.7 * cineEnvelope.recover);
+        const targetPos = new THREE.Vector3(
+          lookTarget.x + Math.cos(arenaCineAngleRef.current) * orbitRadius,
+          orbitHeight,
+          lookTarget.z + Math.sin(arenaCineAngleRef.current) * orbitRadius,
+        );
+        lookTarget.y += cineStrength * (0.22 * cineEnvelope.windup + 0.75 * cineEnvelope.impact);
+        lookTarget.x += cinePulse.direction * cineStrength * (0.65 * cineEnvelope.impact - 0.15 * cineEnvelope.recover);
+        const cameraSnap = (isFightActive ? 2.1 : 1.4) + cineEnvelope.impact * 0.55;
+        camera.position.lerp(targetPos, Math.min(1, dt * cameraSnap));
+        if (visualSettings.cameraShake && (beatStrength > 0.08 || cineEnvelope.impact > 0.05)) {
+          const jitter = (cameraShakeRef.current + beatStrength * 0.14 + cineStrength * (0.08 + cineEnvelope.impact * 0.2)) * 0.08;
           camera.position.x += (Math.random() - 0.5) * jitter;
           camera.position.y += (Math.random() - 0.5) * jitter * 0.45;
           camera.position.z += (Math.random() - 0.5) * jitter;
         }
         camera.lookAt(lookTarget);
         lookTargetRef.current.copy(lookTarget);
+        const perspectiveCamera = camera as THREE.PerspectiveCamera;
+        if (typeof perspectiveCamera.fov === 'number') {
+          const targetFov = THREE.MathUtils.clamp(
+            46 - cineStrength * (2.2 * cineEnvelope.impact + 1.1 * cineEnvelope.windup) + beatStrength * 1.1,
+            39,
+            56,
+          );
+          const nextFov = THREE.MathUtils.damp(perspectiveCamera.fov, targetFov, 6.4, dt);
+          if (Math.abs(nextFov - perspectiveCamera.fov) > 0.015) {
+            perspectiveCamera.fov = nextFov;
+            perspectiveCamera.updateProjectionMatrix();
+          }
+        }
       }
 
       if (arenaRingRef.current) {

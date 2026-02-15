@@ -1,10 +1,17 @@
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
-import { type Agent, type AgentSim, type AgentEconomicState } from './types';
+import { type Agent, type AgentSim, type AgentEconomicState, type AgentState } from './types';
 import { ARCHETYPE_GLYPH, getBodyConfig } from './agentVisuals';
 import { ArchetypeAccessories } from './AgentAccessories';
-import { EconomicStateEffect, ChatAura, ActionAura, ArenaOutcomeAura, type ArenaOutcomeResult } from './AgentStateEffects';
+import {
+  EconomicStateEffect,
+  ChatAura,
+  ActionAura,
+  ActionTransitionPulse,
+  ArenaOutcomeAura,
+  type ArenaOutcomeResult,
+} from './AgentStateEffects';
 
 const DUEL_MOTION_WINDUP_MS = 220;
 const DUEL_MOTION_IMPACT_MS = 140;
@@ -78,6 +85,8 @@ export function AgentDroid({
   const eyeL = useRef<THREE.Mesh>(null);
   const eyeR = useRef<THREE.Mesh>(null);
   const selectionRing = useRef<THREE.Mesh>(null);
+  const previousActivityRef = useRef<AgentState | null>(null);
+  const [transitionPulse, setTransitionPulse] = useState<{ state: AgentState; atMs: number } | null>(null);
 
   const cfg = getBodyConfig(agent.archetype);
   const isDead = false;
@@ -123,6 +132,23 @@ export function AgentDroid({
     const phaseT = t + motionPhase;
     const sim = simsRef.current.get(agent.id);
     const activity = sim?.state || 'WALKING';
+    const previousActivity = previousActivityRef.current;
+    if (previousActivity && previousActivity !== activity) {
+      const transitionEligible = activity !== 'WALKING'
+        && activity !== 'TRAVELING'
+        && activity !== 'IDLE'
+        && activity !== 'CHATTING';
+      if (transitionEligible) {
+        const nowMs = Date.now();
+        setTransitionPulse((prev) => {
+          if (prev && prev.state === activity && nowMs - prev.atMs < 120) {
+            return prev;
+          }
+          return { state: activity, atMs: nowMs };
+        });
+      }
+    }
+    previousActivityRef.current = activity;
     const movementSpeed = sim?.velocity?.length() ?? 0;
     const locomotionBoost = THREE.MathUtils.clamp(movementSpeed / 3.2, 0.35, 1.6);
     const locomotionBlend = sim?.stateBlend ?? (activity === 'WALKING' ? 1 : 0);
@@ -479,6 +505,11 @@ export function AgentDroid({
         {/* Activity-specific effects */}
         {activity === 'CHATTING' && <ChatAura />}
         <ActionAura state={activity} />
+        <ActionTransitionPulse
+          state={transitionPulse?.state ?? activity}
+          triggeredAtMs={transitionPulse?.atMs ?? null}
+          intensity={transitionPulse?.state === 'FIGHTING' ? 1.2 : 1}
+        />
         <ArenaOutcomeAura
           outcome={arenaOutcome?.result ?? null}
           triggeredAtMs={arenaOutcomeAtMs}

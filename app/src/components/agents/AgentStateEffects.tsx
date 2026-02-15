@@ -292,6 +292,214 @@ export function ActionAura({ state }: { state: AgentState }) {
   );
 }
 
+type ActionTransitionVisual = {
+  color: string;
+  accent: string;
+  shardColor: string;
+  shardCount: number;
+  intensity: number;
+  lift: number;
+};
+
+const ACTION_TRANSITION_VISUALS: Partial<Record<AgentState, ActionTransitionVisual>> = {
+  CLAIMING: {
+    color: '#facc15',
+    accent: '#fde047',
+    shardColor: '#fef08a',
+    shardCount: 5,
+    intensity: 0.9,
+    lift: 0.12,
+  },
+  BUILDING: {
+    color: '#f97316',
+    accent: '#fb923c',
+    shardColor: '#fed7aa',
+    shardCount: 6,
+    intensity: 1.02,
+    lift: 0.16,
+  },
+  WORKING: {
+    color: '#fb923c',
+    accent: '#fdba74',
+    shardColor: '#ffedd5',
+    shardCount: 6,
+    intensity: 0.98,
+    lift: 0.14,
+  },
+  MINING: {
+    color: '#a78bfa',
+    accent: '#c4b5fd',
+    shardColor: '#ddd6fe',
+    shardCount: 5,
+    intensity: 0.9,
+    lift: 0.13,
+  },
+  TRADING: {
+    color: '#22d3ee',
+    accent: '#67e8f9',
+    shardColor: '#a5f3fc',
+    shardCount: 6,
+    intensity: 0.96,
+    lift: 0.12,
+  },
+  FIGHTING: {
+    color: '#fb7185',
+    accent: '#fda4af',
+    shardColor: '#fecdd3',
+    shardCount: 7,
+    intensity: 1.14,
+    lift: 0.2,
+  },
+  PLAYING: {
+    color: '#38bdf8',
+    accent: '#7dd3fc',
+    shardColor: '#bae6fd',
+    shardCount: 6,
+    intensity: 0.94,
+    lift: 0.15,
+  },
+};
+
+const ACTION_TRANSITION_LIFE_MS = 940;
+
+export function ActionTransitionPulse({
+  state,
+  triggeredAtMs,
+  intensity = 1,
+}: {
+  state: AgentState;
+  triggeredAtMs: number | null;
+  intensity?: number;
+}) {
+  const config = ACTION_TRANSITION_VISUALS[state];
+  const ringRef = useRef<THREE.Mesh>(null);
+  const haloRef = useRef<THREE.Mesh>(null);
+  const flashRef = useRef<THREE.Mesh>(null);
+  const shardRefs = useRef<Array<THREE.Mesh | null>>([]);
+  const phaseOffsetRef = useRef(Math.random() * Math.PI * 2);
+
+  useFrame((frameState) => {
+    if (!config || !triggeredAtMs) return;
+    const ring = ringRef.current;
+    const halo = haloRef.current;
+    const flash = flashRef.current;
+    if (!ring || !halo || !flash) return;
+
+    const age = Date.now() - triggeredAtMs;
+    if (age < 0 || age > ACTION_TRANSITION_LIFE_MS) {
+      ring.visible = false;
+      halo.visible = false;
+      flash.visible = false;
+      for (let index = 0; index < shardRefs.current.length; index++) {
+        const shard = shardRefs.current[index];
+        if (shard) shard.visible = false;
+      }
+      return;
+    }
+
+    ring.visible = true;
+    halo.visible = true;
+    flash.visible = true;
+
+    const life = THREE.MathUtils.clamp(age / ACTION_TRANSITION_LIFE_MS, 0, 1);
+    const fade = 1 - life;
+    const easeOut = 1 - Math.pow(1 - life, 3);
+    const amp = config.intensity * THREE.MathUtils.clamp(intensity, 0.75, 1.8);
+    const t = frameState.clock.elapsedTime + phaseOffsetRef.current;
+
+    const ringScale = 0.56 + easeOut * (1.05 + amp * 0.34);
+    const haloScale = 0.46 + easeOut * (0.92 + amp * 0.28);
+    ring.position.y = 0.08 + config.lift * easeOut;
+    halo.position.y = 0.05 + config.lift * 0.66 * easeOut;
+    ring.scale.set(ringScale, ringScale, 1);
+    halo.scale.set(haloScale, haloScale, 1);
+    flash.scale.set(0.64 + easeOut * (0.72 + amp * 0.24), 0.64 + easeOut * (0.72 + amp * 0.24), 1);
+
+    const ringMat = ring.material as THREE.MeshStandardMaterial;
+    ringMat.opacity = THREE.MathUtils.clamp((0.6 + Math.sin(t * 8.5) * 0.08) * fade, 0, 0.82);
+    ringMat.emissiveIntensity = THREE.MathUtils.clamp((0.72 + amp * 0.72) * fade, 0, 2.2);
+
+    const haloMat = halo.material as THREE.MeshBasicMaterial;
+    haloMat.opacity = THREE.MathUtils.clamp((0.36 + Math.sin(t * 6.4) * 0.1) * fade, 0, 0.5);
+
+    const flashMat = flash.material as THREE.MeshBasicMaterial;
+    const shock = Math.max(0, Math.sin(life * Math.PI));
+    flashMat.opacity = THREE.MathUtils.clamp((0.14 + shock * 0.26) * fade, 0, 0.42);
+
+    for (let index = 0; index < config.shardCount; index++) {
+      const shard = shardRefs.current[index];
+      if (!shard) continue;
+      shard.visible = true;
+      const theta = (index / config.shardCount) * Math.PI * 2 + t * 0.34;
+      const radial = 0.25 + easeOut * (0.58 + amp * 0.24);
+      shard.position.set(
+        Math.cos(theta) * radial,
+        0.2 + config.lift * 0.5 + easeOut * (0.22 + (index % 2) * 0.08),
+        Math.sin(theta) * radial,
+      );
+      shard.rotation.y = -theta;
+      const shardScaleY = 0.45 + fade * (0.36 + (index % 2) * 0.15);
+      shard.scale.set(0.7, shardScaleY, 0.7);
+      const shardMat = shard.material as THREE.MeshStandardMaterial;
+      shardMat.opacity = THREE.MathUtils.clamp((0.24 + Math.sin(t * 5.6 + index) * 0.08) * fade, 0, 0.5);
+      shardMat.emissiveIntensity = THREE.MathUtils.clamp((0.42 + amp * 0.42) * fade, 0, 1.7);
+    }
+    for (let index = config.shardCount; index < shardRefs.current.length; index++) {
+      const shard = shardRefs.current[index];
+      if (shard) shard.visible = false;
+    }
+  });
+
+  if (!config || !triggeredAtMs) return null;
+
+  return (
+    <group>
+      <mesh ref={flashRef} position={[0, 0.1, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.28, 1.08, 40]} />
+        <meshBasicMaterial color={config.accent} transparent opacity={0.18} depthWrite={false} />
+      </mesh>
+      <mesh ref={haloRef} position={[0, 0.08, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.32, 0.64, 34]} />
+        <meshBasicMaterial color={config.accent} transparent opacity={0.36} depthWrite={false} />
+      </mesh>
+      <mesh ref={ringRef} position={[0, 0.12, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[0.72, 0.048, 10, 42]} />
+        <meshStandardMaterial
+          color={config.color}
+          emissive={config.color}
+          emissiveIntensity={0.9}
+          transparent
+          opacity={0.64}
+          roughness={0.22}
+          metalness={0.2}
+          depthWrite={false}
+        />
+      </mesh>
+      {Array.from({ length: config.shardCount }).map((_, index) => (
+        <mesh
+          key={`action-transition-shard-${index}`}
+          ref={(node) => {
+            shardRefs.current[index] = node;
+          }}
+          position={[0, 0.18, 0]}
+        >
+          <boxGeometry args={[0.045, 0.24, 0.045]} />
+          <meshStandardMaterial
+            color={config.shardColor}
+            emissive={config.accent}
+            emissiveIntensity={0.55}
+            transparent
+            opacity={0.32}
+            roughness={0.24}
+            metalness={0.16}
+            depthWrite={false}
+          />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
 const ARENA_OUTCOME_AURA_CONFIG: Record<
   ArenaOutcomeResult,
   { color: string; baseOpacity: number; emissive: number; lift: number }

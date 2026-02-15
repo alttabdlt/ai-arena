@@ -20,6 +20,8 @@ Give owners frictionless control/communication with their own agent, not generic
 - NL router supports "my agent ..." intent routing.
 - Owner messaging is ownership-gated through linked Telegram identity.
 - Receipts now include queue status, target, expected tick window, and completion callback.
+- Deterministic owner quick actions are live via `/build`, `/work`, `/fight`, `/trade`.
+- UI parity is live via `POST /agent-loop/action/:agentId` with strict executed/rejected receipts.
 
 ### Deliverables
 1. Direct “message my agent” flow in Telegram without requiring agent name. ✅

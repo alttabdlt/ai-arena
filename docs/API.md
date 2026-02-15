@@ -23,6 +23,7 @@ Operator routes authenticate through Telegram identity + linked wallet ownership
 - `POST /agent-loop/tick`
 - `POST /agent-loop/tick/:agentId`
 - `POST /agent-loop/tell/:agentId`
+- `POST /agent-loop/action/:agentId` (deterministic manual action: `build|work|fight|trade|rest`)
 - `POST /agent-loop/mode/:agentId`
 - `GET /agent-loop/mode/:agentId`
 
@@ -138,11 +139,13 @@ Primary command families:
 - Discovery: `/start`, `/town`, `/agents`, `/buildings`, `/stats`, `/wheel`
 - Loop control: `/go`, `/stop`, `/tick`
 - Agent interaction: `/tell`, `/say`, `/watch`, `/unwatch`
+- Owner deterministic action controls: `/build`, `/work`, `/fight`, `/trade` (linked agent only)
 - Identity/ownership: `/link`, `/myagent`, `/command`
 - Betting: `/bet`
 
 Receipt behavior:
 - `/tell` and `/say` return immediate `QUEUED` receipts with expected tick window.
+- `/build|/work|/fight|/trade` run deterministic owner commands and return immediate `EXECUTED/REJECTED` receipts with explicit reason text.
 - Agent reply includes executed action + tick.
 - `/command` returns queue receipt with command id, expiry, and apply window.
 - Command completion/rejection is pushed back to the originating Telegram chat as a structured receipt.

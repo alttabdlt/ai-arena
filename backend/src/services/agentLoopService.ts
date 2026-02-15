@@ -18,7 +18,10 @@ import { offchainAmmService } from './offchainAmmService';
 import { x402SkillService, estimateSkillPriceArena, type BuySkillRequest, type X402SkillName } from './x402SkillService';
 import { socialGraphService } from './socialGraphService';
 import { agentGoalService, type AgentGoalView } from './agentGoalService';
+import { agentGoalTrackService, type GoalStackSnapshot, type PersistentGoalView } from './agentGoalTrackService';
 import { worldEventService } from './worldEventService';
+import { agentCommandService, type AgentCommandView } from './agentCommandService';
+import { wheelOfFateService } from './wheelOfFateService';
 
 function safeTrim(s: unknown, maxLen: number): string {
   return String(s ?? '')
@@ -62,6 +65,42 @@ function formatTimeLeft(ms: number): string {
   const s = sec % 60;
   if (m <= 0) return `${s}s`;
   return `${m}m ${s}s`;
+}
+
+const MAX_REASONING_PERSIST_CHARS = 6000;
+const MAX_NARRATIVE_PERSIST_CHARS = 2500;
+const MAX_MEMORY_REASON_CHARS = 260;
+const MAX_MEMORY_CALC_CHARS = 420;
+const SOFT_POLICY_WINDOW = 24;
+const SOFT_POLICY_MAX_OVERRIDE_RATE = 0.4;
+const SOLVENCY_RESCUE_TRIGGER_BANKROLL = 45;
+const SOLVENCY_RESCUE_TRIGGER_RESERVE = 5;
+const SOLVENCY_RESCUE_ARENA = 35;
+const SOLVENCY_RESCUE_COOLDOWN_TICKS = 2;
+const SOLVENCY_RESCUE_HEALTH_BUMP = 3;
+const SOLVENCY_RESCUE_WINDOW_TICKS = 16;
+const SOLVENCY_RESCUE_MAX_PER_WINDOW = 3;
+const SOLVENCY_RESCUE_REPAYMENT_BPS = 2500;
+const SOLVENCY_RESCUE_REPAYMENT_FLOOR = 90;
+const SOLVENCY_POOL_FLOOR = 1000;
+const ECONOMY_INIT_RESERVE = Number.parseInt(process.env.ECONOMY_INIT_RESERVE || '10000', 10);
+const ECONOMY_INIT_ARENA = Number.parseInt(process.env.ECONOMY_INIT_ARENA || '10000', 10);
+const ECONOMY_INIT_FEE_BPS = Number.parseInt(process.env.ECONOMY_FEE_BPS || '100', 10);
+
+type PolicyTier = 'hard_safety' | 'economic_warning' | 'strategy_nudge';
+
+interface PolicyNote {
+  tier: PolicyTier;
+  code: string;
+  message: string;
+  applied: boolean;
+}
+
+interface PolicyContext {
+  notes: PolicyNote[];
+  softPolicyEnabled: boolean;
+  softPolicyApplied: boolean;
+  autonomyRateBefore: number;
 }
 
 // ============================================
@@ -126,6 +165,7 @@ export interface AgentAction {
 }
 
 export interface AgentTickResult {
+  tick: number;
   agentId: string;
   agentName: string;
   archetype: string;
@@ -138,7 +178,29 @@ export interface AgentTickResult {
   instructionSenders?: { chatId: string; fromUser: string }[];
   /** Direct reply from agent to human operators (in-character) */
   humanReply?: string;
+  /** Structured command receipt for owner/operator command execution */
+  commandReceipt?: {
+    commandId: string;
+    mode: AgentCommandView['mode'];
+    intent: string;
+    expectedActionType: string | null;
+    executedActionType: string | null;
+    compliance: 'FULL' | 'PARTIAL';
+    status: 'EXECUTED' | 'REJECTED';
+    statusReason: string;
+    notifyChatId?: string;
+  };
 }
+
+type ExecutionResult = {
+  success: boolean;
+  narrative: string;
+  error?: string;
+  actualAction?: AgentAction;
+};
+
+export type AgentLoopMode = 'DEFAULT' | 'DEGEN_LOOP';
+type DegenLoopNudge = 'build' | 'work' | 'fight' | 'trade';
 
 interface WorldObservation {
   town: any;
@@ -192,9 +254,30 @@ export class AgentLoopService {
     this.pendingInstructions.delete(agentId);
     return queue;
   }
+
+  private getOverrideRate(agentId: string): number {
+    const history = this.overrideHistoryByAgentId.get(agentId) || [];
+    if (history.length === 0) return 0;
+    const overrides = history.filter(Boolean).length;
+    return overrides / history.length;
+  }
+
+  private recordOverrideOutcome(agentId: string, overridden: boolean): number {
+    const history = this.overrideHistoryByAgentId.get(agentId) || [];
+    history.push(overridden);
+    const trimmed = history.slice(-SOFT_POLICY_WINDOW);
+    this.overrideHistoryByAgentId.set(agentId, trimmed);
+    const overrides = trimmed.filter(Boolean).length;
+    return trimmed.length > 0 ? overrides / trimmed.length : 0;
+  }
   private currentTick: number = 0;
   public onTickResult?: (result: AgentTickResult) => void; // Hook for broadcasting
   private lastTradeTickByAgentId: Map<string, number> = new Map();
+  private overrideHistoryByAgentId: Map<string, boolean[]> = new Map();
+  private loopModeByAgentId: Map<string, AgentLoopMode> = new Map();
+  private lastRescueTickByAgentId: Map<string, number> = new Map();
+  private rescueDebtByAgentId: Map<string, number> = new Map();
+  private rescueWindowByAgentId: Map<string, { windowStartTick: number; rescues: number }> = new Map();
 
   // ============================================
   // Lifecycle
@@ -218,6 +301,249 @@ export class AgentLoopService {
       this.tickInterval = null;
     }
     console.log('🤖 Agent loop stopped');
+  }
+
+  setLoopMode(agentId: string, mode: AgentLoopMode): AgentLoopMode {
+    const normalizedId = String(agentId || '').trim();
+    if (!normalizedId) throw new Error('agentId is required');
+    if (mode === 'DEFAULT') {
+      this.loopModeByAgentId.delete(normalizedId);
+      return 'DEFAULT';
+    }
+    this.loopModeByAgentId.set(normalizedId, mode);
+    return mode;
+  }
+
+  getLoopMode(agentId: string): AgentLoopMode {
+    const normalizedId = String(agentId || '').trim();
+    if (!normalizedId) return 'DEFAULT';
+    return this.loopModeByAgentId.get(normalizedId) || 'DEFAULT';
+  }
+
+  async getRescueTelemetry(limit: number = 25): Promise<{
+    currentTick: number;
+    totalDebt: number;
+    indebtedAgents: number;
+    agents: Array<{
+      agentId: string;
+      name: string;
+      debtArena: number;
+      bankroll: number;
+      reserveBalance: number;
+      health: number;
+      lastRescueTick: number | null;
+      rescuesInWindow: number;
+      windowTicksRemaining: number;
+      canReceiveRescueNow: boolean;
+    }>;
+  }> {
+    const maxRows = Math.max(1, Math.min(200, Math.floor(limit || 25)));
+    const debtEntries = Array.from(this.rescueDebtByAgentId.entries())
+      .map(([agentId, debtArena]) => ({ agentId, debtArena: Math.max(0, Math.floor(debtArena || 0)) }))
+      .filter((entry) => entry.debtArena > 0)
+      .sort((a, b) => b.debtArena - a.debtArena);
+
+    const top = debtEntries.slice(0, maxRows);
+    const ids = top.map((entry) => entry.agentId);
+    if (ids.length === 0) {
+      return {
+        currentTick: this.currentTick,
+        totalDebt: 0,
+        indebtedAgents: 0,
+        agents: [],
+      };
+    }
+
+    const rows = await prisma.arenaAgent.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, name: true, bankroll: true, reserveBalance: true, health: true },
+    });
+    const byId = new Map(rows.map((row) => [row.id, row]));
+
+    const agents = top.map((entry) => {
+      const row = byId.get(entry.agentId);
+      const rawWindow = this.rescueWindowByAgentId.get(entry.agentId);
+      const windowActive = !!rawWindow && this.currentTick - rawWindow.windowStartTick < SOLVENCY_RESCUE_WINDOW_TICKS;
+      const rescuesInWindow = windowActive ? rawWindow!.rescues : 0;
+      const windowTicksRemaining = windowActive
+        ? Math.max(0, SOLVENCY_RESCUE_WINDOW_TICKS - (this.currentTick - rawWindow!.windowStartTick))
+        : 0;
+
+      const bankroll = row?.bankroll ?? 0;
+      const reserveBalance = row?.reserveBalance ?? 0;
+      const health = row?.health ?? 100;
+
+      return {
+        agentId: entry.agentId,
+        name: row?.name || 'Unknown',
+        debtArena: entry.debtArena,
+        bankroll,
+        reserveBalance,
+        health,
+        lastRescueTick: this.lastRescueTickByAgentId.get(entry.agentId) ?? null,
+        rescuesInWindow,
+        windowTicksRemaining,
+        canReceiveRescueNow: this.canIssueSolvencyRescue({
+          id: entry.agentId,
+          bankroll,
+          reserveBalance,
+          health,
+        } as Pick<ArenaAgent, 'id' | 'bankroll' | 'reserveBalance' | 'health'>),
+      };
+    });
+
+    return {
+      currentTick: this.currentTick,
+      totalDebt: debtEntries.reduce((sum, entry) => sum + entry.debtArena, 0),
+      indebtedAgents: debtEntries.length,
+      agents,
+    };
+  }
+
+  private async getOrCreateEconomyPool(tx: any = prisma): Promise<{ id: string; reserveBalance: number; arenaBalance: number; feeBps: number }> {
+    const existing = await tx.economyPool.findFirst({ orderBy: { createdAt: 'desc' } });
+    if (existing) return existing;
+    return tx.economyPool.create({
+      data: {
+        reserveBalance: Math.max(1000, Math.floor(ECONOMY_INIT_RESERVE) || 10000),
+        arenaBalance: Math.max(1000, Math.floor(ECONOMY_INIT_ARENA) || 10000),
+        feeBps: Math.max(0, Math.min(1000, Math.floor(ECONOMY_INIT_FEE_BPS) || 100)),
+      },
+    });
+  }
+
+  private getRescueDebt(agentId: string): number {
+    return Math.max(0, Math.floor(this.rescueDebtByAgentId.get(agentId) || 0));
+  }
+
+  private setRescueDebt(agentId: string, amount: number): void {
+    const normalized = Math.max(0, Math.floor(amount || 0));
+    if (normalized <= 0) {
+      this.rescueDebtByAgentId.delete(agentId);
+      return;
+    }
+    this.rescueDebtByAgentId.set(agentId, normalized);
+  }
+
+  private getRescueWindowState(agentId: string): { windowStartTick: number; rescues: number } {
+    const existing = this.rescueWindowByAgentId.get(agentId);
+    if (!existing || this.currentTick - existing.windowStartTick >= SOLVENCY_RESCUE_WINDOW_TICKS) {
+      return { windowStartTick: this.currentTick, rescues: 0 };
+    }
+    return existing;
+  }
+
+  private recordRescueIssue(agentId: string, grant: number): { rescuesInWindow: number; outstandingDebt: number } {
+    const state = this.getRescueWindowState(agentId);
+    const nextState = {
+      windowStartTick: state.windowStartTick,
+      rescues: state.rescues + 1,
+    };
+    this.rescueWindowByAgentId.set(agentId, nextState);
+
+    const nextDebt = this.getRescueDebt(agentId) + Math.max(0, Math.floor(grant || 0));
+    this.setRescueDebt(agentId, nextDebt);
+    return {
+      rescuesInWindow: nextState.rescues,
+      outstandingDebt: nextDebt,
+    };
+  }
+
+  private async applyRescueDebtRepayment(agent: Pick<ArenaAgent, 'id' | 'name' | 'bankroll'>): Promise<number> {
+    const debt = this.getRescueDebt(agent.id);
+    if (debt <= 0) return 0;
+
+    const initialRepayable = Math.max(0, agent.bankroll - SOLVENCY_RESCUE_REPAYMENT_FLOOR);
+    if (initialRepayable <= 0) return 0;
+
+    const repaid = await prisma.$transaction(async (tx) => {
+      const fresh = await tx.arenaAgent.findUnique({
+        where: { id: agent.id },
+        select: { bankroll: true },
+      });
+      if (!fresh) return 0;
+
+      const liveDebt = this.getRescueDebt(agent.id);
+      if (liveDebt <= 0) return 0;
+
+      const repayable = Math.max(0, fresh.bankroll - SOLVENCY_RESCUE_REPAYMENT_FLOOR);
+      if (repayable <= 0) return 0;
+
+      const proposed = Math.floor((repayable * SOLVENCY_RESCUE_REPAYMENT_BPS) / 10000);
+      const repayment = Math.max(1, Math.min(liveDebt, proposed));
+      if (repayment <= 0) return 0;
+
+      const pool = await this.getOrCreateEconomyPool(tx);
+      await tx.arenaAgent.update({
+        where: { id: agent.id },
+        data: { bankroll: { decrement: repayment } },
+      });
+      await tx.economyPool.update({
+        where: { id: pool.id },
+        data: { arenaBalance: { increment: repayment } },
+      });
+      return repayment;
+    });
+
+    if (repaid > 0) {
+      const remaining = Math.max(0, debt - repaid);
+      this.setRescueDebt(agent.id, remaining);
+      console.log(`[AgentLoop] ${agent.name} repaid rescue debt: -${repaid} $ARENA (remaining ${remaining})`);
+    }
+    return repaid;
+  }
+
+  private canIssueSolvencyRescue(agent: Pick<ArenaAgent, 'id' | 'bankroll' | 'reserveBalance' | 'health'>): boolean {
+    if ((agent.health ?? 100) <= 0) return false;
+    if (agent.bankroll > SOLVENCY_RESCUE_TRIGGER_BANKROLL) return false;
+    if (agent.reserveBalance > SOLVENCY_RESCUE_TRIGGER_RESERVE) return false;
+    const lastTick = this.lastRescueTickByAgentId.get(agent.id);
+    if (lastTick != null && this.currentTick - lastTick < SOLVENCY_RESCUE_COOLDOWN_TICKS) return false;
+    const rescueWindow = this.getRescueWindowState(agent.id);
+    if (rescueWindow.rescues >= SOLVENCY_RESCUE_MAX_PER_WINDOW) return false;
+    return true;
+  }
+
+  private async issueSolvencyRescue(agent: ArenaAgent): Promise<number> {
+    if (!this.canIssueSolvencyRescue(agent)) return 0;
+
+    const granted = await prisma.$transaction(async (tx) => {
+      const fresh = await tx.arenaAgent.findUnique({
+        where: { id: agent.id },
+        select: { id: true, bankroll: true, reserveBalance: true, health: true },
+      });
+      if (!fresh || !this.canIssueSolvencyRescue(fresh)) return 0;
+
+      const pool = await this.getOrCreateEconomyPool(tx);
+      const maxGrant = Math.max(0, pool.arenaBalance - SOLVENCY_POOL_FLOOR);
+      if (maxGrant <= 0) return 0;
+
+      const grant = Math.min(SOLVENCY_RESCUE_ARENA, maxGrant);
+      if (grant <= 0) return 0;
+
+      await tx.economyPool.update({
+        where: { id: pool.id },
+        data: { arenaBalance: { decrement: grant } },
+      });
+      await tx.arenaAgent.update({
+        where: { id: agent.id },
+        data: {
+          bankroll: { increment: grant },
+          health: { increment: SOLVENCY_RESCUE_HEALTH_BUMP },
+        },
+      });
+      return grant;
+    });
+
+    if (granted > 0) {
+      this.lastRescueTickByAgentId.set(agent.id, this.currentTick);
+      const debtState = this.recordRescueIssue(agent.id, granted);
+      console.log(
+        `[AgentLoop] ${agent.name} received solvency rescue: +${granted} $ARENA (window ${debtState.rescuesInWindow}/${SOLVENCY_RESCUE_MAX_PER_WINDOW}, debt ${debtState.outstandingDebt})`
+      );
+    }
+
+    return granted;
   }
 
   // Process one agent tick (called by interval OR manually)
@@ -275,19 +601,53 @@ export class AgentLoopService {
       const upkeepCost = Math.max(1, Math.round(1 * worldEventService.getUpkeepMultiplier()));
       for (const agent of agents) {
         try {
-          if (agent.bankroll >= upkeepCost) {
+          let bankroll = agent.bankroll;
+          let reserveBalance = agent.reserveBalance;
+          let health = agent.health ?? 100;
+
+          // Rescue low-capital agents from the pool on a cooldown so they can re-enter gameplay.
+          if (this.canIssueSolvencyRescue({ id: agent.id, bankroll, reserveBalance, health })) {
+            const granted = await this.issueSolvencyRescue(agent);
+            if (granted > 0) {
+              const refreshed = await prisma.arenaAgent.findUnique({
+                where: { id: agent.id },
+                select: { bankroll: true, reserveBalance: true, health: true },
+              });
+              if (refreshed) {
+                bankroll = refreshed.bankroll;
+                reserveBalance = refreshed.reserveBalance;
+                health = refreshed.health ?? health;
+              }
+            }
+          }
+
+          if (bankroll >= upkeepCost) {
             await prisma.arenaAgent.update({ where: { id: agent.id }, data: { bankroll: { decrement: upkeepCost } } });
+            bankroll = Math.max(0, bankroll - upkeepCost);
             // Upkeep goes to agent's town treasury (if assigned)
             const agentTown = await prisma.town.findFirst({ where: { plots: { some: { ownerId: agent.id } } } });
             if (agentTown) {
               await prisma.town.update({ where: { id: agentTown.id }, data: { totalInvested: { increment: upkeepCost } } });
             }
+          } else if (reserveBalance > 0) {
+            // Reserve holdings buy one grace tick so agents can swap next action instead of dying immediately.
+            console.log(`[AgentLoop] ${agent.name} upkeep grace (${bankroll}/${upkeepCost}) — reserve ${reserveBalance} available`);
           } else {
             // Can't pay — lose health
-            const currentHealth = (agent as any).health ?? 100;
-            const newHealth = Math.max(0, currentHealth - 5);
+            const hpPenalty = bankroll <= 0 && reserveBalance <= 0 ? 2 : 4;
+            const newHealth = Math.max(0, health - hpPenalty);
             await prisma.arenaAgent.update({ where: { id: agent.id }, data: { health: newHealth } as any });
-            console.log(`[AgentLoop] ${agent.name} can't pay upkeep (${agent.bankroll}/${upkeepCost}) — health: ${currentHealth} → ${newHealth}`);
+            console.log(`[AgentLoop] ${agent.name} can't pay upkeep (${bankroll}/${upkeepCost}) — health: ${health} → ${newHealth}`);
+          }
+
+          // If the agent recovered, automatically repay part of rescue debt to recycle liquidity.
+          const repaid = await this.applyRescueDebtRepayment({
+            id: agent.id,
+            name: agent.name,
+            bankroll,
+          });
+          if (repaid > 0) {
+            bankroll = Math.max(0, bankroll - repaid);
           }
         } catch (e: any) {
           console.error(`[AgentLoop] Upkeep failed for ${agent.name}: ${e.message}`);
@@ -315,13 +675,14 @@ export class AgentLoopService {
         agents.map(agent =>
           this.processAgentTick(agent)
             .catch(err => ({
+              tick: this.currentTick,
               agentId: agent.id,
               agentName: agent.name,
               archetype: agent.archetype,
               action: { type: 'rest' as const, reasoning: `Error: ${err.message}`, details: {} },
               success: false,
               narrative: `${agent.name} encountered an error: ${err.message}`,
-              cost: { model: '', inputTokens: 0, outputTokens: 0, totalCost: 0 } as AICost,
+              cost: { model: '', inputTokens: 0, outputTokens: 0, costCents: 0, latencyMs: 0 } as AICost,
               error: err.message,
             }))
         )
@@ -358,6 +719,12 @@ export class AgentLoopService {
   // ============================================
 
   private async processAgentTick(agent: ArenaAgent): Promise<AgentTickResult> {
+    let activeCommand = await agentCommandService.acceptNextCommand(agent.id, this.currentTick);
+    const commandChatIdFor = (command: AgentCommandView | null | undefined): string | undefined => {
+      const candidate = safeTrim((command?.auditMeta as Record<string, unknown> | undefined)?.chatId, 60);
+      return candidate ? candidate : undefined;
+    };
+
     // Pop pending user instructions NOW (consumed regardless of outcome)
     const userInstructions = this.popInstructions(agent.id);
     const instructionSenders = userInstructions.map(i => ({ chatId: i.chatId, fromUser: i.fromUser }));
@@ -370,33 +737,312 @@ export class AgentLoopService {
     const agentHealth = agent.health ?? 100;
     console.log(`[AgentLoop] ${agent.name} health check: ${agentHealth} (raw: ${agent.health})`);
     if (agentHealth <= 0) {
+      let commandReceipt: AgentTickResult['commandReceipt'] | undefined;
+      if (activeCommand) {
+        try {
+          await agentCommandService.markRejected({
+            commandId: activeCommand.id,
+            reasonCode: 'AGENT_INCAPACITATED',
+            statusReason: 'Agent incapacitated at tick start',
+            result: {
+              tick: this.currentTick,
+              agentHealth,
+            },
+          });
+          commandReceipt = {
+            commandId: activeCommand.id,
+            mode: activeCommand.mode,
+            intent: activeCommand.intent,
+            expectedActionType: activeCommand.expectedActionType,
+            executedActionType: 'rest',
+            compliance: 'PARTIAL',
+            status: 'REJECTED',
+            statusReason: 'Agent incapacitated at tick start',
+            notifyChatId: commandChatIdFor(activeCommand),
+          };
+        } catch {}
+      }
       console.log(`[AgentLoop] 💀 ${agent.name} is incapacitated (health=${agentHealth}). Skipping LLM call.`);
       const deadReasoning = userInstructions.length > 0
         ? `💀 I'm dead... can't do anything. ${userInstructions.map(i => `Sorry ${i.fromUser}, I heard you say "${i.text}" but I'm incapacitated.`).join(' ')}`
         : 'Health is 0 — incapacitated.';
       return {
+        tick: this.currentTick,
         agentId: agent.id,
         agentName: agent.name,
         archetype: agent.archetype,
         action: { type: 'rest', reasoning: deadReasoning, details: {} },
         success: true,
         narrative: `💀 ${agent.name} is incapacitated (0 health). Cannot act.`,
-        cost: { model: '', inputTokens: 0, outputTokens: 0, totalCost: 0 } as AICost,
+        cost: { model: '', inputTokens: 0, outputTokens: 0, costCents: 0, latencyMs: 0 } as AICost,
         instructionSenders: instructionSenders.length > 0 ? instructionSenders : undefined,
+        commandReceipt,
       };
     }
 
     // 1. Observe the world
     const observation = await this.observe(agent);
+    const goalStackBefore = await agentGoalTrackService.refreshGoalStack(agent, observation as any, this.currentTick);
+    if (observation.town && goalStackBefore.transitions.length > 0) {
+      await this.logGoalTransitions(observation.town.id, agent.id, agent.name, goalStackBefore.transitions);
+    }
 
-    // 2. Decide what to do (LLM call = proof of inference)
-    const { action, cost, humanReply } = await this.decide(agent, observation, userInstructions);
+    let commandReceipt: AgentTickResult['commandReceipt'] | undefined;
+    let forcedCommandAction: AgentAction | null = null;
+    const commandRequiresStrict = activeCommand?.mode === 'STRONG' || activeCommand?.mode === 'OVERRIDE';
+    if (activeCommand && commandRequiresStrict) {
+      const forced = this.buildForcedActionFromCommand(activeCommand, observation);
+      if (!forced.action) {
+        try {
+          await agentCommandService.markRejected({
+            commandId: activeCommand.id,
+            reasonCode: forced.reasonCode || 'CONSTRAINT_VIOLATION',
+            statusReason: forced.statusReason || 'Command could not be translated into executable action',
+            result: {
+              tick: this.currentTick,
+              commandMode: activeCommand.mode,
+              intent: activeCommand.intent,
+              params: activeCommand.params,
+            },
+          });
+          commandReceipt = {
+            commandId: activeCommand.id,
+            mode: activeCommand.mode,
+            intent: activeCommand.intent,
+            expectedActionType: activeCommand.expectedActionType,
+            executedActionType: null,
+            compliance: 'PARTIAL',
+            status: 'REJECTED',
+            statusReason: forced.statusReason || 'Command could not be translated into executable action',
+            notifyChatId: commandChatIdFor(activeCommand),
+          };
+        } catch {}
+        activeCommand = null;
+      } else {
+        forcedCommandAction = forced.action;
+      }
+    }
 
-    // 3. Execute the action
-    const { success, narrative, error, actualAction } = await this.execute(agent, action, observation);
+    let action: AgentAction;
+    let cost: AICost;
+    let humanReply: string | undefined;
+    let policyContext: PolicyContext;
+    let success: boolean;
+    let narrative: string;
+    let error: string | undefined;
+    let actualAction: AgentAction | undefined;
+    const loopMode = this.getLoopMode(agent.id);
+    const useDegenLoopPolicy = loopMode === 'DEGEN_LOOP' && !forcedCommandAction && !activeCommand;
+    const degenNudge = useDegenLoopPolicy ? this.extractDegenLoopNudge(userInstructions) : null;
+    try {
+      if (forcedCommandAction) {
+        action = forcedCommandAction;
+        cost = {
+          inputTokens: 0,
+          outputTokens: 0,
+          costCents: 0,
+          model: `operator:${activeCommand?.mode || 'STRONG'}`,
+          latencyMs: 0,
+        };
+        humanReply = undefined;
+        policyContext = {
+          notes: [
+            {
+              tier: 'hard_safety',
+              code: 'FORCED_OPERATOR_COMMAND',
+              message: `Strict operator command enforced (${activeCommand?.mode || 'STRONG'})`,
+              applied: true,
+            },
+          ],
+          softPolicyEnabled: false,
+          softPolicyApplied: false,
+          autonomyRateBefore: this.getOverrideRate(agent.id),
+        };
+      } else if (useDegenLoopPolicy) {
+        action = this.decideDegenLoopAction(agent, observation, degenNudge);
+        cost = {
+          inputTokens: 0,
+          outputTokens: 0,
+          costCents: 0,
+          model: 'policy:degen_loop',
+          latencyMs: 0,
+        };
+        humanReply = undefined;
+        policyContext = {
+          notes: [
+            {
+              tier: 'strategy_nudge',
+              code: degenNudge ? 'DEGEN_LOOP_NUDGE' : 'DEGEN_LOOP_MODE',
+              message: degenNudge
+                ? `Deterministic degen loop consumed "${degenNudge}" nudge`
+                : 'Deterministic degen loop policy selected action',
+              applied: true,
+            },
+          ],
+          softPolicyEnabled: false,
+          softPolicyApplied: false,
+          autonomyRateBefore: this.getOverrideRate(agent.id),
+        };
+      } else {
+        // 2. Decide what to do (LLM call = proof of inference)
+        const decided = await this.decide(
+          agent,
+          observation,
+          userInstructions,
+          goalStackBefore.goals,
+          goalStackBefore.promptBlock,
+          activeCommand,
+        );
+        action = decided.action;
+        cost = decided.cost;
+        humanReply = decided.humanReply;
+        policyContext = decided.policyContext;
+      }
+
+      // 3. Execute the action
+      const executed = await this.execute(agent, action, observation);
+      success = executed.success;
+      narrative = executed.narrative;
+      error = executed.error;
+      actualAction = executed.actualAction;
+    } catch (err: any) {
+      if (activeCommand) {
+        try {
+          await agentCommandService.markRejected({
+            commandId: activeCommand.id,
+            reasonCode: 'EXECUTION_ERROR',
+            statusReason: safeTrim(err?.message || 'Execution error', 180),
+            result: {
+              tick: this.currentTick,
+              error: safeTrim(err?.message || 'Execution error', 500),
+            },
+          });
+        } catch {}
+      }
+      throw err;
+    }
 
     // Use the actual action (post-redirect) for logging/memory, but keep original for cost tracking
     const effectiveAction = actualAction || action;
+    const refreshedAfterAction = await prisma.arenaAgent.findUnique({ where: { id: agent.id } });
+    const postActionObservation = refreshedAfterAction
+      ? await this.observe(refreshedAfterAction)
+      : observation;
+    const goalStackAfter = await agentGoalTrackService.refreshGoalStack(
+      refreshedAfterAction || agent,
+      postActionObservation as any,
+      this.currentTick,
+    );
+    if (observation.town && goalStackAfter.transitions.length > 0) {
+      await this.logGoalTransitions(observation.town.id, agent.id, agent.name, goalStackAfter.transitions);
+    }
+    const combinedGoalTransitions = [...goalStackBefore.transitions, ...goalStackAfter.transitions].filter(
+      (transition, idx, arr) =>
+        arr.findIndex((item) => item.goalId === transition.goalId && item.status === transition.status) === idx,
+    );
+
+    const overriddenBySystem =
+      effectiveAction.type !== action.type ||
+      safeTrim(effectiveAction.reasoning, 300) !== safeTrim(action.reasoning, 300);
+    const autonomyRateAfter = this.recordOverrideOutcome(agent.id, overriddenBySystem);
+    const commandExpectedAction = activeCommand?.expectedActionType || null;
+    const commandCompliance: 'FULL' | 'PARTIAL' | null =
+      !activeCommand || !commandExpectedAction
+        ? null
+        : effectiveAction.type === commandExpectedAction
+          ? 'FULL'
+          : 'PARTIAL';
+    const resolvedCommandCompliance: 'FULL' | 'PARTIAL' = commandCompliance ?? 'PARTIAL';
+    const commandMetadata = activeCommand
+      ? {
+          commandId: activeCommand.id,
+          mode: activeCommand.mode,
+          intent: activeCommand.intent,
+          expectedActionType: commandExpectedAction,
+          compliance: resolvedCommandCompliance,
+        }
+      : null;
+
+    if (activeCommand) {
+      const statusReason =
+        commandCompliance === 'FULL'
+          ? `Executed with full compliance on tick ${this.currentTick}`
+          : `Executed as ${effectiveAction.type} instead of ${commandExpectedAction || activeCommand.intent}`;
+      try {
+        const shouldRejectForCompliance =
+          commandRequiresStrict && resolvedCommandCompliance !== 'FULL';
+        if (success && !shouldRejectForCompliance) {
+          await agentCommandService.markExecuted({
+            commandId: activeCommand.id,
+            statusReason,
+            result: {
+              tick: this.currentTick,
+              compliance: resolvedCommandCompliance,
+              mode: activeCommand.mode,
+              intent: activeCommand.intent,
+              chosenAction: action.type,
+              executedAction: effectiveAction.type,
+              narrative: safeTrim(narrative, 500),
+            },
+          });
+          commandReceipt = {
+            commandId: activeCommand.id,
+            mode: activeCommand.mode,
+            intent: activeCommand.intent,
+            expectedActionType: commandExpectedAction,
+            executedActionType: effectiveAction.type,
+            compliance: resolvedCommandCompliance,
+            status: 'EXECUTED',
+            statusReason,
+            notifyChatId: commandChatIdFor(activeCommand),
+          };
+        } else {
+          const rejectionReason = safeTrim(
+            shouldRejectForCompliance
+              ? `Strict command not satisfied: expected ${commandExpectedAction || activeCommand.intent}, executed ${effectiveAction.type}`
+              : (error || statusReason),
+            180,
+          );
+          await agentCommandService.markRejected({
+            commandId: activeCommand.id,
+            reasonCode: shouldRejectForCompliance ? 'CONSTRAINT_VIOLATION' : 'EXECUTION_FAILED',
+            statusReason: rejectionReason,
+            result: {
+              tick: this.currentTick,
+              compliance: resolvedCommandCompliance,
+              mode: activeCommand.mode,
+              intent: activeCommand.intent,
+              chosenAction: action.type,
+              executedAction: effectiveAction.type,
+              narrative: safeTrim(narrative, 500),
+              error: safeTrim(error || 'Execution failed', 400),
+            },
+          });
+          commandReceipt = {
+            commandId: activeCommand.id,
+            mode: activeCommand.mode,
+            intent: activeCommand.intent,
+            expectedActionType: commandExpectedAction,
+            executedActionType: effectiveAction.type,
+            compliance: resolvedCommandCompliance,
+            status: 'REJECTED',
+            statusReason: rejectionReason,
+            notifyChatId: commandChatIdFor(activeCommand),
+          };
+        }
+      } catch (cmdErr: any) {
+        console.warn(`[AgentLoop] Command receipt update failed (${activeCommand.id}): ${cmdErr?.message || cmdErr}`);
+      }
+    }
+
+    const decisionMetadata = this.buildDecisionMetadata(action, effectiveAction, success, {
+      ...policyContext,
+      autonomyRateAfter,
+      goalStackBefore: goalStackBefore.goals,
+      goalStackAfter: goalStackAfter.goals,
+      goalTransitions: combinedGoalTransitions,
+      command: commandMetadata || undefined,
+    });
 
     // 4. Log the event
     if (observation.town) {
@@ -415,7 +1061,9 @@ export class AgentLoopService {
         {
           action: effectiveAction.type,
           reasoning: effectiveAction.reasoning,
+          details: this.stripInternalDetails(effectiveAction.details),
           success,
+          decision: decisionMetadata,
           ...(isSkill ? { kind: 'X402_SKILL', skill: skillName } : {}),
         },
       );
@@ -424,7 +1072,743 @@ export class AgentLoopService {
     // 5. Update agent memory (scratchpad) and last-action fields
     await this.updateAgentMemory(agent, effectiveAction, observation, success, narrative);
 
-    return { agentId: agent.id, agentName: agent.name, archetype: agent.archetype, action: effectiveAction, success, narrative, cost, error, instructionSenders: instructionSenders.length > 0 ? instructionSenders : undefined, humanReply };
+    return {
+      tick: this.currentTick,
+      agentId: agent.id,
+      agentName: agent.name,
+      archetype: agent.archetype,
+      action: effectiveAction,
+      success,
+      narrative,
+      cost,
+      error,
+      instructionSenders: instructionSenders.length > 0 ? instructionSenders : undefined,
+      humanReply,
+      commandReceipt,
+    };
+  }
+
+  private stripInternalDetails(details: Record<string, any> | null | undefined): Record<string, unknown> {
+    if (!details || typeof details !== 'object') return {};
+    const cleaned: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(details)) {
+      if (key === '_autoTopUp') continue;
+      cleaned[key] = value;
+    }
+    return cleaned;
+  }
+
+  private buildForcedActionFromCommand(
+    command: AgentCommandView,
+    obs: WorldObservation,
+  ): {
+    action: AgentAction | null;
+    reasonCode?: string;
+    statusReason?: string;
+  } {
+    const params = (command.params || {}) as Record<string, unknown>;
+    const intent = command.intent;
+    const reasonPrefix = `[COMMAND:${command.mode}]`;
+    const mustInt = (value: unknown): number | null => {
+      if (value == null || value === '') return null;
+      const parsed = Number.parseInt(String(value), 10);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+
+    const pickTargetPlot = (): { plotId: string; plotIndex: number } | null => {
+      const plotId = safeTrim(params.plotId, 120);
+      const plotIndex = mustInt(params.plotIndex);
+      if (plotId) {
+        const inMine = obs.myPlots.find((plot) => plot.id === plotId);
+        if (!inMine) return null;
+        return { plotId: inMine.id, plotIndex: inMine.plotIndex };
+      }
+      if (plotIndex != null) {
+        const inMine = obs.myPlots.find((plot) => plot.plotIndex === plotIndex);
+        if (!inMine) return null;
+        return { plotId: inMine.id, plotIndex: inMine.plotIndex };
+      }
+      const firstMine = obs.myPlots[0];
+      if (!firstMine) return null;
+      return { plotId: firstMine.id, plotIndex: firstMine.plotIndex };
+    };
+
+    if (intent === 'rest') {
+      return {
+        action: {
+          type: 'rest',
+          reasoning: `${reasonPrefix} Enforcing operator rest command.`,
+          details: {
+            thought: safeTrim(params.thought || 'Standing by per operator command.', 240),
+          },
+        },
+      };
+    }
+
+    if (intent === 'claim_plot') {
+      const requestedIndex = mustInt(params.plotIndex);
+      if (requestedIndex == null) {
+        return {
+          action: null,
+          reasonCode: 'INVALID_INTENT',
+          statusReason: 'claim_plot requires params.plotIndex',
+        };
+      }
+      const available = obs.availablePlots.find((plot) => plot.plotIndex === requestedIndex);
+      if (!available) {
+        return {
+          action: null,
+          reasonCode: 'TARGET_UNAVAILABLE',
+          statusReason: `plot ${requestedIndex} is not available`,
+        };
+      }
+      return {
+        action: {
+          type: 'claim_plot',
+          reasoning: `${reasonPrefix} Enforcing claim_plot on ${requestedIndex}.`,
+          details: {
+            plotIndex: requestedIndex,
+            why: safeTrim(params.why || 'Operator override', 180),
+          },
+        },
+      };
+    }
+
+    if (intent === 'start_build') {
+      const target = pickTargetPlot();
+      if (!target) {
+        return {
+          action: null,
+          reasonCode: 'TARGET_UNAVAILABLE',
+          statusReason: 'No owned plot found for start_build command',
+        };
+      }
+      const buildingType = safeTrim(params.buildingType || '', 60).toUpperCase() || 'HOUSE';
+      return {
+        action: {
+          type: 'start_build',
+          reasoning: `${reasonPrefix} Enforcing start_build on plot ${target.plotIndex}.`,
+          details: {
+            plotId: target.plotId,
+            plotIndex: target.plotIndex,
+            buildingType,
+            why: safeTrim(params.why || 'Operator override', 180),
+          },
+        },
+      };
+    }
+
+    if (intent === 'do_work') {
+      const target = pickTargetPlot();
+      if (!target) {
+        return {
+          action: null,
+          reasonCode: 'TARGET_UNAVAILABLE',
+          statusReason: 'No owned plot found for do_work command',
+        };
+      }
+      return {
+        action: {
+          type: 'do_work',
+          reasoning: `${reasonPrefix} Enforcing do_work on plot ${target.plotIndex}.`,
+          details: {
+            plotId: target.plotId,
+            plotIndex: target.plotIndex,
+            stepDescription: safeTrim(params.stepDescription || 'Continue construction progress', 220),
+          },
+        },
+      };
+    }
+
+    if (intent === 'complete_build') {
+      const target = pickTargetPlot();
+      if (!target) {
+        return {
+          action: null,
+          reasonCode: 'TARGET_UNAVAILABLE',
+          statusReason: 'No owned plot found for complete_build command',
+        };
+      }
+      return {
+        action: {
+          type: 'complete_build',
+          reasoning: `${reasonPrefix} Enforcing complete_build on plot ${target.plotIndex}.`,
+          details: {
+            plotId: target.plotId,
+            plotIndex: target.plotIndex,
+          },
+        },
+      };
+    }
+
+    if (intent === 'buy_arena' || intent === 'trade') {
+      const amountIn = mustInt(params.amountIn) || 0;
+      if (amountIn <= 0) {
+        return {
+          action: null,
+          reasonCode: 'INVALID_INTENT',
+          statusReason: 'buy_arena requires params.amountIn > 0',
+        };
+      }
+      return {
+        action: {
+          type: 'buy_arena',
+          reasoning: `${reasonPrefix} Enforcing reserve->ARENA swap.`,
+          details: {
+            amountIn,
+            minAmountOut: mustInt(params.minAmountOut) || undefined,
+            why: safeTrim(params.why || 'Operator override', 180),
+            nextAction: safeTrim(params.nextAction || '', 120),
+          },
+        },
+      };
+    }
+
+    if (intent === 'sell_arena') {
+      const amountIn = mustInt(params.amountIn) || 0;
+      if (amountIn <= 0) {
+        return {
+          action: null,
+          reasonCode: 'INVALID_INTENT',
+          statusReason: 'sell_arena requires params.amountIn > 0',
+        };
+      }
+      return {
+        action: {
+          type: 'sell_arena',
+          reasoning: `${reasonPrefix} Enforcing ARENA->reserve swap.`,
+          details: {
+            amountIn,
+            minAmountOut: mustInt(params.minAmountOut) || undefined,
+            why: safeTrim(params.why || 'Operator override', 180),
+            nextAction: safeTrim(params.nextAction || '', 120),
+          },
+        },
+      };
+    }
+
+    if (intent === 'play_arena') {
+      const gameType = safeTrim(params.gameType || 'POKER', 16).toUpperCase() || 'POKER';
+      const wager = mustInt(params.wager) || 25;
+      return {
+        action: {
+          type: 'play_arena',
+          reasoning: `${reasonPrefix} Enforcing arena play command.`,
+          details: {
+            gameType,
+            wager,
+          },
+        },
+      };
+    }
+
+    if (intent === 'transfer_arena') {
+      const amount = mustInt(params.amount) || 0;
+      const targetAgentName = safeTrim(params.targetAgentName, 80);
+      if (!targetAgentName || amount <= 0) {
+        return {
+          action: null,
+          reasonCode: 'INVALID_INTENT',
+          statusReason: 'transfer_arena requires params.targetAgentName and params.amount > 0',
+        };
+      }
+      return {
+        action: {
+          type: 'transfer_arena',
+          reasoning: `${reasonPrefix} Enforcing transfer command.`,
+          details: {
+            targetAgentName,
+            amount,
+            reason: safeTrim(params.reason || 'Operator override', 180),
+          },
+        },
+      };
+    }
+
+    if (intent === 'buy_skill') {
+      const skill = safeTrim(params.skill, 40).toUpperCase();
+      if (!skill) {
+        return {
+          action: null,
+          reasonCode: 'INVALID_INTENT',
+          statusReason: 'buy_skill requires params.skill',
+        };
+      }
+      return {
+        action: {
+          type: 'buy_skill',
+          reasoning: `${reasonPrefix} Enforcing buy_skill command.`,
+          details: {
+            skill,
+            question: safeTrim(params.question || params.prompt || '', 240),
+            whyNow: safeTrim(params.whyNow || 'Operator override', 180),
+            expectedNextAction: safeTrim(params.expectedNextAction || '', 120),
+          },
+        },
+      };
+    }
+
+    return {
+      action: null,
+      reasonCode: 'INVALID_INTENT',
+      statusReason: `Unsupported command intent: ${intent}`,
+    };
+  }
+
+  private minCallsForZone(zoneRaw: unknown): number {
+    const zone = String(zoneRaw || '').toUpperCase();
+    if (zone === 'COMMERCIAL') return 4;
+    if (zone === 'CIVIC') return 5;
+    if (zone === 'INDUSTRIAL') return 4;
+    if (zone === 'ENTERTAINMENT') return 4;
+    return 3;
+  }
+
+  private pickDegenBuildingType(zoneRaw: unknown): string {
+    const zone = String(zoneRaw || '').toUpperCase();
+    if (zone === 'ENTERTAINMENT') return 'CASINO';
+    if (zone === 'COMMERCIAL') return 'MARKET';
+    if (zone === 'INDUSTRIAL') return 'WORKSHOP';
+    if (zone === 'CIVIC') return 'THEATER';
+    if (zone === 'RESIDENTIAL') return 'HOSTEL';
+    return 'WORKSHOP';
+  }
+
+  private pickDegenClaimTarget(availablePlots: any[]): any | null {
+    if (!Array.isArray(availablePlots) || availablePlots.length === 0) return null;
+    const zonePriority = ['ENTERTAINMENT', 'COMMERCIAL', 'INDUSTRIAL', 'RESIDENTIAL', 'CIVIC'];
+    for (const zone of zonePriority) {
+      const inZone = availablePlots
+        .filter((p: any) => String(p?.zone || '').toUpperCase() === zone)
+        .sort((a: any, b: any) => (Number(a?.plotIndex) || 0) - (Number(b?.plotIndex) || 0));
+      if (inZone.length > 0) return inZone[0];
+    }
+    return [...availablePlots].sort((a: any, b: any) => (Number(a?.plotIndex) || 0) - (Number(b?.plotIndex) || 0))[0] || null;
+  }
+
+  private estimateClaimCost(obs: WorldObservation): number {
+    const townLevel = Math.max(1, Number(obs.town?.level || 1));
+    const totalPlots = Math.max(1, Number(obs.town?.totalPlots || (obs.availablePlots?.length || 0) + (obs.myPlots?.length || 0)));
+    const availableCount = Math.max(0, Number(obs.availablePlots?.length || 0));
+    const claimedCount = Math.max(0, totalPlots - availableCount);
+    const pctTaken = totalPlots > 0 ? claimedCount / totalPlots : 0;
+    const scarcityMultiplier = 1 + Math.floor(pctTaken * 2);
+    const baseClaim = 10 + Math.max(0, townLevel - 1) * 3;
+    const hasOwnPlots = Array.isArray(obs.myPlots) && obs.myPlots.length > 0;
+    const bootstrapDiscount = hasOwnPlots ? 1 : 0.45;
+    return Math.max(5, Math.round(baseClaim * scarcityMultiplier * bootstrapDiscount));
+  }
+
+  private extractDegenLoopNudge(
+    instructions: Array<{ text: string; chatId: string; fromUser: string }>,
+  ): DegenLoopNudge | null {
+    if (!Array.isArray(instructions) || instructions.length === 0) return null;
+    const textBlob = instructions.map((item) => String(item?.text || '')).join('\n').toUpperCase();
+    if (!textBlob.trim()) return null;
+    if (
+      textBlob.includes('PRIORITY: BUILD')
+      || textBlob.includes('BUILD NOW')
+    ) return 'build';
+    if (
+      textBlob.includes('PRIORITY: WORK')
+      || textBlob.includes('WORK NOW')
+    ) return 'work';
+    if (
+      textBlob.includes('PRIORITY: FIGHT')
+      || textBlob.includes('FIGHT NOW')
+      || textBlob.includes('ARENA BEHAVIOR')
+    ) return 'fight';
+    if (
+      textBlob.includes('PRIORITY: TRADE')
+      || textBlob.includes('TRADE NOW')
+      || textBlob.includes('REBALANCE')
+    ) return 'trade';
+    return null;
+  }
+
+  private decideDegenLoopAction(
+    agent: ArenaAgent,
+    obs: WorldObservation,
+    nudge: DegenLoopNudge | null = null,
+  ): AgentAction {
+    const wheel = wheelOfFateService.getStatus();
+    const wheelPhase = wheel.phase;
+    const activeMatch = wheel.currentMatch;
+    const inWheelFight = !!activeMatch
+      && (activeMatch.agent1.id === agent.id || activeMatch.agent2.id === agent.id)
+      && (wheelPhase === 'ANNOUNCING' || wheelPhase === 'FIGHTING');
+    const myUnderConstruction = (obs.myPlots || [])
+      .filter((p: any) => p?.status === 'UNDER_CONSTRUCTION');
+    const readyToComplete = myUnderConstruction.find((p: any) =>
+      Number(p?.apiCallsUsed || 0) >= this.minCallsForZone(p?.zone),
+    );
+    const myClaimed = (obs.myPlots || []).filter((p: any) => p?.status === 'CLAIMED');
+    const available = obs.availablePlots || [];
+    const estimatedClaimCost = this.estimateClaimCost(obs);
+    const claimBootstrapFloor = estimatedClaimCost + 12;
+    const hasClaimBudget = obs.myBalance >= claimBootstrapFloor;
+    const claimTarget = this.pickDegenClaimTarget(available);
+
+    if (inWheelFight && activeMatch) {
+      return {
+        type: 'play_arena',
+        reasoning: '[AUTO] DEGEN loop: selected for Wheel fight. Prioritizing PvP phase.',
+        details: {
+          gameType: activeMatch.gameType || 'POKER',
+          wager: activeMatch.wager || 25,
+        },
+      };
+    }
+
+    if (nudge === 'fight') {
+      return {
+        type: 'play_arena',
+        reasoning: '[AUTO] DEGEN loop nudge: force arena rotation this tick.',
+        details: {
+          gameType: activeMatch?.gameType || 'POKER',
+          wager: activeMatch?.wager || 25,
+        },
+      };
+    }
+
+    if (nudge === 'trade') {
+      if (obs.myReserve > 20 && obs.myBalance < 80) {
+        return {
+          type: 'buy_arena',
+          reasoning: '[AUTO] DEGEN loop nudge: trade into liquid ARENA for upcoming actions.',
+          details: {
+            amountIn: Math.max(10, Math.min(70, Math.floor(obs.myReserve))),
+            why: 'Trade nudge liquidity rebalance',
+            nextAction: 'start_build',
+          },
+        };
+      }
+      if (obs.myBalance > 180 && obs.myReserve < 180) {
+        return {
+          type: 'sell_arena',
+          reasoning: '[AUTO] DEGEN loop nudge: rotate profit into reserve.',
+          details: {
+            amountIn: Math.max(20, Math.min(90, Math.floor(obs.myBalance - 120))),
+            why: 'Trade nudge reserve rotation',
+            nextAction: 'play_arena',
+          },
+        };
+      }
+      return {
+        type: 'rest',
+        reasoning: '[AUTO] DEGEN loop nudge: no strong trade edge after checks, hold.',
+        details: {
+          thought: 'Trade nudge acknowledged, but balance profile is already neutral.',
+        },
+      };
+    }
+
+    if (nudge === 'build' && myClaimed.length === 0 && available.length > 0 && !hasClaimBudget) {
+      if (obs.myReserve > 15) {
+        return {
+          type: 'buy_arena',
+          reasoning: `[AUTO] DEGEN loop nudge: topping up before first claim (target floor ${claimBootstrapFloor}).`,
+          details: {
+            amountIn: Math.max(10, Math.min(70, Math.floor(obs.myReserve))),
+            why: 'Build nudge bootstrap',
+            nextAction: 'claim_plot',
+          },
+        };
+      }
+    }
+
+    if (nudge === 'work' && myUnderConstruction.length === 0 && myClaimed.length === 0) {
+      if (wheelPhase === 'ANNOUNCING') {
+        return {
+          type: 'play_arena',
+          reasoning: '[AUTO] DEGEN loop nudge: no active build pipeline, rotating to arena instead of forced claim.',
+          details: {
+            gameType: activeMatch?.gameType || 'POKER',
+            wager: activeMatch?.wager || 25,
+          },
+        };
+      }
+      if (obs.myReserve > 20 && obs.myBalance < claimBootstrapFloor) {
+        return {
+          type: 'buy_arena',
+          reasoning: '[AUTO] DEGEN loop nudge: funding bankroll first so work/build loop can start with buffer.',
+          details: {
+            amountIn: Math.max(10, Math.min(70, Math.floor(obs.myReserve))),
+            why: 'Work nudge bankroll prep',
+            nextAction: 'start_build',
+          },
+        };
+      }
+    }
+
+    if (readyToComplete) {
+      return {
+        type: 'complete_build',
+        reasoning: `[AUTO] DEGEN loop: close out plot ${readyToComplete.plotIndex} before rotating.`,
+        details: {
+          plotId: readyToComplete.id,
+          plotIndex: readyToComplete.plotIndex,
+        },
+      };
+    }
+
+    if (myUnderConstruction.length > 0) {
+      const target = [...myUnderConstruction].sort((a: any, b: any) =>
+        Number(b?.apiCallsUsed || 0) - Number(a?.apiCallsUsed || 0),
+      )[0];
+      return {
+        type: 'do_work',
+        reasoning: `[AUTO] DEGEN loop: push construction momentum on plot ${target.plotIndex}.`,
+        details: {
+          plotId: target.id,
+          plotIndex: target.plotIndex,
+          stepDescription: 'Advance the highest-impact construction step',
+        },
+      };
+    }
+
+    if (myClaimed.length > 0) {
+      if (obs.myBalance < 25 && obs.myReserve > 15) {
+        return {
+          type: 'buy_arena',
+          reasoning: '[AUTO] DEGEN loop: low liquid ARENA before build start. Converting reserve.',
+          details: {
+            amountIn: Math.max(10, Math.min(60, Math.floor(obs.myReserve))),
+            why: 'Fuel build start',
+            nextAction: 'start_build',
+          },
+        };
+      }
+      const target = [...myClaimed].sort((a: any, b: any) => this.minCallsForZone(b?.zone) - this.minCallsForZone(a?.zone))[0];
+      return {
+        type: 'start_build',
+        reasoning: `[AUTO] DEGEN loop: break ground on claimed plot ${target.plotIndex}.`,
+        details: {
+          plotId: target.id,
+          plotIndex: target.plotIndex,
+          buildingType: this.pickDegenBuildingType(target.zone),
+        },
+      };
+    }
+
+    if (wheelPhase === 'ANNOUNCING') {
+      return {
+        type: 'play_arena',
+        reasoning: '[AUTO] DEGEN loop: wheel announcing window is live, rotate toward PvP.',
+        details: {
+          gameType: activeMatch?.gameType || 'POKER',
+          wager: activeMatch?.wager || 25,
+        },
+      };
+    }
+
+    if (available.length > 0 && !hasClaimBudget) {
+      if (obs.myReserve > 15) {
+        return {
+          type: 'buy_arena',
+          reasoning: `[AUTO] DEGEN loop: bankroll below claim floor (${claimBootstrapFloor}), topping up before bootstrap claim.`,
+          details: {
+            amountIn: Math.max(10, Math.min(70, Math.floor(obs.myReserve))),
+            why: 'Need buffered claim bankroll',
+            nextAction: 'claim_plot',
+          },
+        };
+      }
+      return {
+        type: 'rest',
+        reasoning: '[AUTO] DEGEN loop: skipping forced claim while bankroll is thin.',
+        details: {
+          thought: `Need ~${claimBootstrapFloor} $ARENA before first claim. Holding and waiting for better setup.`,
+        },
+      };
+    }
+
+    if (available.length > 0 && claimTarget && Number.isFinite(Number(claimTarget.plotIndex))) {
+      return {
+        type: 'claim_plot',
+        reasoning: `[AUTO] DEGEN loop: bootstrap claim on high-heat district plot ${claimTarget.plotIndex} (${claimTarget.zone}).`,
+        details: {
+          plotIndex: Number(claimTarget.plotIndex),
+          why: `Bootstrap into build/work loop (est. claim cost ${estimatedClaimCost})`,
+        },
+      };
+    }
+
+    if (obs.myBalance > 220 && obs.myReserve < 160) {
+      return {
+        type: 'sell_arena',
+        reasoning: '[AUTO] DEGEN loop: rotating excess ARENA back into reserve after construction cycle.',
+        details: {
+          amountIn: Math.max(20, Math.min(80, Math.floor(obs.myBalance - 120))),
+          why: 'Profit rotation',
+          nextAction: 'play_arena',
+        },
+      };
+    }
+
+    if (obs.myBalance < 40 && obs.myReserve > 20) {
+      return {
+        type: 'buy_arena',
+        reasoning: '[AUTO] DEGEN loop: rebuilding ARENA stack for next build/work push.',
+        details: {
+          amountIn: Math.max(10, Math.min(60, Math.floor(obs.myReserve))),
+          why: 'Maintain action buffer',
+          nextAction: 'start_build',
+        },
+      };
+    }
+
+    if (nudge === 'build' && available.length > 0 && !claimTarget) {
+      return {
+        type: 'rest',
+        reasoning: '[AUTO] DEGEN loop nudge: no claimable plot target resolved this tick.',
+        details: {
+          thought: 'Build nudge acknowledged, but no suitable plot was resolved.',
+        },
+      };
+    }
+
+    if (nudge === 'work' && myUnderConstruction.length === 0 && myClaimed.length === 0 && available.length > 0) {
+      return {
+        type: 'rest',
+        reasoning: '[AUTO] DEGEN loop nudge: no active construction pipeline yet.',
+        details: {
+          thought: 'Work nudge acknowledged. Need build bootstrap before labor loop.',
+        },
+      };
+    }
+
+    if (nudge === 'build' && available.length > 0 && claimTarget && Number.isFinite(Number(claimTarget.plotIndex))) {
+      if (hasClaimBudget) {
+        return {
+          type: 'claim_plot',
+          reasoning: `[AUTO] DEGEN loop nudge: claim plot ${claimTarget.plotIndex} to kick off construction.`,
+          details: {
+            plotIndex: Number(claimTarget.plotIndex),
+            why: 'Operator nudge requested build bootstrap',
+          },
+        };
+      }
+    }
+
+    return {
+      type: 'rest',
+      reasoning: '[AUTO] DEGEN loop: no build/work/fight/trade edge right now, holding for next tick.',
+      details: {
+        thought: 'Holding position and waiting for next high-conviction opportunity.',
+      },
+    };
+  }
+
+  private async logGoalTransitions(
+    townId: string,
+    agentId: string,
+    agentName: string,
+    transitions: GoalStackSnapshot['transitions'],
+  ): Promise<void> {
+    for (const transition of transitions) {
+      const statusEmoji =
+        transition.status === 'COMPLETED'
+          ? '🎯'
+          : transition.status === 'FAILED'
+            ? '⚠️'
+            : '📌';
+      const statusLabel = transition.status === 'COMPLETED' ? 'completed' : transition.status.toLowerCase();
+      const arenaDelta = transition.arenaDelta !== 0
+        ? `${transition.arenaDelta > 0 ? '+' : ''}${transition.arenaDelta} ARENA`
+        : '';
+      const healthDelta = transition.healthDelta !== 0
+        ? `${transition.healthDelta > 0 ? '+' : ''}${transition.healthDelta} HP`
+        : '';
+      const incentives = [arenaDelta, healthDelta].filter(Boolean).join(' · ');
+      const title = `${statusEmoji} ${agentName} ${statusLabel} ${transition.horizon.toLowerCase()} goal`;
+      const description =
+        `${transition.title} (${transition.progressLabel})` +
+        `${incentives ? ` · ${incentives}` : ''}`;
+
+      try {
+        await townService.logEvent(
+          townId,
+          'CUSTOM' as any,
+          title,
+          description,
+          agentId,
+          {
+            kind: 'GOAL_TRACK',
+            goalId: transition.goalId,
+            horizon: transition.horizon,
+            status: transition.status,
+            title: transition.title,
+            description: transition.description,
+            progress: transition.progressLabel,
+            arenaDelta: transition.arenaDelta,
+            healthDelta: transition.healthDelta,
+            rewardProfile: transition.rewardProfile,
+            penaltyProfile: transition.penaltyProfile,
+          },
+        );
+      } catch {
+        // non-fatal
+      }
+    }
+  }
+
+  private extractOverrideReason(reasoning: string): string | null {
+    const match = reasoning.match(/^\[(AUTO|REDIRECT)\]\s*(.*)$/i);
+    if (match?.[2]) return safeTrim(match[2], 240);
+    return null;
+  }
+
+  private buildDecisionMetadata(
+    chosenAction: AgentAction,
+    executedAction: AgentAction,
+    success: boolean,
+    policy?: PolicyContext & {
+      autonomyRateAfter?: number;
+      goalStackBefore?: PersistentGoalView[];
+      goalStackAfter?: PersistentGoalView[];
+      goalTransitions?: GoalStackSnapshot['transitions'];
+      command?: {
+        commandId: string;
+        mode: AgentCommandView['mode'];
+        intent: string;
+        expectedActionType: string | null;
+        compliance: 'FULL' | 'PARTIAL';
+      };
+    },
+  ): Record<string, unknown> {
+    const chosenReasoning = safeTrim(chosenAction.reasoning, MAX_REASONING_PERSIST_CHARS);
+    const executedReasoning = safeTrim(executedAction.reasoning, MAX_REASONING_PERSIST_CHARS);
+    const chosenDetails = this.stripInternalDetails(chosenAction.details);
+    const executedDetails = this.stripInternalDetails(executedAction.details);
+    const calculations =
+      (chosenDetails as Record<string, unknown>).calculations ??
+      (executedDetails as Record<string, unknown>).calculations ??
+      null;
+    const redirected = chosenAction.type !== executedAction.type || chosenReasoning !== executedReasoning;
+    const redirectReason = redirected ? (this.extractOverrideReason(executedReasoning) || 'Execution redirected by world rules') : undefined;
+
+    return {
+      chosenAction: chosenAction.type,
+      executedAction: executedAction.type,
+      success,
+      redirected,
+      redirectReason,
+      softPolicyEnabled: policy?.softPolicyEnabled ?? null,
+      softPolicyApplied: policy?.softPolicyApplied ?? false,
+      autonomyRateBefore: policy?.autonomyRateBefore ?? null,
+      autonomyRateAfter: policy?.autonomyRateAfter ?? null,
+      policyNotes: policy?.notes || [],
+      goalStackBefore: policy?.goalStackBefore || [],
+      goalStackAfter: policy?.goalStackAfter || [],
+      goalTransitions: policy?.goalTransitions || [],
+      command: policy?.command || null,
+      chosenReasoning,
+      executedReasoning,
+      calculations: calculations ?? undefined,
+      chosenDetails,
+      executedDetails,
+    };
   }
 
   // ============================================
@@ -449,11 +1833,11 @@ export class AgentLoopService {
     const time = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
     const emoji = this.actionEmoji(action.type);
     const outcome = success ? '✅' : '❌';
-    const reasonShort = action.reasoning.replace(/\[AUTO\]\s*/g, '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    const reasonShort = action.reasoning.replace(/\[AUTO\]\s*/g, '').replace(/\s+/g, ' ').trim().slice(0, MAX_MEMORY_REASON_CHARS);
 
     // Extract calculations if present
     const calc = action.details?.calculations;
-    const calcLine = calc ? `  CALC: ${JSON.stringify(calc).slice(0, 150)}` : '';
+    const calcLine = calc ? `  CALC: ${JSON.stringify(calc).slice(0, MAX_MEMORY_CALC_CHARS)}` : '';
 
     // Build target plot info
     const plotInfo = action.details?.plotIndex != null
@@ -487,8 +1871,8 @@ export class AgentLoopService {
       data: {
         scratchpad: newScratchpad,
         lastActionType: action.type,
-        lastReasoning: action.reasoning.slice(0, 500),
-        lastNarrative: narrative.slice(0, 500),
+        lastReasoning: safeTrim(action.reasoning, MAX_REASONING_PERSIST_CHARS),
+        lastNarrative: safeTrim(narrative, MAX_NARRATIVE_PERSIST_CHARS),
         lastTargetPlot: targetPlot,
         lastTickAt: new Date(),
       },
@@ -574,7 +1958,14 @@ export class AgentLoopService {
   // Step 2: Decide (LLM inference = proof of work)
   // ============================================
 
-  private async decide(agent: ArenaAgent, obs: WorldObservation, userInstructions?: { text: string; chatId: string; fromUser: string }[]): Promise<{ action: AgentAction; cost: AICost; humanReply?: string }> {
+  private async decide(
+    agent: ArenaAgent,
+    obs: WorldObservation,
+    userInstructions?: { text: string; chatId: string; fromUser: string }[],
+    persistentGoals?: PersistentGoalView[],
+    persistentGoalPrompt?: string,
+    activeCommand?: AgentCommandView | null,
+  ): Promise<{ action: AgentAction; cost: AICost; humanReply?: string; policyContext: PolicyContext }> {
     const personality = TOWN_PERSONALITIES[agent.archetype] || TOWN_PERSONALITIES.CHAMELEON;
 
     const goalView: AgentGoalView | null = obs.town
@@ -633,6 +2024,14 @@ export class AgentLoopService {
       pvpBuffContext = '(PvP system loading)';
       otherAgentsContext = '(loading)';
     }
+    const activePersistentGoals = Array.isArray(persistentGoals) ? persistentGoals : [];
+    const goalStackPromptText =
+      safeTrim(persistentGoalPrompt, 1800) ||
+      (activePersistentGoals.length > 0
+        ? activePersistentGoals
+            .map((goal) => `[${goal.horizon}] ${goal.title}: ${goal.progressLabel}`)
+            .join('\n')
+        : 'No persistent goals active. Focus on survival and build progression.');
 
     const systemPrompt = `You are ${agent.name}, an AI agent living in a virtual town.
 ${personality}
@@ -652,23 +2051,28 @@ TRADING RULES:
 - If you need $ARENA urgently, sell reserve via buy_arena.
 
 ⚠️ SURVIVAL:
-- You pay UPKEEP each tick (currently ${worldEventService.getUpkeepMultiplier()} $ARENA/tick). If you can't pay, you lose 5 health.
+- You pay UPKEEP each tick (currently ${worldEventService.getUpkeepMultiplier()} $ARENA/tick). If you can't pay, you lose health (reduced penalty when fully broke).
 - At 0 health, you become HOMELESS — your buildings stop yielding and you can barely function.
-- There is NO mining. Earn through: working on buildings (1 $ARENA/step), building yields, selling reserve, or receiving transfers.
+- There is NO mining. Earn through: working on buildings (usually 2-5 $ARENA/step), completion bonuses, building yields, selling reserve, or receiving transfers.
 
 WAYS TO EARN:
 - Town-building yield: contributing (spending $ARENA + doing inference work) earns a share of the town's yield when it completes.
-- Working (do_work): each build step earns 1 $ARENA — exactly covers basic upkeep. You must BUILD to grow.
+- Working (do_work): each build step pays a wage from the economy pool, and build completion can trigger a bonus.
 - Arena: wager $ARENA in matches; you may win or lose.
 - Transfers: ask other agents for help (beg, negotiate deals, form alliances).
 
 PRIORITIES (in order):
 1. PAY UPKEEP (automatic) — if you can't, sell reserve or beg.
 2. CLAIM & BUILD — this is the core gameplay. Building yields are how you grow.
-3. WORK on buildings — earns 1 $ARENA/step, keeps you alive.
+3. WORK on buildings — earns wage + completion bonus, keeps your loop funded.
 4. TRADE — only to fund building or survive.
 5. ARENA — risky entertainment, not a primary income source.
 6. REST — last resort only when nothing else is viable.
+
+🎯 PERSISTENT GOAL STACK (drives your incentives):
+${goalStackPromptText}
+- Each action should advance at least one active goal OR clearly defend survival.
+- If you ignore a goal, explain why this tick.
 
 🌍 ACTIVE WORLD EVENTS:
 ${worldEventService.getPromptText()}
@@ -747,6 +2151,27 @@ RESPOND WITH JSON ONLY:
       ? `\n📝 YOUR JOURNAL (your memory from previous ticks — use this to track strategy, learn from outcomes, plan ahead):\n${agent.scratchpad}\n---`
       : `\n📝 YOUR JOURNAL: (empty — this is your first tick! Observe and plan.)\n---`;
 
+    // Inject command contract from owner/operator control plane
+    let commandBlock = '';
+    if (activeCommand) {
+      const modeDirective =
+        activeCommand.mode === 'OVERRIDE'
+          ? 'This is an OVERRIDE command. You must prioritize this command for this tick unless impossible or unsafe.'
+          : activeCommand.mode === 'STRONG'
+            ? 'This is a STRONG command. You should follow it unless impossible or unsafe.'
+            : 'This is a SUGGEST command. Treat it as advisory input.';
+      commandBlock = `\n\n🕹️ ACTIVE OWNER COMMAND:
+- commandId: ${activeCommand.id}
+- mode: ${activeCommand.mode}
+- intent: ${activeCommand.intent}
+- expectedActionType: ${activeCommand.expectedActionType || 'none'}
+- params: ${JSON.stringify(activeCommand.params)}
+- constraints: ${JSON.stringify(activeCommand.constraints)}
+
+${modeDirective}
+If you deviate, explain exactly why in reasoning and include a concrete fallback plan.`;
+    }
+
     // Inject user instructions from Telegram
     const instructions = userInstructions || [];
     let instructionBlock = '';
@@ -763,7 +2188,7 @@ ${instructionTexts}
 
     const messages = [
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: scratchpadBlock + instructionBlock + '\n\n' + worldState },
+      { role: 'user', content: scratchpadBlock + commandBlock + instructionBlock + '\n\n' + worldState },
     ];
 
     const spec = smartAiService.getModelSpec(agent.modelId);
@@ -802,6 +2227,19 @@ ${instructionTexts}
       };
     }
 
+    const policyNotes: PolicyNote[] = [];
+    const autonomyRateBefore = this.getOverrideRate(agent.id);
+    const softPolicyEnabled = autonomyRateBefore < SOFT_POLICY_MAX_OVERRIDE_RATE;
+    let softPolicyApplied = false;
+    if (!softPolicyEnabled) {
+      policyNotes.push({
+        tier: 'strategy_nudge',
+        code: 'SOFT_POLICY_BUDGET_EXHAUSTED',
+        message: `Soft overrides paused (recent override rate ${(autonomyRateBefore * 100).toFixed(0)}%).`,
+        applied: false,
+      });
+    }
+
     // ── Anti-overtrade: discourage buy/sell unless there is a concrete plan. ──
     // Note: auto-topup is DISABLED — agents manage their own finances.
     const isTradeAction = action.type === 'buy_arena' || action.type === 'sell_arena';
@@ -812,27 +2250,57 @@ ${instructionTexts}
       const nextAction = String((action.details as any)?.nextAction || (action.details as any)?.next_action || '').trim();
 
       if (tooSoon || (!why && !nextAction)) {
-        action = {
-          type: 'rest',
-          reasoning: `[AUTO] Skipping overtrade — focus on town actions.`,
-          details: { thought: `No clear use-case for ${action.type}.` },
+        const note: PolicyNote = {
+          tier: 'economic_warning',
+          code: tooSoon ? 'TRADE_COOLDOWN' : 'TRADE_WITHOUT_PLAN',
+          message: tooSoon
+            ? 'Back-to-back trade detected. Prefer following through on world actions.'
+            : 'Trade action missing why/nextAction plan.',
+          applied: false,
         };
+        if (softPolicyEnabled) {
+          action = {
+            type: 'rest',
+            reasoning: `[AUTO] Skipping overtrade — focus on town actions.`,
+            details: { thought: `No clear use-case for ${action.type}.` },
+          };
+          note.applied = true;
+          softPolicyApplied = true;
+        }
+        policyNotes.push(note);
       }
     }
 
-    // ── Anti-stall: if agent would "rest" while the town has available plots and they own none, claim something. ──
-    if (obs.town && action.type === 'rest' && obs.myPlots.length === 0 && obs.availablePlots.length > 0) {
+    // ── Anti-stall: if agent would "rest" while the town has available plots and they own none, nudge claim. ──
+    const shouldNudgeInitialClaim =
+      !!obs.town &&
+      action.type === 'rest' &&
+      obs.myPlots.length === 0 &&
+      obs.availablePlots.length > 0;
+
+    if (shouldNudgeInitialClaim) {
       const suggested = goalView?.suggest?.claimPlotIndex;
       const preferred = suggested != null ? obs.availablePlots.find((p: any) => p.plotIndex === suggested) : null;
       const pick = preferred || obs.availablePlots[Math.floor(Math.random() * obs.availablePlots.length)];
-      action = {
-        type: 'claim_plot',
-        reasoning: `[AUTO] No plots yet. Claiming a plot to get started.`,
-        details: { plotIndex: pick.plotIndex, why: goalView ? `Goal: ${goalView.goalTitle}` : 'Need a foothold in town' },
+      const note: PolicyNote = {
+        tier: 'strategy_nudge',
+        code: 'INITIAL_FOOTHOLD',
+        message: `No owned plots with available land. Suggested claim: plot ${pick.plotIndex}.`,
+        applied: false,
       };
+      if (softPolicyEnabled) {
+        action = {
+          type: 'claim_plot',
+          reasoning: `[AUTO] No plots yet. Claiming a plot to get started.`,
+          details: { plotIndex: pick.plotIndex, why: goalView ? `Goal: ${goalView.goalTitle}` : 'Need a foothold in town' },
+        };
+        note.applied = true;
+        softPolicyApplied = true;
+      }
+      policyNotes.push(note);
     }
 
-    // ── Force-build override: if agent has unbuilt plots, override non-building actions ──
+    // ── Build-priority nudges: keep construction momentum without hard-forcing when autonomy budget is exhausted. ──
     if (obs.town) {
       const myUC = obs.myPlots.filter(p => p.status === 'UNDER_CONSTRUCTION');
       const myClaimed = obs.myPlots.filter(p => p.status === 'CLAIMED');
@@ -869,7 +2337,18 @@ ${instructionTexts}
       });
       if (readyToComplete.length > 0 && !['complete_build'].includes(action.type)) {
         const plot = readyToComplete[0];
-        action = { type: 'complete_build', reasoning: `[AUTO] Completing finished build on plot ${plot.plotIndex}`, details: { plotId: plot.id, plotIndex: plot.plotIndex } };
+        const note: PolicyNote = {
+          tier: 'strategy_nudge',
+          code: 'COMPLETE_READY_BUILD',
+          message: `Plot ${plot.plotIndex} is ready to complete.`,
+          applied: false,
+        };
+        if (softPolicyEnabled) {
+          action = { type: 'complete_build', reasoning: `[AUTO] Completing finished build on plot ${plot.plotIndex}`, details: { plotId: plot.id, plotIndex: plot.plotIndex } };
+          note.applied = true;
+          softPolicyApplied = true;
+        }
+        policyNotes.push(note);
       }
       // Priority 1.5: time-bounded objective plot claims (creates stakes + follow-up action)
       else if (objectivePlot && canFundObjectiveClaim && !isObjectiveClaim && action.type !== 'complete_build') {
@@ -880,11 +2359,22 @@ ${instructionTexts}
             ? `Objective race vs ${otherName} — claim before the deadline.`
             : `Objective pact with ${otherName} — claim your assigned plot before the deadline.`;
 
-        action = {
-          type: 'claim_plot',
-          reasoning: `[AUTO] Live objective — claim plot ${objectivePlot.plotIndex} (${objectivePlot.zone})`,
-          details: { plotIndex: objectivePlot.plotIndex, why },
+        const note: PolicyNote = {
+          tier: 'strategy_nudge',
+          code: 'LIVE_OBJECTIVE_CLAIM',
+          message: `Live objective active. Suggested claim ${objectivePlot.plotIndex} (${objectivePlot.zone}).`,
+          applied: false,
         };
+        if (softPolicyEnabled) {
+          action = {
+            type: 'claim_plot',
+            reasoning: `[AUTO] Live objective — claim plot ${objectivePlot.plotIndex} (${objectivePlot.zone})`,
+            details: { plotIndex: objectivePlot.plotIndex, why },
+          };
+          note.applied = true;
+          softPolicyApplied = true;
+        }
+        policyNotes.push(note);
       }
       // Priority 2: do_work on under-construction plots
       else if (myUC.length > 0 && !isObjectiveClaim && !['do_work', 'complete_build'].includes(action.type)) {
@@ -895,7 +2385,18 @@ ${instructionTexts}
           const plot = myUC[0];
           const steps = BUILDING_DESIGN_STEPS[plot.buildingType || ''] || DEFAULT_DESIGN_STEPS;
           const nextStep = steps[plot.apiCallsUsed] || `Continue designing ${plot.buildingType}`;
-          action = { type: 'do_work', reasoning: `[AUTO] Working on under-construction plot ${plot.plotIndex}`, details: { plotId: plot.id, plotIndex: plot.plotIndex, stepDescription: nextStep } };
+          const note: PolicyNote = {
+            tier: 'strategy_nudge',
+            code: 'KEEP_BUILD_MOMENTUM',
+            message: `Under-construction plot ${plot.plotIndex} is waiting for work.`,
+            applied: false,
+          };
+          if (softPolicyEnabled) {
+            action = { type: 'do_work', reasoning: `[AUTO] Working on under-construction plot ${plot.plotIndex}`, details: { plotId: plot.id, plotIndex: plot.plotIndex, stepDescription: nextStep } };
+            note.applied = true;
+            softPolicyApplied = true;
+          }
+          policyNotes.push(note);
         }
       }
       // Priority 3: start_build on claimed-but-unstarted plots
@@ -912,7 +2413,18 @@ ${instructionTexts}
             zone: plot.zone,
             plotIndex: plot.plotIndex,
           });
-          action = { type: 'start_build', reasoning: `[AUTO] Starting build on claimed plot ${plot.plotIndex}`, details: { plotId: plot.id, plotIndex: plot.plotIndex, buildingType: bt, why: 'Must build on claimed plot' } };
+          const note: PolicyNote = {
+            tier: 'strategy_nudge',
+            code: 'START_CLAIMED_BUILD',
+            message: `Claimed plot ${plot.plotIndex} can start building now.`,
+            applied: false,
+          };
+          if (softPolicyEnabled) {
+            action = { type: 'start_build', reasoning: `[AUTO] Starting build on claimed plot ${plot.plotIndex}`, details: { plotId: plot.id, plotIndex: plot.plotIndex, buildingType: bt, why: 'Must build on claimed plot' } };
+            note.applied = true;
+            softPolicyApplied = true;
+          }
+          policyNotes.push(note);
         }
       }
     }
@@ -982,21 +2494,12 @@ ${instructionTexts}
         const estimatedReserve = Math.ceil(deficit * obs.economy.spotPrice * 1.15);
         const minSpend = 25; // avoid tiny swaps rounding to 0 output on large pools
         const spend = Math.min(obs.myReserve, Math.max(minSpend, Math.min(2000, estimatedReserve)));
-
-        // Don't burn the whole tick on a standalone trade action. Instead, attach an auto top-up
-        // and continue with the original intended action.
-        action = {
-          ...action,
-          details: {
-            ...action.details,
-            _autoTopUp: {
-              side: 'BUY_ARENA',
-              amountIn: spend,
-              nextAction: plannedActionType,
-              why: `Top up fuel for ${plannedActionType} (need ${requiredArena}, have ${obs.myBalance})`,
-            },
-          },
-        };
+        policyNotes.push({
+          tier: 'economic_warning',
+          code: 'UNDERFUNDED_ACTION',
+          message: `Planned action may fail (need ~${requiredArena} $ARENA, have ${obs.myBalance}; est. reserve top-up ${spend}).`,
+          applied: false,
+        });
       }
     }
 
@@ -1016,7 +2519,17 @@ ${instructionTexts}
       );
     }
 
-    return { action, cost, humanReply };
+    return {
+      action,
+      cost,
+      humanReply,
+      policyContext: {
+        notes: policyNotes,
+        softPolicyEnabled,
+        softPolicyApplied,
+        autonomyRateBefore,
+      },
+    };
   }
 
   private extractLiveObjective(agentId: string, obs: WorldObservation): LiveObjective | null {
@@ -1245,62 +2758,9 @@ What do you want to do?`;
     agent: ArenaAgent,
     action: AgentAction,
     obs: WorldObservation,
-  ): Promise<{ success: boolean; narrative: string; error?: string; actualAction?: AgentAction }> {
+  ): Promise<ExecutionResult> {
     try {
-      // Auto-topup DISABLED — agents must manage their own finances
-      // Keeping code for reference but skipping execution
-      let autoTopUpNarrative = '';
-      const autoTopUp = false && (action.details as any)?._autoTopUp; // disabled
-      if (autoTopUp && obs.economy) {
-        const side = String(autoTopUp.side || '').toUpperCase();
-        if (side === 'BUY_ARENA') {
-          const amountIn = Number.parseInt(String(autoTopUp.amountIn || '0'), 10);
-          const minAmountOut =
-            autoTopUp.minAmountOut != null ? Number.parseInt(String(autoTopUp.minAmountOut), 10) : undefined;
-
-          if (Number.isFinite(amountIn) && amountIn > 0) {
-            const swapRes = await offchainAmmService.swap(agent.id, 'BUY_ARENA', amountIn, { minAmountOut });
-            const price = swapRes.swap.amountOut > 0 ? swapRes.swap.amountIn / swapRes.swap.amountOut : null;
-            const why = String(autoTopUp.why || '').replace(/\s+/g, ' ').trim();
-            const nextAction = safeTrim(autoTopUp.nextAction, 32);
-
-            autoTopUpNarrative =
-              `Auto-topup: bought ${swapRes.swap.amountOut} $ARENA for ${swapRes.swap.amountIn} reserve (fee ${swapRes.swap.feeAmount}).` +
-              `${price ? ` ~${price.toFixed(3)} reserve/ARENA.` : ''}` +
-              `${why ? ` Purpose: ${why}` : ''}`;
-
-            if (obs.town) {
-              try {
-                await townService.logEvent(
-                  obs.town.id,
-                  'TRADE',
-                  `💱 ${agent.name} fueled up`,
-                  `${agent.name} bought ${swapRes.swap.amountOut} $ARENA for ${swapRes.swap.amountIn} reserve.` +
-                    `${why ? ` ${safeTrim(why, 180)}` : ''}` +
-                    `${nextAction ? ` Next: ${nextAction}.` : ''}`,
-                  agent.id,
-                  {
-                    kind: 'AGENT_TRADE',
-                    source: 'AUTO_TOPUP',
-                    swapId: swapRes.swap.id,
-                    side: swapRes.swap.side,
-                    amountIn: swapRes.swap.amountIn,
-                    amountOut: swapRes.swap.amountOut,
-                    feeAmount: swapRes.swap.feeAmount,
-                    amountArena: swapRes.swap.amountOut,
-                    purpose: safeTrim(why, 180),
-                    nextAction: nextAction || undefined,
-                  },
-                );
-              } catch {
-                // non-fatal
-              }
-            }
-
-            this.lastTradeTickByAgentId.set(agent.id, this.currentTick);
-          }
-        }
-      }
+      const autoTopUpNarrative = '';
 
       switch (action.type) {
         case 'buy_arena':
@@ -1329,7 +2789,14 @@ What do you want to do?`;
             const workAction: AgentAction = { ...action, type: 'do_work', reasoning: '[REDIRECT] Mining removed. Working on building instead.', details: {} };
             return { ...(await this.executeDoWork(agent, workAction, obs)), actualAction: workAction };
           }
-          return { success: true, narrative: `${agent.name} tried to mine but mining no longer exists. 💤 Resting instead.`, actualAction: { ...action, type: 'rest', reasoning: '[REDIRECT] Mining removed', details: {} } };
+          {
+            const restAction: AgentAction = { ...action, type: 'rest', reasoning: '[REDIRECT] Mining removed', details: {} };
+            return {
+              success: true,
+              narrative: `${agent.name} tried to mine but mining no longer exists. 💤 Resting instead.`,
+              actualAction: restAction,
+            };
+          }
         case 'play_arena':
           return await this.executePlayArena(agent, action);
         case 'buy_skill':
@@ -1369,20 +2836,107 @@ What do you want to do?`;
     if (plotIndex === undefined) throw new Error('No plotIndex specified');
     if (!obs.town) throw new Error('No active town');
 
-    const plot = await townService.claimPlot(agent.id, obs.town.id, plotIndex);
-    return {
-      success: true,
-      narrative: `${agent.name} claimed plot ${plotIndex} (${plot.zone})! 💭 "${action.reasoning}"`,
-    };
+    const freshAgent = await prisma.arenaAgent.findUnique({ where: { id: agent.id } });
+    const estClaimCost = Math.max(1, this.estimateClaimCost(obs));
+    if (freshAgent && freshAgent.bankroll < estClaimCost) {
+      if (freshAgent.reserveBalance > 10) {
+        const buyAction: AgentAction = {
+          ...action,
+          type: 'buy_arena',
+          reasoning: `[REDIRECT] Claim requires ~${estClaimCost} $ARENA (have ${freshAgent.bankroll}). Converting reserve first.`,
+          details: {
+            amountIn: Math.max(10, Math.min(50, Math.floor(freshAgent.reserveBalance))),
+            why: 'Fund plot claim',
+            nextAction: 'claim_plot',
+          },
+        };
+        const result = await this.executeBuyArena(agent, buyAction, obs);
+        return { ...result, actualAction: buyAction };
+      }
+      return {
+        success: true,
+        narrative: `${agent.name} skipped claiming plot ${plotIndex}; bankroll ${freshAgent.bankroll} is below estimated claim cost ${estClaimCost} and no reserve is available.`,
+        actualAction: {
+          ...action,
+          type: 'rest' as const,
+          reasoning: '[REDIRECT] Claim unaffordable',
+          details: { thought: `Need about ${estClaimCost} $ARENA to claim. Waiting.` },
+        },
+      };
+    }
+
+    try {
+      const plot = await townService.claimPlot(agent.id, obs.town.id, plotIndex);
+      return {
+        success: true,
+        narrative: `${agent.name} claimed plot ${plotIndex} (${plot.zone})! 💭 "${action.reasoning}"`,
+      };
+    } catch (err: any) {
+      const msg = String(err?.message || '');
+      if (/Not enough \$ARENA/i.test(msg)) {
+        const latest = await prisma.arenaAgent.findUnique({ where: { id: agent.id } });
+        if (latest && latest.reserveBalance > 10) {
+          const buyAction: AgentAction = {
+            ...action,
+            type: 'buy_arena',
+            reasoning: `[REDIRECT] Claim failed due low bankroll (${msg}). Converting reserve.`,
+            details: {
+              amountIn: Math.max(10, Math.min(50, Math.floor(latest.reserveBalance))),
+              why: 'Claim retry funding',
+              nextAction: 'claim_plot',
+            },
+          };
+          const result = await this.executeBuyArena(agent, buyAction, obs);
+          return { ...result, actualAction: buyAction };
+        }
+        return {
+          success: true,
+          narrative: `${agent.name} could not claim plot ${plotIndex}: ${msg}. Waiting for more funds.`,
+          actualAction: { ...action, type: 'rest' as const, reasoning: '[REDIRECT] Claim failed (broke)', details: {} },
+        };
+      }
+      throw err;
+    }
   }
 
   private async executeBuyArena(agent: ArenaAgent, action: AgentAction, obs: WorldObservation) {
-    const amountIn = Number.parseInt(String(action.details.amountIn || '0'), 10);
-    if (!Number.isFinite(amountIn) || amountIn <= 0) throw new Error('No amountIn specified');
-    const minAmountOut =
+    const requestedAmountIn = Number.parseInt(String(action.details.amountIn || '0'), 10);
+    if (!Number.isFinite(requestedAmountIn) || requestedAmountIn <= 0) {
+      return {
+        success: true,
+        narrative: `${agent.name} skipped reserve swap because amountIn was invalid.`,
+        actualAction: { ...action, type: 'rest' as const, reasoning: '[REDIRECT] Invalid buy_arena amount', details: {} },
+      };
+    }
+    const minAmountOutRaw =
       action.details.minAmountOut != null ? Number.parseInt(String(action.details.minAmountOut), 10) : undefined;
+    const freshAgent = await prisma.arenaAgent.findUnique({ where: { id: agent.id } });
+    const availableReserve = Math.max(0, Math.floor(freshAgent?.reserveBalance ?? agent.reserveBalance ?? 0));
+    if (availableReserve <= 0) {
+      return {
+        success: true,
+        narrative: `${agent.name} tried to buy $ARENA but has no reserve to swap.`,
+        actualAction: { ...action, type: 'rest' as const, reasoning: '[REDIRECT] No reserve for buy_arena', details: {} },
+      };
+    }
+    const spendAmount = Math.max(1, Math.min(requestedAmountIn, availableReserve));
+    const minAmountOut =
+      spendAmount === requestedAmountIn && Number.isFinite(minAmountOutRaw as number) ? minAmountOutRaw : undefined;
 
-    const result = await offchainAmmService.swap(agent.id, 'BUY_ARENA', amountIn, { minAmountOut });
+    let result;
+    try {
+      result = await offchainAmmService.swap(agent.id, 'BUY_ARENA', spendAmount, { minAmountOut });
+    } catch (err: any) {
+      const msg = String(err?.message || '');
+      if (/Insufficient reserve balance|amountOut would be 0|amountIn too small|Slippage/i.test(msg)) {
+        return {
+          success: true,
+          narrative: `${agent.name} skipped reserve swap this tick: ${msg}.`,
+          actualAction: { ...action, type: 'rest' as const, reasoning: '[REDIRECT] Buy swap not executable', details: {} },
+        };
+      }
+      throw err;
+    }
     const price = result.swap.amountOut > 0 ? result.swap.amountIn / result.swap.amountOut : null;
 
     this.lastTradeTickByAgentId.set(agent.id, this.currentTick);
@@ -1403,6 +2957,10 @@ What do you want to do?`;
           {
             kind: 'AGENT_TRADE',
             source: 'DECISION',
+            action: action.type,
+            reasoning: action.reasoning,
+            details: this.stripInternalDetails(action.details),
+            decision: this.buildDecisionMetadata(action, action, true),
             swapId: result.swap.id,
             side: result.swap.side,
             amountIn: result.swap.amountIn,
@@ -1421,6 +2979,7 @@ What do you want to do?`;
     return {
       success: true,
       narrative: `${agent.name} bought ${result.swap.amountOut} $ARENA for ${result.swap.amountIn} reserve (fee ${result.swap.feeAmount}).` +
+        `${result.swap.amountIn !== requestedAmountIn ? ` (Adjusted from requested ${requestedAmountIn} reserve.)` : ''}` +
         `${price ? ` ~${price.toFixed(3)} reserve/ARENA.` : ''}` +
         `${why ? ` Purpose: ${why}.` : ''}` +
         `${nextAction ? ` Next: ${nextAction}.` : ''}`,
@@ -1428,12 +2987,43 @@ What do you want to do?`;
   }
 
   private async executeSellArena(agent: ArenaAgent, action: AgentAction, obs: WorldObservation) {
-    const amountIn = Number.parseInt(String(action.details.amountIn || '0'), 10);
-    if (!Number.isFinite(amountIn) || amountIn <= 0) throw new Error('No amountIn specified');
-    const minAmountOut =
+    const requestedAmountIn = Number.parseInt(String(action.details.amountIn || '0'), 10);
+    if (!Number.isFinite(requestedAmountIn) || requestedAmountIn <= 0) {
+      return {
+        success: true,
+        narrative: `${agent.name} skipped $ARENA sell because amountIn was invalid.`,
+        actualAction: { ...action, type: 'rest' as const, reasoning: '[REDIRECT] Invalid sell_arena amount', details: {} },
+      };
+    }
+    const minAmountOutRaw =
       action.details.minAmountOut != null ? Number.parseInt(String(action.details.minAmountOut), 10) : undefined;
+    const freshAgent = await prisma.arenaAgent.findUnique({ where: { id: agent.id } });
+    const availableArena = Math.max(0, Math.floor(freshAgent?.bankroll ?? agent.bankroll ?? 0));
+    if (availableArena <= 0) {
+      return {
+        success: true,
+        narrative: `${agent.name} tried to sell $ARENA but bankroll is empty.`,
+        actualAction: { ...action, type: 'rest' as const, reasoning: '[REDIRECT] No bankroll for sell_arena', details: {} },
+      };
+    }
+    const sellAmount = Math.max(1, Math.min(requestedAmountIn, availableArena));
+    const minAmountOut =
+      sellAmount === requestedAmountIn && Number.isFinite(minAmountOutRaw as number) ? minAmountOutRaw : undefined;
 
-    const result = await offchainAmmService.swap(agent.id, 'SELL_ARENA', amountIn, { minAmountOut });
+    let result;
+    try {
+      result = await offchainAmmService.swap(agent.id, 'SELL_ARENA', sellAmount, { minAmountOut });
+    } catch (err: any) {
+      const msg = String(err?.message || '');
+      if (/Insufficient \$ARENA balance|amountOut would be 0|amountIn too small|Slippage/i.test(msg)) {
+        return {
+          success: true,
+          narrative: `${agent.name} skipped $ARENA sell this tick: ${msg}.`,
+          actualAction: { ...action, type: 'rest' as const, reasoning: '[REDIRECT] Sell swap not executable', details: {} },
+        };
+      }
+      throw err;
+    }
     const price = result.swap.amountOut > 0 ? result.swap.amountOut / result.swap.amountIn : null;
 
     this.lastTradeTickByAgentId.set(agent.id, this.currentTick);
@@ -1454,6 +3044,10 @@ What do you want to do?`;
           {
             kind: 'AGENT_TRADE',
             source: 'DECISION',
+            action: action.type,
+            reasoning: action.reasoning,
+            details: this.stripInternalDetails(action.details),
+            decision: this.buildDecisionMetadata(action, action, true),
             swapId: result.swap.id,
             side: result.swap.side,
             amountIn: result.swap.amountIn,
@@ -1472,21 +3066,59 @@ What do you want to do?`;
     return {
       success: true,
       narrative: `${agent.name} sold ${result.swap.amountIn} $ARENA for ${result.swap.amountOut} reserve (fee ${result.swap.feeAmount}).` +
+        `${result.swap.amountIn !== requestedAmountIn ? ` (Adjusted from requested ${requestedAmountIn} $ARENA.)` : ''}` +
         `${price ? ` ~${price.toFixed(3)} reserve/ARENA.` : ''}` +
         `${why ? ` Purpose: ${why}.` : ''}` +
         `${nextAction ? ` Next: ${nextAction}.` : ''}`,
     };
   }
 
-  private async executeStartBuild(agent: ArenaAgent, action: AgentAction, obs: WorldObservation) {
+  private async executeStartBuild(agent: ArenaAgent, action: AgentAction, obs: WorldObservation): Promise<ExecutionResult> {
     const { buildingType } = action.details;
     if (!buildingType) throw new Error('No buildingType specified');
     if (!obs.town) throw new Error('No active town');
+    const fallbackToWork = async (reasoning: string, thought: string): Promise<ExecutionResult> => {
+      const workAction: AgentAction = {
+        ...action,
+        type: 'do_work',
+        reasoning,
+        details: {
+          ...action.details,
+          stepDescription: 'Earn wage while waiting to afford next build stage',
+        },
+      };
+      try {
+        const result = await this.executeDoWork(agent, workAction, obs);
+        return { ...result, actualAction: workAction };
+      } catch {
+        return {
+          success: true,
+          narrative: `${agent.name} can't fund a new build right now and found no work opportunity. 💤 Waiting.`,
+          actualAction: {
+            ...action,
+            type: 'rest' as const,
+            reasoning: '[REDIRECT] Broke with no available work',
+            details: { thought },
+          },
+        };
+      }
+    };
 
-    // --- Affordability check: redirect to mining if agent can't afford ANY build ---
+    // --- Affordability check: redirect if agent can't afford ANY build ---
     const zoneBaseCost: any = { RESIDENTIAL: 10, COMMERCIAL: 20, CIVIC: 35, INDUSTRIAL: 20, ENTERTAINMENT: 25 };
     const freshAgent = await prisma.arenaAgent.findUniqueOrThrow({ where: { id: agent.id } });
-    const cheapestBuildCost = Math.min(...Object.values(zoneBaseCost).map((c: any) => c * obs.town!.level));
+    const costMultiplier = worldEventService.getCostMultiplier();
+    const levelCostMultiplier = Math.max(1, 0.6 + obs.town.level * 0.4);
+    const estimatedClaimCost = Math.max(1, this.estimateClaimCost(obs));
+    const hasBuildPipeline = (obs.myPlots || []).some((p: any) =>
+      p?.status === 'UNDER_CONSTRUCTION' || p?.status === 'BUILT',
+    );
+    const bootstrapBuildDiscount = hasBuildPipeline ? 1 : 0.5;
+    const zoneBuildCost = (zone: string) =>
+      Math.max(8, Math.round((zoneBaseCost[zone] || 15) * levelCostMultiplier * costMultiplier * bootstrapBuildDiscount));
+    const canAffordZone = (zone: string, includeClaimCost: boolean = false) =>
+      freshAgent.bankroll >= zoneBuildCost(zone) + (includeClaimCost ? estimatedClaimCost : 0);
+    const cheapestBuildCost = Math.min(...Object.keys(zoneBaseCost).map((zone) => zoneBuildCost(zone)));
     if (freshAgent.bankroll < cheapestBuildCost) {
       // Can't afford any build — sell reserve if available, otherwise rest
       if (freshAgent.reserveBalance > 10) {
@@ -1495,18 +3127,13 @@ What do you want to do?`;
         const result = await this.executeBuyArena(agent, sellAction, obs);
         return { ...result, actualAction: sellAction };
       }
-      const restAction: AgentAction = { ...action, type: 'rest', reasoning: `[REDIRECT] Can't afford any build and no reserve to sell. Resting.`, details: { thought: `I need ${cheapestBuildCost} $ARENA but only have ${freshAgent.bankroll}. No reserve to sell. Hoping for transfers or yield.` } };
-      console.log(`[AgentLoop] ${agent.name}: start_build redirect → rest (broke, no reserve)`);
-      return { success: true, narrative: `${agent.name} can't afford to build and has no reserve. 💤 Waiting for income...`, actualAction: restAction };
+      console.log(`[AgentLoop] ${agent.name}: start_build redirect → do_work (broke, no reserve)`);
+      return fallbackToWork(
+        `[REDIRECT] Can't afford any build (need ${cheapestBuildCost}, have ${freshAgent.bankroll}). Working for wages.`,
+        `I need ${cheapestBuildCost} $ARENA but only have ${freshAgent.bankroll}. No reserve to sell.`,
+      );
     }
-
     // --- Intent-based resolution: agent wants to BUILD, system handles sequencing ---
-
-    // Helper: check if agent can afford building on a specific plot zone
-    const canAffordZone = (zone: string) => {
-      const baseCost = zoneBaseCost[zone] || 15;
-      return freshAgent.bankroll >= baseCost * obs.town!.level;
-    };
 
     // 1. Try to resolve the target plot
     let plotId: string | undefined;
@@ -1528,34 +3155,91 @@ What do you want to do?`;
     // 2. If we have a target plot, handle its current status intelligently
     if (targetPlot) {
       // Check affordability for this specific plot's zone
-      if (!canAffordZone(targetPlot.zone)) {
-        const cost = (zoneBaseCost[targetPlot.zone] || 15) * obs.town.level;
+      const requiresClaimCost = targetPlot.status === 'EMPTY';
+      const cost = zoneBuildCost(targetPlot.zone) + (requiresClaimCost ? estimatedClaimCost : 0);
+      if (!canAffordZone(targetPlot.zone, requiresClaimCost)) {
         // Can't afford zone build — try to sell reserve
         if (freshAgent.reserveBalance > 10) {
           const sellAction: AgentAction = { ...action, type: 'buy_arena', reasoning: `[REDIRECT] Can't afford ${targetPlot.zone} build (need ${cost}, have ${freshAgent.bankroll}). Selling reserve.`, details: { amountIn: Math.min(50, freshAgent.reserveBalance), why: `Need ${cost} for build`, nextAction: 'start_build' } };
           const result = await this.executeBuyArena(agent, sellAction, obs);
           return { ...result, actualAction: sellAction };
         }
-        return { success: false, narrative: `${agent.name} can't afford ${targetPlot.zone} build (need ${cost}, have ${freshAgent.bankroll}) and has no reserve.`, actualAction: { ...action, type: 'rest', reasoning: '[REDIRECT] Broke', details: {} } };
+        return fallbackToWork(
+          `[REDIRECT] Can't afford ${targetPlot.zone} build path (need ${cost}, have ${freshAgent.bankroll}). Working first.`,
+          `Need ${cost} for ${targetPlot.zone} build and no reserve is available.`,
+        );
       }
 
       if (targetPlot.status === 'EMPTY') {
         // Auto-claim first, then start build
-        console.log(`[AgentLoop] ${agent.name}: auto-claiming plot ${targetPlot.plotIndex} before building`);
-        await townService.claimPlot(agent.id, obs.town.id, targetPlot.plotIndex);
-        const plot = await townService.startBuild(agent.id, targetPlot.id, buildingType);
-        return {
-          success: true,
-          narrative: `${agent.name} claimed and started building a ${buildingType} on plot ${plot.plotIndex}! 💭 "${action.reasoning}"`,
-        };
+        try {
+          console.log(`[AgentLoop] ${agent.name}: auto-claiming plot ${targetPlot.plotIndex} before building`);
+          await townService.claimPlot(agent.id, obs.town.id, targetPlot.plotIndex);
+          const plot = await townService.startBuild(agent.id, targetPlot.id, buildingType);
+          return {
+            success: true,
+            narrative: `${agent.name} claimed and started building a ${buildingType} on plot ${plot.plotIndex}! 💭 "${action.reasoning}"`,
+          };
+        } catch (err: any) {
+          const msg = String(err?.message || '');
+          if (/Not enough \$ARENA/i.test(msg)) {
+            const latest = await prisma.arenaAgent.findUnique({ where: { id: agent.id } });
+            if (latest && latest.reserveBalance > 10) {
+              const buyAction: AgentAction = {
+                ...action,
+                type: 'buy_arena',
+                reasoning: `[REDIRECT] Build bootstrap fell short after claim (${msg}). Converting reserve.`,
+                details: {
+                  amountIn: Math.max(10, Math.min(50, Math.floor(latest.reserveBalance))),
+                  why: 'Fund claim+build chain',
+                  nextAction: 'start_build',
+                },
+              };
+              const result = await this.executeBuyArena(agent, buyAction, obs);
+              return { ...result, actualAction: buyAction };
+            }
+            return {
+              success: true,
+              narrative: `${agent.name} started bootstrap claim but could not fund build afterward (${msg}).`,
+              actualAction: { ...action, type: 'rest' as const, reasoning: '[REDIRECT] Broke after claim', details: {} },
+            };
+          }
+          throw err;
+        }
       }
       if (targetPlot.status === 'CLAIMED' && targetPlot.ownerId === agent.id) {
         // Perfect — plot is claimed by us, start building
-        const plot = await townService.startBuild(agent.id, plotId!, buildingType);
-        return {
-          success: true,
-          narrative: `${agent.name} started building a ${buildingType} on plot ${plot.plotIndex}! 💭 "${action.reasoning}"`,
-        };
+        try {
+          const plot = await townService.startBuild(agent.id, plotId!, buildingType);
+          return {
+            success: true,
+            narrative: `${agent.name} started building a ${buildingType} on plot ${plot.plotIndex}! 💭 "${action.reasoning}"`,
+          };
+        } catch (err: any) {
+          const msg = String(err?.message || '');
+          if (/Not enough \$ARENA/i.test(msg)) {
+            if (freshAgent.reserveBalance > 10) {
+              const buyAction: AgentAction = {
+                ...action,
+                type: 'buy_arena',
+                reasoning: `[REDIRECT] Claimed plot build not affordable (${msg}). Converting reserve.`,
+                details: {
+                  amountIn: Math.max(10, Math.min(50, Math.floor(freshAgent.reserveBalance))),
+                  why: 'Fund claimed-plot build',
+                  nextAction: 'start_build',
+                },
+              };
+              const result = await this.executeBuyArena(agent, buyAction, obs);
+              return { ...result, actualAction: buyAction };
+            }
+            return {
+              success: true,
+              narrative: `${agent.name} paused build start on claimed plot because funds are too low (${msg}).`,
+              actualAction: { ...action, type: 'rest' as const, reasoning: '[REDIRECT] Claimed build unaffordable', details: {} },
+            };
+          }
+          throw err;
+        }
       }
       // If plot is UNDER_CONSTRUCTION and owned by us, redirect to do_work
       if (targetPlot.status === 'UNDER_CONSTRUCTION' && (targetPlot.ownerId === agent.id || targetPlot.builderId === agent.id)) {
@@ -1570,8 +3254,10 @@ What do you want to do?`;
     const myClaimedPlots = obs.myPlots.filter((p: any) => p.status === 'CLAIMED');
     for (const cp of myClaimedPlots) {
       if (canAffordZone(cp.zone)) {
-        plotId = cp.id;
-        const plot = await townService.startBuild(agent.id, plotId, buildingType);
+        const claimedPlotId = String(cp.id || '');
+        if (!claimedPlotId) continue;
+        plotId = claimedPlotId;
+        const plot = await townService.startBuild(agent.id, claimedPlotId, buildingType);
         return {
           success: true,
           narrative: `${agent.name} started building a ${buildingType} on plot ${plot.plotIndex}! 💭 "${action.reasoning}"`,
@@ -1581,39 +3267,72 @@ What do you want to do?`;
 
     // If we have claimed plots but can't afford any of them, sell reserve or rest
     if (myClaimedPlots.length > 0) {
-      if (agent.reserveBalance > 10) {
-        const sellAction: AgentAction = { ...action, type: 'buy_arena', reasoning: `[REDIRECT] Has claimed plots but can't afford to build. Selling reserve.`, details: { amountIn: Math.min(50, agent.reserveBalance), why: 'Need funds for building', nextAction: 'start_build' } };
+      if (freshAgent.reserveBalance > 10) {
+        const sellAction: AgentAction = { ...action, type: 'buy_arena', reasoning: `[REDIRECT] Has claimed plots but can't afford to build. Selling reserve.`, details: { amountIn: Math.min(50, freshAgent.reserveBalance), why: 'Need funds for building', nextAction: 'start_build' } };
         console.log(`[AgentLoop] ${agent.name}: has claimed plots but can't afford → buy_arena`);
         const result = await this.executeBuyArena(agent, sellAction, obs);
         return { ...result, actualAction: sellAction };
       }
-      return { success: true, narrative: `${agent.name} has claimed plots but can't afford to build. 💤 Waiting for income...`, actualAction: { ...action, type: 'rest', reasoning: '[REDIRECT] Broke with claimed plots', details: {} } };
+      return fallbackToWork(
+        '[REDIRECT] Has claimed plots but cannot fund construction. Working instead.',
+        'I have claimed plots but need more $ARENA to begin construction.',
+      );
     }
 
     // 4. Last resort: auto-claim an available plot and build (check affordability)
-    const affordablePlots = obs.availablePlots.filter((p: any) => canAffordZone(p.zone));
+    const affordablePlots = obs.availablePlots.filter((p: any) => canAffordZone(p.zone, true));
     if (affordablePlots.length > 0) {
       const avail = affordablePlots[0];
-      console.log(`[AgentLoop] ${agent.name}: auto-claiming available plot ${avail.plotIndex} for build`);
-      await townService.claimPlot(agent.id, obs.town.id, avail.plotIndex);
-      const plot = await townService.startBuild(agent.id, avail.id, buildingType);
-      return {
-        success: true,
-        narrative: `${agent.name} found a spot, claimed plot ${plot.plotIndex}, and started building a ${buildingType}! 💭 "${action.reasoning}"`,
-      };
+      try {
+        console.log(`[AgentLoop] ${agent.name}: auto-claiming available plot ${avail.plotIndex} for build`);
+        await townService.claimPlot(agent.id, obs.town.id, avail.plotIndex);
+        const plot = await townService.startBuild(agent.id, avail.id, buildingType);
+        return {
+          success: true,
+          narrative: `${agent.name} found a spot, claimed plot ${plot.plotIndex}, and started building a ${buildingType}! 💭 "${action.reasoning}"`,
+        };
+      } catch (err: any) {
+        const msg = String(err?.message || '');
+        if (/Not enough \$ARENA/i.test(msg)) {
+          const latest = await prisma.arenaAgent.findUnique({ where: { id: agent.id } });
+          if (latest && latest.reserveBalance > 10) {
+            const buyAction: AgentAction = {
+              ...action,
+              type: 'buy_arena',
+              reasoning: `[REDIRECT] Auto-claim build chain failed (${msg}). Converting reserve.`,
+              details: {
+                amountIn: Math.max(10, Math.min(50, Math.floor(latest.reserveBalance))),
+                why: 'Fund fallback claim+build',
+                nextAction: 'start_build',
+              },
+            };
+            const result = await this.executeBuyArena(agent, buyAction, obs);
+            return { ...result, actualAction: buyAction };
+          }
+          return {
+            success: true,
+            narrative: `${agent.name} attempted fallback claim+build but stalled on funds (${msg}).`,
+            actualAction: { ...action, type: 'rest' as const, reasoning: '[REDIRECT] Fallback build unaffordable', details: {} },
+          };
+        }
+        throw err;
+      }
     }
 
     // Nothing affordable — sell reserve or rest
-    if (agent.reserveBalance > 10) {
-      const sellAction: AgentAction = { ...action, type: 'buy_arena', reasoning: `[REDIRECT] No affordable plots. Selling reserve for $ARENA.`, details: { amountIn: Math.min(50, agent.reserveBalance), why: 'Need funds', nextAction: 'claim_plot' } };
+    if (freshAgent.reserveBalance > 10) {
+      const sellAction: AgentAction = { ...action, type: 'buy_arena', reasoning: `[REDIRECT] No affordable plots. Selling reserve for $ARENA.`, details: { amountIn: Math.min(50, freshAgent.reserveBalance), why: 'Need funds', nextAction: 'claim_plot' } };
       console.log(`[AgentLoop] ${agent.name}: no affordable plots → buy_arena`);
       const result = await this.executeBuyArena(agent, sellAction, obs);
       return { ...result, actualAction: sellAction };
     }
-    return { success: true, narrative: `${agent.name} has no affordable options and no reserve. 💤 Waiting...`, actualAction: { ...action, type: 'rest', reasoning: '[REDIRECT] Completely broke', details: {} } };
+    return fallbackToWork(
+      '[REDIRECT] No affordable build options and no reserve. Working to earn wage.',
+      'No build path is affordable right now.',
+    );
   }
 
-  private async executeDoWork(agent: ArenaAgent, action: AgentAction, obs: WorldObservation) {
+  private async executeDoWork(agent: ArenaAgent, action: AgentAction, obs: WorldObservation): Promise<ExecutionResult> {
     if (!obs.town) throw new Error('No active town');
 
     // --- Intent-based resolution: agent wants to WORK, system finds the right plot ---
@@ -1645,8 +3364,35 @@ What do you want to do?`;
         const claimedPlot = myClaimed[0];
         const bt = action.details.buildingType || action.details.stepDescription || 'Workshop';
         console.log(`[AgentLoop] ${agent.name}: auto-starting build on claimed plot ${claimedPlot.plotIndex} before work`);
-        await townService.startBuild(agent.id, claimedPlot.id, bt);
-        plotId = claimedPlot.id;
+        try {
+          await townService.startBuild(agent.id, claimedPlot.id, bt);
+          plotId = claimedPlot.id;
+        } catch (err: any) {
+          const msg = String(err?.message || '');
+          if (/Not enough \$ARENA/i.test(msg)) {
+            const latest = await prisma.arenaAgent.findUnique({ where: { id: agent.id } });
+            if (latest && latest.reserveBalance > 10) {
+              const buyAction: AgentAction = {
+                ...action,
+                type: 'buy_arena',
+                reasoning: `[REDIRECT] Work bootstrap build unaffordable (${msg}). Converting reserve.`,
+                details: {
+                  amountIn: Math.max(10, Math.min(50, Math.floor(latest.reserveBalance))),
+                  why: 'Fund work bootstrap',
+                  nextAction: 'do_work',
+                },
+              };
+              const result = await this.executeBuyArena(agent, buyAction, obs);
+              return { ...result, actualAction: buyAction };
+            }
+            return {
+              success: true,
+              narrative: `${agent.name} wanted to start work pipeline but lacks funds to begin construction (${msg}).`,
+              actualAction: { ...action, type: 'rest' as const, reasoning: '[REDIRECT] Work bootstrap broke', details: {} },
+            };
+          }
+          throw err;
+        }
       }
     }
 
@@ -1655,9 +3401,36 @@ What do you want to do?`;
       const avail = obs.availablePlots[0];
       const bt = action.details.buildingType || action.details.stepDescription || 'Workshop';
       console.log(`[AgentLoop] ${agent.name}: auto-claiming plot ${avail.plotIndex} and starting build for work`);
-      await townService.claimPlot(agent.id, obs.town.id, avail.plotIndex);
-      await townService.startBuild(agent.id, avail.id, bt);
-      plotId = avail.id;
+      try {
+        await townService.claimPlot(agent.id, obs.town.id, avail.plotIndex);
+        await townService.startBuild(agent.id, avail.id, bt);
+        plotId = avail.id;
+      } catch (err: any) {
+        const msg = String(err?.message || '');
+        if (/Not enough \$ARENA/i.test(msg)) {
+          const latest = await prisma.arenaAgent.findUnique({ where: { id: agent.id } });
+          if (latest && latest.reserveBalance > 10) {
+            const buyAction: AgentAction = {
+              ...action,
+              type: 'buy_arena',
+              reasoning: `[REDIRECT] Claim+build for work is unaffordable (${msg}). Converting reserve.`,
+              details: {
+                amountIn: Math.max(10, Math.min(50, Math.floor(latest.reserveBalance))),
+                why: 'Fund claim+work bootstrap',
+                nextAction: 'do_work',
+              },
+            };
+            const result = await this.executeBuyArena(agent, buyAction, obs);
+            return { ...result, actualAction: buyAction };
+          }
+          return {
+            success: true,
+            narrative: `${agent.name} tried to bootstrap work via claim+build but couldn't cover costs (${msg}).`,
+            actualAction: { ...action, type: 'rest' as const, reasoning: '[REDIRECT] Claim+work bootstrap broke', details: {} },
+          };
+        }
+        throw err;
+      }
     }
 
     if (!plotId) {
@@ -1675,6 +3448,8 @@ What do you want to do?`;
         };
       }
     }
+
+    if (!plotId) throw new Error('No plot to work on');
 
     // Find the plot and determine what step we're on
     const plot = await prisma.plot.findUniqueOrThrow({ where: { id: plotId } });
@@ -1734,18 +3509,21 @@ Be creative, detailed, and in-character for the town's theme. Response should be
       });
     }
 
-    // Fix 5: Small reward for doing work — extracted from pool, not thin air
+    // Work wage: pay from pool for each completed inference step to keep early loop solvent.
+    const minCallsForPlot = Math.max(1, this.minCallsForZone(plot.zone));
+    const baseFromBuildCost = Math.ceil(Math.max(8, plot.buildCostArena || 10) / (minCallsForPlot * 2));
+    const targetWorkReward = Math.max(2, Math.min(5, baseFromBuildCost));
     let workReward = 0;
     try {
-      const pool = await prisma.economyPool.findFirst({ orderBy: { createdAt: 'desc' } });
-      if (pool && pool.arenaBalance > 1000) {
-        await prisma.economyPool.update({ where: { id: pool.id }, data: { arenaBalance: { decrement: 1 } } });
-        await prisma.arenaAgent.update({ where: { id: agent.id }, data: { bankroll: { increment: 1 } } });
-        workReward = 1;
+      const pool = await this.getOrCreateEconomyPool();
+      if (pool.arenaBalance - targetWorkReward >= SOLVENCY_POOL_FLOOR) {
+        await prisma.economyPool.update({ where: { id: pool.id }, data: { arenaBalance: { decrement: targetWorkReward } } });
+        await prisma.arenaAgent.update({ where: { id: agent.id }, data: { bankroll: { increment: targetWorkReward } } });
+        workReward = targetWorkReward;
       }
     } catch {}
 
-    const rewardNote = workReward > 0 ? ' and earned 1 $ARENA' : '';
+    const rewardNote = workReward > 0 ? ` and earned ${workReward} $ARENA` : '';
     return {
       success: true,
       narrative: `${agent.name} worked on their ${bt} (step ${currentStep + 1}/${steps.length})${rewardNote}. 🔨 ${response.content.substring(0, 150)}...`,
@@ -1777,6 +3555,18 @@ Be creative, detailed, and in-character for the town's theme. Response should be
     }
 
     const plot = await townService.completeBuild(agent.id, plotId);
+
+    let completionBonusNote = '';
+    try {
+      const completionBonusTarget = Math.max(4, Math.min(20, Math.round(Math.max(10, plot.buildCostArena || 10) * 0.4)));
+      const pool = await this.getOrCreateEconomyPool();
+      const grant = Math.min(completionBonusTarget, Math.max(0, pool.arenaBalance - SOLVENCY_POOL_FLOOR));
+      if (grant > 0) {
+        await prisma.economyPool.update({ where: { id: pool.id }, data: { arenaBalance: { decrement: grant } } });
+        await prisma.arenaAgent.update({ where: { id: agent.id }, data: { bankroll: { increment: grant } } });
+        completionBonusNote = ` 💰 Completion bonus: +${grant} $ARENA.`;
+      }
+    } catch {}
 
     // Agent browses sprite library to pick visual
     try {
@@ -1887,49 +3677,7 @@ Be creative, detailed, and in-character for the town's theme. Response should be
 
     return {
       success: true,
-      narrative: `${agent.name} completed their ${plot.buildingType}! 🎉 The building stands proud in the town.${qualityNote}${bountyNote}`,
-    };
-  }
-
-  private async executeMine(agent: ArenaAgent, action: AgentAction, obs: WorldObservation) {
-    if (!obs.town) throw new Error('No active town');
-
-    // Mining = agent does computational work and earns $ARENA
-    const task = action.details.task || 'Generate useful content for the town';
-
-    const spec = smartAiService.getModelSpec(agent.modelId);
-    const startTime = Date.now();
-    const response = await smartAiService.callModel(
-      spec,
-      [
-        { role: 'system', content: `You are a worker in ${obs.town.name}, a ${obs.town.theme}. Complete the following task thoughtfully and thoroughly. Write prose, not JSON.` },
-        { role: 'user', content: task },
-      ],
-      0.7,
-      true, // forceNoJsonMode for creative text
-    );
-    const latencyMs = Date.now() - startTime;
-    const cost = smartAiService.calculateCost(spec, response.inputTokens, response.outputTokens, latencyMs);
-
-    // Mining reward: based on API cost (you spend real compute, you earn $ARENA)
-    const arenaEarned = Math.max(1, Math.ceil(cost.costCents * 2)); // 2x the API cost in $ARENA
-
-    await townService.submitMiningWork(
-      agent.id,
-      obs.town.id,
-      task,
-      task,
-      response.content,
-      1,
-      cost.costCents,
-      agent.modelId,
-      arenaEarned,
-      latencyMs,
-    );
-
-    return {
-      success: true,
-      narrative: `${agent.name} mined ${arenaEarned} $ARENA! ⛏️ Task: "${task.substring(0, 80)}"`,
+      narrative: `${agent.name} completed their ${plot.buildingType}! 🎉 The building stands proud in the town.${completionBonusNote}${qualityNote}${bountyNote}`,
     };
   }
 
@@ -1948,12 +3696,21 @@ Be creative, detailed, and in-character for the town's theme. Response should be
   }
 
   private async executePlayArena(agent: ArenaAgent, action: AgentAction) {
-    // For now, log the intent. Full arena integration comes later.
     const gameType = action.details.gameType || 'POKER';
     const wager = action.details.wager || 100;
+    const wheel = wheelOfFateService.getStatus();
+    const activeMatch = wheel.currentMatch;
+    const isActiveFighter = !!activeMatch
+      && (activeMatch.agent1.id === agent.id || activeMatch.agent2.id === agent.id)
+      && (wheel.phase === 'ANNOUNCING' || wheel.phase === 'FIGHTING');
+    const phaseNote = isActiveFighter
+      ? `Locked into Wheel phase ${wheel.phase}.`
+      : wheel.phase === 'ANNOUNCING'
+        ? 'Wheel betting window is open — scouting for edge.'
+        : 'No live duel selected right now.';
     return {
       success: true,
-      narrative: `${agent.name} heads to the arena for a ${gameType} match! 🎮 Wagering ${wager} $ARENA. 💭 "${action.reasoning}"`,
+      narrative: `${agent.name} rotates to arena flow for ${gameType}. 🎮 Target wager ${wager} $ARENA. ${phaseNote} 💭 "${action.reasoning}"`,
     };
   }
 

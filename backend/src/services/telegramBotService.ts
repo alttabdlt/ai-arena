@@ -16,6 +16,9 @@ import { townService } from './townService';
 import { agentLoopService, AgentTickResult } from './agentLoopService';
 import { prisma } from '../config/database';
 import OpenAI from 'openai';
+import { AgentCommandMode } from '@prisma/client';
+import { agentCommandService } from './agentCommandService';
+import { operatorIdentityService } from './operatorIdentityService';
 
 // Escape HTML special chars for Telegram HTML parse mode
 function esc(s: string): string {
@@ -25,6 +28,17 @@ function esc(s: string): string {
 function truncate(s: string, max: number): string {
   return s.length > max ? s.slice(0, max) + '…' : s;
 }
+
+type ParsedOperatorCommand = {
+  agentName: string;
+  mode: AgentCommandMode;
+  intent: string;
+  params: Record<string, unknown>;
+  constraints: Record<string, unknown>;
+  priority?: number;
+  expiresInTicks?: number;
+  note?: string;
+};
 
 // ============================================
 // Tool definitions for LLM router
@@ -132,6 +146,21 @@ const ROUTER_TOOLS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'tell_my_agent',
+      description: 'Send a message to your own linked agent. Use this when user says "my agent" or asks to control their own agent.',
+      parameters: {
+        type: 'object',
+        properties: {
+          message: { type: 'string', description: 'Instruction for your linked agent' },
+          agentName: { type: 'string', description: 'Optional linked agent name if user has multiple linked agents' },
+        },
+        required: ['message'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'start_agents',
       description: 'Start the agent loop — agents begin thinking, building, and fighting autonomously',
       parameters: { type: 'object', properties: {}, required: [] },
@@ -232,7 +261,8 @@ Key context:
 - "Proof of Inference" — every building step costs a real LLM API call
 
 When users ask about agents, fights, buildings, or the town — use the appropriate tool.
-When users want to talk to an agent — use tell_agent.
+When users want to talk to a specific named agent — use tell_agent.
+When users say "my agent", "my bot", or "the agent I linked" — use tell_my_agent.
 When it's just casual chat or questions about AI Town — use general_chat with a friendly, informative response.
 
 Keep responses punchy and fun. This is a crypto degen entertainment product.`;
@@ -378,6 +408,29 @@ export class TelegramBotService {
       const fromUser = ctx.from?.first_name || ctx.from?.username || 'Anon';
       this.handleTellAgent(ctx.chat.id, agentName, message, fromUser);
     });
+    this.bot.command('say', (ctx) => {
+      const raw = ctx.message.text.replace(/^\/say\s*/i, '').trim();
+      const telegramUserId = ctx.from?.id?.toString() || '';
+      const fromUser = ctx.from?.first_name || ctx.from?.username || 'Anon';
+      const parsed = this.parseOwnerMessageInput(raw);
+      this.handleTellMyAgent(ctx.chat.id, telegramUserId, parsed.message, fromUser, parsed.agentName);
+    });
+    this.bot.command('link', (ctx) => {
+      const walletAddress = ctx.message.text.replace(/^\/link\s*/i, '').trim();
+      const telegramUserId = ctx.from?.id?.toString() || '';
+      const username = ctx.from?.username || ctx.from?.first_name || null;
+      this.handleLinkWallet(ctx.chat.id, telegramUserId, username, walletAddress);
+    });
+    this.bot.command('myagent', (ctx) => {
+      const telegramUserId = ctx.from?.id?.toString() || '';
+      this.handleMyAgent(ctx.chat.id, telegramUserId);
+    });
+    this.bot.command('command', (ctx) => {
+      const input = ctx.message.text.replace(/^\/command\s*/i, '').trim();
+      const telegramUserId = ctx.from?.id?.toString() || '';
+      const username = ctx.from?.username || ctx.from?.first_name || null;
+      this.handleOperatorCommand(ctx.chat.id, telegramUserId, username, input);
+    });
 
     // ============================================
     // Inline button callbacks
@@ -420,7 +473,7 @@ export class TelegramBotService {
 
       // If no LLM router, fall back to simple pattern matching
       if (!this.router) {
-        await this.fallbackRouting(chatId, text, fromUser);
+        await this.fallbackRouting(chatId, text, fromUser, userId);
         return;
       }
 
@@ -429,7 +482,7 @@ export class TelegramBotService {
       } catch (err: any) {
         console.error('LLM routing error:', err.message);
         // Fall back to pattern matching on LLM failure
-        await this.fallbackRouting(chatId, text, fromUser);
+        await this.fallbackRouting(chatId, text, fromUser, userId);
       }
     });
   }
@@ -493,6 +546,7 @@ export class TelegramBotService {
       case 'show_events': await this.handleShowEvents(chatId); break;
       case 'place_bet': await this.handlePlaceBet(chatId, userId, args.agentName, args.amount); break;
       case 'tell_agent': await this.handleTellAgent(chatId, args.agentName, args.message, fromUser); break;
+      case 'tell_my_agent': await this.handleTellMyAgent(chatId, userId, args.message, fromUser, args.agentName); break;
       case 'start_agents': await this.handleStartAgents(chatId); break;
       case 'stop_agents': await this.handleStopAgents(chatId); break;
       case 'run_tick': await this.handleRunTick(chatId); break;
@@ -509,8 +563,16 @@ export class TelegramBotService {
   // Fallback pattern matching (no LLM needed)
   // ============================================
 
-  private async fallbackRouting(chatId: number, text: string, fromUser: string): Promise<void> {
+  private async fallbackRouting(chatId: number, text: string, fromUser: string, telegramUserId: string): Promise<void> {
     const lower = text.toLowerCase();
+
+    const myAgentPrefix = /^(tell\s+)?my\s+(agent|bot)\b/i;
+    if (myAgentPrefix.test(text)) {
+      const stripped = text.replace(myAgentPrefix, '').replace(/^[,:-]?\s*/g, '').trim();
+      const parsed = this.parseOwnerMessageInput(stripped);
+      await this.handleTellMyAgent(chatId, telegramUserId, parsed.message, fromUser, parsed.agentName);
+      return;
+    }
 
     // Try agent name match first (existing free-text behavior)
     const agents = await prisma.arenaAgent.findMany({ where: { isActive: true }, select: { id: true, name: true, archetype: true } });
@@ -546,7 +608,7 @@ export class TelegramBotService {
     // Nothing matched
     await this.send(chatId,
       '🏘️ <b>AI Town</b> — just chat naturally!\n\n' +
-      'Try: "who\'s winning?", "show me the town", "tell AlphaShark to attack", "what\'s the token price?"',
+      'Try: "who\'s winning?", "show me the town", "tell AlphaShark to attack", "my agent go all-in on growth", or "what\'s the token price?"',
     );
   }
 
@@ -582,6 +644,7 @@ export class TelegramBotService {
       '💬 <b>Just chat naturally:</b>\n' +
       '• "who\'s winning?"\n' +
       '• "tell AlphaShark to attack someone"\n' +
+      '• "my agent focus on work for 2 ticks"\n' +
       '• "bet 100 on MorphBot"\n\n' +
       'The agents have personalities. They might listen to you... or not 😏';
 
@@ -916,6 +979,8 @@ export class TelegramBotService {
 
     const emoji = this.archetypeEmoji(agent.archetype);
     const isRunning = agentLoopService.isRunning();
+    const currentTick = agentLoopService.getCurrentTick();
+    const expectedTick = isRunning ? `T${currentTick + 1}` : 'pending (loop stopped)';
     const status = isRunning
       ? (agent.archetype === 'DEGEN' ? "No promises they'll listen though... 🎲" : "They'll consider it next tick.")
       : "⚠️ Agents aren't running yet — say 'start' to fire them up!";
@@ -923,6 +988,379 @@ export class TelegramBotService {
     await this.send(chatId,
       `${emoji} <b>${esc(agent.name)}</b> heard you:\n<i>"${esc(truncate(message, 200))}"</i>\n\n${status}`,
     );
+    await this.send(
+      chatId,
+      `🧾 <b>Instruction Receipt</b>\n` +
+        `status: <b>QUEUED</b>\n` +
+        `target: <b>${esc(agent.name)}</b>\n` +
+        `queuedAt: T${currentTick}\n` +
+        `expectedTick: <b>${expectedTick}</b>`,
+    );
+  }
+
+  private parseOwnerMessageInput(raw: string): { agentName?: string; message: string } {
+    const input = String(raw || '').trim();
+    if (!input) return { message: '' };
+
+    // Optional format: "<agentName>: <message>" for users with multiple links.
+    const colonIdx = input.indexOf(':');
+    if (colonIdx > 0 && colonIdx < 40) {
+      const left = input.slice(0, colonIdx).trim();
+      const right = input.slice(colonIdx + 1).trim();
+      if (left && right) {
+        return { agentName: left, message: right };
+      }
+    }
+
+    return { message: input };
+  }
+
+  private async resolveLinkedAgentForTelegram(
+    telegramUserId: string,
+    preferredAgentName?: string,
+  ): Promise<{ id: string; name: string; archetype: string; role: string }> {
+    const profile = await operatorIdentityService.getOperatorProfile(telegramUserId);
+    const activeLinks = profile.links.filter((link) => link.isActive);
+
+    if (activeLinks.length === 0) {
+      throw new Error('No active linked agent. Use /link <wallet> then /myagent.');
+    }
+
+    const linkedIds = activeLinks.map((link) => link.agentId);
+    const linkedAgents = await prisma.arenaAgent.findMany({
+      where: { id: { in: linkedIds } },
+      select: { id: true, name: true, archetype: true, isActive: true },
+    });
+
+    const byId = new Map(linkedAgents.map((row) => [row.id, row]));
+    const activeResolved: Array<{
+      link: typeof activeLinks[number];
+      agent: { id: string; name: string; archetype: string; isActive: boolean };
+    }> = [];
+    for (const link of activeLinks) {
+      const row = byId.get(link.agentId);
+      if (!row || !row.isActive) continue;
+      activeResolved.push({
+        link,
+        agent: { id: row.id, name: row.name, archetype: row.archetype, isActive: row.isActive },
+      });
+    }
+
+    if (activeResolved.length === 0) {
+      throw new Error('Linked agent not currently active.');
+    }
+
+    if (preferredAgentName) {
+      const q = preferredAgentName.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const match = activeResolved.find(({ agent }) => {
+        const name = agent.name.toLowerCase();
+        const slug = name.replace(/[^a-z0-9]/g, '');
+        return name === preferredAgentName.toLowerCase() || slug.includes(q);
+      });
+      if (!match) {
+        const names = activeResolved.map(({ agent }) => agent.name).join(', ');
+        throw new Error(`No linked agent matching "${preferredAgentName}". Linked: ${names}`);
+      }
+      return { id: match.agent.id, name: match.agent.name, archetype: match.agent.archetype, role: match.link.role };
+    }
+
+    if (activeResolved.length === 1) {
+      const only = activeResolved[0];
+      return { id: only.agent.id, name: only.agent.name, archetype: only.agent.archetype, role: only.link.role };
+    }
+
+    const ownerOnly = activeResolved.filter((row) => row.link.role === 'OWNER');
+    if (ownerOnly.length === 1) {
+      const only = ownerOnly[0];
+      return { id: only.agent.id, name: only.agent.name, archetype: only.agent.archetype, role: only.link.role };
+    }
+
+    const names = activeResolved.map(({ agent }) => agent.name).join(', ');
+    throw new Error(`Multiple linked agents found. Use "/say <agent>: <message>". Linked: ${names}`);
+  }
+
+  private async handleTellMyAgent(
+    chatId: number | string,
+    telegramUserId: string,
+    message: string,
+    fromUser: string,
+    preferredAgentName?: string,
+  ): Promise<void> {
+    if (!telegramUserId) {
+      await this.send(chatId, '❌ Telegram identity unavailable in this chat.');
+      return;
+    }
+    if (!message || message.trim().length < 2) {
+      await this.send(chatId, '💬 Usage: /say <message> or /say <agent>: <message>');
+      return;
+    }
+
+    try {
+      const agent = await this.resolveLinkedAgentForTelegram(telegramUserId, preferredAgentName);
+      agentLoopService.queueInstruction(agent.id, message.trim(), chatId.toString(), fromUser);
+
+      const emoji = this.archetypeEmoji(agent.archetype);
+      const isRunning = agentLoopService.isRunning();
+      const currentTick = agentLoopService.getCurrentTick();
+      const expectedTick = isRunning ? `T${currentTick + 1}` : 'pending (loop stopped)';
+      const status = isRunning
+        ? 'Queued for next tick. You will get a direct reply after the agent acts.'
+        : '⚠️ Agent loop is stopped. Say "start agents" or /go first.';
+
+      await this.send(
+        chatId,
+        `${emoji} <b>Your agent ${esc(agent.name)}</b> heard you:\n` +
+          `<i>"${esc(truncate(message.trim(), 220))}"</i>\n\n` +
+          `${status}`,
+      );
+      await this.send(
+        chatId,
+        `🧾 <b>Owner Receipt</b>\n` +
+          `status: <b>QUEUED</b>\n` +
+          `target: <b>${esc(agent.name)}</b> (${esc(agent.role)})\n` +
+          `queuedAt: T${currentTick}\n` +
+          `expectedTick: <b>${expectedTick}</b>`,
+      );
+    } catch (err: any) {
+      await this.send(chatId, `❌ Could not message your agent: ${esc(err.message || 'unknown error')}`);
+    }
+  }
+
+  private parseOperatorCommandInput(input: string): ParsedOperatorCommand {
+    const parts = input.trim().split(/\s+/).filter(Boolean);
+    if (parts.length < 2) {
+      throw new Error('Usage: /command <agentName> [suggest|strong|override] <intent> [params|json]');
+    }
+
+    const agentName = parts.shift() || '';
+    let mode: AgentCommandMode = 'SUGGEST';
+    const modeCandidate = (parts[0] || '').toUpperCase();
+    if (modeCandidate === 'SUGGEST' || modeCandidate === 'STRONG' || modeCandidate === 'OVERRIDE') {
+      mode = modeCandidate as AgentCommandMode;
+      parts.shift();
+    }
+
+    if (parts.length < 1) {
+      throw new Error('Missing intent. Example: /command AlphaShark strong claim_plot 5');
+    }
+
+    const intent = parts.shift() || '';
+    const remainder = parts.join(' ').trim();
+
+    let params: Record<string, unknown> = {};
+    let constraints: Record<string, unknown> = {};
+    let priority: number | undefined;
+    let expiresInTicks: number | undefined;
+    let note: string | undefined;
+
+    if (remainder) {
+      if (remainder.startsWith('{')) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(remainder);
+        } catch {
+          throw new Error('Invalid JSON payload. Example: {"params":{"plotIndex":5},"expiresInTicks":3}');
+        }
+
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new Error('Command payload must be a JSON object');
+        }
+
+        const payload = parsed as Record<string, unknown>;
+        const payloadParams = payload.params;
+        const payloadConstraints = payload.constraints;
+        params =
+          payloadParams && typeof payloadParams === 'object' && !Array.isArray(payloadParams)
+            ? (payloadParams as Record<string, unknown>)
+            : payload;
+        constraints =
+          payloadConstraints && typeof payloadConstraints === 'object' && !Array.isArray(payloadConstraints)
+            ? (payloadConstraints as Record<string, unknown>)
+            : {};
+
+        if (Number.isFinite(Number(payload.priority))) {
+          priority = Math.round(Number(payload.priority));
+        }
+        if (Number.isFinite(Number(payload.expiresInTicks))) {
+          expiresInTicks = Math.round(Number(payload.expiresInTicks));
+        }
+        if (typeof payload.note === 'string') {
+          note = payload.note.trim().slice(0, 200);
+        }
+      } else {
+        const normalizedIntent = intent.toLowerCase().replace(/[\s-]+/g, '_');
+        if (normalizedIntent === 'claim_plot') {
+          const parsedPlot = Number.parseInt(remainder, 10);
+          if (Number.isFinite(parsedPlot)) params = { plotIndex: parsedPlot };
+          else params = { raw: remainder };
+        } else if (normalizedIntent === 'start_build') {
+          params = { buildingType: remainder.replace(/\s+/g, '_').toUpperCase().slice(0, 48) };
+        } else if (normalizedIntent === 'do_work') {
+          params = { stepDescription: remainder.slice(0, 220) };
+        } else {
+          params = { raw: remainder.slice(0, 220) };
+        }
+      }
+    }
+
+    if (mode === 'OVERRIDE' && !expiresInTicks) {
+      expiresInTicks = 3;
+    }
+
+    return {
+      agentName,
+      mode,
+      intent,
+      params,
+      constraints,
+      priority,
+      expiresInTicks,
+      note,
+    };
+  }
+
+  private async handleLinkWallet(
+    chatId: number | string,
+    telegramUserId: string,
+    username: string | null,
+    walletAddress: string,
+  ): Promise<void> {
+    try {
+      if (!telegramUserId) {
+        await this.send(chatId, '❌ Telegram identity unavailable in this chat.');
+        return;
+      }
+      if (!walletAddress) {
+        await this.send(chatId, '🔗 Usage: /link <walletAddress>');
+        return;
+      }
+
+      const request = await operatorIdentityService.requestLink({
+        telegramUserId,
+        username,
+        walletAddress,
+      });
+      const confirmed = await operatorIdentityService.confirmLink({
+        challengeId: request.challengeId,
+        telegramUserId,
+        walletAddress,
+      });
+
+      if (confirmed.linkedAgent) {
+        await this.send(
+          chatId,
+          `✅ <b>Wallet linked</b>\n` +
+            `Wallet: <code>${esc(confirmed.identity.linkedWalletAddress || walletAddress)}</code>\n` +
+            `Agent: <b>${esc(confirmed.linkedAgent.name)}</b>\n\n` +
+            `Try: <code>/command ${esc(confirmed.linkedAgent.name)} strong claim_plot 5</code>`,
+        );
+        return;
+      }
+
+      await this.send(
+        chatId,
+        `✅ Wallet linked: <code>${esc(confirmed.identity.linkedWalletAddress || walletAddress)}</code>\n` +
+          `No spawned agent found for this wallet yet. Create or spawn one in the town UI, then run <code>/myagent</code>.`,
+      );
+    } catch (err: any) {
+      await this.send(chatId, `❌ Link failed: ${esc(err.message || 'unknown error')}`);
+    }
+  }
+
+  private async handleMyAgent(chatId: number | string, telegramUserId: string): Promise<void> {
+    try {
+      if (!telegramUserId) {
+        await this.send(chatId, '❌ Telegram identity unavailable in this chat.');
+        return;
+      }
+
+      const profile = await operatorIdentityService.getOperatorProfile(telegramUserId);
+      const activeLinks = profile.links.filter((link) => link.isActive);
+      const linkLines =
+        activeLinks.length > 0
+          ? activeLinks
+              .map(
+                (link) =>
+                  `• <b>${esc(link.agentName)}</b> (${link.role}) — <code>${esc(link.agentId)}</code>`,
+              )
+              .join('\n')
+          : '• No active agent links';
+
+      await this.send(
+        chatId,
+        `🧾 <b>Operator Profile</b>\n` +
+          `Telegram: <code>${esc(profile.telegramUserId)}</code>\n` +
+          `Wallet: <code>${esc(profile.linkedWalletAddress || 'not linked')}</code>\n` +
+          `State: <b>${esc(profile.verificationState)}</b>\n\n` +
+          `<b>Active Agent Links</b>\n${linkLines}`,
+      );
+    } catch (err: any) {
+      await this.send(chatId, `❌ Could not load profile: ${esc(err.message || 'unknown error')}`);
+    }
+  }
+
+  private async handleOperatorCommand(
+    chatId: number | string,
+    telegramUserId: string,
+    username: string | null,
+    input: string,
+  ): Promise<void> {
+    try {
+      if (!telegramUserId) {
+        await this.send(chatId, '❌ Telegram identity unavailable in this chat.');
+        return;
+      }
+      if (!input) {
+        await this.send(
+          chatId,
+          '🕹️ Usage: <code>/command &lt;agentName&gt; [suggest|strong|override] &lt;intent&gt; [params]</code>',
+        );
+        return;
+      }
+
+      const parsed = this.parseOperatorCommandInput(input);
+      const agent = await this.fuzzyFindAgent(parsed.agentName);
+      if (!agent) {
+        await this.send(chatId, `❌ Agent not found: ${esc(parsed.agentName)}`);
+        return;
+      }
+
+      const command = await agentCommandService.createCommand({
+        agentId: agent.id,
+        issuerType: 'TELEGRAM',
+        issuerTelegramUserId: telegramUserId,
+        issuerLabel: username || telegramUserId,
+        mode: parsed.mode,
+        intent: parsed.intent,
+        params: parsed.params,
+        constraints: parsed.constraints,
+        priority: parsed.priority,
+        expiresInTicks: parsed.expiresInTicks,
+        currentTick: agentLoopService.getCurrentTick(),
+        auditMeta: {
+          note: parsed.note || '',
+          source: 'telegram',
+          chatId: String(chatId),
+        },
+      });
+
+      const expiryLabel = command.expiresAtTick != null ? `T${command.expiresAtTick}` : 'none';
+      const currentTick = agentLoopService.getCurrentTick();
+      const expectedWindow = agentLoopService.isRunning()
+        ? `T${currentTick + 1}..T${currentTick + 3}`
+        : 'pending (loop stopped)';
+      await this.send(
+        chatId,
+        `✅ Command queued for <b>${esc(agent.name)}</b>\n` +
+          `🧾 receipt: <b>QUEUED</b>\n` +
+          `id: <code>${esc(command.id)}</code>\n` +
+          `mode: <b>${esc(command.mode)}</b> | intent: <b>${esc(command.intent)}</b>\n` +
+          `priority: ${command.priority} | expires: ${expiryLabel}\n` +
+          `expectedApplyWindow: <b>${expectedWindow}</b>`,
+      );
+    } catch (err: any) {
+      await this.send(chatId, `❌ Command rejected: ${esc(err.message || 'unknown error')}`);
+    }
   }
 
   private async handleStartAgents(chatId: number | string): Promise<void> {
@@ -1105,13 +1543,35 @@ export class TelegramBotService {
       const replyMsg =
         `${emoji} <b>${esc(result.agentName)}</b> says:\n\n` +
         `<i>"${esc(truncate(replyText, 500))}"</i>\n\n` +
-        `→ Action: <b>${esc(actionLabel)}</b> ${result.success ? '✅' : '❌'}`;
+        `→ Action: <b>${esc(actionLabel)}</b> ${result.success ? '✅' : '❌'}\n` +
+        `→ Tick: <b>T${result.tick}</b>`;
 
       const sentChats = new Set<string>();
       for (const sender of result.instructionSenders) {
         if (sentChats.has(sender.chatId)) continue;
         sentChats.add(sender.chatId);
         await this.send(sender.chatId, replyMsg);
+      }
+    }
+
+    if (result.commandReceipt?.notifyChatId) {
+      const receipt = result.commandReceipt;
+      const notifyChatId = receipt.notifyChatId;
+      if (notifyChatId) {
+        const statusEmoji = receipt.status === 'EXECUTED' ? '✅' : '❌';
+        const expected = receipt.expectedActionType ? receipt.expectedActionType.replace(/_/g, ' ') : 'n/a';
+        const executed = receipt.executedActionType ? receipt.executedActionType.replace(/_/g, ' ') : 'n/a';
+        await this.send(
+          notifyChatId,
+          `🧾 <b>Command Receipt ${statusEmoji}</b>\n` +
+            `id: <code>${esc(receipt.commandId)}</code>\n` +
+            `agent: <b>${esc(result.agentName)}</b>\n` +
+            `mode: <b>${esc(receipt.mode)}</b> | intent: <b>${esc(receipt.intent)}</b>\n` +
+            `status: <b>${esc(receipt.status)}</b> | compliance: <b>${esc(receipt.compliance)}</b>\n` +
+            `expected: ${esc(expected)} | executed: ${esc(executed)}\n` +
+            `tick: <b>T${result.tick}</b>\n` +
+            `reason: ${esc(truncate(receipt.statusReason, 180))}`,
+        );
       }
     }
 

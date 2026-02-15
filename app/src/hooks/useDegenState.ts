@@ -77,7 +77,9 @@ export function useDegenState(walletAddress: string | null) {
       const res = await fetch(`${API_BASE}/degen/balance/${walletAddress}`);
       const data = await res.json();
       if (mountedRef.current && data.balance) setBalance(data.balance);
-    } catch {}
+    } catch {
+      return;
+    }
   }, [walletAddress]);
 
   // Fetch positions
@@ -87,7 +89,9 @@ export function useDegenState(walletAddress: string | null) {
       const res = await fetch(`${API_BASE}/degen/positions/${walletAddress}`);
       const data = await res.json();
       if (mountedRef.current && data.positions) setPositions(data.positions);
-    } catch {}
+    } catch {
+      return;
+    }
   }, [walletAddress]);
 
   // Fetch price history
@@ -96,7 +100,9 @@ export function useDegenState(walletAddress: string | null) {
       const res = await fetch(`${API_BASE}/economy/price-history?period=1h`);
       const data = await res.json();
       if (mountedRef.current && data.snapshots) setPriceHistory(data.snapshots);
-    } catch {}
+    } catch {
+      return;
+    }
   }, []);
 
   // Fetch active predictions
@@ -105,7 +111,9 @@ export function useDegenState(walletAddress: string | null) {
       const res = await fetch(`${API_BASE}/degen/predictions/active`);
       const data = await res.json();
       if (mountedRef.current && data.markets) setPredictions(data.markets);
-    } catch {}
+    } catch {
+      return;
+    }
   }, []);
 
   // Fetch leaderboard
@@ -114,7 +122,9 @@ export function useDegenState(walletAddress: string | null) {
       const res = await fetch(`${API_BASE}/degen/leaderboard`);
       const data = await res.json();
       if (mountedRef.current && data.leaderboard) setLeaderboard(data.leaderboard);
-    } catch {}
+    } catch {
+      return;
+    }
   }, []);
 
   // Back an agent

@@ -1,8 +1,8 @@
 import { GET_CHANNELS } from '@/graphql/queries/channel';
 import { useQuery } from '@apollo/client';
 import { Tournament } from '@shared/types/tournament';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import Globe from 'react-globe.gl';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Globe, { type GlobeMethods } from 'react-globe.gl';
 
 interface GlobePoint {
   lat: number;
@@ -19,21 +19,43 @@ interface GlobePoint {
 }
 
 // Minimal feature type for GeoJSON polygons
+type GeoGeometry =
+  | {
+      type: 'Polygon';
+      coordinates: number[][][];
+    }
+  | {
+      type: 'MultiPolygon';
+      coordinates: number[][][][];
+    };
+
 interface GeoFeature {
   type: 'Feature';
   id?: string | number;
-  properties: Record<string, any>;
-  geometry: {
-    type: 'Polygon' | 'MultiPolygon';
-    coordinates: number[][][] | number[][][][];
-  };
+  properties: Record<string, unknown>;
+  geometry: GeoGeometry;
+}
+
+interface ChannelInfo {
+  name?: string | null;
+  region?: string | null;
+  worldId?: string | null;
+}
+
+interface ChannelsQueryData {
+  channels: ChannelInfo[];
+}
+
+interface GlobeController {
+  zoomToLocation: (lat: number, lng: number, altitude?: number) => void;
+  resetView: () => void;
 }
 
 interface InteractiveGlobeProps {
   tournaments?: Tournament[];
   onLocationClick?: (lat: number, lng: number) => void;
   onZoomComplete?: () => void;
-  globeRef?: React.MutableRefObject<any>;
+  globeRef?: React.MutableRefObject<GlobeController | null>;
   enableZoom?: boolean;
 }
 
@@ -66,13 +88,13 @@ function isInNorthAmerica(lat: number, lng: number): boolean {
 
 function computeRoughCentroid(feature: GeoFeature): { lat: number; lng: number } | null {
   try {
-    const coords = feature.geometry.coordinates as any;
     const collect: Array<[number, number]> = [];
     if (feature.geometry.type === 'Polygon') {
-      const ring = coords[0];
+      const ring = feature.geometry.coordinates[0] || [];
       for (const [lng, lat] of ring) collect.push([lng, lat]);
     } else if (feature.geometry.type === 'MultiPolygon') {
-      const ring = coords[0]?.[0] || [];
+      const polygons = feature.geometry.coordinates as number[][][][];
+      const ring = polygons[0]?.[0] || [];
       for (const [lng, lat] of ring) collect.push([lng, lat]);
     }
     if (collect.length === 0) return null;
@@ -150,17 +172,17 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
   globeRef,
   enableZoom = true
 }) => {
-  const internalGlobeRef = useRef<any>(null); // Globe.gl doesn't export proper types
-  const globeEl = globeRef || internalGlobeRef;
+  const internalGlobeRef = useRef<GlobeMethods | undefined>(undefined);
   const [globeReady, setGlobeReady] = useState(false);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [worldFeatures, setWorldFeatures] = useState<GeoFeature[]>([]);
   const [hoverFeature, setHoverFeature] = useState<GeoFeature | null>(null);
   const [pulse, setPulse] = useState(0);
   const [activeContinent, setActiveContinent] = useState<ContinentKey>(DEFAULT_REGION);
+  const getGlobeInstance = (): GlobeMethods | undefined => internalGlobeRef.current;
 
   // Channels determine which continents are owned and which is active
-  const { data: channelsData } = useQuery(GET_CHANNELS, {
+  const { data: channelsData } = useQuery<ChannelsQueryData>(GET_CHANNELS, {
     variables: { status: 'ACTIVE' },
     fetchPolicy: 'cache-and-network',
     pollInterval: 15000,
@@ -168,7 +190,7 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
 
   // Map continents to channels that have worlds
   const continentToChannel = useMemo(() => {
-    const mapping = new Map<ContinentKey, any>();
+    const mapping = new Map<ContinentKey, ChannelInfo>();
     const list = channelsData?.channels || [];
     for (const ch of list) {
       const cont = inferContinentFromRegion(ch.region);
@@ -185,7 +207,7 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
   useEffect(() => {
     const channels = channelsData?.channels || [];
     if (channels.length > 0) {
-      const preferred = channels.find((c: any) => !!c.worldId) || channels[0];
+      const preferred = channels.find((channel) => !!channel.worldId) || channels[0];
       const continent = inferContinentFromRegion(preferred.region);
       setActiveContinent(continent);
     } else {
@@ -249,13 +271,14 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
 
   // Configure globe on mount
   useEffect(() => {
-    if (globeEl.current && globeReady) {
+    const globe = getGlobeInstance();
+    if (globe && globeReady) {
       // Auto-rotate with slightly slower cinematic speed
-      globeEl.current.controls().autoRotate = true;
-      globeEl.current.controls().autoRotateSpeed = 0.25;
+      globe.controls().autoRotate = true;
+      globe.controls().autoRotateSpeed = 0.25;
       
       // Set initial camera position
-      globeEl.current.pointOfView({
+      globe.pointOfView({
         lat: 0,
         lng: 0,
         altitude: 2.5
@@ -263,9 +286,10 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
     }
   }, [globeReady]);
 
-  const zoomToLocation = (lat: number, lng: number, altitude: number = 0.5) => {
-    if (globeEl.current && enableZoom) {
-      globeEl.current.pointOfView({
+  const zoomToLocation = useCallback((lat: number, lng: number, altitude: number = 0.5) => {
+    const globe = getGlobeInstance();
+    if (globe && enableZoom) {
+      globe.pointOfView({
         lat,
         lng,
         altitude
@@ -278,7 +302,7 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
         }
       }, 2000);
     }
-  };
+  }, [enableZoom, onZoomComplete]);
 
   // Determine if a given feature belongs to the active region or owned regions
   const isFeatureActiveRegion = useMemo(() => {
@@ -326,15 +350,16 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
   React.useImperativeHandle(globeRef, () => ({
     zoomToLocation,
     resetView: () => {
-      if (globeEl.current) {
-        globeEl.current.pointOfView({
+      const globe = getGlobeInstance();
+      if (globe) {
+        globe.pointOfView({
           lat: 0,
           lng: 0,
           altitude: 2.5
         }, 1000);
       }
     }
-  }), [enableZoom]);
+  }), [zoomToLocation]);
 
   const handleGlobeReady = () => {
     setGlobeReady(true);
@@ -348,7 +373,7 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
   return (
     <div className="fixed inset-0 bg-black">
       <Globe
-        ref={globeEl}
+        ref={internalGlobeRef}
         width={dimensions.width}
         height={dimensions.height}
         globeImageUrl={
@@ -363,7 +388,9 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
         atmosphereAltitude={0.25}
         // Continent/country outlines
         polygonsData={worldFeatures}
-        polygonGeoJsonGeometry={(d: any) => d.geometry}
+        polygonGeoJsonGeometry={(feature: object) =>
+          (feature as GeoFeature).geometry as unknown as { type: string; coordinates: number[] }
+        }
         polygonCapColor={(d: GeoFeature) => {
           const active = isFeatureActiveRegion(d);
           const owned = isFeatureOwned(d);
@@ -393,7 +420,7 @@ const InteractiveGlobe: React.FC<InteractiveGlobeProps> = ({
             <div style="color: white; background: rgba(0,0,0,0.85); padding: 6px 10px; border-radius: 6px;">
               <div style="font-weight: 700; letter-spacing: .3px;">${name}</div>
               <div style="font-size: 12px; opacity: .85;">${owned ? 'Owned: Enter Metaverse' : 'For Sale'}</div>
-              ${center ? `<div style=\"font-size: 11px; opacity: .6;\">${center.lat.toFixed(1)}, ${center.lng.toFixed(1)}</div>` : ''}
+              ${center ? `<div style="font-size: 11px; opacity: .6;">${center.lat.toFixed(1)}, ${center.lng.toFixed(1)}</div>` : ''}
             </div>
           `;
         }}

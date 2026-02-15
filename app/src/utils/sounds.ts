@@ -4,10 +4,13 @@
  */
 
 let audioContext: AudioContext | null = null;
+type WindowWithWebkitAudio = Window & { webkitAudioContext?: typeof AudioContext };
 
 function getAudioContext(): AudioContext {
   if (!audioContext) {
-    audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const Ctor = window.AudioContext || (window as WindowWithWebkitAudio).webkitAudioContext;
+    if (!Ctor) throw new Error('Web Audio API not available');
+    audioContext = new Ctor();
   }
   return audioContext;
 }
@@ -38,14 +41,15 @@ function playBeep(frequency: number, duration: number, volume: number = 0.3) {
 // Chime sound (ascending notes)
 function playChime(baseFreq: number = 440, notes: number = 3) {
   try {
-    const ctx = getAudioContext();
     for (let i = 0; i < notes; i++) {
       setTimeout(() => {
         const freq = baseFreq * Math.pow(1.2, i);
         playBeep(freq, 0.15, 0.2);
       }, i * 100);
     }
-  } catch {}
+  } catch {
+    return;
+  }
 }
 
 // Sound effects for different events

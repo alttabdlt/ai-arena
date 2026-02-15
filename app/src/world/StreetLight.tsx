@@ -26,6 +26,10 @@ export function StreetLights({ positions }: StreetLightProps) {
 
   const count = positions.length;
 
+  useEffect(() => {
+    pointLightRefs.current = [];
+  }, [count]);
+
   // Precompute matrices
   const { poleMatrices, lampMatrices } = useMemo(() => {
     const dummy = new THREE.Object3D();
@@ -90,13 +94,13 @@ export function StreetLights({ positions }: StreetLightProps) {
   return (
     <group>
       {/* Poles */}
-      <instancedMesh ref={poleMeshRef} args={[undefined, undefined, count]}>
+      <instancedMesh key={`street-poles-${count}`} ref={poleMeshRef} args={[undefined, undefined, count]}>
         <cylinderGeometry args={[0.06, 0.08, POLE_HEIGHT, 6]} />
         <meshStandardMaterial color="#1a1a2e" roughness={0.9} metalness={0.3} />
       </instancedMesh>
 
       {/* Lamps */}
-      <instancedMesh ref={lampMeshRef} args={[undefined, undefined, count]}>
+      <instancedMesh key={`street-lamps-${count}`} ref={lampMeshRef} args={[undefined, undefined, count]}>
         <sphereGeometry args={[LAMP_RADIUS, 8, 8]} />
         <meshStandardMaterial
           color={LIGHT_COLOR}
@@ -122,41 +126,4 @@ export function StreetLights({ positions }: StreetLightProps) {
       ))}
     </group>
   );
-}
-
-/**
- * Generate street light positions along road segments, every ~20 units.
- */
-export function generateLightPositions(
-  roadSegments: Array<{ kind: 'V' | 'H'; x: number; z: number; len: number }>,
-  spacing = 20,
-): Array<[number, number]> {
-  const positions: Array<[number, number]> = [];
-  const seen = new Set<string>();
-
-  for (const seg of roadSegments) {
-    const count = Math.max(1, Math.floor(seg.len / spacing));
-    for (let i = 0; i <= count; i++) {
-      const t = count > 0 ? i / count : 0.5;
-      let x: number, z: number;
-      if (seg.kind === 'H') {
-        x = seg.x - seg.len / 2 + seg.len * t;
-        z = seg.z;
-      } else {
-        x = seg.x;
-        z = seg.z - seg.len / 2 + seg.len * t;
-      }
-      // Offset to side of road
-      const sideOffset = 3.0;
-      const px = seg.kind === 'H' ? x : x + sideOffset;
-      const pz = seg.kind === 'V' ? z : z + sideOffset;
-      const key = `${Math.round(px)}:${Math.round(pz)}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        positions.push([px, pz]);
-      }
-    }
-  }
-
-  return positions;
 }

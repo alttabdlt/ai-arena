@@ -17,11 +17,23 @@ interface DebugLogViewerProps {
   onClose?: () => void;
 }
 
+const LOG_SOURCES = ['all', 'frontend', 'backend', 'websocket'] as const;
+const LOG_LEVELS = ['all', 'log', 'info', 'warn', 'error', 'debug'] as const;
+
+type SourceFilter = typeof LOG_SOURCES[number];
+type LevelFilter = typeof LOG_LEVELS[number];
+
+const isSourceFilter = (value: string): value is SourceFilter =>
+  LOG_SOURCES.includes(value as SourceFilter);
+
+const isLevelFilter = (value: string): value is LevelFilter =>
+  LOG_LEVELS.includes(value as LevelFilter);
+
 export function DebugLogViewer({ onClose }: DebugLogViewerProps) {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [filter, setFilter] = useState<{
-    source: 'all' | LogEntry['source'];
-    level: 'all' | LogEntry['level'];
+    source: SourceFilter;
+    level: LevelFilter;
   }>({ source: 'all', level: 'all' });
   const [autoScroll, setAutoScroll] = useState(true);
 
@@ -125,7 +137,11 @@ export function DebugLogViewer({ onClose }: DebugLogViewerProps) {
             <Filter className="h-4 w-4 text-muted-foreground" />
             <Select
               value={filter.source}
-              onValueChange={(value) => setFilter(prev => ({ ...prev, source: value as any }))}
+              onValueChange={(value) => {
+                if (isSourceFilter(value)) {
+                  setFilter(prev => ({ ...prev, source: value }));
+                }
+              }}
             >
               <SelectTrigger className="w-[140px] h-8">
                 <SelectValue />
@@ -139,7 +155,11 @@ export function DebugLogViewer({ onClose }: DebugLogViewerProps) {
             </Select>
             <Select
               value={filter.level}
-              onValueChange={(value) => setFilter(prev => ({ ...prev, level: value as any }))}
+              onValueChange={(value) => {
+                if (isLevelFilter(value)) {
+                  setFilter(prev => ({ ...prev, level: value }));
+                }
+              }}
             >
               <SelectTrigger className="w-[120px] h-8">
                 <SelectValue />

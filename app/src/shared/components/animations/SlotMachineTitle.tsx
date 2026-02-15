@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GameType, GAME_TYPE_INFO } from '@shared/types/tournament';
 import { Button } from '@ui/button';
@@ -24,12 +24,13 @@ const SlotMachineTitle: React.FC<SlotMachineTitleProps> = ({
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const isSlowingDownRef = useRef(false);
   const hasProcessedGameRef = useRef(false);
+  const hasAutoStartedRef = useRef(false);
   
   const enabledGames = useMemo(() => Object.entries(GAME_TYPE_INFO)
     .filter(([_, info]) => !info.disabled)
     .map(([key, info]) => ({ key: key as GameType, ...info })), []);
 
-  const startSpinning = () => {
+  const startSpinning = useCallback(() => {
     if (isSpinning || selectedGame) return;
     
     // Reset refs for new spin
@@ -41,7 +42,6 @@ const SlotMachineTitle: React.FC<SlotMachineTitleProps> = ({
     
     // For continuous spinning, we don't set a target initially
     // We'll check for preSelectedGame during the spin
-    let spinStartTime = Date.now();
     let continuousSpinning = true;
     
     const spin = () => {
@@ -115,7 +115,7 @@ const SlotMachineTitle: React.FC<SlotMachineTitleProps> = ({
     
     // Start spinning
     spin();
-  };
+  }, [enabledGames, isSpinning, onGameSelected, preSelectedGame, selectedGame]);
 
   useEffect(() => {
     return () => {
@@ -127,14 +127,15 @@ const SlotMachineTitle: React.FC<SlotMachineTitleProps> = ({
   
   // Auto-start effect - start spinning immediately on mount
   useEffect(() => {
-    if (!isSpinning && !selectedGame) {
+    if (!isSpinning && !selectedGame && !hasAutoStartedRef.current) {
       const timer = setTimeout(() => {
+        hasAutoStartedRef.current = true;
         startSpinning();
       }, autoStartDelay || 500); // Default 500ms delay
       
       return () => clearTimeout(timer);
     }
-  }, []); // Only run on mount
+  }, [autoStartDelay, isSpinning, selectedGame, startSpinning]);
   
   // Watch for preSelectedGame changes
   useEffect(() => {
@@ -197,7 +198,7 @@ const SlotMachineTitle: React.FC<SlotMachineTitleProps> = ({
       // Start the slowdown sequence
       slowdownSpin();
     }
-  }, [preSelectedGame, isSpinning, selectedGame, enabledGames]);
+  }, [preSelectedGame, isSpinning, selectedGame, enabledGames, onGameSelected]);
 
   const currentGame = enabledGames[currentGameIndex];
 

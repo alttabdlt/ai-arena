@@ -46,7 +46,7 @@ interface MatchState {
   player2: { id: string; name: string; archetype: string; elo: number } | null;
   currentTurnId: string | null;
   turnNumber: number;
-  gameState: any;
+  gameState: unknown;
   moves: Array<{
     turnNumber: number;
     agentId: string;
@@ -56,14 +56,87 @@ interface MatchState {
   }>;
 }
 
+interface MatchMoveDetails {
+  turnNumber: number;
+  action: string;
+  amount?: number;
+  agent?: {
+    name?: string;
+    archetype?: string;
+  };
+  agentId?: string;
+  reasoning?: string;
+  responseTimeMs?: number;
+}
+
+interface RpsRoundHistory {
+  round: number;
+  moves: Record<string, string>;
+  winner?: string | null;
+}
+
+interface PokerHandHistory {
+  handNumber: number;
+  winnerId?: string;
+  amount: number;
+  showdown?: boolean;
+  winnerHand?: string;
+}
+
+interface MatchSummary {
+  id: string;
+  gameType: string;
+  status: string;
+  player1?: { id: string; name: string } | null;
+  player2?: { id: string; name: string } | null;
+  winner?: { id: string; name: string } | null;
+  totalPot: number;
+  turnNumber: number;
+  completedAt?: string | null;
+}
+
+interface ChainStatus {
+  connected?: boolean;
+  blockNumber?: number;
+  arenaTokenBalance?: string | number;
+}
+
+interface ModelInfo {
+  id: string;
+  provider: string;
+  name: string;
+  costTier: string;
+}
+
+const parseActionName = (action: string): string => {
+  try {
+    const parsed = JSON.parse(action) as { action?: string };
+    return parsed.action || action;
+  } catch {
+    return action;
+  }
+};
+
+const parseActionWithAmount = (action: string): { action: string; amountText: string } => {
+  try {
+    const parsed = JSON.parse(action) as { action?: string; amount?: number };
+    return {
+      action: parsed.action || action,
+      amountText: parsed.amount ? ` ${parsed.amount}` : '',
+    };
+  } catch {
+    return { action, amountText: '' };
+  }
+};
+
 // ============================================
 // API helpers
 // ============================================
 
-async function apiFetch(path: string) {
+async function apiFetch<T = unknown>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`);
   if (!res.ok) throw new Error(`API error: ${res.statusText}`);
-  return res.json();
+  return res.json() as Promise<T>;
 }
 
 // ============================================
@@ -185,7 +258,11 @@ function MatchViewer({ match }: { match: MatchState }) {
   const [showReasoning, setShowReasoning] = useState<number | null>(null);
 
   const gameType = match.gameType;
-  const gs = match.gameState;
+  const gs = (match.gameState || {}) as {
+    history?: RpsRoundHistory[];
+    scores?: Record<string, number>;
+    handHistory?: PokerHandHistory[];
+  };
 
   return (
     <Card className="bg-gray-900/50 border-gray-800">
@@ -206,7 +283,9 @@ function MatchViewer({ match }: { match: MatchState }) {
       <CardContent>
         {/* Players */}
         <div className="grid grid-cols-2 gap-4 mb-4">
-          {[match.player1, match.player2].filter(Boolean).map((p: any) => (
+          {[match.player1, match.player2]
+            .filter((player): player is NonNullable<MatchState['player2']> => Boolean(player))
+            .map((p) => (
             <div key={p.id} className={`p-3 rounded-lg border ${
               match.winnerId === p.id ? 'border-yellow-500/50 bg-yellow-500/5' :
               match.currentTurnId === p.id ? 'border-blue-500/50 bg-blue-500/5' :
@@ -234,12 +313,12 @@ function MatchViewer({ match }: { match: MatchState }) {
               <Zap className="w-4 h-4" /> Round History
             </h4>
             <div className="grid gap-1">
-              {gs.history.map((h: any, i: number) => {
+              {gs.history.map((h, i: number) => {
                 const moves = Object.entries(h.moves);
                 return (
                   <div key={i} className="flex items-center gap-2 text-sm font-mono bg-gray-800/30 rounded px-3 py-1.5">
                     <span className="text-gray-500 w-8">R{h.round}</span>
-                    {moves.map(([pid, move]: [string, any]) => (
+                    {moves.map(([pid, move]: [string, string]) => (
                       <span key={pid} className="text-white">
                         {move === 'rock' ? '🪨' : move === 'paper' ? '📄' : '✂️'} {move}
                       </span>
@@ -254,7 +333,7 @@ function MatchViewer({ match }: { match: MatchState }) {
             </div>
             {gs.scores && (
               <div className="text-center font-mono text-lg mt-2">
-                {Object.entries(gs.scores).map(([pid, score]: [string, any], i) => (
+                {Object.entries(gs.scores).map(([pid, score]: [string, number], i) => (
                   <span key={pid}>
                     {i > 0 && ' - '}
                     <span className="text-white">{score}</span>
@@ -271,7 +350,7 @@ function MatchViewer({ match }: { match: MatchState }) {
               <Brain className="w-4 h-4" /> Hand History ({gs.handHistory.length} hands)
             </h4>
             <div className="grid gap-1">
-              {gs.handHistory.map((h: any, i: number) => (
+              {gs.handHistory.map((h, i: number) => (
                 <div key={i} className="flex items-center gap-2 text-sm font-mono bg-gray-800/30 rounded px-3 py-1.5">
                   <span className="text-gray-500 w-12">Hand {h.handNumber}</span>
                   <span className="text-white">{h.winnerId?.slice(0, 8) || 'Split'}...</span>
@@ -296,8 +375,7 @@ function MatchViewer({ match }: { match: MatchState }) {
             <div className="max-h-60 overflow-y-auto space-y-1">
               {match.moves.slice(-20).map((m, i) => {
                 const isPlayer1 = m.agentId === match.player1?.id;
-                let parsedAction = m.action;
-                try { parsedAction = JSON.parse(m.action)?.action || m.action; } catch {}
+                const parsedAction = parseActionName(m.action);
 
                 return (
                   <div key={i}>
@@ -335,12 +413,12 @@ function MatchViewer({ match }: { match: MatchState }) {
 // ============================================
 
 function MatchMoves({ matchId }: { matchId: string }) {
-  const [moves, setMoves] = useState<any[]>([]);
+  const [moves, setMoves] = useState<MatchMoveDetails[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedMove, setExpandedMove] = useState<number | null>(null);
 
   useEffect(() => {
-    apiFetch(`/matches/${matchId}/moves`)
+    apiFetch<MatchMoveDetails[]>(`/matches/${matchId}/moves`)
       .then(setMoves)
       .catch(() => setMoves([]))
       .finally(() => setLoading(false));
@@ -352,13 +430,7 @@ function MatchMoves({ matchId }: { matchId: string }) {
   return (
     <div className="space-y-1 max-h-80 overflow-y-auto">
       {moves.map((m, i) => {
-        let parsedAction = m.action;
-        let parsedAmount = '';
-        try {
-          const a = JSON.parse(m.action);
-          parsedAction = a.action || m.action;
-          if (a.amount) parsedAmount = ` ${a.amount}`;
-        } catch {}
+        const parsed = parseActionWithAmount(m.action);
 
         return (
           <div key={i}>
@@ -369,7 +441,7 @@ function MatchMoves({ matchId }: { matchId: string }) {
               <span className="text-gray-500 w-6">#{m.turnNumber}</span>
               <span className="text-white font-semibold">{m.agent?.name || '?'}</span>
               <ArchetypeBadge archetype={m.agent?.archetype || '?'} />
-              <span className="text-yellow-300 font-bold">{parsedAction}{parsedAmount}</span>
+              <span className="text-yellow-300 font-bold">{parsed.action}{parsed.amountText}</span>
               <span className="text-gray-600 ml-auto">{m.responseTimeMs}ms</span>
               {m.reasoning && m.reasoning !== '' && (
                 expandedMove === i
@@ -394,12 +466,12 @@ function MatchMoves({ matchId }: { matchId: string }) {
 // Recent Matches List (expandable rows with reasoning)
 // ============================================
 
-function RecentMatchesList({ matches }: { matches: any[] }) {
+function RecentMatchesList({ matches }: { matches: MatchSummary[] }) {
   const [expanded, setExpanded] = useState<string | null>(null);
 
   return (
     <div className="space-y-2">
-      {matches.map((m: any) => (
+      {matches.map((m) => (
         <div key={m.id} className="border border-gray-800/50 rounded-lg overflow-hidden">
           {/* Match summary row */}
           <div
@@ -506,12 +578,12 @@ function StatsCards({ agents }: { agents: Agent[] }) {
 // ============================================
 
 function ChainInfo() {
-  const [chainStatus, setChainStatus] = useState<any>(null);
+  const [chainStatus, setChainStatus] = useState<ChainStatus | null>(null);
 
   useEffect(() => {
-    apiFetch('/chain/status').then(setChainStatus).catch(() => {});
+    apiFetch<ChainStatus>('/chain/status').then(setChainStatus).catch(() => undefined);
     const interval = setInterval(() => {
-      apiFetch('/chain/status').then(setChainStatus).catch(() => {});
+      apiFetch<ChainStatus>('/chain/status').then(setChainStatus).catch(() => undefined);
     }, 30000);
     return () => clearInterval(interval);
   }, []);
@@ -559,21 +631,21 @@ function ChainInfo() {
 
 export default function Arena() {
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [recentMatches, setRecentMatches] = useState<MatchState[]>([]);
+  const [recentMatches, setRecentMatches] = useState<MatchSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
       const [lb, matches] = await Promise.all([
-        apiFetch('/leaderboard?limit=50'),
-        apiFetch('/matches/recent?limit=20').catch(() => []),
+        apiFetch<Agent[]>('/leaderboard?limit=50'),
+        apiFetch<MatchSummary[]>('/matches/recent?limit=20').catch((): MatchSummary[] => []),
       ]);
       setAgents(lb);
       setRecentMatches(matches);
       setError(null);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to load arena data');
     } finally {
       setLoading(false);
     }
@@ -669,10 +741,10 @@ export default function Arena() {
 }
 
 function ModelsList() {
-  const [models, setModels] = useState<any[]>([]);
+  const [models, setModels] = useState<ModelInfo[]>([]);
 
   useEffect(() => {
-    apiFetch('/models').then(setModels).catch(console.error);
+    apiFetch<ModelInfo[]>('/models').then(setModels).catch(console.error);
   }, []);
 
   return (

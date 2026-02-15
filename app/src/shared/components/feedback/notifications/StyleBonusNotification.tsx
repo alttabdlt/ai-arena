@@ -1,6 +1,6 @@
 import { PokerStyleBonus as StyleBonus } from '@game/shared/types';
 import { Shield, Target, TrendingUp, Trophy, Zap } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 interface StyleBonusNotificationProps {
   bonuses: StyleBonus[];
@@ -42,18 +42,18 @@ const getColorForBonus = (type: StyleBonus['type'] | string) => {
 
 export function StyleBonusNotification({ bonuses }: StyleBonusNotificationProps) {
   const [visibleBonuses, setVisibleBonuses] = useState<(StyleBonus & { id: number; isVisible: boolean })[]>([]);
-  const [nextId, setNextId] = useState(0);
+  const nextIdRef = useRef(0);
 
   useEffect(() => {
     if (bonuses.length > 0) {
       const newBonuses = bonuses.map((bonus, index) => ({
         ...bonus,
-        id: nextId + index,
+        id: nextIdRef.current + index,
         isVisible: false
       }));
+      nextIdRef.current += bonuses.length;
       
       setVisibleBonuses(prev => [...prev, ...newBonuses]);
-      setNextId(prev => prev + bonuses.length);
 
       // Animate in
       setTimeout(() => {

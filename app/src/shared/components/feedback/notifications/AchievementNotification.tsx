@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 // Define AchievementEvent inline since it's not exported from the new structure
 interface AchievementEvent {
   playerId: string;
@@ -65,18 +65,18 @@ const getRarityGlow = (rarity: string) => {
 
 export function AchievementNotification({ events, players }: AchievementNotificationProps) {
   const [visibleEvents, setVisibleEvents] = useState<(AchievementEvent & { id: number; isVisible: boolean })[]>([]);
-  const [nextId, setNextId] = useState(0);
+  const nextIdRef = useRef(0);
 
   useEffect(() => {
     if (events.length > 0) {
       const newEvents = events.map((event, index) => ({
         ...event,
-        id: nextId + index,
+        id: nextIdRef.current + index,
         isVisible: false
       }));
+      nextIdRef.current += events.length;
       
       setVisibleEvents(prev => [...prev, ...newEvents]);
-      setNextId(prev => prev + events.length);
 
       // Animate in with stagger
       newEvents.forEach((event, index) => {

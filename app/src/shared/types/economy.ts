@@ -30,7 +30,7 @@ export interface BotEquipment {
   powerBonus: number;
   defenseBonus: number;
   equipped: boolean;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
 }
@@ -64,7 +64,7 @@ export interface Furniture {
     y: number;
     rotation: number;
   };
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown>;
   createdAt: string;
 }
 

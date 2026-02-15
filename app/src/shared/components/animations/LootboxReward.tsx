@@ -12,11 +12,28 @@ interface LootboxRewardDisplayProps {
   onContinue?: () => void;
 }
 
+type RewardItemStats = Record<string, string | number>;
+
+const getRewardStats = (item: LootboxReward['item']): RewardItemStats | undefined => {
+  const maybeStats = (item as Partial<{ stats: unknown }>).stats;
+  if (typeof maybeStats !== 'object' || maybeStats === null || Array.isArray(maybeStats)) {
+    return undefined;
+  }
+
+  return Object.fromEntries(
+    Object.entries(maybeStats).filter((entry): entry is [string, string | number] => {
+      const value = entry[1];
+      return typeof value === 'string' || typeof value === 'number';
+    })
+  );
+};
+
 export const LootboxRewardDisplay: React.FC<LootboxRewardDisplayProps> = ({ reward, visible = true, onContinue }) => {
   if (!reward || !visible) return null;
 
   const rarityColor = RARITY_COLORS[reward.item.rarity];
   const Icon = reward.item.rarity === 'legendary' ? Trophy : reward.item.rarity === 'epic' ? Sparkles : Star;
+  const itemStats = getRewardStats(reward.item);
 
   return (
     <motion.div
@@ -54,9 +71,9 @@ export const LootboxRewardDisplay: React.FC<LootboxRewardDisplayProps> = ({ rewa
           )}
           
           {/* For future extensibility - items may have stats */}
-          {(reward.item as any).stats && (
+          {itemStats && (
             <div className="space-y-1 text-sm">
-              {Object.entries((reward.item as any).stats).map(([key, value]) => (
+              {Object.entries(itemStats).map(([key, value]) => (
                 <div key={key} className="flex justify-between">
                   <span className="capitalize">{key}:</span>
                   <span className="font-medium">+{String(value)}</span>

@@ -16,7 +16,30 @@ const PERSONALITIES = [
 interface SpawnAgentProps {
   walletAddress: string | null;
   onConnectWallet: () => Promise<string | null>;
-  onSpawned?: (agent: any) => void;
+  onSpawned?: (agent: SpawnedAgent) => void;
+}
+
+interface SpawnedAgent {
+  name: string;
+  archetype: string;
+  walletAddress: string;
+}
+
+interface SpawnSuccess {
+  agent: SpawnedAgent;
+  assignedTown?: string;
+}
+
+interface SpawnResponse {
+  error?: string;
+  agent?: SpawnedAgent;
+  assignedTown?: string;
+}
+
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === 'string') return error;
+  return 'Failed to spawn';
 }
 
 export function SpawnAgent({ walletAddress, onConnectWallet, onSpawned }: SpawnAgentProps) {
@@ -24,7 +47,7 @@ export function SpawnAgent({ walletAddress, onConnectWallet, onSpawned }: SpawnA
   const [personality, setPersonality] = useState('CHAMELEON');
   const [error, setError] = useState<string | null>(null);
   const [spawning, setSpawning] = useState(false);
-  const [success, setSuccess] = useState<any>(null);
+  const [success, setSuccess] = useState<SpawnSuccess | null>(null);
 
   const handleSpawn = useCallback(async () => {
     setError(null);
@@ -47,12 +70,17 @@ export function SpawnAgent({ walletAddress, onConnectWallet, onSpawned }: SpawnA
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: name.trim(), personality, walletAddress: wallet }),
       });
-      const data = await res.json();
+      const data = (await res.json()) as SpawnResponse;
       if (!res.ok) throw new Error(data.error || 'Failed to spawn');
-      setSuccess(data);
-      onSpawned?.(data.agent);
-    } catch (err: any) {
-      setError(err.message);
+      if (!data.agent) throw new Error('Spawn response missing agent');
+      const nextSuccess: SpawnSuccess = {
+        agent: data.agent,
+        assignedTown: data.assignedTown,
+      };
+      setSuccess(nextSuccess);
+      onSpawned?.(nextSuccess.agent);
+    } catch (error: unknown) {
+      setError(toErrorMessage(error));
     } finally {
       setSpawning(false);
     }

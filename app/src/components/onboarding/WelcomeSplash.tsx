@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 const STORAGE_KEY = 'aitown_welcomed';
 const AUTO_DISMISS_MS = 8000;
@@ -11,6 +11,15 @@ export function WelcomeSplash({ onDismiss }: WelcomeSplashProps) {
   const [visible, setVisible] = useState(false);
   const [fadeOut, setFadeOut] = useState(false);
 
+  const dismiss = useCallback(() => {
+    setFadeOut(true);
+    localStorage.setItem(STORAGE_KEY, '1');
+    setTimeout(() => {
+      setVisible(false);
+      onDismiss?.();
+    }, 400);
+  }, [onDismiss]);
+
   useEffect(() => {
     // Only show on first visit
     if (localStorage.getItem(STORAGE_KEY)) return;
@@ -19,16 +28,7 @@ export function WelcomeSplash({ onDismiss }: WelcomeSplashProps) {
     // Auto-dismiss after timeout
     const timer = setTimeout(() => dismiss(), AUTO_DISMISS_MS);
     return () => clearTimeout(timer);
-  }, []);
-
-  const dismiss = () => {
-    setFadeOut(true);
-    localStorage.setItem(STORAGE_KEY, '1');
-    setTimeout(() => {
-      setVisible(false);
-      onDismiss?.();
-    }, 400);
-  };
+  }, [dismiss]);
 
   if (!visible) return null;
 

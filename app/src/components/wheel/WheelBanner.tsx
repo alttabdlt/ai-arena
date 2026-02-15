@@ -31,9 +31,15 @@ interface WheelBannerProps {
   status: WheelStatus | null;
   odds: WheelOdds | null;
   walletAddress: string | null;
-  onBet: (wallet: string, side: 'A' | 'B', amount: number) => Promise<any>;
+  onBet: (wallet: string, side: 'A' | 'B', amount: number) => Promise<unknown>;
   loading?: boolean;
   isMobile?: boolean;
+}
+
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === 'string') return error;
+  return 'Bet failed';
 }
 
 export function WheelBanner({ status, odds, walletAddress, onBet, loading, isMobile }: WheelBannerProps) {
@@ -88,8 +94,8 @@ export function WheelBanner({ status, odds, walletAddress, onBet, loading, isMob
       await onBet(walletAddress, side, betAmount);
       const name = side === 'A' ? status?.currentMatch?.agent1.name : status?.currentMatch?.agent2.name;
       setToast({ msg: `✅ Bet ${betAmount} on ${name}!`, type: 'ok' });
-    } catch (e: any) {
-      setToast({ msg: `❌ ${e.message}`, type: 'err' });
+    } catch (error: unknown) {
+      setToast({ msg: `❌ ${toErrorMessage(error)}`, type: 'err' });
     } finally {
       setBetting(false);
     }

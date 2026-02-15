@@ -5,13 +5,23 @@ interface LogEntry {
   level: 'log' | 'warn' | 'error' | 'info' | 'debug';
   source: 'frontend' | 'backend' | 'websocket';
   message: string;
-  data?: any;
+  data?: unknown;
   stack?: string;
 }
 
+type ApolloClientLike = {
+  mutate: (options: {
+    mutation: unknown;
+    variables: Record<string, unknown>;
+  }) => Promise<unknown>;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
 // Apollo client will be injected
-let apolloClient: any = null;
-export const setApolloClient = (client: any) => {
+let apolloClient: ApolloClientLike | null = null;
+export const setApolloClient = (client: ApolloClientLike | null) => {
   apolloClient = client;
 };
 
@@ -47,7 +57,7 @@ class DebugLogger {
 
   private overrideConsole() {
     const capture = (level: LogEntry['level']) => {
-      return (...args: any[]) => {
+      return (...args: unknown[]) => {
         // Always call original console method
         this.originalConsole[level](...args);
 
@@ -206,10 +216,14 @@ class DebugLogger {
     
     // Check data for SendDebugLog references
     if (entry.data && typeof entry.data === 'object') {
-      const dataStr = JSON.stringify(entry.data).toLowerCase();
-      if (dataStr.includes('senddebuglog') || 
-          dataStr.includes('send_debug_log')) {
-        return true;
+      try {
+        const dataStr = JSON.stringify(entry.data).toLowerCase();
+        if (dataStr.includes('senddebuglog') || 
+            dataStr.includes('send_debug_log')) {
+          return true;
+        }
+      } catch {
+        return false;
       }
     }
     
@@ -283,7 +297,7 @@ class DebugLogger {
         output += `Stack trace:\n${log.stack}\n`;
       }
       
-      if (log.data && typeof log.data === 'object' && Object.keys(log.data).length > 0) {
+      if (isRecord(log.data) && Object.keys(log.data).length > 0) {
         try {
           output += `Data: ${JSON.stringify(log.data, null, 2)}\n`;
         } catch {
@@ -429,11 +443,12 @@ class DebugLogger {
     if (!apolloClient) return;
     
     try {
+      const entryData = isRecord(entry.data) ? entry.data : {};
       // Include game type in the log data
       const logWithGameType = {
         ...entry,
         data: {
-          ...entry.data,
+          ...entryData,
           gameType: this.gameType
         }
       };
@@ -459,7 +474,7 @@ class DebugLogger {
       const logsWithGameType = entries.map(entry => ({
         ...entry,
         data: {
-          ...entry.data,
+          ...(isRecord(entry.data) ? entry.data : {}),
           gameType: this.gameType
         }
       }));
@@ -481,28 +496,41 @@ class DebugLogger {
 // Create singleton instance
 export const debugLogger = new DebugLogger();
 
+declare global {
+  interface Window {
+    debugLogger?: DebugLogger;
+    getLogs?: () => LogEntry[];
+    exportLogs?: () => string;
+    saveLogs?: () => void;
+    getSessions?: () => string[];
+    loadSession?: (sessionId: string) => LogEntry[];
+    downloadSession?: (sessionId: string) => void;
+    clearDebugStorage?: () => void;
+  }
+}
+
 // Make debugLogger available globally for easy console access
 if (typeof window !== 'undefined') {
-  (window as any).debugLogger = debugLogger;
-  (window as any).getLogs = () => debugLogger.getLogs();
-  (window as any).exportLogs = () => {
+  window.debugLogger = debugLogger;
+  window.getLogs = () => debugLogger.getLogs();
+  window.exportLogs = () => {
     const logs = debugLogger.exportLogs();
     console.log(logs);
     return logs;
   };
-  (window as any).saveLogs = () => debugLogger.downloadLogs();
-  (window as any).getSessions = () => {
+  window.saveLogs = () => debugLogger.downloadLogs();
+  window.getSessions = () => {
     const sessions = debugLogger.getSavedSessions();
     console.log('📁 Saved debug sessions:');
     sessions.forEach(s => console.log(`  - ${s}`));
     return sessions;
   };
-  (window as any).loadSession = (sessionId: string) => {
+  window.loadSession = (sessionId: string) => {
     const logs = debugLogger.loadSession(sessionId);
     console.log(`📂 Loaded ${logs.length} logs from session ${sessionId}`);
     return logs;
   };
-  (window as any).downloadSession = (sessionId: string) => {
+  window.downloadSession = (sessionId: string) => {
     debugLogger.downloadSession(sessionId);
     console.log(`💾 Downloading logs for session ${sessionId}`);
   };
@@ -518,7 +546,7 @@ if (typeof window !== 'undefined') {
   // console.log('  - Press Ctrl/Cmd + D to toggle debug viewer');
   
   // Add clear storage command
-  (window as any).clearDebugStorage = () => {
+  window.clearDebugStorage = () => {
     debugLogger.clearOldStorageData();
     console.log('✅ Debug log storage cleared');
   };

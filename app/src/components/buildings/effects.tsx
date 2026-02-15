@@ -34,9 +34,10 @@ export function IndustrialSmoke({ position, intensity = 1 }: { position: [number
   });
 
   return (
-    <points ref={smokesRef} position={position}>
+    <points key={`industrial-smoke-${count}`} ref={smokesRef} position={position}>
       <bufferGeometry>
         <bufferAttribute
+          key={`industrial-smoke-attr-${count}`}
           attach="attributes-position"
           array={positions}
           count={count}

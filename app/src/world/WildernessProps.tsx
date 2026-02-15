@@ -161,7 +161,13 @@ export function WildernessProps({ fromZ, toZ, centerX, seed }: WildernessPropsPr
     <group>
       {/* Tree trunks */}
       {trees.length > 0 && (
-        <instancedMesh ref={treeTrunkRef} args={[undefined, undefined, trees.length]} castShadow receiveShadow>
+        <instancedMesh
+          key={`wild-tree-trunk-${trees.length}`}
+          ref={treeTrunkRef}
+          args={[undefined, undefined, trees.length]}
+          castShadow
+          receiveShadow
+        >
           <cylinderGeometry args={[0.18, 0.28, 2.0, 6]} />
           <meshStandardMaterial color="#3f2a1c" roughness={0.95} />
         </instancedMesh>
@@ -169,7 +175,13 @@ export function WildernessProps({ fromZ, toZ, centerX, seed }: WildernessPropsPr
 
       {/* Tree canopies */}
       {trees.length > 0 && (
-        <instancedMesh ref={treeCanopyRef} args={[undefined, undefined, trees.length]} castShadow receiveShadow>
+        <instancedMesh
+          key={`wild-tree-canopy-${trees.length}`}
+          ref={treeCanopyRef}
+          args={[undefined, undefined, trees.length]}
+          castShadow
+          receiveShadow
+        >
           <coneGeometry args={[1.1, 2.4, 7]} />
           <meshStandardMaterial color="#06351f" roughness={0.9} />
         </instancedMesh>
@@ -177,7 +189,13 @@ export function WildernessProps({ fromZ, toZ, centerX, seed }: WildernessPropsPr
 
       {/* Rocks */}
       {rocks.length > 0 && (
-        <instancedMesh ref={rockRef} args={[undefined, undefined, rocks.length]} castShadow receiveShadow>
+        <instancedMesh
+          key={`wild-rock-${rocks.length}`}
+          ref={rockRef}
+          args={[undefined, undefined, rocks.length]}
+          castShadow
+          receiveShadow
+        >
           <dodecahedronGeometry args={[0.8, 0]} />
           <meshStandardMaterial color="#111827" roughness={0.98} />
         </instancedMesh>
@@ -185,7 +203,7 @@ export function WildernessProps({ fromZ, toZ, centerX, seed }: WildernessPropsPr
 
       {/* Grass patches */}
       {grasses.length > 0 && (
-        <instancedMesh ref={grassRef} args={[undefined, undefined, grasses.length]}>
+        <instancedMesh key={`wild-grass-${grasses.length}`} ref={grassRef} args={[undefined, undefined, grasses.length]}>
           <circleGeometry args={[1.2, 6]} />
           <meshStandardMaterial color="#0a2818" roughness={1} transparent opacity={0.6} />
         </instancedMesh>

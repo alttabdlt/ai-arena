@@ -1,1 +1,2 @@
-export { OnboardingOverlay, isOnboarded, getMyAgentId, getMyWallet } from './OnboardingOverlay';
+export { OnboardingOverlay } from './OnboardingOverlay';
+export { isOnboarded, getMyAgentId, getMyWallet } from './storage';

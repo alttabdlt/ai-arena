@@ -25,7 +25,7 @@ interface Match {
     id: string;
     name: string;
   };
-  gameHistory?: any;
+  gameHistory?: unknown;
 }
 
 interface MatchHistoryEnhancedProps {

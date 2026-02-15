@@ -145,7 +145,9 @@ export function useWheelStatus(walletAddress?: string | null) {
       if (!res.ok) return;
       const data = await res.json();
       if (mountedRef.current) setStatus(data);
-    } catch {}
+    } catch {
+      return;
+    }
   }, []);
 
   const fetchOdds = useCallback(async () => {
@@ -154,7 +156,9 @@ export function useWheelStatus(walletAddress?: string | null) {
       if (!res.ok) return;
       const data = await res.json();
       if (mountedRef.current) setOdds(data);
-    } catch {}
+    } catch {
+      return;
+    }
   }, []);
 
   const placeBet = useCallback(async (wallet: string, side: 'A' | 'B', amount: number) => {

@@ -2,6 +2,30 @@ import { useEffect } from 'react';
 import { useApolloClient } from '@apollo/client';
 import { debugLogger } from '@shared/services/debugLogger';
 
+interface GraphQLOperation {
+  query?: {
+    definitions?: Array<{
+      operation?: string;
+    }>;
+  };
+  operationName?: string;
+  variables?: unknown;
+}
+
+interface ApolloLinkWithRequest {
+  request?: (...args: unknown[]) => unknown;
+  subscriptionClient?: WebSocketClientLike;
+}
+
+interface WebSocketClientLike {
+  onMessage?: (message: unknown) => unknown;
+}
+
+interface ApolloClientWithSocket {
+  wsClient?: WebSocketClientLike;
+  link?: ApolloLinkWithRequest;
+}
+
 export function useDebugLogging(gameType: string) {
   const client = useApolloClient();
 
@@ -10,27 +34,29 @@ export function useDebugLogging(gameType: string) {
     debugLogger.startCapture(gameType);
 
     // Intercept Apollo Client operations
-    const link = client.link;
+    const link = client.link as unknown as ApolloLinkWithRequest;
     
     // Log GraphQL operations
-    const originalRequest = (link as any).request;
-    if (originalRequest) {
-      (link as any).request = (operation: any) => {
+    const originalRequest = link.request;
+    if (typeof originalRequest === 'function') {
+      link.request = (...requestArgs: unknown[]) => {
+        const operation = requestArgs[0] as GraphQLOperation | undefined;
         console.log('🔄 GraphQL Operation:', {
-          type: operation.query.definitions[0].operation,
-          name: operation.operationName,
-          variables: operation.variables,
+          type: operation?.query?.definitions?.[0]?.operation,
+          name: operation?.operationName,
+          variables: operation?.variables,
         });
-        return originalRequest.call(link, operation);
+        return originalRequest.call(link, ...requestArgs);
       };
     }
 
     // Intercept WebSocket messages
-    const wsClient = (client as any).wsClient || (client.link as any)?.subscriptionClient;
+    const socketClient = client as unknown as ApolloClientWithSocket;
+    const wsClient = socketClient.wsClient || socketClient.link?.subscriptionClient;
     if (wsClient) {
       const originalOnMessage = wsClient.onMessage;
-      if (originalOnMessage) {
-        wsClient.onMessage = (message: any) => {
+      if (typeof originalOnMessage === 'function') {
+        wsClient.onMessage = (message: unknown) => {
           window.dispatchEvent(new CustomEvent('websocket-log', {
             detail: {
               timestamp: new Date().toISOString(),
@@ -57,14 +83,20 @@ export function useBackendLogListener() {
     // This would be connected to your backend WebSocket that streams logs
     // For now, we'll simulate it by parsing certain console messages
     
-    const handleSubscriptionData = (event: any) => {
-      if (event.detail?.data?.gameStateUpdate) {
+    const handleSubscriptionData = (event: Event) => {
+      const customEvent = event as CustomEvent<{
+        data?: {
+          gameStateUpdate?: unknown;
+        };
+      }>;
+
+      if (customEvent.detail?.data?.gameStateUpdate) {
         window.dispatchEvent(new CustomEvent('backend-log', {
           detail: {
             timestamp: new Date().toISOString(),
             level: 'info',
             message: 'Game state update from backend',
-            data: event.detail.data,
+            data: customEvent.detail.data,
           }
         }));
       }

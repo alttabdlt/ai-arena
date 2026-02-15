@@ -91,9 +91,15 @@ interface WheelArenaProps {
   status: WheelStatus;
   odds: WheelOdds | null;
   walletAddress: string | null;
-  onBet: (wallet: string, side: 'A' | 'B', amount: number) => Promise<any>;
+  onBet: (wallet: string, side: 'A' | 'B', amount: number) => Promise<unknown>;
   loading?: boolean;
   onClose?: () => void;
+}
+
+function toErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === 'string') return error;
+  return 'Bet failed';
 }
 
 // ============================================
@@ -119,6 +125,7 @@ export function WheelArena({ status, odds, walletAddress, onBet, loading, onClos
   const match = status.currentMatch;
   const result = status.lastResult;
   const phase = status.phase;
+  const currentMoves = useMemo(() => status.currentMoves || [], [status.currentMoves]);
 
   // ---- Spin overlay on ANNOUNCING ----
   useEffect(() => {
@@ -150,11 +157,8 @@ export function WheelArena({ status, odds, walletAddress, onBet, loading, onClos
   // ---- Update moves during FIGHTING from live currentMoves ----
   useEffect(() => {
     if (phase !== 'FIGHTING') return;
-    const liveMoves = status.currentMoves || [];
-    if (liveMoves.length > visibleMoves.length) {
-      setVisibleMoves(liveMoves);
-    }
-  }, [phase, status.currentMoves?.length]);
+    setVisibleMoves((prev) => (currentMoves.length > prev.length ? currentMoves : prev));
+  }, [phase, currentMoves]);
 
   // ---- Show result + sounds on phase transitions ----
   useEffect(() => {
@@ -180,17 +184,16 @@ export function WheelArena({ status, odds, walletAddress, onBet, loading, onClos
 
   // Play sound on new moves (all-in detection)
   useEffect(() => {
-    const moves = status.currentMoves || [];
-    if (moves.length > prevMoveCountRef.current && moves.length > 0) {
-      const latest = moves[moves.length - 1];
+    if (currentMoves.length > prevMoveCountRef.current && currentMoves.length > 0) {
+      const latest = currentMoves[currentMoves.length - 1];
       if (latest.action === 'all-in') {
         playSound('allIn');
       } else {
         playSound('cardFlip');
       }
     }
-    prevMoveCountRef.current = moves.length;
-  }, [status.currentMoves?.length]);
+    prevMoveCountRef.current = currentMoves.length;
+  }, [currentMoves]);
 
   // ---- Toast dismiss ----
   useEffect(() => {
@@ -213,9 +216,9 @@ export function WheelArena({ status, odds, walletAddress, onBet, loading, onClos
       playSound('stake');
       const name = pendingBet.side === 'A' ? match?.agent1.name : match?.agent2.name;
       setToast(`Bet ${betAmount} $ARENA on ${name}!`);
-    } catch (e: any) {
+    } catch (error: unknown) {
       playSound('error');
-      setToast(`${e.message}`);
+      setToast(toErrorMessage(error));
     } finally {
       setBetting(false);
     }
@@ -667,7 +670,7 @@ function PokerArena({ agent1, agent2, moves, wager }: { agent1: AgentInfo; agent
         return () => clearTimeout(t);
       }
     }
-  }, [moves.length]);
+  }, [moves]);
 
   const communityCards = snapshot?.communityCards || [];
   const pot = snapshot?.pot ?? wager * 2;

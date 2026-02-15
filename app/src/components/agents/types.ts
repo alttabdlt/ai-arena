@@ -1,6 +1,20 @@
 import * as THREE from 'three';
 
-export type AgentActivity = 'WALKING' | 'IDLE' | 'SHOPPING' | 'CHATTING' | 'BUILDING' | 'MINING' | 'PLAYING' | 'BEGGING' | 'SCHEMING';
+export type AgentActivity =
+  | 'WALKING'
+  | 'IDLE'
+  | 'SHOPPING'
+  | 'CHATTING'
+  | 'CLAIMING'
+  | 'BUILDING'
+  | 'WORKING'
+  | 'MINING'
+  | 'TRADING'
+  | 'PLAYING'
+  | 'FIGHTING'
+  | 'BEGGING'
+  | 'SCHEMING'
+  | 'TRAVELING';
 export type AgentEconomicState = 'THRIVING' | 'COMFORTABLE' | 'STRUGGLING' | 'BROKE' | 'HOMELESS' | 'DEAD' | 'RECOVERING';
 export type AgentState = AgentActivity | 'DEAD';
 
@@ -8,13 +22,20 @@ export interface AgentSim {
   id: string;
   position: THREE.Vector3;
   heading: THREE.Vector3;
+  velocity?: THREE.Vector3;
+  acceleration?: THREE.Vector3;
   route: THREE.Vector3[];
   speed: number;
   walk: number;
   state: AgentState;
+  stateBlend?: number;
+  turnVelocity?: number;
+  lastImpactAt?: number;
   stateTimer: number;
+  stateEndsAt?: number;
   targetPlotId: string | null;
   chatPartnerId: string | null;
+  chatEndsAt?: number;
   health: number;
 }
 

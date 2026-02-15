@@ -17,15 +17,15 @@ interface GraphQLGameState {
   bettingRound: string;
   communityCards: string[];
   potSize: number;
-  sidePots: any[];
+  sidePots: unknown[];
   currentBet: number;
   minRaise: number;
-  opponents: any[];
+  opponents: OpponentInfo[];
   actionHistory: {
-    preflop: any[];
-    flop: any[];
-    turn: any[];
-    river: any[];
+    preflop: unknown[];
+    flop: unknown[];
+    turn: unknown[];
+    river: unknown[];
   };
   mainPot: number;
   totalPot: number;
@@ -37,6 +37,22 @@ interface GraphQLGameState {
     percentage: number;
     breakEvenPercentage: number;
   };
+}
+
+interface OpponentInfo {
+  seat: number;
+  id: string;
+  name: string;
+  stackSize: number;
+  position: string;
+  positionType: string;
+  status: string;
+  amountInPot: number;
+  amountInRound: number;
+  isAllIn: boolean;
+  holeCardsKnown: boolean;
+  holeCards: string[];
+  lastAction: unknown;
 }
 
 interface GraphQLPlayerState {
@@ -71,6 +87,41 @@ export function transformScenarioToGraphQL(scenario: TestScenario): {
   opponents: number;
 } {
   const { gameState, playerState, opponents } = scenario;
+
+  const baseGameState = {
+    gameType: gameState.gameType,
+    bettingStructure: gameState.bettingStructure,
+    maxPlayers: gameState.maxPlayers,
+    currentPlayers: gameState.currentPlayers,
+    activePlayers: gameState.activePlayers,
+    smallBlind: gameState.smallBlind,
+    bigBlind: gameState.bigBlind,
+    ante: gameState.ante,
+    level: gameState.level,
+    handNumber: gameState.handNumber,
+    communityCards: gameState.communityCards,
+    potSize: gameState.potSize,
+    sidePots: gameState.sidePots,
+    currentBet: gameState.currentBet,
+    minRaise: gameState.minRaise,
+    mainPot: gameState.mainPot,
+  };
+
+  const basePlayerState = {
+    holeCards: playerState.holeCards,
+    stackSize: playerState.stackSize,
+    position: playerState.position,
+    positionType: playerState.positionType,
+    seatNumber: playerState.seatNumber,
+    isAllIn: playerState.isAllIn,
+    amountInvestedThisHand: playerState.amountInvestedThisHand,
+    amountInvestedThisRound: playerState.amountInvestedThisRound,
+    amountToCall: playerState.amountToCall,
+    canCheck: playerState.canCheck,
+    canFold: playerState.canFold,
+    canCall: playerState.canCall,
+    canRaise: playerState.canRaise,
+  };
 
   // Map stage to bettingRound
   const bettingRoundMap: Record<string, string> = {
@@ -110,7 +161,7 @@ export function transformScenarioToGraphQL(scenario: TestScenario): {
       holeCardsKnown: false,
       holeCards: [],
       lastAction: null
-    };
+    } satisfies OpponentInfo;
   });
 
   // Calculate effective stack size
@@ -121,7 +172,7 @@ export function transformScenarioToGraphQL(scenario: TestScenario): {
 
   // Transform to GraphQL format
   const transformedGameState: GraphQLGameState = {
-    ...gameState,
+    ...baseGameState,
     dealerPosition,
     smallBlindPosition,
     bigBlindPosition,
@@ -160,7 +211,7 @@ export function transformScenarioToGraphQL(scenario: TestScenario): {
     .map(o => o.id);
 
   const transformedPlayerState: GraphQLPlayerState = {
-    ...playerState,
+    ...basePlayerState,
     minRaiseAmount,
     maxRaiseAmount,
     seatsToActAfter: playersLeftToAct.length,
@@ -175,23 +226,9 @@ export function transformScenarioToGraphQL(scenario: TestScenario): {
     commitmentLevel: playerState.amountInvestedThisHand / playerState.stackSize
   };
 
-  // Remove fields that don't exist in GraphQL schema
-  const cleanedGameState = { ...transformedGameState };
-  delete (cleanedGameState as any).stage;
-  delete (cleanedGameState as any).totalChipsInPlay;
-  delete (cleanedGameState as any).averageStack;
-  delete (cleanedGameState as any).playersAllIn;
-
-  const cleanedPlayerState = { ...transformedPlayerState };
-  delete (cleanedPlayerState as any).canAllIn;
-  delete (cleanedPlayerState as any).minBet;
-  delete (cleanedPlayerState as any).maxBet;
-  delete (cleanedPlayerState as any).potOdds;
-  delete (cleanedPlayerState as any).stackToPotRatio;
-
   return {
-    gameState: cleanedGameState,
-    playerState: cleanedPlayerState,
+    gameState: transformedGameState,
+    playerState: transformedPlayerState,
     opponents
   };
 }

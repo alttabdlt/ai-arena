@@ -38,11 +38,30 @@ export interface Bot {
   };
 }
 
+interface BotResponse {
+  id: string;
+  name: string;
+  avatar?: string;
+  personality: string;
+  isActive: boolean;
+  character?: string;
+  experience?: {
+    level: number;
+    currentXP: number;
+    totalXP: number;
+    xpToNextLevel: number;
+  };
+}
+
+interface GetAllBotsQueryData {
+  bots: BotResponse[];
+}
+
 export const useBots = () => {
   const [bots, setBots] = useState<Bot[]>([]);
   
   // Query real bots from GraphQL
-  const { data, loading, error, refetch } = useQuery(GET_ALL_BOTS, {
+  const { data, loading, error, refetch } = useQuery<GetAllBotsQueryData>(GET_ALL_BOTS, {
     pollInterval: 30000, // Poll every 30 seconds
     onError: (error) => {
       console.error('Failed to fetch bots:', error);
@@ -53,7 +72,7 @@ export const useBots = () => {
   useEffect(() => {
     if (data?.bots) {
       // Map bots from GraphQL response
-      const mappedBots = data.bots.map((bot: any) => ({
+      const mappedBots = data.bots.map((bot) => ({
         id: bot.id,
         name: bot.name,
         avatar: bot.avatar,  // This contains the randomly selected character from deployment

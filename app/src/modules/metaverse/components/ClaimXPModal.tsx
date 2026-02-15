@@ -3,10 +3,21 @@ import { useMutation } from '@apollo/client';
 import { Trophy, Coins, Loader2, CheckCircle } from 'lucide-react';
 import { CLAIM_WINNINGS, UPDATE_BOT_EXPERIENCE } from '@/graphql/queries/betting';
 
+export interface WinningsBet {
+  id: string;
+  actualPayout?: number | null;
+  tournament?: {
+    gameType?: string | null;
+  } | null;
+  participant?: {
+    name?: string | null;
+  } | null;
+}
+
 interface ClaimXPModalProps {
   isOpen: boolean;
   onClose: () => void;
-  winnings: any[];
+  winnings: WinningsBet[];
   selectedBotId: string | null;
   onClaimComplete: () => void;
 }

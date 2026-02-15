@@ -16,6 +16,20 @@ import {
   RETRY_FAILED_DEPLOYMENTS
 } from '@/graphql/queries/deployment';
 
+interface WorldStatus {
+  worldId: string;
+  zone: string;
+  active: boolean;
+  botCount: number;
+}
+
+interface FailedDeployment {
+  botId: string;
+  botName: string;
+  error: string;
+  timestamp: string;
+}
+
 export const DeploymentStatus: React.FC = () => {
   const [forceDeployment, setForceDeployment] = useState(false);
   
@@ -32,8 +46,12 @@ export const DeploymentStatus: React.FC = () => {
   const [retryFailed, { loading: retrying }] = useMutation(RETRY_FAILED_DEPLOYMENTS);
   
   const status = statusData?.getDeploymentStatus;
-  const worlds = worldsData?.getWorldsStatus || [];
-  const failed = failedData?.getFailedDeployments || [];
+  const worlds: WorldStatus[] = Array.isArray(worldsData?.getWorldsStatus)
+    ? (worldsData.getWorldsStatus as WorldStatus[])
+    : [];
+  const failed: FailedDeployment[] = Array.isArray(failedData?.getFailedDeployments)
+    ? (failedData.getFailedDeployments as FailedDeployment[])
+    : [];
   
   const deploymentProgress = status ? (status.deployedBots / status.totalBots) * 100 : 0;
   
@@ -157,7 +175,7 @@ export const DeploymentStatus: React.FC = () => {
           )}
           
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {worlds.map((world: any) => (
+            {worlds.map((world) => (
               <div key={world.worldId} className="border rounded-lg p-3">
                 <div className="flex items-center justify-between mb-2">
                   <Badge variant={world.active ? 'default' : 'secondary'}>
@@ -267,7 +285,7 @@ export const DeploymentStatus: React.FC = () => {
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {failed.slice(0, 5).map((failure: any) => (
+              {failed.slice(0, 5).map((failure) => (
                 <div key={failure.botId} className="border rounded p-2">
                   <div className="flex justify-between items-start">
                     <div>

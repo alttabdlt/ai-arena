@@ -4,6 +4,15 @@ import { IGameDecision as AIDecision, Card, PokerPhase as GamePhase, PokerPlayer
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '@auth/contexts/AuthContext';
 
+type BackendRecord = Record<string, unknown>;
+type DecisionShape = {
+  action?: string | { type?: string; amount?: number; data?: { amount?: number } };
+};
+
+function toRecord(value: unknown): BackendRecord {
+  return value && typeof value === 'object' ? (value as BackendRecord) : {};
+}
+
 interface UsePokerGameState {
   players: Player[];
   communityCards: Card[];
@@ -11,16 +20,16 @@ interface UsePokerGameState {
   currentBet: number;
   phase: GamePhase;
   currentPlayer: Player | null;
-  winners: any[];
+  winners: unknown[];
   isHandComplete: boolean;
   currentAIThinking: string | null;
   currentAIReasoning: string | null;
-  recentActions: any[];
+  recentActions: Array<{ t: number; text: string }>;
   aiDecisionHistory: Map<string, AIDecision>;
   recentStyleBonuses: StyleBonus[];
-  recentMisreads: any[];
-  recentPointEvents: any[];
-  recentAchievementEvents: any[];
+  recentMisreads: unknown[];
+  recentPointEvents: unknown[];
+  recentAchievementEvents: unknown[];
   dealerPosition?: number | null;
   smallBlindPosition?: number | null;
   bigBlindPosition?: number | null;
@@ -51,7 +60,7 @@ const GAME_EVENT = gql`
 
 interface UseServerSidePokerOptions {
   gameId: string;
-  tournament?: any;
+  tournament?: unknown;
 }
 
 export function useServerSidePoker({ gameId, tournament }: UseServerSidePokerOptions) {
@@ -64,8 +73,6 @@ export function useServerSidePoker({ gameId, tournament }: UseServerSidePokerOpt
   const hasJoinedGame = useRef(false);
   const hasInitializedFromMatch = useRef(false);
   const isCatchingUp = useRef(false);
-  const eventBuffer = useRef<any[]>([]);
-  const isProcessingBuffer = useRef(false);
   const currentHandNumber = useRef(1);
 
   const [gameState, setGameState] = useState<UsePokerGameState>({
@@ -92,7 +99,7 @@ export function useServerSidePoker({ gameId, tournament }: UseServerSidePokerOpt
 
   const [isInitialized, setIsInitialized] = useState(false);
   const [currentGameState, setCurrentGameState] = useState<'setup' | 'playing' | 'paused' | 'finished'>('setup');
-  const [config] = useState<any>({
+  const [config] = useState({
     startingChips: 100000,
     blindStructure: 'normal',
     maxHands: 20,
@@ -117,25 +124,6 @@ export function useServerSidePoker({ gameId, tournament }: UseServerSidePokerOpt
     };
   }, [gameId, joinGame, leaveGame, signalFrontendReady, isAuthenticated]);
 
-  const processEventBuffer = useCallback(() => {
-    if (isProcessingBuffer.current || eventBuffer.current.length === 0) return;
-    isProcessingBuffer.current = true;
-    const events = [...eventBuffer.current];
-    eventBuffer.current = [];
-    const stateUpdates = events.filter(e => e.type === 'state');
-    stateUpdates.forEach((e, idx) => updateGameStateFromBackend(e.data, idx !== stateUpdates.length - 1));
-    const decisions = events.filter(e => e.type === 'decision');
-    decisions.forEach(e => handlePlayerDecision(e.playerId, e.data, true));
-    isProcessingBuffer.current = false;
-  }, []);
-
-  useEffect(() => {
-    const t = setTimeout(() => {
-      if (eventBuffer.current.length > 0) processEventBuffer();
-    }, 100);
-    return () => clearTimeout(t);
-  }, [processEventBuffer]);
-
   useSubscription(GAME_STATE_UPDATE, {
     variables: { gameId },
     skip: !gameId,
@@ -147,14 +135,14 @@ export function useServerSidePoker({ gameId, tournament }: UseServerSidePokerOpt
         if (parsed?.state) {
           // Apply state immediately for real-time feel
           updateGameStateFromBackend(parsed.state);
-          // Also buffer it in case batch processing is desired later
-          eventBuffer.current.push({ type: 'state', data: parsed.state });
           if (!isInitialized) {
             setIsInitialized(true);
             setCurrentGameState('playing');
           }
         }
-      } catch {}
+      } catch {
+        // ignore malformed state payloads
+      }
     }
   });
 
@@ -169,7 +157,9 @@ export function useServerSidePoker({ gameId, tournament }: UseServerSidePokerOpt
         if (evt.event === 'player_decision') {
           // Server sends { playerId, decision, handNumber? }
           const decisionPayload = parsed?.decision ?? parsed;
-          eventBuffer.current.push({ type: 'decision', playerId: evt.playerId, data: decisionPayload });
+          if (evt.playerId) {
+            handlePlayerDecision(evt.playerId, decisionPayload, true);
+          }
         } else if (parsed?.event === 'hand_complete') {
           setGameState(prev => ({
             ...prev,
@@ -191,7 +181,9 @@ export function useServerSidePoker({ gameId, tournament }: UseServerSidePokerOpt
         } else if (parsed?.event === 'thinking_complete') {
           setGameState(prev => ({ ...prev, currentAIThinking: null }));
         }
-      } catch {}
+      } catch {
+        // ignore malformed event payloads
+      }
     }
   });
 
@@ -219,59 +211,98 @@ export function useServerSidePoker({ gameId, tournament }: UseServerSidePokerOpt
           setIsInitialized(true);
           setCurrentGameState('playing');
         }
-      } catch {}
+      } catch {
+        // ignore malformed initial game state
+      }
     }
   });
 
-  const updateGameStateFromBackend = useCallback((backendState: any, isCatchUp = false) => {
-    const players: (Player & { avatar?: string; isAI?: boolean })[] = (backendState.players || []).map((p: any) => ({
-      id: p.id,
-      name: p.name || p.id,
-      chips: p.chips || 0,
-      cards: p.holeCards || p.cards || [],
-      folded: !!p.folded,
-      allIn: !!p.isAllIn,
-      bet: p.bet || 0,
-      position: p.position || 0,
-      hasActed: !!p.hasActed,
-      isActive: !p.folded && (p.chips > 0),
-      avatar: '',
-      isAI: true
-    }));
+  const updateGameStateFromBackend = useCallback((backendStateRaw: unknown, _isCatchUp = false) => {
+    const backendState = toRecord(backendStateRaw);
+    const gameSpecific = toRecord(backendState.gameSpecific);
+    const rawPlayers = Array.isArray(backendState.players) ? backendState.players : [];
+    const players: (Player & { avatar?: string; isAI?: boolean })[] = rawPlayers.map((rawPlayer) => {
+      const p = toRecord(rawPlayer);
+      const holeCards = Array.isArray(p.holeCards) ? p.holeCards : [];
+      const cards = Array.isArray(p.cards) ? p.cards : [];
+      const normalizedCards = (holeCards.length > 0 ? holeCards : cards).map((card) => String(card)) as Card[];
+      const chips = typeof p.chips === 'number' ? p.chips : 0;
+      const folded = Boolean(p.folded);
+      const id = String(p.id ?? '');
+      return {
+        id,
+        name: String(p.name ?? id),
+        chips,
+        cards: normalizedCards,
+        folded,
+        allIn: Boolean(p.isAllIn),
+        bet: typeof p.bet === 'number' ? p.bet : 0,
+        position: typeof p.position === 'number' ? p.position : 0,
+        hasActed: Boolean(p.hasActed),
+        isActive: !folded && chips > 0,
+        avatar: '',
+        isAI: true,
+      };
+    });
 
-    const currentPlayer = backendState.currentTurn ? players.find((p) => p.id === backendState.currentTurn) || null : null;
-    if (backendState.gameSpecific?.handNumber && backendState.gameSpecific.handNumber !== currentHandNumber.current) {
-      currentHandNumber.current = backendState.gameSpecific.handNumber;
+    const currentTurn = typeof backendState.currentTurn === 'string' ? backendState.currentTurn : null;
+    const currentPlayer = currentTurn ? players.find((p) => p.id === currentTurn) || null : null;
+    const handNumber = typeof gameSpecific.handNumber === 'number' ? gameSpecific.handNumber : null;
+    if (handNumber && handNumber !== currentHandNumber.current) {
+      currentHandNumber.current = handNumber;
     }
 
-    const newCommunityCards = backendState.gameSpecific?.communityCards || [];
-    const newPhase = (backendState.gameSpecific?.bettingRound || backendState.phase || 'waiting') as GamePhase;
+    const newCommunityCards = (Array.isArray(gameSpecific.communityCards) ? gameSpecific.communityCards : []).map((c) => String(c)) as Card[];
+    const bettingRound = typeof gameSpecific.bettingRound === 'string' ? gameSpecific.bettingRound : null;
+    const phase = typeof backendState.phase === 'string' ? backendState.phase : null;
+    const newPhase = (bettingRound || phase || 'waiting') as GamePhase;
 
     setGameState(prev => ({
       ...prev,
       players,
       communityCards: newCommunityCards,
-      pot: backendState.gameSpecific?.pot ?? backendState.pot ?? 0,
-      currentBet: backendState.gameSpecific?.currentBet ?? backendState.currentBet ?? 0,
+      pot: typeof gameSpecific.pot === 'number'
+        ? gameSpecific.pot
+        : typeof backendState.pot === 'number'
+          ? backendState.pot
+          : 0,
+      currentBet: typeof gameSpecific.currentBet === 'number'
+        ? gameSpecific.currentBet
+        : typeof backendState.currentBet === 'number'
+          ? backendState.currentBet
+          : 0,
       phase: newPhase,
       currentPlayer,
-      isHandComplete: newPhase === 'handComplete' || newPhase === 'showdown',
-      dealerPosition: backendState.dealerPosition ?? backendState.gameSpecific?.dealerPosition ?? null,
-      smallBlindPosition: backendState.smallBlindPosition ?? backendState.gameSpecific?.smallBlindPosition ?? null,
-      bigBlindPosition: backendState.bigBlindPosition ?? backendState.gameSpecific?.bigBlindPosition ?? null
+      isHandComplete: Boolean(gameSpecific.isHandComplete) || newPhase === 'showdown',
+      dealerPosition: typeof backendState.dealerPosition === 'number'
+        ? backendState.dealerPosition
+        : typeof gameSpecific.dealerPosition === 'number'
+          ? gameSpecific.dealerPosition
+          : null,
+      smallBlindPosition: typeof backendState.smallBlindPosition === 'number'
+        ? backendState.smallBlindPosition
+        : typeof gameSpecific.smallBlindPosition === 'number'
+          ? gameSpecific.smallBlindPosition
+          : null,
+      bigBlindPosition: typeof backendState.bigBlindPosition === 'number'
+        ? backendState.bigBlindPosition
+        : typeof gameSpecific.bigBlindPosition === 'number'
+          ? gameSpecific.bigBlindPosition
+          : null
     }));
   }, []);
 
-  const handlePlayerDecision = useCallback((playerId: string, decision: any, _buffered = false) => {
+  const handlePlayerDecision = useCallback((playerId: string, decisionRaw: unknown, _buffered = false) => {
+    const decision = toRecord(decisionRaw) as DecisionShape;
     setGameState(prev => {
       const newMap = new Map(prev.aiDecisionHistory);
-      newMap.set(playerId, decision);
+      newMap.set(playerId, decision as unknown as AIDecision);
       const type = typeof decision?.action === 'string' ? decision.action : decision?.action?.type;
       const amt = (() => {
-        const a = decision?.action;
+        const a = decision.action;
         if (!a) return undefined;
-        if (typeof a?.amount === 'number') return a.amount;
-        if (typeof a?.data?.amount === 'number') return a.data.amount;
+        if (typeof a === 'object' && typeof a.amount === 'number') return a.amount;
+        if (typeof a === 'object' && a.data && typeof a.data.amount === 'number') return a.data.amount;
         return undefined;
       })();
       const who = prev.players.find(p => p.id === playerId)?.name || playerId;

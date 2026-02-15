@@ -30,12 +30,26 @@ interface RecentWinnersProps {
   className?: string;
 }
 
+interface JackpotWinner {
+  id: string;
+  botId: string;
+  botName: string;
+  personality: string;
+  amount: number;
+  wonAt: string;
+}
+
+interface JackpotHistoryQueryData {
+  jackpotHistory: JackpotWinner[];
+  topJackpotWinners: JackpotWinner[];
+}
+
 export const RecentWinners: React.FC<RecentWinnersProps> = ({ 
   limit = 5, 
   showTopWinners = true,
   className = '' 
 }) => {
-  const { data, loading, error } = useQuery(JACKPOT_HISTORY_QUERY, {
+  const { data, loading, error } = useQuery<JackpotHistoryQueryData>(JACKPOT_HISTORY_QUERY, {
     variables: { limit },
     pollInterval: 60000 // Refresh every minute
   });
@@ -127,7 +141,7 @@ export const RecentWinners: React.FC<RecentWinnersProps> = ({
           <>
             {/* Recent Winners List */}
             <div className="space-y-2 mb-4">
-              {data.jackpotHistory.map((winner: any, index: number) => (
+              {data.jackpotHistory.map((winner, index: number) => (
                 <motion.div
                   key={winner.id}
                   initial={{ opacity: 0, x: -20 }}
@@ -164,7 +178,7 @@ export const RecentWinners: React.FC<RecentWinnersProps> = ({
                   🔥 Biggest Wins All-Time
                 </h4>
                 <div className="grid grid-cols-1 gap-1">
-                  {data.topJackpotWinners.slice(0, 3).map((winner: any, index: number) => (
+                  {data.topJackpotWinners.slice(0, 3).map((winner, index: number) => (
                     <div
                       key={winner.id}
                       className="flex items-center justify-between text-xs"

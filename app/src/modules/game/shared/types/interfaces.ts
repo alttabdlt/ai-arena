@@ -6,7 +6,7 @@ export interface IGameState {
   currentTurn?: string;
   turnCount: number;
   players: IGamePlayer[];
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface IGamePlayer {
@@ -16,21 +16,21 @@ export interface IGamePlayer {
   isAI: boolean;
   isActive: boolean;
   score?: number;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface IGameAction {
   playerId: string;
   type: string;
   timestamp: Date;
-  data?: any;
+  data?: unknown;
 }
 
 export interface IGameConfig {
   thinkingTime: number;
   maxDuration?: number;
   playerConfigs: IPlayerConfig[];
-  gameSpecificConfig?: Record<string, any>;
+  gameSpecificConfig?: Record<string, unknown>;
 }
 
 export interface IPlayerConfig {
@@ -45,7 +45,7 @@ export interface IGameDecision {
   action: IGameAction;
   confidence: number;
   reasoning: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface IGameValidationResult {
@@ -57,7 +57,7 @@ export interface IGameValidationResult {
 export interface IGameEvent {
   type: string;
   timestamp: Date;
-  data: any;
+  data: unknown;
   playerId?: string;
 }
 
@@ -97,8 +97,8 @@ export interface IGameManager<TState extends IGameState, TConfig extends IGameCo
   getState(): TState;
   getConfig(): TConfig;
   
-  on(event: string, handler: (data: any) => void): void;
-  off(event: string, handler: (data: any) => void): void;
+  on(event: string, handler: (data: unknown) => void): void;
+  off(event: string, handler: (data: unknown) => void): void;
 }
 
 export interface IGameAIAgent<TState extends IGameState, TAction extends IGameAction> {
@@ -115,7 +115,7 @@ export interface IAIPersonality {
   riskTolerance: number;
   bluffingTendency: number;
   adaptability: number;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface IGameScoringSystem<TState extends IGameState> {
@@ -163,5 +163,5 @@ export interface IGameError extends Error {
   code: string;
   severity: 'low' | 'medium' | 'high' | 'critical';
   recoverable: boolean;
-  context?: any;
+  context?: unknown;
 }

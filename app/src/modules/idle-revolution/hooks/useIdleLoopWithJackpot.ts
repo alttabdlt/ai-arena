@@ -178,14 +178,14 @@ export const useIdleLoopWithJackpot = ({
   });
 
   // Risk mode multipliers
-  const getRiskMultiplier = () => {
+  const getRiskMultiplier = useCallback(() => {
     switch (riskMode) {
       case 'SAFE': return 0.5;
       case 'DEGEN': return 2.0;
       case 'YOLO': return 5.0;
       default: return 1.0;
     }
-  };
+  }, [riskMode]);
 
   // Calculate XP required for next level
   const calculateMaxXp = useCallback((currentLevel: number) => {
@@ -215,7 +215,7 @@ export const useIdleLoopWithJackpot = ({
       ...activity,
       xpGained
     };
-  }, [riskMode]);
+  }, [getRiskMultiplier]);
 
   // Rotate activity
   const rotateActivity = useCallback(() => {
@@ -333,7 +333,7 @@ export const useIdleLoopWithJackpot = ({
     
     // Track pending XP for batch save
     pendingXpRef.current += xpGained;
-  }, [botId, botName, personality, riskMode, calculateMaxXp, checkJackpotWin, contributeToJackpot, onJackpotWin]);
+  }, [botId, botName, personality, riskMode, calculateMaxXp, checkJackpotWin, contributeToJackpot, onJackpotWin, getRiskMultiplier, maxXp]);
 
   // Save progress to backend
   const saveProgress = useCallback(async () => {
@@ -397,7 +397,7 @@ export const useIdleLoopWithJackpot = ({
         saveProgress();
       }
     };
-  }, [botId, personality, riskMode]); // Only depend on stable values
+  }, [botId, handleXpTick, rotateActivity, saveProgress]);
 
   // Save on window unload
   useEffect(() => {

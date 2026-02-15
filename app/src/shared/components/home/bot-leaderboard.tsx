@@ -5,8 +5,30 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@apollo/client';
 import { GET_TOP_BOTS } from '@/graphql/queries/bot';
 
+interface LeaderboardBot {
+  id: string;
+  name: string;
+  avatar?: string | null;
+  isActive: boolean;
+  queuePosition?: number | null;
+  modelType: string;
+  creator: {
+    username?: string | null;
+    address: string;
+  };
+  stats: {
+    wins: number;
+    winRate: number;
+    earnings: string;
+  };
+}
+
+interface TopBotsQueryData {
+  topBots: LeaderboardBot[];
+}
+
 export function BotLeaderboard() {
-  const { data, loading } = useQuery(GET_TOP_BOTS, {
+  const { data, loading } = useQuery<TopBotsQueryData>(GET_TOP_BOTS, {
     variables: { limit: 10 },
     pollInterval: 60000 // Poll every minute
   });
@@ -76,7 +98,7 @@ export function BotLeaderboard() {
           </div>
         ) : bots.length > 0 ? (
           <div className="grid gap-4 max-w-4xl mx-auto">
-            {bots.map((bot: any, index: number) => (
+            {bots.map((bot, index: number) => (
               <div key={bot.id} className="card-gaming p-6 hover:shadow-gaming transition-all duration-300">
                 <div className="flex items-center justify-between">
                   {/* Rank and Bot Info */}

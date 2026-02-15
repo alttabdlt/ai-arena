@@ -7,11 +7,89 @@ import { Loader2, ArrowLeft, Brain, Swords, Trophy } from 'lucide-react';
 
 const API_BASE = '/api/v1';
 
-async function apiFetch(path: string) {
+async function apiFetch<T = unknown>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`);
   if (!res.ok) throw new Error(`API error: ${res.statusText}`);
-  return res.json();
+  return res.json() as Promise<T>;
 }
+
+interface MatchPlayer {
+  id: string;
+  name: string;
+  archetype: string;
+  elo: number;
+}
+
+interface MatchMove {
+  turnNumber: number;
+  agentId: string;
+  action: string;
+  reasoning?: string;
+  responseTimeMs?: number;
+  agent?: Partial<MatchPlayer>;
+}
+
+interface PokerTablePlayerState {
+  chips?: number;
+  holeCards?: string[];
+}
+
+interface PokerHandHistoryEntry {
+  handNumber: number;
+  amount: number;
+  showdown?: boolean;
+  winnerHand?: string;
+  players?: Array<{ id: string; holeCards?: string[] }>;
+}
+
+interface RpsRoundHistory {
+  round: number;
+  moves?: Record<string, string>;
+  winner?: string | null;
+}
+
+interface BattleshipBoardState {
+  hits?: number[][];
+  misses?: number[][];
+}
+
+interface MatchGameState {
+  players?: PokerTablePlayerState[];
+  communityCards?: string[];
+  pot?: number;
+  currentBet?: number;
+  phase?: string;
+  handNumber?: number;
+  maxHands?: number;
+  handHistory?: PokerHandHistoryEntry[];
+  history?: RpsRoundHistory[];
+  scores?: Record<string, number>;
+  round?: number;
+  boards?: Record<string, BattleshipBoardState>;
+  shipsRemaining?: Record<string, number>;
+}
+
+interface MatchSpectateState {
+  id: string;
+  gameType: string;
+  status: string;
+  totalPot: number;
+  rakeAmount: number;
+  winnerId?: string | null;
+  player1?: MatchPlayer;
+  player2?: MatchPlayer;
+  currentTurnId?: string | null;
+  gameState?: MatchGameState;
+}
+
+const parseActionName = (action: string): string => {
+  try {
+    const parsed = JSON.parse(action) as { action?: string };
+    return parsed.action || action;
+  } catch {
+    return action;
+  }
+};
 
 // ============================================
 // Shared Components
@@ -27,7 +105,7 @@ const ARCHETYPE_COLORS: Record<string, string> = {
 };
 
 function PlayerBanner({ player, isWinner, isTurn, side, chips, cards }: {
-  player: any; isWinner: boolean; isTurn: boolean; side: 'left' | 'right';
+  player?: MatchPlayer; isWinner: boolean; isTurn: boolean; side: 'left' | 'right';
   chips?: number; cards?: string[];
 }) {
   if (!player) return null;
@@ -92,7 +170,7 @@ function PokerCard({ card, size = 'md' }: { card: string; size?: 'sm' | 'md' | '
 // AI Reasoning Panel
 // ============================================
 
-function ReasoningPanel({ moves, player1, player2 }: { moves: any[]; player1: any; player2: any }) {
+function ReasoningPanel({ moves, player1, player2 }: { moves: MatchMove[]; player1?: MatchPlayer; player2?: MatchPlayer }) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -115,8 +193,7 @@ function ReasoningPanel({ moves, player1, player2 }: { moves: any[]; player1: an
             const agent = m.agent || (m.agentId === player1?.id ? player1 : player2);
             const agentName = agent?.name || '?';
             const archetype = agent?.archetype || '?';
-            let parsedAction = m.action;
-            try { parsedAction = JSON.parse(m.action)?.action || m.action; } catch {}
+            const parsedAction = parseActionName(m.action);
 
             return (
               <div key={i} className="flex gap-2 text-xs">
@@ -152,7 +229,7 @@ function ReasoningPanel({ moves, player1, player2 }: { moves: any[]; player1: an
 // POKER VIEWER
 // ============================================
 
-function PokerViewer({ state, moves }: { state: any; moves: any[] }) {
+function PokerViewer({ state, moves }: { state: MatchSpectateState; moves: MatchMove[] }) {
   const gs = state.gameState;
   if (!gs) return <div className="text-gray-500">Waiting for game state...</div>;
 
@@ -241,14 +318,14 @@ function PokerViewer({ state, moves }: { state: any; moves: any[] }) {
           </CardHeader>
           <CardContent>
             <div className="space-y-1">
-              {handHistory.map((h: any, i: number) => (
+              {handHistory.map((h: PokerHandHistoryEntry, i: number) => (
                 <div key={i} className="flex items-center gap-2 text-xs font-mono bg-gray-800/30 rounded px-3 py-1.5">
                   <span className="text-gray-500 w-14">Hand {h.handNumber}</span>
                   <span className="text-yellow-400 w-16">{h.amount} pot</span>
                   <span className={h.showdown ? 'text-blue-400' : 'text-red-400'}>
                     {h.showdown ? `Showdown: ${h.winnerHand}` : 'Fold'}
                   </span>
-                  {h.players?.map((p: any) => (
+                  {h.players?.map((p) => (
                     <span key={p.id} className="text-gray-400">
                       [{p.holeCards?.join(' ')}]
                     </span>
@@ -277,7 +354,7 @@ const RPS_BIG: Record<string, string> = {
   rock: '✊', paper: '✋', scissors: '✌️',
 };
 
-function RPSViewer({ state, moves }: { state: any; moves: any[] }) {
+function RPSViewer({ state, moves }: { state: MatchSpectateState; moves: MatchMove[] }) {
   const gs = state.gameState;
   if (!gs) return <div className="text-gray-500">Waiting for game state...</div>;
 
@@ -374,7 +451,7 @@ function RPSViewer({ state, moves }: { state: any; moves: any[] }) {
           </CardHeader>
           <CardContent>
             <div className="grid gap-1">
-              {history.map((h: any, i: number) => (
+              {history.map((h: RpsRoundHistory, i: number) => (
                 <div key={i} className="flex items-center gap-3 text-sm font-mono bg-gray-800/30 rounded px-3 py-2">
                   <span className="text-gray-500 w-8">R{h.round}</span>
                   <span className="text-blue-400 w-20">
@@ -405,7 +482,7 @@ function RPSViewer({ state, moves }: { state: any; moves: any[] }) {
 // BATTLESHIP VIEWER
 // ============================================
 
-function BattleshipViewer({ state, moves }: { state: any; moves: any[] }) {
+function BattleshipViewer({ state, moves }: { state: MatchSpectateState; moves: MatchMove[] }) {
   const gs = state.gameState;
   if (!gs) return <div className="text-gray-500">Waiting for game state...</div>;
 
@@ -486,8 +563,8 @@ function BattleshipViewer({ state, moves }: { state: any; moves: any[] }) {
 
 export default function MatchPage() {
   const { matchId } = useParams();
-  const [state, setState] = useState<any>(null);
-  const [moves, setMoves] = useState<any[]>([]);
+  const [state, setState] = useState<MatchSpectateState | null>(null);
+  const [moves, setMoves] = useState<MatchMove[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -495,15 +572,15 @@ export default function MatchPage() {
     if (!matchId) return;
     try {
       const [matchState, matchMoves] = await Promise.all([
-        apiFetch(`/matches/${matchId}/spectate`),
-        apiFetch(`/matches/${matchId}/moves`).catch(() => []),
+        apiFetch<MatchSpectateState>(`/matches/${matchId}/spectate`),
+        apiFetch<MatchMove[]>(`/matches/${matchId}/moves`).catch((): MatchMove[] => []),
       ]);
 
       if (matchState) setState(matchState);
       if (matchMoves) setMoves(matchMoves);
       setError(null);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to load match');
     } finally {
       setLoading(false);
     }

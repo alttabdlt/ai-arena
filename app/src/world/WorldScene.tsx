@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { layoutTowns, townGatePositions, getLODTier, TOWN_GAP, type WorldTown, type LODTier } from './worldLayout';
-import { assignAgentsToTowns, tickTravel } from './agentAssignment';
+import { assignAgentsToTowns, tickTravel, type AgentTownAssignment } from './agentAssignment';
 import { HighwaySegment } from './HighwaySegment';
 import { TownGateLandmark } from './TownGateLandmark';
 import { WildernessProps } from './WildernessProps';

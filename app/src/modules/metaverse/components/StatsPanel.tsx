@@ -20,6 +20,17 @@ interface Activity {
   xpGained?: number;
 }
 
+interface BotActivityRecord {
+  emoji: string;
+  activity: string;
+  xpGained?: number;
+  timestamp: string;
+}
+
+interface BotActivitiesQueryData {
+  getBotActivities: BotActivityRecord[];
+}
+
 interface StatsPanelProps {
   bot?: Bot;
   level: number;
@@ -40,7 +51,7 @@ const StatsPanel: React.FC<StatsPanelProps> = ({
   const [activities, setActivities] = useState<Array<Activity & { timestamp: Date }>>([]);
   
   // Fetch historical activities from backend
-  const { data: historicalData } = useQuery(GET_BOT_ACTIVITIES, {
+  const { data: historicalData } = useQuery<BotActivitiesQueryData>(GET_BOT_ACTIVITIES, {
     variables: { botId: bot?.id, limit: 20 },
     skip: !bot?.id,
     fetchPolicy: 'cache-and-network'
@@ -49,7 +60,7 @@ const StatsPanel: React.FC<StatsPanelProps> = ({
   // Load historical activities on mount
   useEffect(() => {
     if (historicalData?.getBotActivities) {
-      const historical = historicalData.getBotActivities.map((activity: any) => ({
+      const historical = historicalData.getBotActivities.map((activity) => ({
         emoji: activity.emoji,
         activity: activity.activity,
         xpGained: activity.xpGained,

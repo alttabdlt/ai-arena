@@ -39,7 +39,13 @@ const JACKPOT_WON_SUBSCRIPTION = gql`
 `;
 
 interface JackpotDisplayProps {
-  onWin?: (winner: any) => void;
+  onWin?: (winner: {
+    botId: string;
+    botName: string;
+    personality: string;
+    amount: number;
+    timestamp: string;
+  }) => void;
   className?: string;
 }
 

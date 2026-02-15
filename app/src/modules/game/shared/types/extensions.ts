@@ -7,14 +7,14 @@ export interface ITurnBasedGameState extends IGameState {
 }
 
 export interface ICardGameState extends ITurnBasedGameState {
-  deck: any[];
-  discardPile: any[];
-  playerHands: Map<string, any[]>;
+  deck: unknown[];
+  discardPile: unknown[];
+  playerHands: Map<string, unknown[]>;
 }
 
 export interface IBoardGameState extends ITurnBasedGameState {
-  board: any[][];
-  pieces: Map<string, any[]>;
+  board: unknown[][];
+  pieces: Map<string, unknown[]>;
 }
 
 export interface IWordGameState extends IGameState {
@@ -26,7 +26,7 @@ export interface IWordGameState extends IGameState {
 export interface IRealTimeGameState extends IGameState {
   frameCount: number;
   deltaTime: number;
-  entities: Map<string, any>;
+  entities: Map<string, unknown>;
 }
 
 export interface ITimedGameConfig extends IGameConfig {
@@ -90,5 +90,5 @@ export interface IGameModifiers {
   difficulty?: GameDifficulty;
   speed?: GameSpeed;
   handicap?: Map<string, number>;
-  customRules?: Record<string, any>;
+  customRules?: Record<string, unknown>;
 }

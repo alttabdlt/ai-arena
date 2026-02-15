@@ -199,7 +199,7 @@ export const useIdleLoop = ({
     
     // Track pending XP for batch save
     pendingXpRef.current += xpGained;
-  }, [botId, personality, calculateMaxXp]);
+  }, [botId, personality, calculateMaxXp, maxXp]);
 
   // Save progress to backend
   const saveProgress = useCallback(async () => {
@@ -263,7 +263,7 @@ export const useIdleLoop = ({
         saveProgress();
       }
     };
-  }, [botId, personality]); // Only depend on stable values
+  }, [botId, handleXpTick, rotateActivity, saveProgress]);
 
   // Save on window unload
   useEffect(() => {

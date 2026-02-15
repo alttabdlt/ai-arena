@@ -48,7 +48,7 @@ export interface DecisionHistoryEntry {
   confidence?: number;
   pot: number;
   playerChips: number;
-  communityCards: any[];
+  communityCards: unknown[];
   timestamp: Date | number;  // Can be either Date or number
 }
 
@@ -96,6 +96,6 @@ export interface IScoreBreakdown {
 export interface IGameEvent {
   type: string;
   playerId?: string;
-  data: any;
+  data: unknown;
   timestamp: Date;
 }

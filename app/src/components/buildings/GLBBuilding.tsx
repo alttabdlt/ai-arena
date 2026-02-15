@@ -1,10 +1,10 @@
 /**
  * GLBBuilding — Loads Kenney GLB models with cyberpunk re-skinning.
  *
- * Since the FBX→GLB conversion lost the original color palette, we use
- * normal-based material assignment: roof faces (Y-up) get accent color,
- * wall faces (sideways) get main zone color, creating natural-looking
- * multi-colored buildings from monochrome geometry.
+ * Since the FBX→GLB conversion lost the original color palette, we apply
+ * a stable single-material tone with subtle zone tinting per building.
+ * This avoids runtime geometry/index mutation paths that can destabilize
+ * WebGL on some devices.
  */
 import { useMemo, useEffect } from 'react';
 import * as THREE from 'three';
@@ -26,67 +26,6 @@ const ALL_MODEL_PATHS = (['RESIDENTIAL', 'COMMERCIAL', 'CIVIC', 'INDUSTRIAL', 'E
 
 export function preloadBuildingModels() {
   ALL_MODEL_PATHS.forEach(path => useGLTF.preload(path));
-}
-
-// ── Normal-based face splitting ────────────────────────────────────
-
-/**
- * Splits a single-material geometry into groups by face normal direction:
- *   0 = walls (mostly horizontal normals)
- *   1 = roof  (normals pointing up, Y > threshold)
- *   2 = floor (normals pointing down, Y < -threshold)
- */
-function splitByNormals(geometry: THREE.BufferGeometry) {
-  const index = geometry.index;
-  const normal = geometry.attributes.normal;
-  if (!normal || !index) return;
-
-  // Clear existing groups
-  geometry.clearGroups();
-
-  const faceCount = index.count / 3;
-  const faceNY = new Float32Array(faceCount);
-
-  // Compute average normal Y for each face
-  for (let f = 0; f < faceCount; f++) {
-    const i0 = index.getX(f * 3);
-    const i1 = index.getX(f * 3 + 1);
-    const i2 = index.getX(f * 3 + 2);
-    faceNY[f] = (normal.getY(i0) + normal.getY(i1) + normal.getY(i2)) / 3;
-  }
-
-  // Sort faces into groups by normal direction
-  // Rebuild the index buffer sorted by group
-  const wallFaces: number[] = [];
-  const roofFaces: number[] = [];
-  const floorFaces: number[] = [];
-
-  for (let f = 0; f < faceCount; f++) {
-    const ny = faceNY[f];
-    const indices = [
-      index.getX(f * 3),
-      index.getX(f * 3 + 1),
-      index.getX(f * 3 + 2),
-    ];
-    if (ny > 0.5) {
-      roofFaces.push(...indices);
-    } else if (ny < -0.5) {
-      floorFaces.push(...indices);
-    } else {
-      wallFaces.push(...indices);
-    }
-  }
-
-  // Rebuild index: walls first, then roof, then floor
-  const newIndices = new Uint32Array(wallFaces.length + roofFaces.length + floorFaces.length);
-  newIndices.set(wallFaces, 0);
-  newIndices.set(roofFaces, wallFaces.length);
-  newIndices.set(floorFaces, wallFaces.length + roofFaces.length);
-
-  geometry.setIndex(new THREE.BufferAttribute(newIndices, 1));
-  geometry.addGroup(0, wallFaces.length, 0);                              // walls
-  geometry.addGroup(wallFaces.length, roofFaces.length, 1);               // roof
-  geometry.addGroup(wallFaces.length + roofFaces.length, floorFaces.length, 2); // floor
 }
 
 // ── Component ──────────────────────────────────────────────────────
@@ -114,15 +53,13 @@ export function GLBBuilding({
   const { scene } = useGLTF(modelPath);
 
   // Deep-clone scene per instance: clone(true) only shallow-clones geometry
-  // so we must deep-clone geometries to avoid mutating shared buffers
+  // so we deep-clone geometries to avoid mutating shared buffers.
   const clonedScene = useMemo(() => {
     const clone = scene.clone(true);
     clone.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
         const mesh = child as THREE.Mesh;
         mesh.geometry = mesh.geometry.clone();
-        // Split normals once at clone time (geometry is now unique per instance)
-        splitByNormals(mesh.geometry);
       }
     });
     return clone;
@@ -154,15 +91,14 @@ export function GLBBuilding({
     };
   }, [clonedScene, targetHeight]);
 
-  // Stable hex strings for useEffect deps (Color objects change ref every render)
-  const mainHex = useMemo(() => '#' + main.getHexString(), [main]);
+  // Stable hex string for useEffect deps (Color objects change ref every render)
   const accentHex_ = useMemo(() => '#' + accent.getHexString(), [accent]);
 
-  // Apply normal-based multi-material coloring
-  // Use seeded random for per-building wall color variation
+  // Apply stable single-material coloring.
+  // Use seeded random for per-building tone variation.
   const wallTint = useMemo(() => {
     const rng = seededRandom(plotId, ':wallcolor');
-    // Natural wall palettes: warm neutrals, concretes, bricks — NOT the zone color
+    // Natural wall palettes: warm neutrals, concretes, bricks.
     const wallPalettes = [
       '#d4c5a9', // warm sandstone
       '#c9b89a', // beige
@@ -176,54 +112,35 @@ export function GLBBuilding({
       '#d0c0a8', // limestone
     ];
     const base = new THREE.Color(wallPalettes[Math.floor(rng() * wallPalettes.length)]);
-    // Slightly tint toward zone color for cohesion (15% blend)
+    // Slightly tint toward zone color for cohesion.
     base.lerp(main, 0.15);
     return base;
-  }, [plotId, mainHex]);
+  }, [plotId, main]);
 
   useEffect(() => {
-    const mainC = new THREE.Color(mainHex);
     const accentC = new THREE.Color(accentHex_);
 
-    // Wall material — natural building tones, NOT zone color
-    const wallMat = new THREE.MeshStandardMaterial({
+    const buildingMat = new THREE.MeshStandardMaterial({
       color: wallTint.clone().multiplyScalar(0.7),
-      roughness: 0.82,
-      metalness: 0.05,
+      roughness: 0.78,
+      metalness: 0.08,
       emissive: selected ? accentC.clone().multiplyScalar(0.08) : new THREE.Color('#000000'),
-    });
-
-    // Roof material — vivid zone accent color (this carries the zone identity)
-    const roofMat = new THREE.MeshStandardMaterial({
-      color: accentC.clone().multiplyScalar(0.85),
-      roughness: 0.55,
-      metalness: 0.2,
-      emissive: accentC.clone().multiplyScalar(selected ? 0.3 : 0.1),
-    });
-
-    // Floor/foundation — dark neutral
-    const floorMat = new THREE.MeshStandardMaterial({
-      color: new THREE.Color('#3a3530'),
-      roughness: 0.95,
-      metalness: 0.02,
+      emissiveIntensity: selected ? 1.0 : 0.4,
     });
 
     clonedScene.traverse((child) => {
       if ((child as THREE.Mesh).isMesh) {
         const mesh = child as THREE.Mesh;
-        // Geometry already split at clone time — just apply materials
-        mesh.material = [wallMat, roofMat, floorMat];
+        mesh.material = buildingMat;
         mesh.castShadow = false;
         mesh.receiveShadow = false;
       }
     });
 
     return () => {
-      wallMat.dispose();
-      roofMat.dispose();
-      floorMat.dispose();
+      buildingMat.dispose();
     };
-  }, [clonedScene, mainHex, accentHex_, selected, wallTint]);
+  }, [clonedScene, accentHex_, selected, wallTint]);
 
   return (
     <group>

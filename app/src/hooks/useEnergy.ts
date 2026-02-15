@@ -39,6 +39,12 @@ export function useEnergy(botId?: string) {
   const { toast } = useToast();
   const [purchasingPack, setPurchasingPack] = useState<string | null>(null);
 
+  const getErrorMessage = (error: unknown): string => {
+    if (error instanceof Error && error.message) return error.message;
+    if (typeof error === 'string') return error;
+    return 'Unknown error';
+  };
+
   // Query bot energy
   const { data: energyData, loading: energyLoading, refetch: refetchEnergy } = useQuery(GET_BOT_ENERGY, {
     variables: { botId },
@@ -99,10 +105,10 @@ export function useEnergy(botId?: string) {
         title: "Bot Paused",
         description: "Your bot has been paused to save energy",
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Failed to Pause",
-        description: error.message || "Could not pause bot",
+        description: getErrorMessage(error) || "Could not pause bot",
         variant: "destructive",
       });
     }
@@ -118,10 +124,10 @@ export function useEnergy(botId?: string) {
         title: "Bot Resumed",
         description: "Your bot is now active again",
       });
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast({
         title: "Failed to Resume",
-        description: error.message || "Could not resume bot",
+        description: getErrorMessage(error) || "Could not resume bot",
         variant: "destructive",
       });
     }

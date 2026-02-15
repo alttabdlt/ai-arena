@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 // Define PointEvent inline since it's not exported from the new structure
 interface PointEvent {
   playerId: string;
@@ -6,7 +6,7 @@ interface PointEvent {
   category: string;
   points: number;
   description: string;
-  details?: any;
+  details?: unknown;
 }
 import { Trophy, Zap, TrendingUp, Shield, Target, AlertTriangle, Star, Coins } from 'lucide-react';
 
@@ -68,7 +68,7 @@ const getTextColorForType = (type: 'base' | 'style' | 'penalty', points: number)
 
 export function PointNotification({ events }: PointNotificationProps) {
   const [visibleEvents, setVisibleEvents] = useState<(PointEvent & { id: number; isVisible: boolean })[]>([]);
-  const [nextId, setNextId] = useState(0);
+  const nextIdRef = useRef(0);
 
   useEffect(() => {
     if (events.length > 0) {
@@ -85,12 +85,12 @@ export function PointNotification({ events }: PointNotificationProps) {
       
       const newEvents = filteredEvents.map((event, index) => ({
         ...event,
-        id: nextId + index,
+        id: nextIdRef.current + index,
         isVisible: false
       }));
+      nextIdRef.current += filteredEvents.length;
       
       setVisibleEvents(prev => [...prev, ...newEvents]);
-      setNextId(prev => prev + filteredEvents.length);
 
       // Animate in with stagger
       newEvents.forEach((event, index) => {

@@ -67,13 +67,14 @@ const PlayPoker = () => {
       });
       await startGame({ variables: { gameId } });
       navigate(`/play/poker/${gameId}`);
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error(e);
-      setError(e?.message || 'Failed to start match. Ensure backend is running.');
+      const message = e instanceof Error ? e.message : 'Failed to start match. Ensure backend is running.';
+      setError(message);
     } finally {
       setSearching(false);
     }
-  }, [createGame, startGame, navigate, opponent.id]);
+  }, [createGame, quickMatch, startGame, navigate, opponent.id, userMMR]);
 
   return (
     <div className="container mx-auto px-4 py-8">

@@ -5,6 +5,7 @@ import BotSelector from '@/modules/metaverse/components/BotSelector';
 import BotSprite from '@/modules/metaverse/components/BotSprite';
 import StatsPanel from '@/modules/metaverse/components/StatsPanel';
 import ClaimXPModal from '@/modules/metaverse/components/ClaimXPModal';
+import type { WinningsBet } from '@/modules/metaverse/components/ClaimXPModal';
 import { useBots } from '@/modules/metaverse/hooks/useBots';
 import { useIdleLoop } from '@/modules/metaverse/hooks/useIdleLoop';
 import { useOfflineProgress } from '@/modules/metaverse/hooks/useOfflineProgress';
@@ -19,9 +20,9 @@ import { useAuth } from '@auth/contexts/AuthContext';
 const IdleGame: React.FC = () => {
   const navigate = useNavigate();
   const [selectedBotId, setSelectedBotId] = useState<string | null>(null);
-  const [jackpotWinner, setJackpotWinner] = useState<any | null>(null);
+  const [jackpotWinner, setJackpotWinner] = useState<unknown | null>(null);
   const [showClaimModal, setShowClaimModal] = useState(false);
-  const [unclaimedWinnings, setUnclaimedWinnings] = useState<any[]>([]);
+  const [unclaimedWinnings, setUnclaimedWinnings] = useState<WinningsBet[]>([]);
   const { bots, loading, refetch: refetchBots } = useBots();
   const { isAuthenticated } = useAuth();
   
@@ -102,8 +103,9 @@ const IdleGame: React.FC = () => {
       } else {
         toast.error(data?.burnCompanionForSOL?.message || 'Failed to burn bot');
       }
-    } catch (e: any) {
-      toast.error(e.message || 'Failed to burn bot');
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Failed to burn bot';
+      toast.error(message);
     }
   };
 

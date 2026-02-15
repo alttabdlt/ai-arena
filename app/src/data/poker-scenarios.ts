@@ -17,7 +17,7 @@ export interface TestScenario {
     communityCards: string[];
     potSize: number;
     mainPot: number;
-    sidePots: any[];
+    sidePots: unknown[];
     currentBet: number;
     minRaise: number;
     totalChipsInPlay: number;

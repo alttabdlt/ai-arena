@@ -12,6 +12,11 @@ import {
   GET_PENDING_LOOTBOXES 
 } from '@/graphql/queries/economy';
 
+type EquipmentItem = {
+  id: string;
+  equipped: boolean;
+} & Record<string, unknown>;
+
 export function useOpenLootbox(botId?: string) {
   const [openLootbox, { loading, error }] = useMutation(OPEN_LOOTBOX, {
     onCompleted: (data) => {
@@ -67,13 +72,13 @@ export function useToggleEquipment() {
       const botId = result.bot.id;
       
       // Update the equipment list in cache
-      const equipmentData = cache.readQuery<{ getBotEquipment: any[] }>({
+      const equipmentData = cache.readQuery<{ getBotEquipment: EquipmentItem[] }>({
         query: GET_BOT_EQUIPMENT,
         variables: { botId },
       });
       
       if (equipmentData && Array.isArray(equipmentData.getBotEquipment)) {
-        const updatedEquipment = equipmentData.getBotEquipment.map((item: any) =>
+        const updatedEquipment = equipmentData.getBotEquipment.map((item) =>
           item.id === result.id ? { ...item, equipped: result.equipped } : item
         );
         

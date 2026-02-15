@@ -1,5 +1,5 @@
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { LAMPORTS_PER_SOL } from '@solana/web3.js';
 
 export function useHypeBalance() {
@@ -9,7 +9,7 @@ export function useHypeBalance() {
   const [isLoading, setIsLoading] = useState(false);
   const [isError, setIsError] = useState(false);
 
-  const fetchBalance = async () => {
+  const fetchBalance = useCallback(async () => {
     if (!publicKey) {
       setBalance(0);
       return;
@@ -28,7 +28,7 @@ export function useHypeBalance() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [connection, publicKey]);
 
   useEffect(() => {
     fetchBalance();
@@ -45,7 +45,7 @@ export function useHypeBalance() {
         connection.removeAccountChangeListener(subscriptionId);
       };
     }
-  }, [publicKey, connection]);
+  }, [publicKey, connection, fetchBalance]);
 
   const formatBalance = (bal: number | null): string => {
     if (bal === null || bal === 0) return '0';

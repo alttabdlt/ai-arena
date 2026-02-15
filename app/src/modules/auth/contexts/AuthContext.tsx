@@ -48,32 +48,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [refreshToken] = useMutation(REFRESH_TOKEN);
   const [logoutMutation] = useMutation(LOGOUT);
 
-  // Load stored auth data on mount
-  useEffect(() => {
-    const storedUser = localStorage.getItem(USER_KEY);
-    const storedToken = localStorage.getItem(TOKEN_KEY);
-    
-    if (storedUser && storedToken) {
-      try {
-        const parsedUser = JSON.parse(storedUser);
-        setUser(parsedUser);
-        setIsAuthReady(true);
-        
-        // Validate token is still valid by checking address
-        if (publicKey && parsedUser.address !== publicKey.toString()) {
-          // Address mismatch, clear auth
-          handleLogout();
-        }
-      } catch (error) {
-        console.error('Failed to parse stored user:', error);
-        localStorage.removeItem(USER_KEY);
-        localStorage.removeItem(TOKEN_KEY);
-      }
-    }
-    
-    setIsLoading(false);
-  }, [publicKey]);
-
   const handleLogout = useCallback(async () => {
     try {
       const refreshTokenValue = localStorage.getItem(REFRESH_TOKEN_KEY);
@@ -103,6 +77,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await disconnect();
     }
   }, [connected, disconnect, logoutMutation]);
+
+  // Load stored auth data on mount
+  useEffect(() => {
+    const storedUser = localStorage.getItem(USER_KEY);
+    const storedToken = localStorage.getItem(TOKEN_KEY);
+    
+    if (storedUser && storedToken) {
+      try {
+        const parsedUser = JSON.parse(storedUser);
+        setUser(parsedUser);
+        setIsAuthReady(true);
+        
+        // Validate token is still valid by checking address
+        if (publicKey && parsedUser.address !== publicKey.toString()) {
+          // Address mismatch, clear auth
+          handleLogout();
+        }
+      } catch (error) {
+        console.error('Failed to parse stored user:', error);
+        localStorage.removeItem(USER_KEY);
+        localStorage.removeItem(TOKEN_KEY);
+      }
+    }
+    
+    setIsLoading(false);
+  }, [publicKey, handleLogout]);
 
   const login = useCallback(async () => {
     // Prevent rapid login attempts

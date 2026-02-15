@@ -92,8 +92,8 @@ export function useTestBotDecision() {
       });
 
       return data.getAIPokerDecision;
-    } catch (err: any) {
-      const errorMessage = err.message || 'Failed to test bot decision';
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to test bot decision';
       setError(errorMessage);
       throw new Error(errorMessage);
     } finally {

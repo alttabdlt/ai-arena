@@ -1,13 +1,12 @@
 export function formatTimestamp(date: Date = new Date()): string {
   // Format timestamp for local time (will use browser's timezone)
-  const options: any = {
+  const options: Intl.DateTimeFormatOptions = {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-    fractionalSecondDigits: 3,
     hour12: false
   };
   
@@ -15,7 +14,7 @@ export function formatTimestamp(date: Date = new Date()): string {
   const parts = formatter.formatToParts(date);
   
   // Reconstruct in ISO-like format but with local time
-  const dateParts: { [key: string]: string } = {};
+  const dateParts: Record<string, string> = {};
   parts.forEach(part => {
     dateParts[part.type] = part.value;
   });
@@ -26,6 +25,7 @@ export function formatTimestamp(date: Date = new Date()): string {
   const offsetMinutes = Math.abs(offset) % 60;
   const offsetSign = offset >= 0 ? '+' : '-';
   const offsetString = `${offsetSign}${String(offsetHours).padStart(2, '0')}:${String(offsetMinutes).padStart(2, '0')}`;
+  const milliseconds = String(date.getMilliseconds()).padStart(3, '0');
   
-  return `${dateParts.year}-${dateParts.month}-${dateParts.day}T${dateParts.hour}:${dateParts.minute}:${dateParts.second}.${dateParts.fractionalSecond || '000'}${offsetString}`;
+  return `${dateParts.year}-${dateParts.month}-${dateParts.day}T${dateParts.hour}:${dateParts.minute}:${dateParts.second}.${milliseconds}${offsetString}`;
 }

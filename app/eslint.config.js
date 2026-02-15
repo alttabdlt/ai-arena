@@ -25,5 +25,16 @@ export default tseslint.config(
       ],
       "@typescript-eslint/no-unused-vars": "off",
     },
+  },
+  {
+    files: [
+      "src/components/buildings/GLBBuilding.tsx",
+      "src/components/buildings/shared.tsx",
+      "src/modules/auth/contexts/AuthContext.tsx",
+      "src/shared/components/ui/*.tsx",
+    ],
+    rules: {
+      "react-refresh/only-export-components": "off",
+    },
   }
 );

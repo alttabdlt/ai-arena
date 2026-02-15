@@ -20,6 +20,7 @@ import { AgentCommandMode, CrewStrategy } from '@prisma/client';
 import { agentCommandService } from './agentCommandService';
 import { operatorIdentityService } from './operatorIdentityService';
 import { crewWarsService } from './crewWarsService';
+import { isOpenRouterActiveConfig } from '../config/llm';
 
 // Escape HTML special chars for Telegram HTML parse mode
 function esc(s: string): string {
@@ -355,7 +356,7 @@ export class TelegramBotService {
 
   private initRouter(): void {
     // Prefer OpenRouter (single key, all models), then Gemini direct, then OpenAI, then DeepSeek
-    if (process.env.OPENROUTER_API_KEY) {
+    if (isOpenRouterActiveConfig()) {
       this.router = new OpenAI({
         apiKey: process.env.OPENROUTER_API_KEY,
         baseURL: 'https://openrouter.ai/api/v1',
@@ -366,6 +367,8 @@ export class TelegramBotService {
         },
       });
       this.routerModel = 'google/gemini-2.0-flash-001';
+    } else if (process.env.OPENROUTER_API_KEY) {
+      console.log('⚠️  Telegram NL router skipping OpenRouter (OPENROUTER_ENABLED is off)');
     } else if (process.env.GEMINI_API_KEY) {
       this.router = new OpenAI({
         apiKey: process.env.GEMINI_API_KEY,

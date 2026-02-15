@@ -25,6 +25,7 @@ import { initializeTournamentScheduler } from './services/tournamentScheduler';
 import { aiService } from './services/aiService';
 import { initializeStakingService } from './services/stakingService';
 import { initializeXPEconomyService } from './services/xpEconomyService';
+import { isOpenRouterActiveConfig } from './config/llm';
 
 // Performance optimization flags
 const FAST_STARTUP = process.env.FAST_STARTUP === 'true';
@@ -494,8 +495,8 @@ async function startServer() {
     console.warn(`[Arena] Startup cleanup failed: ${err.message}`);
   }
 
-  // Auto-upgrade agent models: if OpenRouter is configured, migrate old models
-  if (process.env.OPENROUTER_API_KEY) {
+  // Auto-upgrade agent models only when OpenRouter spend is explicitly enabled.
+  if (isOpenRouterActiveConfig()) {
     try {
       const upgradeTarget = 'or-gemini-2.0-flash';
       const oldModels = ['deepseek-v3', 'deepseek-chat', 'gpt-4o-mini'];

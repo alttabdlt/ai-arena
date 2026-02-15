@@ -221,3 +221,23 @@ Original prompt: "yes, but are we able to implement build/work/fight > crypto lo
 
 - Runtime note:
   - One console error remains during automated load: a generic `404` resource miss (non-blocking; likely asset/favicon).
+
+### OpenRouter spend guard (2026-02-15)
+
+- Added explicit OpenRouter opt-in gate:
+  - New config helper: `backend/src/config/llm.ts`
+  - `OPENROUTER_ENABLED` now defaults to `false` when unset.
+  - OpenRouter client initializes only when both:
+    - `OPENROUTER_ENABLED=1`
+    - `OPENROUTER_API_KEY` exists
+
+- Applied guard across runtime spend paths:
+  - `smartAiService` OpenRouter client init + model fallback away from OpenRouter when disabled.
+  - `telegramBotService` NL router now skips OpenRouter unless enabled.
+  - Startup auto-upgrade to `or-gemini-2.0-flash` now only runs when OpenRouter is actively enabled.
+  - Agent spawn default model now chooses OpenRouter model only when OpenRouter is actively enabled.
+  - `/api/v1/agent-loop/llm-status` now reports `OPENROUTER_DISABLED` when intentionally off.
+
+- Validation:
+  - `cd backend && npx tsc --noEmit` passed.
+  - `cd backend && npm test` passed (`12` files, `94` tests).

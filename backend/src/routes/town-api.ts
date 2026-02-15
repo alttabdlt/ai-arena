@@ -15,6 +15,7 @@ import { agentGoalService } from '../services/agentGoalService';
 import { agentGoalTrackService } from '../services/agentGoalTrackService';
 import { agentLoopService } from '../services/agentLoopService';
 import { prisma } from '../config/database';
+import { isOpenRouterActiveConfig } from '../config/llm';
 
 const router = Router();
 
@@ -1164,7 +1165,7 @@ router.post('/agents/spawn', async (req: Request, res: Response): Promise<void> 
       data: {
         name: name.trim(),
         archetype: archetype as any,
-        modelId: reqModelId || (process.env.OPENROUTER_API_KEY ? 'or-gemini-2.0-flash' : 'deepseek-v3'),
+        modelId: reqModelId || (isOpenRouterActiveConfig() ? 'or-gemini-2.0-flash' : 'deepseek-v3'),
         walletAddress,
         apiKey: `spawn_${Date.now()}_${Math.random().toString(36).slice(2)}`,
         reserveBalance: 100,

@@ -61,13 +61,33 @@ router.get('/agent-loop/status', async (_req: Request, res: Response): Promise<v
 
 // Probe LLM health so frontend can distinguish stale fallback logs from live billing/provider issues.
 router.get('/agent-loop/llm-status', async (_req: Request, res: Response): Promise<void> => {
-  const configured = Boolean(process.env.OPENROUTER_API_KEY);
+  const enabled = smartAiService.isOpenRouterEnabled();
+  const configured = smartAiService.isOpenRouterConfigured();
+  const ready = smartAiService.isOpenRouterReady();
+  if (!enabled) {
+    res.status(503).json({
+      ok: false,
+      configured,
+      code: 'OPENROUTER_DISABLED',
+      message: 'OpenRouter is disabled (set OPENROUTER_ENABLED=1 to enable testing).',
+    });
+    return;
+  }
   if (!configured) {
     res.status(503).json({
       ok: false,
       configured: false,
       code: 'OPENROUTER_NOT_CONFIGURED',
       message: 'OPENROUTER_API_KEY missing on backend',
+    });
+    return;
+  }
+  if (!ready) {
+    res.status(503).json({
+      ok: false,
+      configured: true,
+      code: 'OPENROUTER_NOT_READY',
+      message: 'OpenRouter key is set but client is not initialized.',
     });
     return;
   }

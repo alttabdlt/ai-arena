@@ -13,6 +13,7 @@
 
 import OpenAI from 'openai';
 import Anthropic from '@anthropic-ai/sdk';
+import { isOpenRouterActiveConfig, isOpenRouterEnabledFlag } from '../config/llm';
 
 // ============================================
 // Types
@@ -276,6 +277,7 @@ export class SmartAIService {
   
   private gemini: OpenAI | null = null;
   private openrouter: OpenAI | null = null;
+  private openrouterEnabled = false;
 
   constructor() {
     if (process.env.OPENAI_API_KEY) {
@@ -298,7 +300,8 @@ export class SmartAIService {
         timeout: 30000,
       });
     }
-    if (process.env.OPENROUTER_API_KEY) {
+    this.openrouterEnabled = isOpenRouterEnabledFlag();
+    if (isOpenRouterActiveConfig()) {
       this.openrouter = new OpenAI({
         apiKey: process.env.OPENROUTER_API_KEY,
         baseURL: 'https://openrouter.ai/api/v1',
@@ -308,6 +311,8 @@ export class SmartAIService {
           'X-Title': 'AI Town',
         },
       });
+    } else if (process.env.OPENROUTER_API_KEY && !this.openrouterEnabled) {
+      console.log('⚠️  OpenRouter key detected but disabled (set OPENROUTER_ENABLED=1 to allow spend)');
     }
   }
 
@@ -559,6 +564,7 @@ What should ${agent.name} do?`;
     temperature: number,
     forceNoJsonMode: boolean = false,
   ): Promise<{ content: string; inputTokens: number; outputTokens: number }> {
+    if (!this.openrouterEnabled) throw new Error('OpenRouter disabled — set OPENROUTER_ENABLED=1 to enable');
     if (!this.openrouter) throw new Error('OpenRouter not configured — set OPENROUTER_API_KEY');
 
     const response = await this.openrouter.chat.completions.create({
@@ -671,12 +677,37 @@ Respond ONLY with compact JSON (keep reasoning under 50 words):
   getModelSpec(modelId: string): ModelSpec {
     const spec = MODEL_SPECS[modelId];
     if (!spec) {
-      // Prefer OpenRouter Gemini Flash if available, else deepseek-v3
-      const fallback = this.openrouter ? 'or-gemini-2.0-flash' : 'deepseek-v3';
+      const fallback = this.pickFallbackModelId();
       console.warn(`Unknown model ${modelId}, falling back to ${fallback}`);
       return MODEL_SPECS[fallback];
     }
+    if (spec.provider === 'openrouter' && !this.openrouter) {
+      const fallback = this.pickFallbackModelId(true);
+      console.warn(`OpenRouter model ${modelId} unavailable, falling back to ${fallback}`);
+      return MODEL_SPECS[fallback];
+    }
     return spec;
+  }
+
+  isOpenRouterEnabled(): boolean {
+    return this.openrouterEnabled;
+  }
+
+  isOpenRouterConfigured(): boolean {
+    return Boolean(process.env.OPENROUTER_API_KEY);
+  }
+
+  isOpenRouterReady(): boolean {
+    return Boolean(this.openrouter);
+  }
+
+  private pickFallbackModelId(preferNonOpenRouter = false): string {
+    if (!preferNonOpenRouter && this.openrouter) return 'or-gemini-2.0-flash';
+    if (this.deepseek) return 'deepseek-v3';
+    if (this.gemini) return 'gemini-2.0-flash';
+    if (this.openai) return 'gpt-4o-mini';
+    if (this.anthropic) return 'claude-3.5-haiku';
+    return 'deepseek-v3';
   }
 
   getTemperature(archetype: AgentArchetype): number {
@@ -840,7 +871,16 @@ Generate ONE short pre-match trash talk line (max 15 words). You're about to fig
   // ============================================
 
   getAvailableModels(): Array<{ id: string; name: string; provider: string; costTier: string }> {
-    return Object.entries(MODEL_SPECS).map(([id, spec]) => ({
+    const available = Object.entries(MODEL_SPECS).filter(([, spec]) => {
+      if (spec.provider === 'openrouter') return Boolean(this.openrouter);
+      if (spec.provider === 'deepseek') return Boolean(this.deepseek);
+      if (spec.provider === 'gemini') return Boolean(this.gemini);
+      if (spec.provider === 'openai') return Boolean(this.openai);
+      if (spec.provider === 'anthropic') return Boolean(this.anthropic);
+      return true;
+    });
+    const source = available.length > 0 ? available : Object.entries(MODEL_SPECS);
+    return source.map(([id, spec]) => ({
       id,
       name: spec.modelName,
       provider: spec.provider,

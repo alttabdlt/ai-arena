@@ -116,6 +116,10 @@ const LazyDegenControlBar = lazy(async () => {
   const mod = await import('../components/town/DegenControlBar');
   return { default: mod.DegenControlBar };
 });
+const LazyReadableRuntimeHud = lazy(async () => {
+  const mod = await import('../components/game/ReadableRuntimeHud');
+  return { default: mod.ReadableRuntimeHud };
+});
 
 type EthereumProvider = {
   request: (args: { method: string; params?: unknown[] | object }) => Promise<unknown>;
@@ -335,6 +339,48 @@ interface AgentMeLookupResponse {
     id?: string;
     walletAddress?: string | null;
   };
+}
+
+interface RuntimeAgentCard {
+  agentId: string;
+  name: string;
+  archetype: string;
+  crewName: string | null;
+  state: string;
+  action: string;
+  reason: string;
+  targetLabel: string;
+  etaSec: number | null;
+  blockedCode: string | null;
+  lastOutcome: string;
+}
+
+interface RuntimeCrewCard {
+  crewId: string;
+  name: string;
+  colorHex: string;
+  objective: string;
+  activeOperation: string;
+  impactSummary: string;
+  activeMembers: Array<{ name: string; action: string; state: string }>;
+}
+
+interface RuntimeBuildingCard {
+  plotId: string;
+  plotIndex: number;
+  zone: string;
+  status: string;
+  buildingName: string | null;
+  task: string;
+  progressPct: number;
+  etaSec: number;
+  occupants: Array<{ name: string; role: string }>;
+}
+
+interface RuntimeFeedCard {
+  id: string;
+  line: string;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | string;
 }
 
 type ActivityItem =
@@ -4659,6 +4705,13 @@ export default function Town3D() {
   const [events, setEvents] = useState<TownEvent[]>([]);
   const [worldEvents, setWorldEvents] = useState<ActiveWorldEvent[]>([]);
   const [crewWarsStatus, setCrewWarsStatus] = useState<CrewWarsStatusPayload | null>(null);
+  const [runtimeAgents, setRuntimeAgents] = useState<RuntimeAgentCard[]>([]);
+  const [runtimeCrews, setRuntimeCrews] = useState<RuntimeCrewCard[]>([]);
+  const [runtimeBuildings, setRuntimeBuildings] = useState<RuntimeBuildingCard[]>([]);
+  const [runtimeFeed, setRuntimeFeed] = useState<RuntimeFeedCard[]>([]);
+  const [runtimeTick, setRuntimeTick] = useState(0);
+  const [runtimeLoopRunning, setRuntimeLoopRunning] = useState(false);
+  const [runtimeLoading, setRuntimeLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [swapNotifications, setSwapNotifications] = useState<SwapNotification[]>([]);
@@ -6113,6 +6166,54 @@ export default function Town3D() {
     };
   }, [pushTradeText]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    type RuntimeAgentsResponse = {
+      running?: boolean;
+      tick?: number;
+      agents?: RuntimeAgentCard[];
+    };
+    type RuntimeCrewsResponse = {
+      crews?: RuntimeCrewCard[];
+    };
+    type RuntimeBuildingsResponse = {
+      buildings?: RuntimeBuildingCard[];
+    };
+    type RuntimeFeedResponse = {
+      feed?: RuntimeFeedCard[];
+    };
+
+    const loadRuntime = async () => {
+      try {
+        const [agentsRes, crewsRes, buildingsRes, feedRes] = await Promise.all([
+          apiFetch<RuntimeAgentsResponse>('/runtime/agents').catch(() => ({})),
+          apiFetch<RuntimeCrewsResponse>('/runtime/crews').catch(() => ({})),
+          apiFetch<RuntimeBuildingsResponse>('/runtime/buildings').catch(() => ({})),
+          apiFetch<RuntimeFeedResponse>('/runtime/feed?limit=30').catch(() => ({})),
+        ]);
+
+        if (cancelled) return;
+
+        if (Array.isArray(agentsRes.agents)) setRuntimeAgents(agentsRes.agents);
+        if (Array.isArray(crewsRes.crews)) setRuntimeCrews(crewsRes.crews);
+        if (Array.isArray(buildingsRes.buildings)) setRuntimeBuildings(buildingsRes.buildings);
+        if (Array.isArray(feedRes.feed)) setRuntimeFeed(feedRes.feed);
+        setRuntimeTick(Number.isFinite(Number(agentsRes.tick)) ? Number(agentsRes.tick) : 0);
+        setRuntimeLoopRunning(Boolean(agentsRes.running));
+      } finally {
+        if (!cancelled) setRuntimeLoading(false);
+      }
+    };
+
+    void loadRuntime();
+    const t = setInterval(loadRuntime, 2500);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, []);
+
   const selectedPlot = useMemo(() => town?.plots.find((p) => p.id === selectedPlotId) ?? null, [town, selectedPlotId]);
   const selectedAgent = useMemo(() => agents.find((a) => a.id === selectedAgentId) ?? null, [agents, selectedAgentId]);
   const selectedAgentOutcomes = useMemo(
@@ -7048,6 +7149,21 @@ export default function Town3D() {
               timeAgo={timeAgo}
               safeTrim={safeTrim}
               formatTimeLeft={formatTimeLeft}
+            />
+          </Suspense>
+        </div>
+
+        <div className="pointer-events-auto absolute right-3 bottom-3 z-[57] hidden lg:block">
+          <Suspense fallback={null}>
+            <LazyReadableRuntimeHud
+              ownedAgentId={ownedAgentId}
+              agents={runtimeAgents}
+              crews={runtimeCrews}
+              buildings={runtimeBuildings}
+              feed={runtimeFeed}
+              running={runtimeLoopRunning}
+              tick={runtimeTick}
+              loading={runtimeLoading}
             />
           </Suspense>
         </div>

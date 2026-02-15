@@ -310,3 +310,31 @@ Original prompt: "yes, but are we able to implement build/work/fight > crypto lo
 
 - Updated skill docs:
   - `backend/ai-town-skill/SKILL.md` now includes SDK helper usage and harness command.
+
+### UX pass: spectator deploy + nav/streak clarity (2026-02-16)
+
+- Implemented spectator-to-player recovery path:
+  - Added `Sign In`/`Deploy Agent` and `Spectator → Player` CTAs in `DegenControlBar` when no owned agent.
+  - Added `openDeployFlow` in `Town3D` to route unauthenticated users to onboarding and authenticated users to spawn overlay.
+  - Added persistent top-bar CTA: `Sign In & Deploy` (or `Deploy Agent` when authenticated).
+  - Added spectator strip under top nav with `Become a Player` button.
+
+- Clarified momentum terminology:
+  - Replaced ambiguous `HEAT/TILT xN` toast labels with `WIN STREAK/LOSS STREAK xN`.
+  - Added explanatory chip/tooltips in top nav: `HEAT = loop momentum · STREAK = duel run`.
+  - Updated compact heat chip text to `Heat xN`.
+
+- Validation:
+  - `cd app && npx tsc --noEmit` passed.
+  - `cd app && npm run build` passed.
+  - Playwright screenshot checks (`npx playwright screenshot`) captured:
+    - `artifacts/town-spectator-final.png`
+    - `artifacts/pw-after-restart.png`
+  - DOM assertions via Playwright script after skip:
+    - `Sign In & Deploy` present.
+    - `Become a Player` present.
+    - `Spectator → Player` present in degen control card.
+    - No `TILT` string found in rendered text.
+
+- Runtime note:
+  - Vite dev server was initially serving stale transformed module for `DegenControlBar`; restarted frontend process and revalidated on fresh runtime.

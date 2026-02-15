@@ -5277,6 +5277,13 @@ export default function Town3D() {
     };
   }, []);
   const [showSpawnOverlay, setShowSpawnOverlay] = useState(false);
+  const openDeployFlow = useCallback(() => {
+    if (!isPlayerAuthenticated) {
+      setShowOnboarding(true);
+      return;
+    }
+    setShowSpawnOverlay(true);
+  }, [isPlayerAuthenticated]);
   const closeMissionTour = useCallback(() => {
     localStorage.setItem(DEGEN_TOUR_KEY, '1');
     setShowMissionTour(false);
@@ -6326,8 +6333,11 @@ export default function Town3D() {
             </button>
           )}
           {ownedLoopTelemetry && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded border border-amber-500/45 bg-amber-500/15 text-amber-200 font-mono">
-              🔥x{Math.max(1, ownedLoopTelemetry.chain)}
+            <span
+              className="text-[9px] px-1.5 py-0.5 rounded border border-amber-500/45 bg-amber-500/15 text-amber-200 font-mono"
+              title="Loop Heat = consecutive non-rest actions. Higher heat means stronger loop momentum."
+            >
+              🔥Heat x{Math.max(1, ownedLoopTelemetry.chain)}
             </span>
           )}
           {ownedCrewLink && (
@@ -6473,7 +6483,7 @@ export default function Town3D() {
                 <div className={`rounded-full px-2.5 py-1 text-[10px] font-bold backdrop-blur-md ${
                   isWin ? 'bg-emerald-900/85 text-emerald-100' : 'bg-rose-900/85 text-rose-100'
                 }`}>
-                  {isWin ? '🔥' : '☠️'} {isWin ? 'HEAT' : 'TILT'} x{toast.streak}
+                  {isWin ? '🔥' : '☠️'} {isWin ? 'WIN STREAK' : 'LOSS STREAK'} x{toast.streak}
                 </div>
               </div>
             );
@@ -6620,97 +6630,130 @@ export default function Town3D() {
       {wheelArenaOverlay}
       {missionTourOverlay}
       {/* Top Bar: Degen Stats */}
-      <div className="shrink-0 flex items-center justify-between px-4 py-1.5 bg-slate-950/90 border-b border-slate-800/40 z-50">
-        <div className="flex items-center gap-3">
-          <span className="text-xs font-bold text-amber-400">AI TOWN</span>
-          {economy && Number.isFinite(economy.spotPrice) && (
-            <span className="text-[10px] text-slate-500 font-mono">$ARENA {economy.spotPrice.toFixed(4)}</span>
-          )}
-          <span className="text-[10px] text-cyan-300/90 font-mono uppercase">
-            {visualSettings.quality === 'auto' ? `AUTO:${resolvedVisualQuality}` : resolvedVisualQuality}
-          </span>
-          <span
-            className={`text-[10px] px-2 py-0.5 rounded-full border font-mono ${
-              aiMode === 'LIVE'
-                ? 'border-emerald-500/55 bg-emerald-950/35 text-emerald-200'
-                : 'border-slate-700/70 bg-slate-900/40 text-slate-300'
-            }`}
-            title={aiMode === 'LIVE' ? 'Live model calls enabled' : 'Simulation mode (no live model spend)'}
-          >
-            AI:{aiMode}
-          </span>
-          {ownedLoopTelemetry && (
-            <span className="text-[10px] bg-amber-900/45 text-amber-200 px-2 py-0.5 rounded-full border border-amber-500/45 font-mono">
-              🔥 x{Math.max(1, ownedLoopTelemetry.chain)} · loops {Math.max(0, ownedLoopTelemetry.loopsCompleted)}
-            </span>
-          )}
-          {ownedCrewLink && (
-            <span
-              className="text-[10px] px-2 py-0.5 rounded-full border font-mono"
-              style={{
-                color: ownedCrewLink.colorHex,
-                borderColor: `${ownedCrewLink.colorHex}66`,
-                backgroundColor: `${ownedCrewLink.colorHex}1f`,
-              }}
-              title={`Crew role: ${ownedCrewLink.role}`}
+      <div className="shrink-0 border-b border-cyan-950/40 bg-gradient-to-r from-slate-950/95 via-slate-950/92 to-slate-900/92 px-3 py-2.5 z-50">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 leading-tight shadow-[0_0_20px_rgba(245,158,11,0.12)]">
+              <div className="text-[13px] font-black tracking-[0.14em] text-amber-300">AI TOWN</div>
+              <div className="text-[9px] font-mono uppercase text-slate-400">Agent Arena Live</div>
+            </div>
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              {economy && Number.isFinite(economy.spotPrice) && (
+                <span className="rounded-full border border-slate-700/70 bg-slate-900/50 px-2 py-0.5 text-[10px] font-mono text-slate-300">
+                  $ARENA {economy.spotPrice.toFixed(4)}
+                </span>
+              )}
+              <span className="rounded-full border border-slate-700/70 bg-slate-900/45 px-2 py-0.5 text-[10px] font-mono uppercase text-cyan-300/90">
+                {visualSettings.quality === 'auto' ? `AUTO:${resolvedVisualQuality}` : resolvedVisualQuality}
+              </span>
+              <span
+                className={`rounded-full border px-2 py-0.5 text-[10px] font-mono ${
+                  aiMode === 'LIVE'
+                    ? 'border-emerald-500/55 bg-emerald-950/35 text-emerald-200'
+                    : 'border-slate-700/70 bg-slate-900/40 text-slate-300'
+                }`}
+                title={aiMode === 'LIVE' ? 'Live model calls enabled' : 'Simulation mode (no live model spend)'}
+              >
+                AI:{aiMode}
+              </span>
+              {ownedLoopTelemetry && (
+                <span
+                  className="rounded-full border border-amber-500/45 bg-amber-900/45 px-2 py-0.5 text-[10px] font-mono text-amber-200"
+                  title="Loop Heat = consecutive non-rest actions. Streak toasts: WIN STREAK = consecutive duel wins, LOSS STREAK = consecutive duel losses."
+                >
+                  🔥 LOOP HEAT x{Math.max(1, ownedLoopTelemetry.chain)} · loops {Math.max(0, ownedLoopTelemetry.loopsCompleted)}
+                </span>
+              )}
+              <span
+                className="rounded-full border border-slate-700/65 bg-slate-900/35 px-2 py-0.5 text-[10px] font-mono text-slate-300"
+                title="Definitions: LOOP HEAT tracks non-rest loop momentum. WIN/LOSS STREAK toasts track consecutive duel outcomes."
+              >
+                ℹ HEAT = loop momentum · STREAK = duel run
+              </span>
+              {ownedCrewLink && (
+                <span
+                  className="rounded-full border px-2 py-0.5 text-[10px] font-mono"
+                  style={{
+                    color: ownedCrewLink.colorHex,
+                    borderColor: `${ownedCrewLink.colorHex}66`,
+                    backgroundColor: `${ownedCrewLink.colorHex}1f`,
+                  }}
+                  title={`Crew role: ${ownedCrewLink.role}`}
+                >
+                  ⚑ {ownedCrewLink.crewName}
+                </span>
+              )}
+              {leadingCrew && (
+                <span className="rounded-full border border-rose-400/35 bg-rose-950/30 px-2 py-0.5 text-[10px] font-mono text-rose-200">
+                  ⚔️ {leadingCrew.name} · terr {leadingCrew.territoryControl} · score {leadingCrew.warScore}
+                </span>
+              )}
+              {activeOpportunity && opportunityTimeLeft && (
+                <span
+                  className="rounded-full border px-2 py-0.5 text-[10px] font-mono animate-pulse"
+                  style={{
+                    color: activeOpportunity.objective.color,
+                    borderColor: `${activeOpportunity.objective.color}66`,
+                    backgroundColor: `${activeOpportunity.objective.color}1f`,
+                  }}
+                  title={`${activeOpportunity.label}: ${activeOpportunity.subtitle}`}
+                >
+                  ⏱ {activeOpportunity.label} {opportunityTimeLeft}
+                </span>
+              )}
+              {displayObjective && (
+                <span
+                  className="rounded-full border px-2 py-0.5 text-[10px] font-mono"
+                  style={{
+                    color: displayObjective.color,
+                    borderColor: `${displayObjective.color}66`,
+                    backgroundColor: `${displayObjective.color}1f`,
+                  }}
+                  title={`Objective from ${displayObjective.sourceType || 'system'}: ${displayObjective.label}`}
+                >
+                  {displayObjective.emoji} {displayObjective.label}
+                </span>
+              )}
+              {wheel.status?.phase === 'ANNOUNCING' && (
+                <span className="rounded-full border border-fuchsia-400/45 bg-fuchsia-950/35 px-2 py-0.5 text-[10px] text-fuchsia-200 animate-pulse">🎰 Betting Open</span>
+              )}
+              {wheel.status?.phase === 'FIGHTING' && (
+                <span className="rounded-full border border-red-400/45 bg-red-950/35 px-2 py-0.5 text-[10px] text-red-200 animate-pulse">⚔️ Fight!</span>
+              )}
+              {wheel.status?.phase === 'AFTERMATH' && (
+                <span className="rounded-full border border-amber-400/45 bg-amber-950/35 px-2 py-0.5 text-[10px] text-amber-200">🏆 Result</span>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Suspense fallback={null}>
+              <LazyPrivyWalletConnect
+                compact
+                onAddressChange={setWalletAddress}
+                onSessionChange={setPlayerSession}
+              />
+            </Suspense>
+            <button
+              onClick={openDeployFlow}
+              className="rounded-lg border border-amber-500/65 bg-gradient-to-r from-amber-600/80 to-orange-600/80 px-3 py-1 text-xs font-bold text-white transition-all hover:from-amber-500 hover:to-orange-500"
             >
-              ⚑ {ownedCrewLink.crewName}
-            </span>
-          )}
-          {leadingCrew && (
-            <span className="text-[10px] px-2 py-0.5 rounded-full border border-rose-400/35 bg-rose-950/30 text-rose-200 font-mono">
-              ⚔️ {leadingCrew.name} · terr {leadingCrew.territoryControl} · score {leadingCrew.warScore}
-            </span>
-          )}
-          {activeOpportunity && opportunityTimeLeft && (
-            <span
-              className="text-[10px] px-2 py-0.5 rounded-full border font-mono animate-pulse"
-              style={{
-                color: activeOpportunity.objective.color,
-                borderColor: `${activeOpportunity.objective.color}66`,
-                backgroundColor: `${activeOpportunity.objective.color}1f`,
-              }}
-              title={`${activeOpportunity.label}: ${activeOpportunity.subtitle}`}
-            >
-              ⏱ {activeOpportunity.label} {opportunityTimeLeft}
-            </span>
-          )}
-          {displayObjective && (
-            <span
-              className="text-[10px] px-2 py-0.5 rounded-full border font-mono"
-              style={{
-                color: displayObjective.color,
-                borderColor: `${displayObjective.color}66`,
-                backgroundColor: `${displayObjective.color}1f`,
-              }}
-              title={`Objective from ${displayObjective.sourceType || 'system'}: ${displayObjective.label}`}
-            >
-              {displayObjective.emoji} {displayObjective.label}
-            </span>
-          )}
-          {wheel.status?.phase === 'ANNOUNCING' && (
-            <span className="text-[10px] bg-purple-900/60 text-purple-300 px-2 py-0.5 rounded-full animate-pulse">🎰 Betting Open</span>
-          )}
-          {wheel.status?.phase === 'FIGHTING' && (
-            <span className="text-[10px] bg-red-900/60 text-red-300 px-2 py-0.5 rounded-full animate-pulse">⚔️ Fight!</span>
-          )}
-          {wheel.status?.phase === 'AFTERMATH' && (
-            <span className="text-[10px] bg-amber-900/60 text-amber-300 px-2 py-0.5 rounded-full">🏆 Result</span>
-          )}
+              {isPlayerAuthenticated ? '🤖 Deploy Agent' : '✨ Sign In & Deploy'}
+            </button>
+          </div>
         </div>
-        <Suspense fallback={null}>
-          <LazyPrivyWalletConnect
-            compact
-            onAddressChange={setWalletAddress}
-            onSessionChange={setPlayerSession}
-          />
-        </Suspense>
-        <button
-          onClick={() => setShowSpawnOverlay(true)}
-          className="px-3 py-1 bg-gradient-to-r from-amber-600/80 to-orange-600/80 text-white text-xs font-bold rounded hover:from-amber-500 hover:to-orange-500 transition-all"
-        >
-          🤖 Spawn Agent
-        </button>
+        {!ownedAgentId && (
+          <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-cyan-500/25 bg-cyan-500/8 px-3 py-1.5">
+            <div className="text-[11px] text-cyan-100/90">
+              Spectator mode: You can watch now, then deploy anytime from this bar.
+            </div>
+            <button
+              onClick={openDeployFlow}
+              className="rounded-md border border-cyan-400/50 bg-cyan-500/20 px-2 py-1 text-[10px] font-semibold text-cyan-100 hover:bg-cyan-500/28"
+            >
+              Become a Player
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Spawn Agent Overlay */}
@@ -6851,14 +6894,14 @@ export default function Town3D() {
                 isWin
                   ? 'bg-emerald-900/80 border-emerald-400/40 text-emerald-100'
                   : 'bg-rose-900/80 border-rose-400/40 text-rose-100'
-              }`}>
+              }`} title={isWin ? 'Consecutive duel wins' : 'Consecutive duel losses'}>
                 <div className="flex items-center gap-2">
                   <span className="text-lg">{isWin ? '🔥' : '☠️'}</span>
                   <span style={{ color }} className="font-mono text-xs">
                     {glyph} {toast.agentName}
                   </span>
                   <span className="text-[10px] uppercase tracking-wider opacity-85">
-                    {isWin ? 'Heat' : 'Tilt'}
+                    {isWin ? 'Win Streak' : 'Loss Streak'}
                   </span>
                   <span className="font-black text-base tracking-wide">x{toast.streak}</span>
                 </div>
@@ -6973,8 +7016,9 @@ export default function Town3D() {
 
         <div className="pointer-events-auto absolute left-3 bottom-3 flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end max-w-[calc(100vw-24px)]">
           <Suspense fallback={null}>
-            <LazyDegenControlBar
+          <LazyDegenControlBar
               ownedAgent={ownedAgent ? { id: ownedAgent.id, name: ownedAgent.name, archetype: ownedAgent.archetype } : null}
+              isPlayerAuthenticated={isPlayerAuthenticated}
               loopMode={ownedLoopMode}
               loopUpdating={loopModeUpdating}
               nudgeBusy={degenNudgeBusy}
@@ -6997,6 +7041,8 @@ export default function Town3D() {
               onToggleLoop={updateOwnedLoopMode}
               onNudge={sendDegenNudge}
               onCrewOrder={sendCrewOrder}
+              onOpenOnboarding={() => setShowOnboarding(true)}
+              onOpenSpawn={() => setShowSpawnOverlay(true)}
             />
           </Suspense>
           <Suspense fallback={null}>

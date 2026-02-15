@@ -18,6 +18,7 @@ interface OwnedAgentLite {
 
 interface DegenControlBarProps {
   ownedAgent: OwnedAgentLite | null;
+  isPlayerAuthenticated?: boolean;
   loopMode: 'DEFAULT' | 'DEGEN_LOOP';
   loopUpdating: boolean;
   nudgeBusy: boolean;
@@ -40,6 +41,8 @@ interface DegenControlBarProps {
   onToggleLoop: (nextMode: 'DEFAULT' | 'DEGEN_LOOP') => void;
   onNudge: (nudge: DegenNudge) => void;
   onCrewOrder?: (strategy: CrewOrderStrategy) => void;
+  onOpenOnboarding?: () => void;
+  onOpenSpawn?: () => void;
 }
 
 const NUDGES: Array<{ key: DegenNudge; label: string; emoji: string }> = [
@@ -64,6 +67,7 @@ const LOOP_PLAYBOOK: Array<{ key: DegenNudge; label: string; brief: string }> = 
 
 export function DegenControlBar({
   ownedAgent,
+  isPlayerAuthenticated = false,
   loopMode,
   loopUpdating,
   nudgeBusy,
@@ -86,6 +90,8 @@ export function DegenControlBar({
   onToggleLoop,
   onNudge,
   onCrewOrder,
+  onOpenOnboarding,
+  onOpenSpawn,
 }: DegenControlBarProps) {
   if (!ownedAgent) {
     return (
@@ -94,6 +100,34 @@ export function DegenControlBar({
         <div className="text-[10px] text-cyan-200/85">Build &gt; Work &gt; Fight &gt; Trade cycle</div>
         <div className="mt-2 rounded-lg border border-slate-700/70 bg-slate-900/45 px-2 py-2 text-[10px] leading-tight text-slate-300">
           {actionsLockedReason || 'Sign in and spawn/select your wallet-linked agent to unlock loop controls.'}
+        </div>
+        <div className="mt-2 grid grid-cols-2 gap-1.5">
+          <button
+            type="button"
+            onClick={() => {
+              if (!isPlayerAuthenticated) {
+                onOpenOnboarding?.();
+                return;
+              }
+              onOpenSpawn?.();
+            }}
+            className="rounded-md border border-amber-500/55 bg-amber-500/15 px-2 py-1 text-[10px] font-semibold text-amber-200 transition-colors hover:bg-amber-500/22"
+          >
+            {isPlayerAuthenticated ? 'Deploy Agent' : 'Sign In'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (!isPlayerAuthenticated) {
+                onOpenOnboarding?.();
+                return;
+              }
+              onOpenSpawn?.();
+            }}
+            className="rounded-md border border-cyan-500/45 bg-cyan-500/12 px-2 py-1 text-[10px] text-cyan-100 transition-colors hover:bg-cyan-500/20"
+          >
+            Spectator → Player
+          </button>
         </div>
       </div>
     );
@@ -136,7 +170,9 @@ export function DegenControlBar({
       </div>
       <div className="mb-2 rounded-lg border border-amber-500/25 bg-slate-900/45 px-2 py-1.5">
         <div className="mb-1 flex items-center justify-between text-[10px]">
-          <span className="font-mono text-amber-200">HEAT x{chain}</span>
+          <span className="font-mono text-amber-200" title="Loop heat = consecutive non-rest loop actions (higher means stronger momentum).">
+            HEAT x{chain}
+          </span>
           <span className="font-mono text-slate-400">LOOPS {loopsCompleted}</span>
         </div>
         <div className="grid grid-cols-4 gap-1">

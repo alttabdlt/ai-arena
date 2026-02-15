@@ -62,6 +62,8 @@ const ARENA_IMPACT_BURST_CAP = 28;
 const ACTION_BURST_LIFE_MS = 1280;
 const CREW_BATTLE_TOAST_LIFE_MS = 5200;
 const UI_MODE_KEY = 'ai_arena_ui_mode';
+const ARENA_TOKEN_ADDRESS = '0x0bA5E04470Fe327AC191179Cf6823E667B007777';
+const NAD_FUN_TOKEN_URL = `https://nad.fun/tokens/${ARENA_TOKEN_ADDRESS}`;
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const MISSION_TOUR_STEPS = [
   {
@@ -116,6 +118,10 @@ const LazyDesktopAgentHudPanel = lazy(async () => {
 const LazyDegenControlBar = lazy(async () => {
   const mod = await import('../components/town/DegenControlBar');
   return { default: mod.DegenControlBar };
+});
+const LazyAgentFundingModal = lazy(async () => {
+  const mod = await import('../components/town/AgentFundingModal');
+  return { default: mod.AgentFundingModal };
 });
 const LazyReadableRuntimeHud = lazy(async () => {
   const mod = await import('../components/game/ReadableRuntimeHud');
@@ -203,6 +209,41 @@ interface AgentBalanceSnapshot {
   reserveBalance: number;
   lastTickAt: string | null;
   lastActionType: string | null;
+}
+
+interface AgentFundingReceipt {
+  id: string;
+  txHash: string;
+  walletAddress: string;
+  arenaAmount: number;
+  blockNumber: number | null;
+  createdAt: string;
+}
+
+interface AgentFundingHistoryResponse {
+  ok: boolean;
+  tokenAddress: string;
+  receipts: AgentFundingReceipt[];
+  totals: {
+    creditedArena: number;
+    receiptCount: number;
+  };
+}
+
+interface AgentFundingApplyResponse {
+  ok: boolean;
+  funding: {
+    txHash: string;
+    arenaAmount: number;
+    blockNumber: number | null;
+    createdAt: string;
+  };
+  agent: {
+    id: string;
+    name: string;
+    bankroll: number;
+    reserveBalance: number;
+  };
 }
 
 type ArenaOutcomeSignal = {
@@ -5080,6 +5121,15 @@ export default function Town3D() {
   const [ownedLoopTelemetry, setOwnedLoopTelemetry] = useState<DegenLoopTelemetry | null>(null);
   const [degenPlans, setDegenPlans] = useState<Record<DegenNudge, DegenActionPlan> | null>(null);
   const [degenPlansLoading, setDegenPlansLoading] = useState(false);
+  const [fundingModalOpen, setFundingModalOpen] = useState(false);
+  const [fundingTxHash, setFundingTxHash] = useState('');
+  const [fundingReceipts, setFundingReceipts] = useState<AgentFundingReceipt[]>([]);
+  const [fundingTotals, setFundingTotals] = useState<{ creditedArena: number; receiptCount: number } | null>(null);
+  const [fundingLoading, setFundingLoading] = useState(false);
+  const [fundingSubmitting, setFundingSubmitting] = useState(false);
+  const [fundingError, setFundingError] = useState<string | null>(null);
+  const [fundingSuccess, setFundingSuccess] = useState<string | null>(null);
+  const [fundingTokenAddress, setFundingTokenAddress] = useState(ARENA_TOKEN_ADDRESS);
   const degenLoopTelemetryByAgentIdRef = useRef<Map<string, DegenLoopTelemetry>>(new Map());
   const degenStatusTimerRef = useRef<number | null>(null);
   const showDegenStatus = useCallback((message: string, tone: 'neutral' | 'ok' | 'error', ttlMs = 2600) => {
@@ -5521,7 +5571,110 @@ export default function Town3D() {
       window.clearInterval(timer);
     };
   }, []);
+  const refreshFundingHistory = useCallback(async () => {
+    if (!ownedAgentId || !isPlayerAuthenticated) {
+      setFundingReceipts([]);
+      setFundingTotals(null);
+      return;
+    }
+    setFundingLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/agents/${ownedAgentId}/funding`, {
+        headers: buildPlayerHeaders(false),
+      });
+      if (!res.ok) throw new Error(`Funding history unavailable (${res.status})`);
+      const payload = await res.json() as AgentFundingHistoryResponse;
+      setFundingReceipts(Array.isArray(payload.receipts) ? payload.receipts : []);
+      setFundingTotals(payload.totals || { creditedArena: 0, receiptCount: 0 });
+      if (payload.tokenAddress) setFundingTokenAddress(payload.tokenAddress);
+    } catch {
+      setFundingReceipts([]);
+      setFundingTotals(null);
+    } finally {
+      setFundingLoading(false);
+    }
+  }, [buildPlayerHeaders, isPlayerAuthenticated, ownedAgentId]);
+  useEffect(() => {
+    if (!ownedAgentId || !isPlayerAuthenticated) {
+      setFundingReceipts([]);
+      setFundingTotals(null);
+      return;
+    }
+    void refreshFundingHistory();
+    const timer = window.setInterval(() => {
+      void refreshFundingHistory();
+    }, 18000);
+    return () => window.clearInterval(timer);
+  }, [isPlayerAuthenticated, ownedAgentId, refreshFundingHistory]);
   const [showSpawnOverlay, setShowSpawnOverlay] = useState(false);
+  const openFundingFlow = useCallback(() => {
+    if (!ensureActionSession('funding this agent')) return;
+    setFundingError(null);
+    setFundingSuccess(null);
+    setFundingModalOpen(true);
+    void refreshFundingHistory();
+  }, [ensureActionSession, refreshFundingHistory]);
+  const submitFundingTx = useCallback(async () => {
+    if (!ensureActionSession('funding this agent')) return;
+    if (!ownedAgentId) return;
+    const txHash = fundingTxHash.trim();
+    if (!txHash) {
+      setFundingError('Paste a Monad tx hash first.');
+      return;
+    }
+    setFundingSubmitting(true);
+    setFundingError(null);
+    setFundingSuccess(null);
+    try {
+      const res = await fetch(`${API_BASE}/agents/${ownedAgentId}/fund`, {
+        method: 'POST',
+        headers: buildPlayerHeaders(true),
+        body: JSON.stringify({ txHash }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(String(payload?.error || `Funding failed (${res.status})`));
+      const data = payload as AgentFundingApplyResponse;
+      if (data?.agent?.id) {
+        setAgents((prev) => prev.map((agent) => (
+          agent.id === data.agent.id
+            ? {
+                ...agent,
+                bankroll: data.agent.bankroll,
+                reserveBalance: data.agent.reserveBalance,
+              }
+            : agent
+        )));
+      }
+      const credited = Number(data?.funding?.arenaAmount || 0);
+      const shortTx = txHash.length > 14 ? `${txHash.slice(0, 10)}...${txHash.slice(-6)}` : txHash;
+      setFundingSuccess(`Credited +${Math.round(credited)} $ARENA from ${shortTx}.`);
+      setFundingTxHash('');
+      showDegenStatus(`Funding credited +${Math.round(credited)}A`, 'ok', 4200);
+      await refreshFundingHistory();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Funding verification failed';
+      setFundingError(message);
+      showDegenStatus(message, 'error', 4200);
+    } finally {
+      setFundingSubmitting(false);
+    }
+  }, [
+    buildPlayerHeaders,
+    ensureActionSession,
+    fundingTxHash,
+    ownedAgentId,
+    refreshFundingHistory,
+    showDegenStatus,
+  ]);
+  useEffect(() => {
+    if (isPlayerAuthenticated && ownedAgentId) return;
+    setFundingModalOpen(false);
+    setFundingTxHash('');
+    setFundingError(null);
+    setFundingSuccess(null);
+    setFundingReceipts([]);
+    setFundingTotals(null);
+  }, [isPlayerAuthenticated, ownedAgentId]);
   const openDeployFlow = useCallback(() => {
     if (!isPlayerAuthenticated) {
       setShowOnboarding(true);
@@ -5541,15 +5694,18 @@ export default function Town3D() {
     setMissionTourStep((step) => Math.min(step + 1, MISSION_TOUR_STEPS.length - 1));
   }, [closeMissionTour, missionTourStep]);
   const [canvasEpoch, setCanvasEpoch] = useState(0);
+  const [canvasRecovering, setCanvasRecovering] = useState(false);
   const canvasRecoveryGuardRef = useRef(false);
   const canvasListenerCleanupRef = useRef<(() => void) | null>(null);
   const handleCanvasCreated = useCallback((state: RootState) => {
+    setCanvasRecovering(false);
     canvasListenerCleanupRef.current?.();
     const canvas = state.gl.domElement as HTMLCanvasElement;
     const onContextLost = (event: Event) => {
       event.preventDefault();
       if (canvasRecoveryGuardRef.current) return;
       canvasRecoveryGuardRef.current = true;
+      setCanvasRecovering(true);
       // Fallback to a cheaper profile first to reduce context pressure.
       setVisualSettings((prev) => {
         const nextQuality = prev.quality === 'high'
@@ -5568,12 +5724,15 @@ export default function Town3D() {
         const stillLost = typeof ctx.isContextLost === 'function' ? ctx.isContextLost() : false;
         if (stillLost) {
           setCanvasEpoch((prev) => prev + 1);
+        } else {
+          setCanvasRecovering(false);
         }
         canvasRecoveryGuardRef.current = false;
       }, 1100);
     };
     const onContextRestored = () => {
       canvasRecoveryGuardRef.current = false;
+      setCanvasRecovering(false);
     };
     canvas.addEventListener('webglcontextlost', onContextLost, { passive: false });
     canvas.addEventListener('webglcontextrestored', onContextRestored);
@@ -6591,6 +6750,32 @@ export default function Town3D() {
       </div>
     </div>
   ) : null;
+  const fundingModalOverlay = (
+    <Suspense fallback={null}>
+      <LazyAgentFundingModal
+        open={fundingModalOpen}
+        agentName={ownedAgent?.name || null}
+        bankroll={ownedAgent?.bankroll ?? null}
+        reserveBalance={ownedAgent?.reserveBalance ?? null}
+        tokenAddress={fundingTokenAddress}
+        nadFunUrl={NAD_FUN_TOKEN_URL}
+        txHash={fundingTxHash}
+        submitting={fundingSubmitting}
+        error={fundingError}
+        success={fundingSuccess}
+        receipts={fundingReceipts}
+        totals={fundingTotals}
+        historyLoading={fundingLoading}
+        onTxHashChange={setFundingTxHash}
+        onSubmit={submitFundingTx}
+        onClose={() => {
+          setFundingModalOpen(false);
+          setFundingError(null);
+          setFundingSuccess(null);
+        }}
+      />
+    </Suspense>
+  );
 
   /* ────────────── MOBILE LAYOUT ────────────── */
   if (isMobile) return (
@@ -6602,6 +6787,7 @@ export default function Town3D() {
       )}
       {wheelArenaOverlay}
       {missionTourOverlay}
+      {fundingModalOverlay}
       {/* Mobile top bar — compact */}
       <div className="shrink-0 flex items-center justify-between px-3 py-1 bg-slate-950/95 border-b border-slate-800/40 z-50">
         <span className="text-xs font-bold text-amber-400">AI TOWN</span>
@@ -6842,6 +7028,16 @@ export default function Town3D() {
             >
               🤖+
             </button>
+            <button
+              className={`px-3 py-1.5 rounded-lg text-xs backdrop-blur-md border transition-all ${
+                ownedAgent && ownedAgent.bankroll < 30
+                  ? 'bg-rose-500/20 border-rose-500/45 text-rose-200'
+                  : 'bg-slate-950/70 border-slate-800/40 text-slate-300'
+              }`}
+              onClick={openFundingFlow}
+            >
+              ⛽ Fund
+            </button>
           </div>
         </div>
 
@@ -6934,6 +7130,7 @@ export default function Town3D() {
       )}
       {wheelArenaOverlay}
       {missionTourOverlay}
+      {fundingModalOverlay}
       {/* Top Bar: Degen Stats */}
       <div className="shrink-0 border-b border-cyan-950/40 bg-gradient-to-r from-slate-950/95 via-slate-950/92 to-slate-900/92 px-3 py-2.5 z-50">
         <div className="flex items-center justify-between gap-3">
@@ -6958,6 +7155,20 @@ export default function Town3D() {
                     <span className="rounded-full border border-slate-700/70 bg-slate-900/45 px-2 py-0.5 text-[10px] font-mono text-slate-200">
                       BAL ${Math.round(ownedAgent.bankroll)}A / {Math.round(ownedAgent.reserveBalance)}R
                     </span>
+                  )}
+                  {ownedAgent && !onboardingEntryLock && (
+                    <button
+                      type="button"
+                      onClick={openFundingFlow}
+                      className={`rounded-full border px-2 py-0.5 text-[10px] font-mono transition-colors ${
+                        ownedAgent.bankroll < 30
+                          ? 'border-rose-500/60 bg-rose-950/35 text-rose-100 hover:bg-rose-900/40'
+                          : 'border-amber-500/55 bg-amber-950/35 text-amber-100 hover:bg-amber-900/42'
+                      }`}
+                      title="Top up your agent bankroll using a verified nad.fun transaction hash"
+                    >
+                      {ownedAgent.bankroll < 30 ? '⛽ TOP UP' : '➕ FUND'}
+                    </button>
                   )}
                   <span className="rounded-full border border-cyan-500/45 bg-cyan-950/30 px-2 py-0.5 text-[10px] font-mono text-cyan-100">
                     {ownedRuntimeAgent?.action || 'WAIT'} · {ownedRuntimeAgent?.targetLabel || 'Awaiting target'}
@@ -7088,7 +7299,7 @@ export default function Town3D() {
             >
               {uiMode === 'pro' ? 'Pro Mode' : 'Default Mode'}
             </button>
-            {!onboardingEntryLock && (
+            {!onboardingEntryLock && !showOnboarding && !showSpawnOverlay && !fundingModalOpen && (
               <button
                 onClick={openDeployFlow}
                 className="rounded-lg border border-amber-500/65 bg-gradient-to-r from-amber-600/80 to-orange-600/80 px-3 py-1 text-xs font-bold text-white transition-all hover:from-amber-500 hover:to-orange-500"
@@ -7145,6 +7356,7 @@ export default function Town3D() {
         onPointerMissed={() => {
           setSelectedPlotId(null);
         }}
+        fallback={<div className="h-full w-full grid place-items-center bg-slate-950 text-slate-300 text-sm">WebGL not supported</div>}
       >
         <TownScene
           town={town}
@@ -7183,6 +7395,17 @@ export default function Town3D() {
           visualSettings={visualSettings}
         />
       </Canvas>
+
+      {canvasRecovering && (
+        <div className="pointer-events-none absolute inset-0 z-[58] grid place-items-center">
+          <div className="rounded-xl border border-amber-500/45 bg-slate-950/86 px-3 py-2 text-[11px] font-mono text-amber-200 shadow-xl backdrop-blur-sm">
+            <div className="flex items-center gap-2">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Renderer recovering...
+            </div>
+          </div>
+        </div>
+      )}
 
       {uiMode === 'pro' && (
       <>
@@ -7401,6 +7624,8 @@ export default function Town3D() {
                 crewName={ownedCrewLink?.crewName || null}
                 crewColor={ownedCrewLink?.colorHex || null}
                 actionsLockedReason={authRequiredForActions ? actionLockReason : null}
+                bankroll={ownedAgent?.bankroll ?? null}
+                reserveBalance={ownedAgent?.reserveBalance ?? null}
                 loopTelemetry={ownedLoopTelemetry}
                 nowMs={uiNowMs}
                 statusMessage={degenStatus?.message}
@@ -7408,6 +7633,7 @@ export default function Town3D() {
                 onToggleLoop={updateOwnedLoopMode}
                 onNudge={sendDegenNudge}
                 onCrewOrder={sendCrewOrder}
+                onOpenFunding={openFundingFlow}
               />
             </Suspense>
             <Suspense fallback={null}>

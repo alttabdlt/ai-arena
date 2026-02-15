@@ -186,6 +186,7 @@ type ArenaImpactBurst = {
 };
 
 type ActionBurstKind = 'CLAIM' | 'BUILD' | 'WORK' | 'TRADE' | 'FIGHT' | 'MINE' | 'IDLE' | 'OTHER';
+type DegenLoopPhase = 'BUILD' | 'WORK' | 'FIGHT' | 'TRADE';
 
 type ActionBurst = {
   id: string;
@@ -194,9 +195,18 @@ type ActionBurst = {
   actionType: string;
   kind: ActionBurstKind;
   polarity: -1 | 0 | 1;
+  label: string;
   intensity: number;
   createdAt: number;
   isOwned: boolean;
+};
+
+type DegenLoopTelemetry = {
+  nextIndex: number;
+  chain: number;
+  loopsCompleted: number;
+  lastPhase: DegenLoopPhase | null;
+  lastAdvanceAt: number | null;
 };
 
 interface EconomyPoolSummary {
@@ -477,6 +487,21 @@ function summarizeArenaMomentum(entries: AgentOutcomeEntry[]) {
   return { streak, direction };
 }
 
+const DEGEN_LOOP_SEQUENCE: DegenLoopPhase[] = ['BUILD', 'WORK', 'FIGHT', 'TRADE'];
+const EMPTY_DEGEN_LOOP_TELEMETRY: DegenLoopTelemetry = {
+  nextIndex: 0,
+  chain: 0,
+  loopsCompleted: 0,
+  lastPhase: null,
+  lastAdvanceAt: null,
+};
+
+type DegenLoopStepResult = {
+  telemetry: DegenLoopTelemetry;
+  advanced: boolean;
+  completedLoop: boolean;
+};
+
 function resolveActionBurstKind(actionType: string): ActionBurstKind {
   const normalized = String(actionType || '').trim().toLowerCase();
   if (normalized.includes('claim')) return 'CLAIM';
@@ -487,6 +512,65 @@ function resolveActionBurstKind(actionType: string): ActionBurstKind {
   if (normalized.includes('mine')) return 'MINE';
   if (normalized === 'rest' || normalized === 'idle') return 'IDLE';
   return 'OTHER';
+}
+
+function resolveDegenLoopPhase(actionType: string): DegenLoopPhase | null {
+  const kind = resolveActionBurstKind(actionType);
+  if (kind === 'CLAIM' || kind === 'BUILD') return 'BUILD';
+  if (kind === 'WORK' || kind === 'MINE') return 'WORK';
+  if (kind === 'FIGHT') return 'FIGHT';
+  if (kind === 'TRADE') return 'TRADE';
+  return null;
+}
+
+function advanceDegenLoopTelemetry(
+  current: DegenLoopTelemetry,
+  phase: DegenLoopPhase,
+  observedAtMs: number,
+): DegenLoopStepResult {
+  const expected = DEGEN_LOOP_SEQUENCE[current.nextIndex] ?? DEGEN_LOOP_SEQUENCE[0];
+
+  // Wrong phase resets the chain unless agent immediately re-enters at BUILD.
+  if (phase !== expected) {
+    if (phase === 'BUILD') {
+      return {
+        telemetry: {
+          nextIndex: 1,
+          chain: 1,
+          loopsCompleted: current.loopsCompleted,
+          lastPhase: phase,
+          lastAdvanceAt: observedAtMs,
+        },
+        advanced: true,
+        completedLoop: false,
+      };
+    }
+    return {
+      telemetry: {
+        nextIndex: 0,
+        chain: 0,
+        loopsCompleted: current.loopsCompleted,
+        lastPhase: current.lastPhase,
+        lastAdvanceAt: current.lastAdvanceAt,
+      },
+      advanced: false,
+      completedLoop: false,
+    };
+  }
+
+  const nextIndexRaw = current.nextIndex + 1;
+  const completedLoop = nextIndexRaw >= DEGEN_LOOP_SEQUENCE.length;
+  return {
+    telemetry: {
+      nextIndex: completedLoop ? 0 : nextIndexRaw,
+      chain: current.chain + 1,
+      loopsCompleted: current.loopsCompleted + (completedLoop ? 1 : 0),
+      lastPhase: phase,
+      lastAdvanceAt: observedAtMs,
+    },
+    advanced: true,
+    completedLoop,
+  };
 }
 
 function actionBurstVisual(kind: ActionBurstKind, polarity: -1 | 0 | 1) {
@@ -515,6 +599,56 @@ function actionBurstVisual(kind: ActionBurstKind, polarity: -1 | 0 | 1) {
       return { emoji: '💤', color: '#64748b', accent: '#94a3b8' };
     default:
       return { emoji: '✨', color: '#38bdf8', accent: '#7dd3fc' };
+  }
+}
+
+function buildActionBurstLabel(
+  kind: ActionBurstKind,
+  bankrollDelta: number,
+  reserveDelta: number,
+  loopSuffix?: string | null,
+): string {
+  const kindLabel: Record<ActionBurstKind, string> = {
+    CLAIM: 'CLAIM',
+    BUILD: 'BUILD',
+    WORK: 'WORK',
+    TRADE: 'TRADE',
+    FIGHT: 'FIGHT',
+    MINE: 'MINE',
+    IDLE: 'IDLE',
+    OTHER: 'ACTION',
+  };
+  const arena = Math.round(bankrollDelta);
+  const reserve = Math.round(reserveDelta);
+  const parts = [kindLabel[kind] || 'ACTION'];
+  if (arena !== 0) parts.push(`${arena > 0 ? '+' : ''}${arena}A`);
+  if (reserve !== 0) parts.push(`${reserve > 0 ? '+' : ''}${reserve}R`);
+  if (arena === 0 && reserve === 0) parts.push('EVEN');
+  if (loopSuffix) parts.push(loopSuffix);
+  return parts.join(' ');
+}
+
+function buildOwnedLoopSuffix(stepResult: DegenLoopStepResult | null): string | null {
+  if (!stepResult || !stepResult.advanced) return null;
+  if (stepResult.completedLoop) {
+    return `LOOP x${Math.max(1, stepResult.telemetry.loopsCompleted)}`;
+  }
+  const completedSteps = Math.max(1, Math.min(DEGEN_LOOP_SEQUENCE.length, stepResult.telemetry.nextIndex));
+  return `S${completedSteps}/${DEGEN_LOOP_SEQUENCE.length}`;
+}
+
+function resolveDegenLoopVisual(phase: DegenLoopPhase | null) {
+  switch (phase) {
+    case 'BUILD':
+      return { color: '#f59e0b', accent: '#fbbf24' };
+    case 'WORK':
+      return { color: '#06b6d4', accent: '#67e8f9' };
+    case 'FIGHT':
+      return { color: '#f43f5e', accent: '#fecdd3' };
+    case 'TRADE':
+      return { color: '#10b981', accent: '#6ee7b7' };
+    default:
+      return { color: '#64748b', accent: '#cbd5e1' };
   }
 }
 
@@ -1306,18 +1440,38 @@ function ActionBurstFx({ burst }: { burst: ActionBurst }) {
   const ringRef = useRef<THREE.Mesh>(null);
   const haloRef = useRef<THREE.Mesh>(null);
   const spriteRef = useRef<THREE.Sprite>(null);
+  const labelRef = useRef<THREE.Sprite>(null);
   const shardRefs = useRef<Array<THREE.Mesh | null>>([]);
   const seededPhase = useMemo(() => hashToSeed(burst.id), [burst.id]);
   const visual = useMemo(() => actionBurstVisual(burst.kind, burst.polarity), [burst.kind, burst.polarity]);
   const iconTexture = useMemo(() => getEmojiTexture(visual.emoji), [visual.emoji]);
+  const labelAsset = useMemo(() => {
+    const fg = burst.polarity > 0 ? '#dcfce7' : burst.polarity < 0 ? '#fecdd3' : '#e2e8f0';
+    const bg = burst.polarity > 0
+      ? 'rgba(6, 78, 59, 0.86)'
+      : burst.polarity < 0
+        ? 'rgba(127, 29, 29, 0.86)'
+        : 'rgba(15, 23, 42, 0.86)';
+    return drawLabelTexture(burst.label, { fg, bg });
+  }, [burst.label, burst.polarity]);
+  const labelAspect = labelAsset.width / Math.max(1, labelAsset.height);
+  const labelHeight = burst.isOwned ? 0.16 : 0.145;
+  const labelWidth = labelHeight * labelAspect;
   const shardCount = 4;
+
+  useEffect(() => {
+    return () => {
+      labelAsset.texture.dispose();
+    };
+  }, [labelAsset.texture]);
 
   useFrame((state) => {
     const group = groupRef.current;
     const ring = ringRef.current;
     const halo = haloRef.current;
     const sprite = spriteRef.current;
-    if (!group || !ring || !halo || !sprite) return;
+    const label = labelRef.current;
+    if (!group || !ring || !halo || !sprite || !label) return;
 
     const ageMs = Date.now() - burst.createdAt;
     if (ageMs < 0 || ageMs > ACTION_BURST_LIFE_MS) {
@@ -1340,6 +1494,9 @@ function ActionBurstFx({ burst }: { burst: ActionBurst }) {
     sprite.position.set(0, 0.2 + pop * 0.26, 0);
     const iconScale = 0.24 + pop * 0.18 + (burst.isOwned ? 0.05 : 0);
     sprite.scale.set(iconScale, iconScale, 1);
+    label.position.set(0, 0.5 + pop * 0.38, 0);
+    const labelScale = 1 + pop * 0.18;
+    label.scale.set(labelWidth * labelScale, labelHeight * labelScale, 1);
 
     const ringMat = ring.material as THREE.MeshStandardMaterial;
     ringMat.color.set(visual.color);
@@ -1353,6 +1510,8 @@ function ActionBurstFx({ burst }: { burst: ActionBurst }) {
 
     const spriteMat = sprite.material as THREE.SpriteMaterial;
     spriteMat.opacity = THREE.MathUtils.clamp((0.92 - life * 0.35) * fade, 0, 0.98);
+    const labelMat = label.material as THREE.SpriteMaterial;
+    labelMat.opacity = THREE.MathUtils.clamp((0.92 - life * 0.22) * fade, 0, 0.95);
 
     for (let index = 0; index < shardCount; index++) {
       const shard = shardRefs.current[index];
@@ -1421,7 +1580,11 @@ function ActionBurstFx({ burst }: { burst: ActionBurst }) {
           transparent
           opacity={0.94}
           depthWrite={false}
+          depthTest={false}
         />
+      </sprite>
+      <sprite ref={labelRef} position={[0, 0.52, 0]} scale={[labelWidth, labelHeight, 1]}>
+        <spriteMaterial map={labelAsset.texture} transparent opacity={0.92} depthWrite={false} depthTest={false} />
       </sprite>
     </group>
   );
@@ -1434,6 +1597,91 @@ function ActionBursts({ bursts }: { bursts: ActionBurst[] }) {
       {bursts.map((burst) => (
         <ActionBurstFx key={burst.id} burst={burst} />
       ))}
+    </group>
+  );
+}
+
+function OwnedLoopAura({
+  ownedAgentId,
+  loopTelemetry,
+  simsRef,
+}: {
+  ownedAgentId: string | null;
+  loopTelemetry: DegenLoopTelemetry | null;
+  simsRef: React.MutableRefObject<Map<string, AgentSim>>;
+}) {
+  const groupRef = useRef<THREE.Group>(null);
+  const ringRef = useRef<THREE.Mesh>(null);
+  const haloRef = useRef<THREE.Mesh>(null);
+  const shaftRef = useRef<THREE.Mesh>(null);
+
+  useFrame((state) => {
+    const group = groupRef.current;
+    const ring = ringRef.current;
+    const halo = haloRef.current;
+    const shaft = shaftRef.current;
+    if (!group || !ring || !halo || !shaft) return;
+
+    if (!ownedAgentId || !loopTelemetry) {
+      group.visible = false;
+      return;
+    }
+
+    const sim = simsRef.current.get(ownedAgentId);
+    if (!sim || sim.state === 'DEAD') {
+      group.visible = false;
+      return;
+    }
+
+    group.visible = true;
+    const tone = resolveDegenLoopVisual(loopTelemetry.lastPhase);
+    const nowMs = Date.now();
+    const elapsed = loopTelemetry.lastAdvanceAt != null ? Math.max(0, nowMs - loopTelemetry.lastAdvanceAt) : 99999;
+    const heat = THREE.MathUtils.clamp(1 - elapsed / 9000, 0, 1);
+    const chain = Math.max(0, loopTelemetry.chain);
+    const chainBoost = THREE.MathUtils.clamp(chain / 8, 0, 1);
+
+    const pulse = (Math.sin(state.clock.elapsedTime * (9 + heat * 11)) + 1) * 0.5;
+    const floatPulse = (Math.sin(state.clock.elapsedTime * 3.6) + 1) * 0.5;
+    const baseScale = 1 + chainBoost * 0.3 + heat * 0.2 + pulse * 0.22;
+
+    group.position.set(sim.position.x, 0.03, sim.position.z);
+
+    ring.scale.set(baseScale, baseScale, 1);
+    const ringMat = ring.material as THREE.MeshStandardMaterial;
+    ringMat.color.set(tone.color);
+    ringMat.emissive.set(tone.color);
+    ringMat.opacity = THREE.MathUtils.clamp(0.2 + heat * 0.16 + pulse * 0.12, 0.15, 0.52);
+    ringMat.emissiveIntensity = THREE.MathUtils.clamp(0.7 + chainBoost * 0.8 + heat * 1.2 + pulse * 0.7, 0.7, 2.8);
+
+    halo.scale.set(baseScale * (1.28 + heat * 0.12), baseScale * (1.28 + heat * 0.12), 1);
+    const haloMat = halo.material as THREE.MeshBasicMaterial;
+    haloMat.color.set(tone.accent);
+    haloMat.opacity = THREE.MathUtils.clamp(0.1 + heat * 0.14 + pulse * 0.08, 0.06, 0.34);
+
+    shaft.position.y = 0.82 + floatPulse * 0.12;
+    shaft.scale.set(1, 1 + chainBoost * 0.22 + heat * 0.14, 1);
+    const shaftMat = shaft.material as THREE.MeshStandardMaterial;
+    shaftMat.color.set(tone.accent);
+    shaftMat.emissive.set(tone.color);
+    shaftMat.opacity = THREE.MathUtils.clamp(0.12 + heat * 0.18, 0.1, 0.48);
+    shaftMat.emissiveIntensity = THREE.MathUtils.clamp(0.35 + chainBoost * 0.7 + heat * 1.05, 0.35, 2.2);
+  });
+
+  return (
+    <group ref={groupRef} visible={false}>
+      <mesh ref={haloRef} rotation={[Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
+        <ringGeometry args={[1.2, 1.95, 46]} />
+        <meshBasicMaterial transparent opacity={0.18} depthWrite={false} />
+      </mesh>
+      <mesh ref={ringRef} rotation={[Math.PI / 2, 0, 0]} position={[0, 0.06, 0]}>
+        <torusGeometry args={[1.4, 0.055, 10, 52]} />
+        <meshStandardMaterial transparent opacity={0.26} roughness={0.2} metalness={0.4} depthWrite={false} />
+      </mesh>
+      <mesh ref={shaftRef} position={[0, 0.84, 0]}>
+        <cylinderGeometry args={[0.12, 0.16, 1.3, 12]} />
+        <meshStandardMaterial transparent opacity={0.22} roughness={0.32} metalness={0.25} depthWrite={false} />
+      </mesh>
     </group>
   );
 }
@@ -2166,6 +2414,8 @@ function Minimap({
 function TownScene({
   town,
   agents,
+  ownedAgentId,
+  ownedLoopTelemetry,
   selectedPlotId,
   setSelectedPlotId,
   selectedAgentId,
@@ -2195,6 +2445,8 @@ function TownScene({
 }: {
   town: Town;
   agents: Agent[];
+  ownedAgentId: string | null;
+  ownedLoopTelemetry: DegenLoopTelemetry | null;
   selectedPlotId: string | null;
   setSelectedPlotId: (id: string | null) => void;
   selectedAgentId: string | null;
@@ -4036,6 +4288,7 @@ function TownScene({
       <ArenaDuelBeam fighterIds={arenaFighterIds} simsRef={simsRef} active={arenaFighterIds.length >= 2} />
       <ArenaImpactBursts bursts={arenaImpactBursts} />
       <ActionBursts bursts={actionBursts} />
+      <OwnedLoopAura ownedAgentId={ownedAgentId} loopTelemetry={ownedLoopTelemetry} simsRef={simsRef} />
 
         {objectiveBeacon && (
           <ObjectiveBeacon
@@ -4312,6 +4565,8 @@ export default function Town3D() {
   const [loopModeUpdating, setLoopModeUpdating] = useState(false);
   const [degenNudgeBusy, setDegenNudgeBusy] = useState(false);
   const [degenStatus, setDegenStatus] = useState<{ message: string; tone: 'neutral' | 'ok' | 'error' } | null>(null);
+  const [ownedLoopTelemetry, setOwnedLoopTelemetry] = useState<DegenLoopTelemetry | null>(null);
+  const degenLoopTelemetryByAgentIdRef = useRef<Map<string, DegenLoopTelemetry>>(new Map());
   const degenStatusTimerRef = useRef<number | null>(null);
   const showDegenStatus = useCallback((message: string, tone: 'neutral' | 'ok' | 'error', ttlMs = 2600) => {
     if (degenStatusTimerRef.current != null) {
@@ -4333,6 +4588,14 @@ export default function Town3D() {
       }
     };
   }, []);
+  useEffect(() => {
+    if (!ownedAgentId) {
+      setOwnedLoopTelemetry(null);
+      return;
+    }
+    const snapshot = degenLoopTelemetryByAgentIdRef.current.get(ownedAgentId);
+    setOwnedLoopTelemetry(snapshot ? { ...snapshot } : { ...EMPTY_DEGEN_LOOP_TELEMETRY });
+  }, [ownedAgentId]);
   useEffect(() => {
     if (!ownedAgentId) {
       setOwnedLoopMode('DEFAULT');
@@ -4743,6 +5006,7 @@ export default function Town3D() {
     const newArenaToasts: ArenaOutcomeToast[] = [];
     const newMomentumToasts: ArenaMomentumToast[] = [];
     const newActionBursts: ActionBurst[] = [];
+    let ownedTelemetryUpdate: DegenLoopTelemetry | null = null;
 
     for (const agent of nextAgents) {
       const previous = previousMap.get(agent.id);
@@ -4761,6 +5025,7 @@ export default function Town3D() {
 
         if (shouldCapture) {
           const observedAt = currentTickAt || new Date().toISOString();
+          const observedAtMs = Number.isFinite(Date.parse(observedAt)) ? Date.parse(observedAt) : Date.now();
           const signature = [
             observedAt,
             actionType,
@@ -4783,6 +5048,16 @@ export default function Town3D() {
           });
           const deltaNet = bankrollDelta + reserveDelta;
           const burstPolarity = deltaNet > 0.001 ? 1 : deltaNet < -0.001 ? -1 : 0;
+          let degenLoopStep: DegenLoopStepResult | null = null;
+          const loopPhase = resolveDegenLoopPhase(actionType);
+          if (loopPhase && (tickChanged || actionChanged)) {
+            const currentTelemetry = degenLoopTelemetryByAgentIdRef.current.get(agent.id) || EMPTY_DEGEN_LOOP_TELEMETRY;
+            degenLoopStep = advanceDegenLoopTelemetry(currentTelemetry, loopPhase, observedAtMs);
+            degenLoopTelemetryByAgentIdRef.current.set(agent.id, degenLoopStep.telemetry);
+            if (ownedAgentId === agent.id) {
+              ownedTelemetryUpdate = { ...degenLoopStep.telemetry };
+            }
+          }
           const shouldEmitBurst =
             actionType !== 'rest'
             && actionType !== 'idle'
@@ -4802,12 +5077,14 @@ export default function Town3D() {
                 0.5,
                 2.3,
               );
+              const loopSuffix = ownedAgentId === agent.id ? buildOwnedLoopSuffix(degenLoopStep) : null;
               newActionBursts.push({
                 id: `action:${agent.id}:${signature}`,
                 agentId: agent.id,
                 actionType,
                 kind,
                 polarity: burstPolarity,
+                label: buildActionBurstLabel(kind, bankrollDelta, reserveDelta, loopSuffix),
                 intensity,
                 createdAt: Date.now(),
                 isOwned: ownedAgentId === agent.id,
@@ -4873,6 +5150,9 @@ export default function Town3D() {
 
     previousAgentBalanceRef.current = nextMap;
     setAgents(nextAgents);
+    if (ownedTelemetryUpdate) {
+      setOwnedLoopTelemetry(ownedTelemetryUpdate);
+    }
 
     if (newOutcomes.length === 0) return;
     setAgentOutcomesById((prev) => {
@@ -5342,6 +5622,11 @@ export default function Town3D() {
               {ownedLoopMode === 'DEGEN_LOOP' ? 'AUTO' : 'MAN'}
             </button>
           )}
+          {ownedLoopTelemetry && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded border border-amber-500/45 bg-amber-500/15 text-amber-200 font-mono">
+              🔥x{Math.max(1, ownedLoopTelemetry.chain)}
+            </span>
+          )}
           <span className="text-[10px] text-cyan-300/90 uppercase">{mobileVisualQuality}</span>
           {activeOpportunity && opportunityTimeLeft && (
             <span
@@ -5400,6 +5685,8 @@ export default function Town3D() {
           <TownScene
             town={town}
             agents={agents}
+            ownedAgentId={ownedAgentId}
+            ownedLoopTelemetry={ownedLoopTelemetry}
             selectedPlotId={selectedPlotId}
             setSelectedPlotId={setSelectedPlotId}
             selectedAgentId={selectedAgentId}
@@ -5599,6 +5886,11 @@ export default function Town3D() {
           <span className="text-[10px] text-cyan-300/90 font-mono uppercase">
             {visualSettings.quality === 'auto' ? `AUTO:${resolvedVisualQuality}` : resolvedVisualQuality}
           </span>
+          {ownedLoopTelemetry && (
+            <span className="text-[10px] bg-amber-900/45 text-amber-200 px-2 py-0.5 rounded-full border border-amber-500/45 font-mono">
+              🔥 x{Math.max(1, ownedLoopTelemetry.chain)} · loops {Math.max(0, ownedLoopTelemetry.loopsCompleted)}
+            </span>
+          )}
           {activeOpportunity && opportunityTimeLeft && (
             <span
               className="text-[10px] px-2 py-0.5 rounded-full border font-mono animate-pulse"
@@ -5686,6 +5978,8 @@ export default function Town3D() {
         <TownScene
           town={town}
           agents={agents}
+          ownedAgentId={ownedAgentId}
+          ownedLoopTelemetry={ownedLoopTelemetry}
           selectedPlotId={selectedPlotId}
           setSelectedPlotId={setSelectedPlotId}
           selectedAgentId={selectedAgentId}
@@ -5886,6 +6180,8 @@ export default function Town3D() {
               loopMode={ownedLoopMode}
               loopUpdating={loopModeUpdating}
               nudgeBusy={degenNudgeBusy}
+              loopTelemetry={ownedLoopTelemetry}
+              nowMs={uiNowMs}
               statusMessage={degenStatus?.message}
               statusTone={degenStatus?.tone || 'neutral'}
               onToggleLoop={updateOwnedLoopMode}

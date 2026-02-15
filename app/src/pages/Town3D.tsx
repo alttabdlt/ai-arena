@@ -41,6 +41,15 @@ const ARENA_IMPACT_FLASH_LIFE_MS = 520;
 const ARENA_CAMERA_CINE_LIFE_MS = 1800;
 const ARENA_CAMERA_CINE_WINDUP_MS = 240;
 const ARENA_CAMERA_CINE_IMPACT_MS = 170;
+const ARENA_STRIKE_WINDUP_MS = 170;
+const ARENA_STRIKE_IMPACT_MS = 130;
+const ARENA_STRIKE_RECOVER_MS = 280;
+const ARENA_STRIKE_LIFE_MS = ARENA_STRIKE_WINDUP_MS + ARENA_STRIKE_IMPACT_MS + ARENA_STRIKE_RECOVER_MS;
+const ARENA_STRIKE_COOLDOWN_MIN_MS = 420;
+const ARENA_STRIKE_COOLDOWN_MAX_MS = 760;
+const ARENA_IMPACT_BURST_LIFE_MS = 620;
+const ARENA_IMPACT_BURST_CAP = 28;
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const LazyPrivyWalletConnect = lazy(async () => {
   const mod = await import('../components/PrivyWalletConnect');
   return { default: mod.PrivyWalletConnect };
@@ -165,6 +174,14 @@ type ArenaOutcomeSignal = {
   result: 'WIN' | 'LOSS' | 'DRAW';
   delta: number;
   at: string;
+};
+
+type ArenaImpactBurst = {
+  id: string;
+  position: [number, number, number];
+  createdAt: number;
+  intensity: number;
+  tone: 'ROSE' | 'CYAN';
 };
 
 interface EconomyPoolSummary {
@@ -399,6 +416,33 @@ function getArenaCineEnvelope(ageMs: number) {
     windup: 0,
     impact: THREE.MathUtils.clamp(1 - (recoverAge / recoverMs), 0, 1),
     recover: THREE.MathUtils.clamp(recoverAge / recoverMs, 0, 1),
+  };
+}
+
+function getArenaStrikeEnvelope(ageMs: number) {
+  if (ageMs < 0 || ageMs > ARENA_STRIKE_LIFE_MS) {
+    return { windup: 0, impact: 0, recover: 0 };
+  }
+  if (ageMs <= ARENA_STRIKE_WINDUP_MS) {
+    return {
+      windup: THREE.MathUtils.clamp(ageMs / ARENA_STRIKE_WINDUP_MS, 0, 1),
+      impact: 0,
+      recover: 0,
+    };
+  }
+  const impactAge = ageMs - ARENA_STRIKE_WINDUP_MS;
+  if (impactAge <= ARENA_STRIKE_IMPACT_MS) {
+    return {
+      windup: THREE.MathUtils.clamp(1 - (impactAge / ARENA_STRIKE_IMPACT_MS), 0, 1),
+      impact: THREE.MathUtils.clamp(impactAge / ARENA_STRIKE_IMPACT_MS, 0, 1),
+      recover: 0,
+    };
+  }
+  const recoverAge = impactAge - ARENA_STRIKE_IMPACT_MS;
+  return {
+    windup: 0,
+    impact: THREE.MathUtils.clamp(1 - (recoverAge / ARENA_STRIKE_RECOVER_MS), 0, 1),
+    recover: THREE.MathUtils.clamp(recoverAge / ARENA_STRIKE_RECOVER_MS, 0, 1),
   };
 }
 
@@ -830,6 +874,273 @@ function ParticleEffect({
           <sphereGeometry args={[0.15, 8, 8]} />
           <meshBasicMaterial color={color} transparent />
         </mesh>
+      ))}
+    </group>
+  );
+}
+
+function ArenaDuelBeam({
+  fighterIds,
+  simsRef,
+  active,
+}: {
+  fighterIds: string[];
+  simsRef: React.MutableRefObject<Map<string, AgentSim>>;
+  active: boolean;
+}) {
+  const beamRef = useRef<THREE.Mesh>(null);
+  const pulseRef = useRef<THREE.Mesh>(null);
+  const orbARef = useRef<THREE.Mesh>(null);
+  const orbBRef = useRef<THREE.Mesh>(null);
+  const aRef = useRef(new THREE.Vector3());
+  const bRef = useRef(new THREE.Vector3());
+  const deltaRef = useRef(new THREE.Vector3());
+  const midRef = useRef(new THREE.Vector3());
+
+  useFrame((state) => {
+    const beam = beamRef.current;
+    const pulse = pulseRef.current;
+    const orbA = orbARef.current;
+    const orbB = orbBRef.current;
+    if (!beam || !pulse || !orbA || !orbB) return;
+
+    if (!active || fighterIds.length < 2) {
+      beam.visible = false;
+      pulse.visible = false;
+      orbA.visible = false;
+      orbB.visible = false;
+      return;
+    }
+
+    const simA = simsRef.current.get(fighterIds[0]);
+    const simB = simsRef.current.get(fighterIds[1]);
+    if (!simA || !simB) {
+      beam.visible = false;
+      pulse.visible = false;
+      orbA.visible = false;
+      orbB.visible = false;
+      return;
+    }
+
+    const a = aRef.current.copy(simA.position);
+    a.y += 1.45;
+    const b = bRef.current.copy(simB.position);
+    b.y += 1.45;
+
+    const delta = deltaRef.current.copy(b).sub(a);
+    const distance = delta.length();
+    if (!Number.isFinite(distance) || distance < 0.2) {
+      beam.visible = false;
+      pulse.visible = false;
+      orbA.visible = false;
+      orbB.visible = false;
+      return;
+    }
+    delta.divideScalar(distance);
+
+    const mid = midRef.current.copy(a).add(b).multiplyScalar(0.5);
+    const t = state.clock.elapsedTime;
+    const pulseWave = (Math.sin(t * 17.5) + 1) * 0.5;
+    const jitterWave = (Math.sin(t * 9.5) + 1) * 0.5;
+    const beamRadius = 0.08 + pulseWave * 0.08;
+
+    beam.visible = true;
+    beam.position.copy(mid);
+    beam.quaternion.setFromUnitVectors(Y_AXIS, delta);
+    beam.scale.set(beamRadius, distance * 0.5, beamRadius);
+    const beamMat = beam.material as THREE.MeshStandardMaterial;
+    beamMat.opacity = 0.52 + pulseWave * 0.35;
+    beamMat.emissiveIntensity = 1.1 + pulseWave * 1.25;
+
+    pulse.visible = true;
+    pulse.position.copy(mid);
+    pulse.position.y = 0.09;
+    pulse.rotation.z = t * 1.6;
+    const pulseScale = 1 + pulseWave * 0.32 + distance * 0.06;
+    pulse.scale.set(pulseScale, pulseScale, 1);
+    const pulseMat = pulse.material as THREE.MeshBasicMaterial;
+    pulseMat.opacity = 0.14 + pulseWave * 0.18;
+
+    const orbScale = 0.22 + jitterWave * 0.18;
+    orbA.visible = true;
+    orbA.position.copy(a);
+    orbA.scale.setScalar(orbScale);
+    const orbAMat = orbA.material as THREE.MeshStandardMaterial;
+    orbAMat.opacity = 0.46 + pulseWave * 0.32;
+    orbAMat.emissiveIntensity = 1.2 + pulseWave * 0.7;
+
+    orbB.visible = true;
+    orbB.position.copy(b);
+    orbB.scale.setScalar(orbScale);
+    const orbBMat = orbB.material as THREE.MeshStandardMaterial;
+    orbBMat.opacity = 0.46 + pulseWave * 0.32;
+    orbBMat.emissiveIntensity = 1.2 + pulseWave * 0.7;
+  });
+
+  if (!active || fighterIds.length < 2) return null;
+
+  return (
+    <group>
+      <mesh ref={pulseRef} position={[0, 0.09, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[6.8, 8.8, 44]} />
+        <meshBasicMaterial color="#fb7185" transparent opacity={0.18} depthWrite={false} />
+      </mesh>
+      <mesh ref={beamRef}>
+        <cylinderGeometry args={[0.13, 0.13, 1, 16]} />
+        <meshStandardMaterial
+          color="#fda4af"
+          emissive="#f43f5e"
+          emissiveIntensity={1.6}
+          transparent
+          opacity={0.72}
+          roughness={0.15}
+          metalness={0.45}
+          depthWrite={false}
+        />
+      </mesh>
+      <mesh ref={orbARef}>
+        <icosahedronGeometry args={[0.2, 1]} />
+        <meshStandardMaterial
+          color="#fecdd3"
+          emissive="#fb7185"
+          emissiveIntensity={1.3}
+          transparent
+          opacity={0.65}
+          roughness={0.12}
+          metalness={0.3}
+          depthWrite={false}
+        />
+      </mesh>
+      <mesh ref={orbBRef}>
+        <icosahedronGeometry args={[0.2, 1]} />
+        <meshStandardMaterial
+          color="#fecdd3"
+          emissive="#fb7185"
+          emissiveIntensity={1.3}
+          transparent
+          opacity={0.65}
+          roughness={0.12}
+          metalness={0.3}
+          depthWrite={false}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+function ArenaImpactBurstFx({ burst }: { burst: ArenaImpactBurst }) {
+  const groupRef = useRef<THREE.Group>(null);
+  const ringRef = useRef<THREE.Mesh>(null);
+  const haloRef = useRef<THREE.Mesh>(null);
+  const sparkRefs = useRef<Array<THREE.Mesh | null>>([]);
+  const lifeSeed = useMemo(() => hashToSeed(burst.id), [burst.id]);
+  const sparkCount = 6;
+
+  useFrame((state) => {
+    const group = groupRef.current;
+    const ring = ringRef.current;
+    const halo = haloRef.current;
+    if (!group || !ring || !halo) return;
+
+    const ageMs = Date.now() - burst.createdAt;
+    if (ageMs < 0 || ageMs > ARENA_IMPACT_BURST_LIFE_MS) {
+      group.visible = false;
+      return;
+    }
+    group.visible = true;
+
+    const life = THREE.MathUtils.clamp(ageMs / ARENA_IMPACT_BURST_LIFE_MS, 0, 1);
+    const fade = 1 - life;
+    const easeOut = 1 - Math.pow(1 - life, 3);
+    const t = state.clock.elapsedTime;
+    const toneColor = burst.tone === 'ROSE' ? '#fb7185' : '#22d3ee';
+    const ringScale = 0.65 + easeOut * (1.35 + burst.intensity * 0.45);
+    const lift = easeOut * (0.18 + burst.intensity * 0.12);
+
+    group.position.set(burst.position[0], burst.position[1] + lift, burst.position[2]);
+
+    ring.scale.set(ringScale, ringScale, 1);
+    const ringMat = ring.material as THREE.MeshStandardMaterial;
+    ringMat.opacity = THREE.MathUtils.clamp(0.65 * fade, 0, 0.75);
+    ringMat.emissiveIntensity = THREE.MathUtils.clamp(1.25 * fade + burst.intensity * 0.55, 0, 2.2);
+    ringMat.color.set(toneColor);
+    ringMat.emissive.set(toneColor);
+
+    halo.scale.set(ringScale * 0.82, ringScale * 0.82, 1);
+    const haloMat = halo.material as THREE.MeshBasicMaterial;
+    haloMat.opacity = THREE.MathUtils.clamp((0.45 + Math.sin(t * 24 + lifeSeed * 0.001) * 0.08) * fade, 0, 0.5);
+    haloMat.color.set(toneColor);
+
+    for (let index = 0; index < sparkCount; index++) {
+      const spark = sparkRefs.current[index];
+      if (!spark) continue;
+      const angle = (index / sparkCount) * Math.PI * 2 + lifeSeed * 0.00011;
+      const radial = 0.18 + easeOut * (0.9 + burst.intensity * 0.45);
+      spark.position.set(
+        Math.cos(angle) * radial,
+        0.08 + easeOut * (0.24 + (index % 2) * 0.05),
+        Math.sin(angle) * radial,
+      );
+      spark.rotation.y = -angle;
+      spark.scale.setScalar(0.45 + fade * 0.55);
+      const sparkMat = spark.material as THREE.MeshStandardMaterial;
+      sparkMat.opacity = THREE.MathUtils.clamp((0.28 + (index % 2) * 0.12) * fade, 0, 0.4);
+      sparkMat.emissiveIntensity = THREE.MathUtils.clamp((0.65 + burst.intensity * 0.28) * fade, 0, 1.8);
+      sparkMat.color.set(toneColor);
+      sparkMat.emissive.set(toneColor);
+    }
+  });
+
+  return (
+    <group ref={groupRef} position={burst.position}>
+      <mesh ref={haloRef} rotation={[Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.35, 0.52, 36]} />
+        <meshBasicMaterial color={burst.tone === 'ROSE' ? '#fb7185' : '#22d3ee'} transparent opacity={0.36} depthWrite={false} />
+      </mesh>
+      <mesh ref={ringRef} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[0.56, 0.05, 10, 40]} />
+        <meshStandardMaterial
+          color={burst.tone === 'ROSE' ? '#fb7185' : '#22d3ee'}
+          emissive={burst.tone === 'ROSE' ? '#fb7185' : '#22d3ee'}
+          emissiveIntensity={1.25}
+          transparent
+          opacity={0.65}
+          roughness={0.2}
+          metalness={0.28}
+          depthWrite={false}
+        />
+      </mesh>
+      {Array.from({ length: sparkCount }).map((_, index) => (
+        <mesh
+          key={`spark-${burst.id}-${index}`}
+          ref={(node) => {
+            sparkRefs.current[index] = node;
+          }}
+          position={[0, 0.12, 0]}
+        >
+          <boxGeometry args={[0.04, 0.25, 0.04]} />
+          <meshStandardMaterial
+            color={burst.tone === 'ROSE' ? '#fecdd3' : '#a5f3fc'}
+            emissive={burst.tone === 'ROSE' ? '#fb7185' : '#22d3ee'}
+            emissiveIntensity={0.8}
+            transparent
+            opacity={0.3}
+            roughness={0.25}
+            metalness={0.18}
+            depthWrite={false}
+          />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function ArenaImpactBursts({ bursts }: { bursts: ArenaImpactBurst[] }) {
+  if (bursts.length === 0) return null;
+  return (
+    <group>
+      {bursts.map((burst) => (
+        <ArenaImpactBurstFx key={burst.id} burst={burst} />
       ))}
     </group>
   );
@@ -1614,7 +1925,13 @@ function TownScene({
   const focusSnapTimerRef = useRef(0);
   const arenaRingRef = useRef<THREE.Mesh>(null);
   const arenaDomeRef = useRef<THREE.Mesh>(null);
+  const arenaShockwaveRef = useRef<THREE.Mesh>(null);
+  const arenaSlashRingRef = useRef<THREE.Mesh>(null);
+  const arenaNextStrikeAtRef = useRef<Map<string, number>>(new Map());
+  const arenaStrikeStartAtRef = useRef<Map<string, number>>(new Map());
+  const arenaPairImpactAtRef = useRef<Map<string, number>>(new Map());
   const arenaCoreLightRef = useRef<THREE.PointLight>(null);
+  const [arenaImpactBursts, setArenaImpactBursts] = useState<ArenaImpactBurst[]>([]);
   const arenaCineAngleRef = useRef(Math.PI * 0.22);
   const arenaBeatRef = useRef<{ activeUntilMs: number; strength: number }>({
     activeUntilMs: 0,
@@ -1636,6 +1953,37 @@ function TownScene({
   const lastArenaOutcomeSigRef = useRef<string>('');
   const activeOpportunityRef = useRef<OpportunityWindow | null>(null);
   const resolvedOpportunityIdsRef = useRef<Set<string>>(new Set());
+  const arenaFighterIds = useMemo(
+    () => Array.from(fightingAgentIds ?? []).sort(),
+    [fightingAgentIds],
+  );
+
+  useEffect(() => {
+    const cleanup = window.setInterval(() => {
+      const nowMs = Date.now();
+      setArenaImpactBursts((prev) => {
+        const next = prev.filter((burst) => nowMs - burst.createdAt <= ARENA_IMPACT_BURST_LIFE_MS);
+        return next.length === prev.length ? prev : next;
+      });
+    }, 110);
+    return () => window.clearInterval(cleanup);
+  }, []);
+
+  useEffect(() => {
+    const activeFighters = new Set(arenaFighterIds);
+    for (const id of Array.from(arenaNextStrikeAtRef.current.keys())) {
+      if (!activeFighters.has(id)) {
+        arenaNextStrikeAtRef.current.delete(id);
+        arenaStrikeStartAtRef.current.delete(id);
+      }
+    }
+    for (const key of Array.from(arenaPairImpactAtRef.current.keys())) {
+      const [a, b] = key.split(':');
+      if (!activeFighters.has(a) || !activeFighters.has(b)) {
+        arenaPairImpactAtRef.current.delete(key);
+      }
+    }
+  }, [arenaFighterIds]);
 
   useEffect(() => {
     if (!visualSettings.cameraShake) {
@@ -2186,6 +2534,7 @@ function TownScene({
       resolvedOpportunityIdsRef.current.clear();
     }
 
+    const pendingArenaBursts: ArenaImpactBurst[] = [];
     for (const a of agents) {
       const sim = sims.get(a.id);
       if (!sim) continue;
@@ -2221,6 +2570,102 @@ function TownScene({
         sim.acceleration.set(0, 0, 0);
         const g = agentGroupRefs.current.get(a.id);
         if (g) g.position.copy(sim.position);
+        continue;
+      }
+
+      const fighterSlot = arenaFighterIds.indexOf(a.id);
+      if (fighterSlot >= 0) {
+        const fighterCount = Math.max(2, arenaFighterIds.length);
+        const orbitBase = (fighterSlot / fighterCount) * Math.PI * 2;
+        const orbitSpeed = 0.34 + fighterCount * 0.026;
+        const orbitAngle = nowMs * 0.001 * orbitSpeed + orbitBase;
+        const radius = 4.6 + Math.sin(nowMs * 0.0017 + fighterSlot * 0.8) * 0.34;
+        const orbitAnchor = new THREE.Vector3(
+          Math.cos(orbitAngle) * radius,
+          0.02,
+          Math.sin(orbitAngle) * radius,
+        );
+        const opponentIndex = (fighterSlot + Math.floor(fighterCount / 2)) % fighterCount;
+        const opponentId = arenaFighterIds[opponentIndex];
+        const opponentSim = opponentId ? sims.get(opponentId) : null;
+
+        const fallbackInward = orbitAnchor.clone().setY(0).normalize().multiplyScalar(-1);
+        if (fallbackInward.lengthSq() < 0.0001) fallbackInward.set(0, 0, -1);
+        const headingTarget = opponentSim
+          ? opponentSim.position.clone().sub(orbitAnchor).setY(0)
+          : fallbackInward.clone();
+        if (headingTarget.lengthSq() > 0.0001) {
+          headingTarget.normalize();
+        } else {
+          headingTarget.copy(fallbackInward);
+        }
+        const strafeDir = new THREE.Vector3(-headingTarget.z, 0, headingTarget.x);
+
+        let nextStrikeAt = arenaNextStrikeAtRef.current.get(a.id);
+        if (!Number.isFinite(nextStrikeAt)) {
+          const seedDelay = 120 + (hashToSeed(`${a.id}:strike`) % 460);
+          nextStrikeAt = nowMs + seedDelay;
+          arenaNextStrikeAtRef.current.set(a.id, nextStrikeAt);
+        }
+        if (nowMs >= (nextStrikeAt ?? 0)) {
+          arenaStrikeStartAtRef.current.set(a.id, nowMs);
+          const cooldown = randomRange(ARENA_STRIKE_COOLDOWN_MIN_MS, ARENA_STRIKE_COOLDOWN_MAX_MS);
+          arenaNextStrikeAtRef.current.set(a.id, nowMs + cooldown);
+        }
+
+        const strikeStartAt = arenaStrikeStartAtRef.current.get(a.id) ?? -1;
+        const strikeAge = strikeStartAt > 0 ? nowMs - strikeStartAt : Number.POSITIVE_INFINITY;
+        const strikeEnvelope = getArenaStrikeEnvelope(strikeAge);
+        const strikeOffset =
+          -0.88 * strikeEnvelope.windup
+          + 2.15 * strikeEnvelope.impact
+          - 0.72 * strikeEnvelope.recover;
+        const strafeOffset = Math.sin(nowMs * 0.0082 + fighterSlot * 1.2) * 0.24;
+        const orbitWobble = Math.sin(nowMs * 0.0046 + fighterSlot * 0.8) * 0.16;
+        const targetPos = orbitAnchor
+          .clone()
+          .addScaledVector(headingTarget, strikeOffset + orbitWobble)
+          .addScaledVector(strafeDir, strafeOffset);
+
+        sim.position.lerp(targetPos, Math.min(1, dt * (6.4 + strikeEnvelope.impact * 7.2)));
+        sim.velocity.set(0, 0, 0);
+        sim.acceleration.set(0, 0, 0);
+        sim.route = [];
+        sim.targetPlotId = ARENA_SPECTATOR_TARGET_ID;
+        sim.state = 'FIGHTING';
+        sim.stateBlend = THREE.MathUtils.damp(sim.stateBlend, 0, 10.4, dt);
+        sim.stateEndsAt = 0;
+        sim.heading.lerp(headingTarget, Math.min(1, dt * (11 + strikeEnvelope.impact * 5.5)));
+
+        if (strikeEnvelope.impact > 0.78 && nowMs - sim.lastImpactAt > 260) {
+          const pairKey = opponentId ? [a.id, opponentId].sort().join(':') : `${a.id}:solo`;
+          const lastPairImpactAt = arenaPairImpactAtRef.current.get(pairKey) ?? 0;
+          if (nowMs - lastPairImpactAt > 210) {
+            arenaPairImpactAtRef.current.set(pairKey, nowMs);
+            sim.lastImpactAt = nowMs;
+            const midpoint = opponentSim
+              ? sim.position.clone().lerp(opponentSim.position, 0.52)
+              : sim.position.clone().addScaledVector(headingTarget, 0.9);
+            midpoint.y = 1.15;
+            pendingArenaBursts.push({
+              id: `impact:${pairKey}:${nowMs}`,
+              position: [midpoint.x, midpoint.y, midpoint.z],
+              createdAt: nowMs,
+              intensity: THREE.MathUtils.clamp(0.58 + strikeEnvelope.impact * 0.75, 0.5, 1.65),
+              tone: fighterSlot % 2 === 0 ? 'ROSE' : 'CYAN',
+            });
+          }
+        }
+
+        const g = agentGroupRefs.current.get(a.id);
+        if (g) {
+          g.position.copy(sim.position);
+          g.position.y = 0.05 + Math.sin(sim.stateTimer * 14.2 + fighterSlot * 0.6) * 0.07 + strikeEnvelope.impact * 0.08;
+          const targetYaw = Math.atan2(sim.heading.x, sim.heading.z);
+          g.rotation.y = dampAngle(g.rotation.y, targetYaw, 19.5, dt);
+          const strikeTilt = (fighterSlot % 2 === 0 ? 1 : -1) * strikeEnvelope.impact * 0.09;
+          g.rotation.z = Math.sin(sim.stateTimer * 17 + fighterSlot) * 0.026 + strikeTilt;
+        }
         continue;
       }
 
@@ -2770,6 +3215,10 @@ function TownScene({
       }
     }
 
+    if (pendingArenaBursts.length > 0) {
+      setArenaImpactBursts((prev) => [...prev, ...pendingArenaBursts].slice(-ARENA_IMPACT_BURST_CAP));
+    }
+
       const simList = Array.from(sims.values()).filter((s) => s.state !== 'DEAD');
       resolveAgentSeparation(simList);
 
@@ -2950,6 +3399,22 @@ function TownScene({
         const targetIntensity = 0.45 + Math.sin(elapsed * (2.2 + (isFightActive ? 3.6 : 0))) * 0.12 + (isFightActive ? 0.5 : 0) + beatPulse;
         ringMaterial.emissiveIntensity = THREE.MathUtils.lerp(ringMaterial.emissiveIntensity, targetIntensity, 0.16);
       }
+      if (arenaShockwaveRef.current) {
+        const shockMaterial = arenaShockwaveRef.current.material as THREE.MeshBasicMaterial;
+        const pulse = (Math.sin(elapsed * (isFightActive ? 14.5 : 8.2)) + 1) * 0.5;
+        const scale = 1 + pulse * (isFightActive ? 1.4 : 0.8) + beatStrength * 2.6;
+        arenaShockwaveRef.current.visible = isFightActive || beatStrength > 0.04;
+        arenaShockwaveRef.current.scale.set(scale, scale, 1);
+        shockMaterial.opacity = THREE.MathUtils.clamp((isFightActive ? 0.08 : 0.02) + beatStrength * 0.34 + pulse * 0.09, 0, 0.4);
+      }
+      if (arenaSlashRingRef.current) {
+        const slashMaterial = arenaSlashRingRef.current.material as THREE.MeshStandardMaterial;
+        arenaSlashRingRef.current.rotation.z += dt * (isFightActive ? 1.8 : 0.9);
+        const slashScale = 1 + beatStrength * 0.45 + (isFightActive ? 0.16 : 0);
+        arenaSlashRingRef.current.scale.set(slashScale, slashScale, 1);
+        slashMaterial.opacity = THREE.MathUtils.clamp(0.2 + beatStrength * 0.38 + (isFightActive ? 0.22 : 0), 0, 0.74);
+        slashMaterial.emissiveIntensity = THREE.MathUtils.clamp(0.6 + beatStrength * 1.2 + (isFightActive ? 0.7 : 0), 0.3, 2.2);
+      }
       if (arenaDomeRef.current) {
         const domeMaterial = arenaDomeRef.current.material as THREE.MeshStandardMaterial;
         const targetOpacity = 0.56 + Math.sin(elapsed * 1.8) * 0.035 + (isFightActive ? 0.08 : 0) + beatStrength * 0.11;
@@ -2965,16 +3430,20 @@ function TownScene({
   });
 
   const sceneAgents = useMemo(
+    () => agents,
+    [agents],
+  );
+  const navigationAgents = useMemo(
     () => agents.filter((a) => !fightingAgentIds?.has(a.id)),
     [agents, fightingAgentIds],
   );
   const destinationLineAgents = useMemo(
-    () => sceneAgents.slice(0, visualProfile.destinationLineAgentLimit),
-    [sceneAgents, visualProfile.destinationLineAgentLimit],
+    () => navigationAgents.slice(0, visualProfile.destinationLineAgentLimit),
+    [navigationAgents, visualProfile.destinationLineAgentLimit],
   );
   const trailAgents = useMemo(
-    () => sceneAgents.slice(0, visualProfile.trailAgentLimit),
-    [sceneAgents, visualProfile.trailAgentLimit],
+    () => navigationAgents.slice(0, visualProfile.trailAgentLimit),
+    [navigationAgents, visualProfile.trailAgentLimit],
   );
   const visibleCoinBursts = useMemo(
     () => coinBursts.slice(-visualProfile.maxTransientEffects),
@@ -3152,6 +3621,23 @@ function TownScene({
 	          <torusGeometry args={[7.5, 0.15, 8, 48]} />
 	          <meshStandardMaterial color="#e94560" emissive="#e94560" emissiveIntensity={0.5} />
 	        </mesh>
+          <mesh ref={arenaShockwaveRef} position={[0, 0.08, 0]} rotation={[Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[7.8, 10.2, 56]} />
+            <meshBasicMaterial color="#fb7185" transparent opacity={0.16} depthWrite={false} />
+          </mesh>
+          <mesh ref={arenaSlashRingRef} position={[0, 0.2, 0]} rotation={[Math.PI / 2, 0, 0]}>
+            <torusGeometry args={[6.2, 0.08, 10, 56]} />
+            <meshStandardMaterial
+              color="#fecdd3"
+              emissive="#f43f5e"
+              emissiveIntensity={0.8}
+              transparent
+              opacity={0.34}
+              roughness={0.2}
+              metalness={0.42}
+              depthWrite={false}
+            />
+          </mesh>
 	        {/* Arena pillars */}
 	        {[0, 1, 2, 3, 4, 5].map((i) => {
 	          const angle = (i / 6) * Math.PI * 2;
@@ -3166,6 +3652,8 @@ function TownScene({
 	        <BillboardLabel text={`⚔️ ARENA ${fightingAgentIds?.size ? `(${fightingAgentIds.size} inside)` : ''}`} position={[0, 6.5, 0]} color="#e94560" />
 	        <pointLight ref={arenaCoreLightRef} position={[0, 4, 0]} color="#e94560" intensity={0.45} distance={12} />
 	      </group>
+      <ArenaDuelBeam fighterIds={arenaFighterIds} simsRef={simsRef} active={arenaFighterIds.length >= 2} />
+      <ArenaImpactBursts bursts={arenaImpactBursts} />
 
         {objectiveBeacon && (
           <ObjectiveBeacon

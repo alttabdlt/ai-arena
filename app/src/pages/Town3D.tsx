@@ -36,6 +36,8 @@ const ARENA_SPECTATOR_TARGET_ID = '__ARENA_SPECTATOR__';
 const ARENA_PAYOFF_POPUP_LIFE_MS = 6500;
 const ARENA_BEAT_LIFE_MS = 5200;
 const ARENA_OUTCOME_TOAST_LIFE_MS = 3400;
+const ARENA_MOMENTUM_TOAST_LIFE_MS = 3800;
+const ARENA_IMPACT_FLASH_LIFE_MS = 520;
 const ARENA_CAMERA_CINE_LIFE_MS = 1800;
 const ARENA_CAMERA_CINE_WINDUP_MS = 240;
 const ARENA_CAMERA_CINE_IMPACT_MS = 170;
@@ -156,6 +158,7 @@ interface AgentBalanceSnapshot {
   bankroll: number;
   reserveBalance: number;
   lastTickAt: string | null;
+  lastActionType: string | null;
 }
 
 type ArenaOutcomeSignal = {
@@ -397,6 +400,22 @@ function getArenaCineEnvelope(ageMs: number) {
     impact: THREE.MathUtils.clamp(1 - (recoverAge / recoverMs), 0, 1),
     recover: THREE.MathUtils.clamp(recoverAge / recoverMs, 0, 1),
   };
+}
+
+function summarizeArenaMomentum(entries: AgentOutcomeEntry[]) {
+  const duelEntries = entries.filter((entry) => entry.actionType === 'play_arena' && entry.bankrollDelta !== 0);
+  if (duelEntries.length === 0) {
+    return { streak: 0, direction: 0 as -1 | 0 | 1 };
+  }
+  const direction = Math.sign(duelEntries[0].bankrollDelta) as -1 | 1;
+  let streak = 0;
+  for (const entry of duelEntries) {
+    const sign = Math.sign(entry.bankrollDelta);
+    if (sign !== direction) break;
+    streak += 1;
+    if (streak >= 6) break;
+  }
+  return { streak, direction };
 }
 
 function fallbackObjective(
@@ -1510,6 +1529,7 @@ function TownScene({
   opportunityWindow,
   fightingAgentIds,
   arenaOutcomeByAgentId,
+  arenaMomentumByAgentId,
   visualProfile,
   visualQuality,
   visualSettings,
@@ -1537,6 +1557,7 @@ function TownScene({
   opportunityWindow: OpportunityWindow | null;
   fightingAgentIds?: Set<string>;
   arenaOutcomeByAgentId: Record<string, ArenaOutcomeSignal>;
+  arenaMomentumByAgentId: Record<string, number>;
   visualProfile: VisualProfile;
   visualQuality: ResolvedVisualQuality;
   visualSettings: VisualSettings;
@@ -1668,7 +1689,10 @@ function TownScene({
     const age = Date.now() - latestTs;
     if (age < 0 || age > ARENA_PAYOFF_POPUP_LIFE_MS) return;
 
-    const strength = THREE.MathUtils.clamp(Math.abs(signal.delta) / 20, 0.22, 1.4);
+    const baseStrength = THREE.MathUtils.clamp(Math.abs(signal.delta) / 20, 0.22, 1.4);
+    const momentumScore = Math.max(1, Math.abs(arenaMomentumByAgentId[agentId] || 1));
+    const streakBoost = 1 + Math.min(0.95, Math.max(0, momentumScore - 1) * 0.22);
+    const strength = THREE.MathUtils.clamp(baseStrength * streakBoost, 0.22, 2.1);
     arenaBeatRef.current = {
       activeUntilMs: Date.now() + ARENA_BEAT_LIFE_MS,
       strength,
@@ -1683,7 +1707,7 @@ function TownScene({
     if (visualSettings.cameraShake) {
       cameraShakeRef.current = Math.min(0.95, cameraShakeRef.current + 0.12 + strength * 0.08);
     }
-  }, [arenaOutcomeByAgentId, visualSettings.cameraShake]);
+  }, [arenaMomentumByAgentId, arenaOutcomeByAgentId, visualSettings.cameraShake]);
 
   useEffect(() => {
     const sims = simsRef.current;
@@ -3176,16 +3200,17 @@ function TownScene({
 	                else agentGroupRefs.current.delete(a.id);
 	              }}
 	            >
-	              <AgentDroid
-	                agent={a}
-	                color={color}
-	                selected={selected}
-	                onClick={() => {}}
-	                simsRef={simsRef}
-	                economicState={economicState}
+		              <AgentDroid
+		                agent={a}
+		                color={color}
+		                selected={selected}
+		                onClick={() => {}}
+		                simsRef={simsRef}
+		                economicState={economicState}
                   arenaOutcome={arenaOutcome}
-	                BillboardLabel={BillboardLabel}
-	              />
+                  duelMomentum={Math.max(1, Math.abs(arenaMomentumByAgentId[a.id] || 1))}
+		                BillboardLabel={BillboardLabel}
+		              />
 		              {tradeByAgentId[a.id]?.text && (
 		                <SpeechBubble
 		                  text={tradeByAgentId[a.id].text}
@@ -3248,6 +3273,22 @@ interface ArenaOutcomeToast {
   createdAt: number;
 }
 
+interface ArenaMomentumToast {
+  id: string;
+  agentId: string;
+  agentName: string;
+  archetype: string;
+  direction: 'WIN' | 'LOSS';
+  streak: number;
+  createdAt: number;
+}
+
+interface ArenaImpactFlash {
+  id: string;
+  tone: 'WIN' | 'LOSS';
+  intensity: number;
+}
+
 // Preload building GLB models as soon as module is imported
 preloadBuildingModels();
 
@@ -3266,13 +3307,17 @@ export default function Town3D() {
   const [error, setError] = useState<string | null>(null);
   const [swapNotifications, setSwapNotifications] = useState<SwapNotification[]>([]);
   const [arenaOutcomeToasts, setArenaOutcomeToasts] = useState<ArenaOutcomeToast[]>([]);
+  const [arenaMomentumToasts, setArenaMomentumToasts] = useState<ArenaMomentumToast[]>([]);
+  const [arenaImpactFlash, setArenaImpactFlash] = useState<ArenaImpactFlash | null>(null);
   const [eventNotifications, setEventNotifications] = useState<TownEvent[]>([]);
   const seenSwapIdsRef = useRef<Set<string>>(new Set());
   const seenArenaOutcomeIdsRef = useRef<Set<string>>(new Set());
+  const seenArenaMomentumIdsRef = useRef<Set<string>>(new Set());
   const swapsPrimedRef = useRef(false);
   const seenEventIdsRef = useRef<Set<string>>(new Set());
   const seenTradeEventIdsRef = useRef<Set<string>>(new Set());
   const previousAgentBalanceRef = useRef<Map<string, AgentBalanceSnapshot>>(new Map());
+  const agentOutcomesByIdRef = useRef<Record<string, AgentOutcomeEntry[]>>({});
 
   const userSelectedTownIdRef = useRef<string | null>(null);
   const activeTownIdRef = useRef<string | null>(null);
@@ -3778,53 +3823,114 @@ export default function Town3D() {
     }, ARENA_OUTCOME_TOAST_LIFE_MS + 250);
   }, []);
 
+  const pushArenaMomentumToast = useCallback((toast: ArenaMomentumToast) => {
+    setArenaMomentumToasts((prev) => [toast, ...prev.filter((item) => item.id !== toast.id)].slice(0, 3));
+    setArenaImpactFlash({
+      id: toast.id,
+      tone: toast.direction,
+      intensity: THREE.MathUtils.clamp(0.45 + toast.streak * 0.14, 0.48, 0.92),
+    });
+    window.setTimeout(() => {
+      setArenaMomentumToasts((prev) => prev.filter((item) => item.id !== toast.id));
+    }, ARENA_MOMENTUM_TOAST_LIFE_MS + 250);
+    window.setTimeout(() => {
+      setArenaImpactFlash((current) => (current?.id === toast.id ? null : current));
+    }, ARENA_IMPACT_FLASH_LIFE_MS);
+  }, []);
+
   const agentById = useMemo(() => new Map(agents.map((a) => [a.id, a])), [agents]);
   const agentByIdRef = useRef<Map<string, Agent>>(new Map());
   useEffect(() => {
     agentByIdRef.current = agentById;
   }, [agentById]);
+  useEffect(() => {
+    agentOutcomesByIdRef.current = agentOutcomesById;
+  }, [agentOutcomesById]);
 
   const applyAgentSnapshot = useCallback((nextAgents: Agent[]) => {
     const previousMap = previousAgentBalanceRef.current;
     const nextMap = new Map<string, AgentBalanceSnapshot>();
     const newOutcomes: Array<{ agentId: string; entry: AgentOutcomeEntry }> = [];
     const newArenaToasts: ArenaOutcomeToast[] = [];
+    const newMomentumToasts: ArenaMomentumToast[] = [];
 
     for (const agent of nextAgents) {
       const previous = previousMap.get(agent.id);
       const currentTickAt = typeof agent.lastTickAt === 'string' ? agent.lastTickAt : null;
-      const previousTickAt = previous?.lastTickAt ?? null;
-      const tickChanged = !!currentTickAt && currentTickAt !== previousTickAt;
-
-      if (previous && tickChanged) {
+      if (previous) {
+        const previousTickAt = previous.lastTickAt;
         const actionType = agent.lastActionType || 'rest';
+        const previousActionType = previous.lastActionType || 'rest';
         const bankrollDelta = agent.bankroll - previous.bankroll;
         const reserveDelta = agent.reserveBalance - previous.reserveBalance;
-        newOutcomes.push({
-          agentId: agent.id,
-          entry: {
-            id: `${agent.id}:${currentTickAt}:${agent.lastActionType || 'rest'}`,
+        const bankrollChanged = Math.abs(bankrollDelta) > 0.0001;
+        const reserveChanged = Math.abs(reserveDelta) > 0.0001;
+        const tickChanged = !!currentTickAt && currentTickAt !== previousTickAt;
+        const actionChanged = actionType !== previousActionType;
+        const shouldCapture = tickChanged || actionChanged || bankrollChanged || reserveChanged;
+
+        if (shouldCapture) {
+          const observedAt = currentTickAt || new Date().toISOString();
+          const signature = [
+            observedAt,
+            actionType,
+            Math.round(bankrollDelta),
+            Math.round(reserveDelta),
+            Math.round(agent.bankroll),
+            Math.round(agent.reserveBalance),
+          ].join(':');
+          const entry: AgentOutcomeEntry = {
+            id: `${agent.id}:${signature}`,
             actionType,
             reasoning: safeTrim(agent.lastReasoning || agent.lastNarrative || 'No reasoning provided.', 180),
             bankrollDelta,
             reserveDelta,
-            at: currentTickAt,
-          },
-        });
-        if (actionType === 'play_arena') {
-          const toastId = `${agent.id}:${currentTickAt}:play_arena`;
-          if (!seenArenaOutcomeIdsRef.current.has(toastId)) {
-            seenArenaOutcomeIdsRef.current.add(toastId);
-            const result: ArenaOutcomeSignal['result'] = bankrollDelta > 0 ? 'WIN' : bankrollDelta < 0 ? 'LOSS' : 'DRAW';
-            newArenaToasts.push({
-              id: toastId,
-              agentId: agent.id,
-              agentName: agent.name,
-              archetype: agent.archetype,
-              result,
-              delta: bankrollDelta,
-              createdAt: Date.now(),
-            });
+            at: observedAt,
+          };
+          newOutcomes.push({
+            agentId: agent.id,
+            entry,
+          });
+          if (actionType === 'play_arena') {
+            const toastId = `${agent.id}:${signature}:play_arena`;
+            if (!seenArenaOutcomeIdsRef.current.has(toastId)) {
+              seenArenaOutcomeIdsRef.current.add(toastId);
+              const result: ArenaOutcomeSignal['result'] = bankrollDelta > 0 ? 'WIN' : bankrollDelta < 0 ? 'LOSS' : 'DRAW';
+              newArenaToasts.push({
+                id: toastId,
+                agentId: agent.id,
+                agentName: agent.name,
+                archetype: agent.archetype,
+                result,
+                delta: bankrollDelta,
+                createdAt: Date.now(),
+              });
+            }
+            const history = agentOutcomesByIdRef.current[agent.id] || [];
+            const merged: AgentOutcomeEntry[] = [];
+            const seenIds = new Set<string>();
+            for (const candidate of [entry, ...history]) {
+              if (seenIds.has(candidate.id)) continue;
+              seenIds.add(candidate.id);
+              merged.push(candidate);
+              if (merged.length >= 8) break;
+            }
+            const momentum = summarizeArenaMomentum(merged);
+            if (momentum.streak >= 2 && momentum.direction !== 0) {
+              const momentumId = `${agent.id}:${signature}:momentum:${momentum.direction > 0 ? 'win' : 'loss'}:${momentum.streak}`;
+              if (!seenArenaMomentumIdsRef.current.has(momentumId)) {
+                seenArenaMomentumIdsRef.current.add(momentumId);
+                newMomentumToasts.push({
+                  id: momentumId,
+                  agentId: agent.id,
+                  agentName: agent.name,
+                  archetype: agent.archetype,
+                  direction: momentum.direction > 0 ? 'WIN' : 'LOSS',
+                  streak: momentum.streak,
+                  createdAt: Date.now(),
+                });
+              }
+            }
           }
         }
       }
@@ -3833,6 +3939,7 @@ export default function Town3D() {
         bankroll: agent.bankroll,
         reserveBalance: agent.reserveBalance,
         lastTickAt: currentTickAt,
+        lastActionType: agent.lastActionType || null,
       });
     }
 
@@ -3845,14 +3952,17 @@ export default function Town3D() {
       for (const outcome of newOutcomes) {
         const existing = next[outcome.agentId] || [];
         if (existing.some((entry) => entry.id === outcome.entry.id)) continue;
-        next[outcome.agentId] = [outcome.entry, ...existing].slice(0, 3);
+        next[outcome.agentId] = [outcome.entry, ...existing].slice(0, 8);
       }
       return next;
     });
     if (newArenaToasts.length > 0) {
       newArenaToasts.forEach((toast) => pushArenaOutcomeToast(toast));
     }
-  }, [pushArenaOutcomeToast]);
+    if (newMomentumToasts.length > 0) {
+      newMomentumToasts.forEach((toast) => pushArenaMomentumToast(toast));
+    }
+  }, [pushArenaOutcomeToast, pushArenaMomentumToast]);
 
 
 
@@ -4149,6 +4259,16 @@ export default function Town3D() {
     }
     return byAgent;
   }, [agentOutcomesById]);
+  const arenaMomentumByAgentId = useMemo(() => {
+    const byAgent: Record<string, number> = {};
+    for (const [agentId, entries] of Object.entries(agentOutcomesById)) {
+      if (!Array.isArray(entries) || entries.length === 0) continue;
+      const momentum = summarizeArenaMomentum(entries);
+      if (momentum.streak < 2 || momentum.direction === 0) continue;
+      byAgent[agentId] = momentum.streak * momentum.direction;
+    }
+    return byAgent;
+  }, [agentOutcomesById]);
   const ownedAgent = useMemo(() => {
     if (!ownedAgentId) return null;
     return agents.find((a) => a.id === ownedAgentId) ?? null;
@@ -4369,6 +4489,7 @@ export default function Town3D() {
             opportunityWindow={activeOpportunity}
             fightingAgentIds={fightingAgentIds}
             arenaOutcomeByAgentId={arenaOutcomeByAgentId}
+            arenaMomentumByAgentId={arenaMomentumByAgentId}
             visualProfile={mobileVisualProfile}
             visualQuality={mobileVisualQuality}
             visualSettings={visualSettings}
@@ -4387,6 +4508,21 @@ export default function Town3D() {
                   <span>{isBuy ? '📈' : '📉'}</span>
                   <span className="font-mono">{notif.agentName}</span>
                   <span className="font-mono font-semibold">{Math.round(notif.amount)}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="pointer-events-none absolute top-14 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 z-[55]">
+          {arenaMomentumToasts.slice(0, 1).map((toast) => {
+            const isWin = toast.direction === 'WIN';
+            return (
+              <div key={toast.id} className="animate-in zoom-in-95 slide-in-from-top-2 fade-in duration-300">
+                <div className={`rounded-full px-2.5 py-1 text-[10px] font-bold backdrop-blur-md ${
+                  isWin ? 'bg-emerald-900/85 text-emerald-100' : 'bg-rose-900/85 text-rose-100'
+                }`}>
+                  {isWin ? '🔥' : '☠️'} {isWin ? 'HEAT' : 'TILT'} x{toast.streak}
                 </div>
               </div>
             );
@@ -4638,6 +4774,7 @@ export default function Town3D() {
           opportunityWindow={activeOpportunity}
           fightingAgentIds={fightingAgentIds}
           arenaOutcomeByAgentId={arenaOutcomeByAgentId}
+          arenaMomentumByAgentId={arenaMomentumByAgentId}
           visualProfile={desktopVisualProfile}
           visualQuality={resolvedVisualQuality}
           visualSettings={visualSettings}
@@ -4677,6 +4814,35 @@ export default function Town3D() {
         })}
       </div>
 
+      {/* Arena momentum combo toasts (center-mid) */}
+      <div className="pointer-events-none absolute top-28 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 z-[55]">
+        {arenaMomentumToasts.slice(0, 3).map((toast) => {
+          const glyph = ARCHETYPE_GLYPH[toast.archetype] || '●';
+          const color = ARCHETYPE_COLORS[toast.archetype] || '#93c5fd';
+          const isWin = toast.direction === 'WIN';
+          return (
+            <div key={toast.id} className="animate-in zoom-in-95 slide-in-from-top-2 fade-in duration-300">
+              <div className={`rounded-2xl border px-4 py-2 backdrop-blur-md shadow-2xl ${
+                isWin
+                  ? 'bg-emerald-900/80 border-emerald-400/40 text-emerald-100'
+                  : 'bg-rose-900/80 border-rose-400/40 text-rose-100'
+              }`}>
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">{isWin ? '🔥' : '☠️'}</span>
+                  <span style={{ color }} className="font-mono text-xs">
+                    {glyph} {toast.agentName}
+                  </span>
+                  <span className="text-[10px] uppercase tracking-wider opacity-85">
+                    {isWin ? 'Heat' : 'Tilt'}
+                  </span>
+                  <span className="font-black text-base tracking-wide">x{toast.streak}</span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
       {/* Arena Outcome Notifications - floating toasts (top-right) */}
       <div className="pointer-events-none absolute top-14 right-3 flex flex-col items-end gap-1.5 z-50">
         {arenaOutcomeToasts.slice(0, 4).map((toast) => {
@@ -4708,6 +4874,18 @@ export default function Town3D() {
           );
         })}
       </div>
+
+      {arenaImpactFlash && (
+        <div
+          className="pointer-events-none absolute inset-0 z-40 animate-pulse"
+          style={{
+            opacity: arenaImpactFlash.intensity,
+            background: arenaImpactFlash.tone === 'WIN'
+              ? 'radial-gradient(circle at 50% 56%, rgba(34,197,94,0.24) 0%, rgba(16,185,129,0.12) 22%, rgba(0,0,0,0) 62%)'
+              : 'radial-gradient(circle at 50% 56%, rgba(244,63,94,0.26) 0%, rgba(220,38,38,0.14) 22%, rgba(0,0,0,0) 62%)',
+          }}
+        />
+      )}
 
       {/* (world event banner and build completion banners removed) */}
 

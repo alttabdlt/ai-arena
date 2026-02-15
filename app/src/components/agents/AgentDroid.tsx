@@ -52,6 +52,7 @@ interface AgentDroidProps {
     delta: number;
     at: string;
   } | null;
+  duelMomentum?: number;
   BillboardLabel: React.ComponentType<{ text: string; position: [number, number, number]; color?: string }>;
 }
 
@@ -63,6 +64,7 @@ export function AgentDroid({
   simsRef,
   economicState,
   arenaOutcome,
+  duelMomentum = 1,
   BillboardLabel,
 }: AgentDroidProps) {
   const body = useRef<THREE.Mesh>(null);
@@ -134,7 +136,8 @@ export function AgentDroid({
     if (arenaOutcomeAtMs && arenaOutcome) {
       const age = Date.now() - arenaOutcomeAtMs;
       duelEnvelope = getDuelMotionEnvelope(age);
-      duelStrength = THREE.MathUtils.clamp(Math.abs(arenaOutcome.delta) / 24, 0.48, 1.32);
+      const momentumBoost = THREE.MathUtils.clamp(1 + Math.max(0, duelMomentum - 1) * 0.14, 1, 1.9);
+      duelStrength = THREE.MathUtils.clamp((Math.abs(arenaOutcome.delta) / 24) * momentumBoost, 0.48, 1.7);
       duelDirection = arenaOutcome.result === 'LOSS'
         ? -1
         : arenaOutcome.result === 'DRAW'

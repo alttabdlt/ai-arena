@@ -85,6 +85,12 @@ const SOLVENCY_RESCUE_MAX_PER_WINDOW = 2;
 const SOLVENCY_RESCUE_REPAYMENT_BPS = 2500;
 const SOLVENCY_RESCUE_REPAYMENT_FLOOR = 90;
 const SOLVENCY_POOL_FLOOR = 1000;
+const ECONOMY_ARENA_BACKSTOP_ENABLED = process.env.ECONOMY_ARENA_BACKSTOP !== 'false';
+const ECONOMY_ARENA_BACKSTOP_BUFFER = 200;
+const ECONOMY_ARENA_BACKSTOP_MAX_MINT_PER_TICK = Math.max(
+  100,
+  Math.min(5000, Number.parseInt(process.env.ECONOMY_ARENA_BACKSTOP_MAX_MINT || '1500', 10) || 1500),
+);
 const ARENA_MIN_WAGER = 10;
 const ARENA_TURBO_MAX_ACTIONS = 14;
 const ECONOMY_INIT_RESERVE = Number.parseInt(process.env.ECONOMY_INIT_RESERVE || '10000', 10);
@@ -1093,6 +1099,41 @@ export class AgentLoopService {
     return granted;
   }
 
+  private async applyArenaLiquidityBackstop(
+    agents: Array<Pick<ArenaAgent, 'bankroll' | 'reserveBalance' | 'health'>>,
+  ): Promise<number> {
+    if (!ECONOMY_ARENA_BACKSTOP_ENABLED) return 0;
+    if (!Array.isArray(agents) || agents.length === 0) return 0;
+
+    const criticalAgents = agents.filter((agent) => {
+      const health = agent.health ?? 100;
+      const criticalLiquidity =
+        agent.bankroll <= SOLVENCY_RESCUE_TRIGGER_BANKROLL &&
+        agent.reserveBalance <= SOLVENCY_RESCUE_TRIGGER_RESERVE;
+      return health <= 0 || criticalLiquidity;
+    }).length;
+
+    const minimumTarget = SOLVENCY_POOL_FLOOR + ECONOMY_ARENA_BACKSTOP_BUFFER;
+    const rescueTarget = SOLVENCY_POOL_FLOOR + criticalAgents * SOLVENCY_RESCUE_ARENA + ECONOMY_ARENA_BACKSTOP_BUFFER;
+    const targetArena = Math.max(minimumTarget, rescueTarget);
+
+    const pool = await this.getOrCreateEconomyPool();
+    if (pool.arenaBalance >= targetArena) return 0;
+
+    const mintAmount = Math.max(0, Math.min(ECONOMY_ARENA_BACKSTOP_MAX_MINT_PER_TICK, targetArena - pool.arenaBalance));
+    if (mintAmount <= 0) return 0;
+
+    await prisma.economyPool.update({
+      where: { id: pool.id },
+      data: { arenaBalance: { increment: mintAmount } },
+    });
+
+    console.log(
+      `[AgentLoop] 🛟 Arena backstop: +${mintAmount} $ARENA liquidity (pool ${pool.arenaBalance} -> ${pool.arenaBalance + mintAmount}, target ${targetArena}, critical ${criticalAgents})`
+    );
+    return mintAmount;
+  }
+
   // Process one agent tick (called by interval OR manually)
   async tick(): Promise<AgentTickResult[]> {
     if (!this.running) return [];
@@ -1142,6 +1183,13 @@ export class AgentLoopService {
         }
       } catch (e: any) {
         console.error(`[AgentLoop] Auto-create town failed: ${e.message}`);
+      }
+
+      // === LIQUIDITY BACKSTOP: keep enough ARENA in pool to prevent full economic deadlock ===
+      try {
+        await this.applyArenaLiquidityBackstop(agents);
+      } catch (e: any) {
+        console.error(`[AgentLoop] Arena liquidity backstop failed: ${e.message}`);
       }
 
       // === UPKEEP: deduct survival cost from all agents ===

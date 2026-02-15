@@ -6742,16 +6742,10 @@ export default function Town3D() {
           </div>
         </div>
         {!ownedAgentId && (
-          <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-cyan-500/25 bg-cyan-500/8 px-3 py-1.5">
+          <div className="mt-2 rounded-xl border border-cyan-500/25 bg-cyan-500/8 px-3 py-1.5">
             <div className="text-[11px] text-cyan-100/90">
-              Spectator mode: You can watch now, then deploy anytime from this bar.
+              Spectator mode: deploy from top-right when ready.
             </div>
-            <button
-              onClick={openDeployFlow}
-              className="rounded-md border border-cyan-400/50 bg-cyan-500/20 px-2 py-1 text-[10px] font-semibold text-cyan-100 hover:bg-cyan-500/28"
-            >
-              Become a Player
-            </button>
           </div>
         )}
       </div>
@@ -7018,7 +7012,6 @@ export default function Town3D() {
           <Suspense fallback={null}>
           <LazyDegenControlBar
               ownedAgent={ownedAgent ? { id: ownedAgent.id, name: ownedAgent.name, archetype: ownedAgent.archetype } : null}
-              isPlayerAuthenticated={isPlayerAuthenticated}
               loopMode={ownedLoopMode}
               loopUpdating={loopModeUpdating}
               nudgeBusy={degenNudgeBusy}
@@ -7041,8 +7034,6 @@ export default function Town3D() {
               onToggleLoop={updateOwnedLoopMode}
               onNudge={sendDegenNudge}
               onCrewOrder={sendCrewOrder}
-              onOpenOnboarding={() => setShowOnboarding(true)}
-              onOpenSpawn={() => setShowSpawnOverlay(true)}
             />
           </Suspense>
           <Suspense fallback={null}>

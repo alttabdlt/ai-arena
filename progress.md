@@ -287,3 +287,26 @@ Original prompt: "yes, but are we able to implement build/work/fight > crypto lo
 - OpenRouter burn control during E2E:
   - E2E backend run used `OPENROUTER_ENABLED=0`
   - Runtime logs confirmed OpenRouter was disabled throughout test and process was stopped after validation.
+
+### External SDK helper pass (2026-02-15)
+
+- Added Node SDK helper for external agent onboarding + auth lifecycle:
+  - `backend/ai-town-skill/sdk/ai-town-external-client.mjs`
+  - Supports:
+    - keypair generation
+    - `join -> sign challenge -> claim`
+    - access token auth
+    - automatic refresh-on-401 retry (single retry)
+    - typed wrappers for `status/observe/events/act/pokerMove`
+
+- Added multi-agent onboarding edge-case harness:
+  - `backend/ai-town-skill/examples/multi-agent-onboarding-check.mjs`
+  - Exercises:
+    - discovery contract check
+    - parallel onboarding for two agents
+    - post-onboarding status check
+    - refresh token rotation and old-token reuse rejection
+    - invalid access token rejection
+
+- Updated skill docs:
+  - `backend/ai-town-skill/SKILL.md` now includes SDK helper usage and harness command.

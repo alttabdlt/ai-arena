@@ -4386,19 +4386,40 @@ ${plot.buildingData !== '{}' ? `PREVIOUS WORK:\n${this.summarizeBuildingData(plo
 
 Be creative, detailed, and in-character for the town's theme. Response should be 100-300 words of rich, immersive content.${nameInstruction}`;
 
-    const spec = smartAiService.getModelSpec(agent.modelId);
-    const startTime = Date.now();
-    const response = await smartAiService.callModel(
-      spec,
-      [
-        { role: 'system', content: `You are a creative AI building designer in a ${obs.town.theme}. Generate rich, detailed content. Do not output JSON — write prose.` },
-        { role: 'user', content: designPrompt },
-      ],
-      0.9, // Higher temperature for creative content
-      true, // forceNoJsonMode for creative text
-    );
-    const latencyMs = Date.now() - startTime;
-    const cost = smartAiService.calculateCost(spec, response.inputTokens, response.outputTokens, latencyMs);
+    let generatedContent = '';
+    let latencyMs = 0;
+    let costCents = 0;
+    let usedFallback = false;
+    try {
+      const spec = smartAiService.getModelSpec(agent.modelId);
+      const startTime = Date.now();
+      const response = await smartAiService.callModel(
+        spec,
+        [
+          { role: 'system', content: `You are a creative AI building designer in a ${obs.town.theme}. Generate rich, detailed content. Do not output JSON — write prose.` },
+          { role: 'user', content: designPrompt },
+        ],
+        0.9, // Higher temperature for creative content
+        true, // forceNoJsonMode for creative text
+      );
+      latencyMs = Date.now() - startTime;
+      const cost = smartAiService.calculateCost(spec, response.inputTokens, response.outputTokens, latencyMs);
+      costCents = cost.costCents;
+      generatedContent = response.content;
+    } catch (error: any) {
+      usedFallback = true;
+      const errMsg = String(error?.message || error || 'unknown LLM error');
+      console.warn(`[AgentLoop] ${agent.name}: do_work LLM unavailable, using deterministic fallback (${errMsg})`);
+      generatedContent = this.buildFallbackWorkDraft({
+        townName: obs.town.name,
+        townTheme: obs.town.theme,
+        buildingType: bt || 'WORKSHOP',
+        buildingName: plot.buildingName || '',
+        stepPrompt,
+        currentStep,
+        totalSteps: steps.length,
+      });
+    }
 
     // Submit the work
     await townService.submitWork(
@@ -4407,19 +4428,19 @@ Be creative, detailed, and in-character for the town's theme. Response should be
       'DESIGN',
       `Step ${currentStep + 1}: ${stepPrompt}`,
       designPrompt,
-      response.content,
+      generatedContent,
       1,
-      cost.costCents,
+      costCents,
       agent.modelId,
       latencyMs,
     );
 
     // If this is the first work, set the building name
     if (plot.apiCallsUsed === 0 && !plot.buildingName) {
-      const buildingName = this.extractBuildingName(response.content, agent.name, bt);
+      const buildingName = this.extractBuildingName(generatedContent, agent.name, bt);
       await prisma.plot.update({
         where: { id: plotId },
-        data: { buildingName, buildingDesc: response.content.substring(0, 500) },
+        data: { buildingName, buildingDesc: generatedContent.substring(0, 500) },
       });
     }
 
@@ -4438,9 +4459,10 @@ Be creative, detailed, and in-character for the town's theme. Response should be
     } catch {}
 
     const rewardNote = workReward > 0 ? ` and earned ${workReward} $ARENA` : '';
+    const sourceNote = usedFallback ? ' (deterministic fallback draft)' : '';
     return {
       success: true,
-      narrative: `${agent.name} worked on their ${bt} (step ${currentStep + 1}/${steps.length})${rewardNote}. 🔨 ${response.content.substring(0, 150)}...`,
+      narrative: `${agent.name} worked on their ${bt} (step ${currentStep + 1}/${steps.length})${rewardNote}${sourceNote}. 🔨 ${generatedContent.substring(0, 150)}...`,
     };
   }
 
@@ -4951,6 +4973,24 @@ Be creative, detailed, and in-character for the town's theme. Response should be
   // ============================================
   // Helpers
   // ============================================
+
+  private buildFallbackWorkDraft(input: {
+    townName: string;
+    townTheme: string;
+    buildingType: string;
+    buildingName: string;
+    stepPrompt: string;
+    currentStep: number;
+    totalSteps: number;
+  }): string {
+    const label = input.buildingName?.trim() || `The ${input.buildingType.toLowerCase()} of ${input.townName}`;
+    const stepNumber = input.currentStep + 1;
+    return `"${label}"
+
+Step ${stepNumber}/${input.totalSteps}: ${input.stepPrompt}.
+
+In ${input.townName}, the crew leans into the ${input.townTheme} atmosphere and pushes the build forward with practical detail: layout refinements, material choices, and flow improvements that make the site feel alive. The team reinforces structural points, improves visitor circulation, and aligns the visual identity so this ${input.buildingType.toLowerCase()} reads clearly from street level. Ambient lighting, signage, and interaction touchpoints are staged to support both gameplay readability and flavor. The result is a coherent upgrade pass that advances construction while preserving thematic consistency for the next phase.`;
+  }
 
   /**
    * Extract a proper building name from LLM prose.

@@ -13,7 +13,7 @@
 
 import { Telegraf } from 'telegraf';
 import { townService } from './townService';
-import { agentLoopService, AgentTickResult } from './agentLoopService';
+import { agentLoopService, AgentTickResult, type ManualActionKind } from './agentLoopService';
 import { prisma } from '../config/database';
 import OpenAI from 'openai';
 import { AgentCommandMode } from '@prisma/client';
@@ -430,6 +430,30 @@ export class TelegramBotService {
       const telegramUserId = ctx.from?.id?.toString() || '';
       const username = ctx.from?.username || ctx.from?.first_name || null;
       this.handleOperatorCommand(ctx.chat.id, telegramUserId, username, input);
+    });
+    this.bot.command('build', (ctx) => {
+      const preferredAgentName = ctx.message.text.replace(/^\/build\s*/i, '').trim() || undefined;
+      const telegramUserId = ctx.from?.id?.toString() || '';
+      const username = ctx.from?.username || ctx.from?.first_name || null;
+      this.handleOwnerQuickAction(ctx.chat.id, telegramUserId, username, 'build', preferredAgentName);
+    });
+    this.bot.command('work', (ctx) => {
+      const preferredAgentName = ctx.message.text.replace(/^\/work\s*/i, '').trim() || undefined;
+      const telegramUserId = ctx.from?.id?.toString() || '';
+      const username = ctx.from?.username || ctx.from?.first_name || null;
+      this.handleOwnerQuickAction(ctx.chat.id, telegramUserId, username, 'work', preferredAgentName);
+    });
+    this.bot.command('fight', (ctx) => {
+      const preferredAgentName = ctx.message.text.replace(/^\/fight\s*/i, '').trim() || undefined;
+      const telegramUserId = ctx.from?.id?.toString() || '';
+      const username = ctx.from?.username || ctx.from?.first_name || null;
+      this.handleOwnerQuickAction(ctx.chat.id, telegramUserId, username, 'fight', preferredAgentName);
+    });
+    this.bot.command('trade', (ctx) => {
+      const preferredAgentName = ctx.message.text.replace(/^\/trade\s*/i, '').trim() || undefined;
+      const telegramUserId = ctx.from?.id?.toString() || '';
+      const username = ctx.from?.username || ctx.from?.first_name || null;
+      this.handleOwnerQuickAction(ctx.chat.id, telegramUserId, username, 'trade', preferredAgentName);
     });
 
     // ============================================
@@ -1123,6 +1147,84 @@ export class TelegramBotService {
       );
     } catch (err: any) {
       await this.send(chatId, `❌ Could not message your agent: ${esc(err.message || 'unknown error')}`);
+    }
+  }
+
+  private async handleOwnerQuickAction(
+    chatId: number | string,
+    telegramUserId: string,
+    username: string | null,
+    action: ManualActionKind,
+    preferredAgentName?: string,
+  ): Promise<void> {
+    if (!telegramUserId) {
+      await this.send(chatId, '❌ Telegram identity unavailable in this chat.');
+      return;
+    }
+
+    try {
+      const agent = await this.resolveLinkedAgentForTelegram(telegramUserId, preferredAgentName);
+      const plan = await agentLoopService.planDeterministicAction(agent.id, action);
+      if (!plan.ok) {
+        await this.send(
+          chatId,
+          `⛔ <b>${action.toUpperCase()} blocked</b>\n` +
+            `target: <b>${esc(agent.name)}</b>\n` +
+            `reason: ${esc(plan.reason)}`,
+        );
+        return;
+      }
+
+      const command = await agentCommandService.createCommand({
+        agentId: agent.id,
+        issuerType: 'TELEGRAM',
+        issuerTelegramUserId: telegramUserId,
+        issuerLabel: username || telegramUserId,
+        mode: 'OVERRIDE',
+        intent: plan.intent,
+        params: plan.params,
+        priority: 100,
+        expiresInTicks: 2,
+        currentTick: agentLoopService.getCurrentTick(),
+        auditMeta: {
+          source: 'telegram-quick-action',
+          action,
+          chatId: String(chatId),
+        },
+      });
+
+      const result = await agentLoopService.processAgent(agent.id);
+      const commandState = await agentCommandService.getCommand(command.id);
+      const receipt =
+        result.commandReceipt?.commandId === command.id
+          ? result.commandReceipt
+          : {
+              status: commandState.status === 'EXECUTED' ? 'EXECUTED' : 'REJECTED',
+              statusReason: commandState.statusReason,
+              executedActionType: null,
+            };
+
+      if (receipt.status === 'EXECUTED') {
+        await this.send(
+          chatId,
+          `✅ <b>${action.toUpperCase()} executed</b>\n` +
+            `target: <b>${esc(agent.name)}</b>\n` +
+            `intent: <b>${esc(plan.intent)}</b>\n` +
+            `appliedAs: <b>${esc(receipt.executedActionType || result.action.type)}</b>\n` +
+            `note: ${esc(plan.note)}`,
+        );
+        return;
+      }
+
+      await this.send(
+        chatId,
+        `⛔ <b>${action.toUpperCase()} rejected</b>\n` +
+          `target: <b>${esc(agent.name)}</b>\n` +
+          `intent: <b>${esc(plan.intent)}</b>\n` +
+          `reason: ${esc(receipt.statusReason || 'Command rejected')}`,
+      );
+    } catch (err: any) {
+      await this.send(chatId, `❌ Could not execute ${action.toUpperCase()}: ${esc(err.message || 'unknown error')}`);
     }
   }
 

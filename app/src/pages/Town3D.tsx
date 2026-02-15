@@ -1,26 +1,78 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { Sky, Line } from '@react-three/drei';
+import { Canvas, useFrame, useThree, type RootState } from '@react-three/fiber';
+import { Line } from '@react-three/drei';
 import { Button } from '@ui/button';
 import { Loader2, Volume2, VolumeX } from 'lucide-react';
-import { PrivyWalletConnect } from '../components/PrivyWalletConnect';
-import { SpawnAgent } from '../components/SpawnAgent';
 import { playSound, isSoundEnabled, setSoundEnabled } from '../utils/sounds';
 
 import { useWheelStatus } from '../hooks/useWheelStatus';
-import { WheelBanner } from '../components/wheel/WheelBanner';
-import { WheelArena } from '../components/wheel/WheelArena';
 
 import { BuildingMesh, preloadBuildingModels } from '../components/buildings';
 import { AgentDroid } from '../components/agents/AgentDroid';
-import { OnboardingOverlay, isOnboarded, getMyAgentId, getMyWallet } from '../components/onboarding';
+import { isOnboarded, getMyAgentId, getMyWallet, MY_AGENT_KEY, MY_WALLET_KEY, ONBOARDED_KEY } from '../components/onboarding/storage';
 import { buildRoadGraph, findPath, type RoadGraph, type RoadSegInput } from '../world/roadGraph';
 import { WorldScene } from '../world/WorldScene';
-import { StreetLights, generateLightPositions } from '../world/StreetLight';
+import { StreetLights } from '../world/StreetLight';
+import { generateLightPositions } from '../world/streetLightUtils';
+import { updateFollowCamera } from '../world/sim/cameraController';
+import { enforceBuildingExclusion, resolveAgentSeparation, stepAgentAlongRoute } from '../world/sim/updateMotion';
+import {
+  DEFAULT_VISUAL_SETTINGS,
+  detectQualityFromFps,
+  loadVisualSettings,
+  nextVisualQuality,
+  resolveVisualQuality,
+  saveVisualSettings,
+  type ResolvedVisualQuality,
+  type VisualProfile,
+  type VisualSettings,
+  VISUAL_PROFILES,
+} from '../world/visual/townVisualTuning';
 
 const API_BASE = '/api/v1';
 const TOWN_SPACING = 20;
+const ARENA_SPECTATOR_TARGET_ID = '__ARENA_SPECTATOR__';
+const LazyPrivyWalletConnect = lazy(async () => {
+  const mod = await import('../components/PrivyWalletConnect');
+  return { default: mod.PrivyWalletConnect };
+});
+const LazySpawnAgent = lazy(async () => {
+  const mod = await import('../components/SpawnAgent');
+  return { default: mod.SpawnAgent };
+});
+const LazyWheelBanner = lazy(async () => {
+  const mod = await import('../components/wheel/WheelBanner');
+  return { default: mod.WheelBanner };
+});
+const LazyWheelArena = lazy(async () => {
+  const mod = await import('../components/wheel/WheelArena');
+  return { default: mod.WheelArena };
+});
+const LazyOnboardingOverlay = lazy(async () => {
+  const mod = await import('../components/onboarding/OnboardingOverlay');
+  return { default: mod.OnboardingOverlay };
+});
+const LazyWorldFxLayer = lazy(async () => {
+  const mod = await import('../world/visual/WorldFxLayer');
+  return { default: mod.WorldFxLayer };
+});
+const LazyDesktopActivityPanel = lazy(async () => {
+  const mod = await import('../components/town/DesktopActivityPanel');
+  return { default: mod.DesktopActivityPanel };
+});
+const LazyDesktopAgentHudPanel = lazy(async () => {
+  const mod = await import('../components/town/DesktopAgentHudPanel');
+  return { default: mod.DesktopAgentHudPanel };
+});
+const LazyDegenControlBar = lazy(async () => {
+  const mod = await import('../components/town/DegenControlBar');
+  return { default: mod.DegenControlBar };
+});
+
+type EthereumProvider = {
+  request: (args: { method: string; params?: unknown[] | object }) => Promise<unknown>;
+};
 
 type PlotZone = 'RESIDENTIAL' | 'COMMERCIAL' | 'CIVIC' | 'INDUSTRIAL' | 'ENTERTAINMENT';
 type PlotStatus = 'EMPTY' | 'CLAIMED' | 'UNDER_CONSTRUCTION' | 'BUILT';
@@ -70,6 +122,7 @@ interface Agent {
   archetype: string;
   bankroll: number;
   reserveBalance: number;
+  walletAddress?: string | null;
   wins: number;
   losses: number;
   draws?: number;
@@ -82,6 +135,21 @@ interface Agent {
   lastNarrative?: string;
   lastTargetPlot?: number | null;
   lastTickAt?: string | null;
+}
+
+interface AgentOutcomeEntry {
+  id: string;
+  actionType: string;
+  reasoning: string;
+  bankrollDelta: number;
+  reserveDelta: number;
+  at: string;
+}
+
+interface AgentBalanceSnapshot {
+  bankroll: number;
+  reserveBalance: number;
+  lastTickAt: string | null;
 }
 
 interface EconomyPoolSummary {
@@ -126,15 +194,214 @@ interface TownEvent {
   createdAt: string;
 }
 
+interface AgentMeLookupResponse {
+  agent?: {
+    id?: string;
+    walletAddress?: string | null;
+  };
+}
 
 type ActivityItem =
   | { kind: 'swap'; data: EconomySwapRow }
   | { kind: 'event'; data: TownEvent };
 
+interface ActiveWorldEvent {
+  emoji: string;
+  name: string;
+  description: string;
+  type: string;
+}
+
+type UrgencyKind = 'ARENA' | 'TRADE' | 'MINE' | 'BUILD' | 'ENTERTAIN' | 'STABILIZE';
+
+interface UrgencyObjective {
+  kind: UrgencyKind;
+  label: string;
+  emoji: string;
+  color: string;
+  targetZones: PlotZone[];
+  sourceType: string | null;
+}
+
+interface OpportunityWindow {
+  id: string;
+  kind: UrgencyKind;
+  label: string;
+  subtitle: string;
+  createdAt: number;
+  endsAt: number;
+  objective: UrgencyObjective;
+  rewardBoost: number;
+  penaltyDrag: number;
+}
+
+type LoopMode = 'DEFAULT' | 'DEGEN_LOOP';
+
+const URGENCY_VISUALS: Record<UrgencyKind, { emoji: string; color: string }> = {
+  ARENA: { emoji: '⚔️', color: '#fb7185' },
+  TRADE: { emoji: '📈', color: '#38bdf8' },
+  MINE: { emoji: '⛏️', color: '#f97316' },
+  BUILD: { emoji: '🏗️', color: '#fbbf24' },
+  ENTERTAIN: { emoji: '🎰', color: '#f472b6' },
+  STABILIZE: { emoji: '🛡️', color: '#a3e635' },
+};
+
+function makeUrgencyObjective(
+  kind: UrgencyKind,
+  label: string,
+  targetZones: PlotZone[],
+  sourceType: string | null = null,
+): UrgencyObjective {
+  const visuals = URGENCY_VISUALS[kind];
+  return {
+    kind,
+    label,
+    emoji: visuals.emoji,
+    color: visuals.color,
+    targetZones,
+    sourceType,
+  };
+}
+
+function deriveUrgencyObjective(
+  worldEvents: ActiveWorldEvent[],
+  wheelPhase: string | undefined,
+  weather: 'clear' | 'rain' | 'storm',
+  sentiment: 'bull' | 'bear' | 'neutral',
+): UrgencyObjective | null {
+  if (wheelPhase === 'ANNOUNCING' || wheelPhase === 'FIGHTING') {
+    return makeUrgencyObjective('ARENA', 'Arena Heat', ['ENTERTAINMENT'], 'WHEEL_ARENA');
+  }
+
+  const primary = worldEvents[0];
+  const sourceType = primary?.type || null;
+  const blob = `${primary?.type || ''} ${primary?.name || ''} ${primary?.description || ''}`.toUpperCase();
+
+  if (/\b(MINE|ORE|RIG|RESOURCE|HASH|EXTRACT)\b/.test(blob)) {
+    return makeUrgencyObjective('MINE', 'Resource Rush', ['INDUSTRIAL'], sourceType);
+  }
+  if (/\b(BUILD|CLAIM|CONSTRUCT|DEVELOP|UPGRADE|EXPAND)\b/.test(blob)) {
+    return makeUrgencyObjective('BUILD', 'Build Race', ['RESIDENTIAL', 'COMMERCIAL', 'CIVIC', 'INDUSTRIAL', 'ENTERTAINMENT'], sourceType);
+  }
+  if (/\b(TRADE|MARKET|VOLUME|PUMP|DUMP|LIQUIDITY|ARBITRAGE)\b/.test(blob)) {
+    return makeUrgencyObjective('TRADE', 'Liquidity Hunt', ['COMMERCIAL'], sourceType);
+  }
+  if (/\b(ARENA|DUEL|MATCH|TOURNAMENT|SHOWDOWN)\b/.test(blob)) {
+    return makeUrgencyObjective('ARENA', 'Arena Heat', ['ENTERTAINMENT'], sourceType);
+  }
+  if (/\b(CASINO|FEST|PARTY|ENTERTAIN|NIGHT)\b/.test(blob)) {
+    return makeUrgencyObjective('ENTERTAIN', 'High-Risk Night', ['ENTERTAINMENT'], sourceType);
+  }
+  if (weather === 'storm' || sentiment === 'bear') {
+    return makeUrgencyObjective('STABILIZE', 'Risk-Off Rotation', ['CIVIC', 'RESIDENTIAL'], sourceType);
+  }
+  if (sentiment === 'bull') {
+    return makeUrgencyObjective('TRADE', 'Momentum Rotation', ['COMMERCIAL'], sourceType);
+  }
+  return null;
+}
+
+const OPPORTUNITY_CONFIG: Record<
+  UrgencyKind,
+  {
+    label: string;
+    subtitle: string;
+    durationRangeMs: [number, number];
+    rewardBoost: number;
+    penaltyDrag: number;
+  }
+> = {
+  ARENA: {
+    label: 'Arena Surge',
+    subtitle: 'Crowd and contenders rotate to entertainment plots.',
+    durationRangeMs: [45_000, 72_000],
+    rewardBoost: 1.22,
+    penaltyDrag: 0.84,
+  },
+  TRADE: {
+    label: 'Liquidity Window',
+    subtitle: 'Commercial zones pay off for fast actors.',
+    durationRangeMs: [42_000, 70_000],
+    rewardBoost: 1.2,
+    penaltyDrag: 0.86,
+  },
+  MINE: {
+    label: 'Resource Spike',
+    subtitle: 'Industrial hotspots accelerate payoff loops.',
+    durationRangeMs: [50_000, 78_000],
+    rewardBoost: 1.24,
+    penaltyDrag: 0.85,
+  },
+  BUILD: {
+    label: 'Construction Bounty',
+    subtitle: 'Under-construction plots become high-priority.',
+    durationRangeMs: [48_000, 74_000],
+    rewardBoost: 1.21,
+    penaltyDrag: 0.86,
+  },
+  ENTERTAIN: {
+    label: 'High-Risk Session',
+    subtitle: 'Entertainment districts magnetize activity.',
+    durationRangeMs: [44_000, 70_000],
+    rewardBoost: 1.23,
+    penaltyDrag: 0.84,
+  },
+  STABILIZE: {
+    label: 'Risk-Off Rotation',
+    subtitle: 'Civic and residential zones absorb pressure.',
+    durationRangeMs: [46_000, 72_000],
+    rewardBoost: 1.18,
+    penaltyDrag: 0.87,
+  },
+};
+
+function randomRange(min: number, max: number): number {
+  return min + Math.random() * (max - min);
+}
+
+function fallbackObjective(
+  weather: 'clear' | 'rain' | 'storm',
+  sentiment: 'bull' | 'bear' | 'neutral',
+): UrgencyObjective {
+  if (weather === 'storm') return makeUrgencyObjective('STABILIZE', 'Storm Hedging', ['CIVIC', 'RESIDENTIAL'], 'WEATHER');
+  if (sentiment === 'bull') return makeUrgencyObjective('TRADE', 'Momentum Rotation', ['COMMERCIAL'], 'SENTIMENT');
+  if (sentiment === 'bear') return makeUrgencyObjective('MINE', 'Defensive Yield', ['INDUSTRIAL'], 'SENTIMENT');
+  const roll = Math.random();
+  if (roll < 0.33) return makeUrgencyObjective('BUILD', 'Build Race', ['RESIDENTIAL', 'COMMERCIAL', 'CIVIC', 'INDUSTRIAL', 'ENTERTAINMENT'], 'SYSTEM');
+  if (roll < 0.66) return makeUrgencyObjective('TRADE', 'Liquidity Hunt', ['COMMERCIAL'], 'SYSTEM');
+  return makeUrgencyObjective('MINE', 'Resource Rush', ['INDUSTRIAL'], 'SYSTEM');
+}
+
+function createOpportunityWindow(
+  nowMs: number,
+  baseObjective: UrgencyObjective | null,
+  weather: 'clear' | 'rain' | 'storm',
+  sentiment: 'bull' | 'bear' | 'neutral',
+): OpportunityWindow {
+  const objective = baseObjective ?? fallbackObjective(weather, sentiment);
+  const cfg = OPPORTUNITY_CONFIG[objective.kind];
+  const durationMs = randomRange(cfg.durationRangeMs[0], cfg.durationRangeMs[1]);
+  return {
+    id: `${objective.kind}:${nowMs}:${Math.round(Math.random() * 1000)}`,
+    kind: objective.kind,
+    label: cfg.label,
+    subtitle: cfg.subtitle,
+    createdAt: nowMs,
+    endsAt: nowMs + durationMs,
+    objective,
+    rewardBoost: cfg.rewardBoost,
+    penaltyDrag: cfg.penaltyDrag,
+  };
+}
+
 async function apiFetch<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`);
   if (!res.ok) throw new Error(`API error (${res.status}): ${res.statusText}`);
   return res.json() as Promise<T>;
+}
+
+function normalizeWalletAddress(value: string | null | undefined): string {
+  return String(value || '').trim().toLowerCase();
 }
 
 function safeTrim(s: unknown, maxLen: number): string {
@@ -150,6 +417,12 @@ function formatTimeLeft(ms: number): string {
   const s = sec % 60;
   if (m <= 0) return `${s}s`;
   return `${m}m ${s}s`;
+}
+
+function dampAngle(current: number, target: number, smoothness: number, dt: number): number {
+  const delta = Math.atan2(Math.sin(target - current), Math.cos(target - current));
+  const blend = 1 - Math.exp(-smoothness * dt);
+  return current + delta * blend;
 }
 
 const ZONE_COLORS: Record<PlotZone, string> = {
@@ -175,10 +448,6 @@ const ARCHETYPE_GLYPH: Record<string, string> = {
   DEGEN: '★',
   GRINDER: '◎',
 };
-
-function easeOutCubic(t: number) {
-  return 1 - Math.pow(1 - t, 3);
-}
 
 function hashToSeed(input: string): number {
   let h = 2166136261;
@@ -279,9 +548,13 @@ const ACTIVITY_INDICATORS: Record<AgentActivity, { emoji: string; color: string 
   IDLE: { emoji: '💤', color: '#94a3b8' },
   SHOPPING: { emoji: '🛒', color: '#34d399' },
   CHATTING: { emoji: '💬', color: '#60a5fa' },
+  CLAIMING: { emoji: '📍', color: '#facc15' },
   BUILDING: { emoji: '🔨', color: '#fbbf24' },
+  WORKING: { emoji: '🧱', color: '#fb923c' },
   MINING: { emoji: '⛏️', color: '#f97316' },
+  TRADING: { emoji: '💱', color: '#22d3ee' },
   PLAYING: { emoji: '🎮', color: '#a855f7' },
+  FIGHTING: { emoji: '⚔️', color: '#fb7185' },
   BEGGING: { emoji: '🙏', color: '#9ca3af' },
   SCHEMING: { emoji: '🤫', color: '#6366f1' },
   TRAVELING: { emoji: '🚶', color: '#38bdf8' },
@@ -544,6 +817,7 @@ function DestinationLine({
 
   return (
     <Line
+      key={`${agentId}-dest-${points.length}`}
       points={points}
       color={color}
       lineWidth={1.5}
@@ -652,14 +926,15 @@ function ThoughtBubble({
   const isRecent = lastTickAt
     ? (Date.now() - new Date(lastTickAt).getTime()) < 90_000
     : false;
-
-  if (!isRecent || !lastAction || !lastReasoning) return null;
+  const canRenderThought = isRecent && !!lastAction && !!lastReasoning;
 
   // Clean up reasoning (remove [AUTO] prefix, trim)
-  const cleanReasoning = lastReasoning
-    .replace(/\[AUTO\]\s*/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const cleanReasoning = canRenderThought
+    ? String(lastReasoning)
+        .replace(/\[AUTO\]\s*/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+    : '';
 
   // Build display text: emoji + short action + reasoning snippet
   const actionEmojis: Record<string, string> = {
@@ -667,13 +942,14 @@ function ThoughtBubble({
     buy_arena: '💱', sell_arena: '💱', mine: '⛏️', play_arena: '🎮',
     buy_skill: '💳', rest: '💤',
   };
-  const emoji = actionEmojis[lastAction] || '💭';
+  const emoji = actionEmojis[lastAction ?? 'rest'] || '💭';
   const maxLen = 50;
   const text = cleanReasoning.length > maxLen
     ? `${emoji} ${cleanReasoning.slice(0, maxLen)}…`
     : `${emoji} ${cleanReasoning}`;
 
   const { texture, width, height } = useMemo(() => {
+    if (!canRenderThought) return { texture: new THREE.Texture(), width: 1, height: 1 };
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     if (!ctx) return { texture: new THREE.Texture(), width: 1, height: 1 };
@@ -722,7 +998,9 @@ function ThoughtBubble({
     const texture = new THREE.CanvasTexture(canvas);
     texture.needsUpdate = true;
     return { texture, width: w, height: h };
-  }, [text, lastAction]);
+  }, [text, lastAction, canRenderThought]);
+
+  if (!canRenderThought) return null;
 
   const aspect = width / height;
   const worldHeight = 1.2; // Much larger — visible above agents at metaverse scale
@@ -761,47 +1039,52 @@ function ClaimedMarker({ position, color }: { position: [number, number, number]
   );
 }
 
-// BuildingWindows moved to ../components/buildings/shared.tsx
-
-// Ambient floating particles
-function AmbientParticles({ count = 50 }: { count?: number }) {
-  const particlesRef = useRef<THREE.Points>(null);
-  
-  const positions = useMemo(() => {
-    const arr = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) {
-      arr[i * 3] = (Math.random() - 0.5) * 200;
-      arr[i * 3 + 1] = Math.random() * 30 + 3;
-      arr[i * 3 + 2] = (Math.random() - 0.5) * 200;
-    }
-    return arr;
-  }, [count]);
+function ObjectiveBeacon({
+  position,
+  color,
+  label,
+}: {
+  position: [number, number, number];
+  color: string;
+  label: string;
+}) {
+  const ringRef = useRef<THREE.Mesh>(null);
+  const haloRef = useRef<THREE.Mesh>(null);
 
   useFrame((state) => {
-    if (!particlesRef.current) return;
-    const positions = particlesRef.current.geometry.attributes.position.array as Float32Array;
     const t = state.clock.elapsedTime;
-    for (let i = 0; i < count; i++) {
-      positions[i * 3 + 1] += Math.sin(t + i) * 0.002;
-      positions[i * 3] += Math.cos(t * 0.5 + i) * 0.001;
+    if (ringRef.current) {
+      ringRef.current.rotation.z = t * 0.7;
+      const pulse = 1 + Math.sin(t * 2.7) * 0.12;
+      ringRef.current.scale.set(pulse, pulse, 1);
+      const material = ringRef.current.material as THREE.MeshStandardMaterial;
+      material.emissiveIntensity = 0.55 + Math.sin(t * 2.7) * 0.2;
+      material.opacity = 0.3 + Math.sin(t * 2.7) * 0.12;
     }
-    particlesRef.current.geometry.attributes.position.needsUpdate = true;
+    if (haloRef.current) {
+      haloRef.current.position.y = 2.5 + Math.sin(t * 2) * 0.15;
+      const material = haloRef.current.material as THREE.MeshStandardMaterial;
+      material.opacity = 0.14 + Math.sin(t * 2.3) * 0.05;
+    }
   });
 
   return (
-    <points ref={particlesRef}>
-      <bufferGeometry>
-        <bufferAttribute
-          attach="attributes-position"
-          array={positions}
-          count={count}
-          itemSize={3}
-        />
-      </bufferGeometry>
-      <pointsMaterial color="#94a3b8" size={0.15} transparent opacity={0.4} sizeAttenuation />
-    </points>
+    <group position={position}>
+      <mesh ref={ringRef} position={[0, 0.12, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[8.3, 0.2, 8, 42]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.55} transparent opacity={0.3} />
+      </mesh>
+      <mesh ref={haloRef} position={[0, 2.5, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[9.6, 9.6]} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.2} transparent opacity={0.14} />
+      </mesh>
+      <pointLight position={[0, 3.2, 0]} color={color} intensity={0.8} distance={16} />
+      <BillboardLabel text={label} position={[0, 4.9, 0]} color={color} />
+    </group>
   );
 }
+
+// BuildingWindows moved to ../components/buildings/shared.tsx
 
 // Agent trail effect
 function AgentTrail({
@@ -838,6 +1121,7 @@ function AgentTrail({
 
   return (
     <Line
+      key={`${agentId}-trail-${points.length}`}
       points={points}
       color={color}
       lineWidth={2}
@@ -846,387 +1130,6 @@ function AgentTrail({
     />
   );
 }
-
-// Day/Night cycle controller
-function DayNightCycle({ timeScale = 0.02 }: { timeScale?: number }) {
-  const sunRef = useRef<THREE.DirectionalLight>(null);
-  const skyRef = useRef<THREE.Mesh | null>(null);
-
-  useFrame((state) => {
-    const t = state.clock.elapsedTime * timeScale;
-    const angle = t % (Math.PI * 2);
-    
-    // Sun orbits around
-    const x = Math.cos(angle) * 100;
-    const y = Math.sin(angle) * 80 + 20; // Keep above horizon mostly
-    const z = Math.sin(angle * 0.5) * 60;
-    
-    if (sunRef.current) {
-      sunRef.current.position.set(x, Math.max(y, 5), z);
-      // Dim light at night
-      const dayFactor = Math.max(0, Math.min(1, (y + 10) / 50));
-      sunRef.current.intensity = 0.3 + dayFactor * 0.9;
-    }
-
-    // Avoid setState in the render loop; update the Sky shader uniform directly.
-    type SunPosLike = { set: (x: number, y: number, z: number) => void };
-    type SkyMaterialLike = { uniforms?: { sunPosition?: { value?: SunPosLike } } };
-    const skyMesh = skyRef.current;
-    const sunPos = (skyMesh?.material as unknown as SkyMaterialLike | undefined)?.uniforms?.sunPosition?.value;
-    if (sunPos) {
-      sunPos.set(x, Math.max(y, -5), z);
-    }
-  });
-
-  return (
-    <>
-      <Sky 
-        ref={skyRef}
-        distance={450000} 
-        sunPosition={[1, 1, 0]} 
-        turbidity={10} 
-        rayleigh={1.8} 
-        mieCoefficient={0.005} 
-        mieDirectionalG={0.8} 
-      />
-      <directionalLight
-        ref={sunRef}
-        position={[1, 1, 0]}
-        intensity={1.15}
-        castShadow
-        shadow-mapSize-width={2048}
-        shadow-mapSize-height={2048}
-        shadow-camera-near={1}
-        shadow-camera-far={120}
-        shadow-camera-left={-55}
-        shadow-camera-right={55}
-        shadow-camera-top={55}
-        shadow-camera-bottom={-55}
-      />
-    </>
-  );
-}
-
-// Rain effect
-function RainEffect({ intensity = 200 }: { intensity?: number }) {
-  const rainRef = useRef<THREE.Points>(null);
-  
-  const positions = useMemo(() => {
-    const arr = new Float32Array(intensity * 3);
-    for (let i = 0; i < intensity; i++) {
-      arr[i * 3] = (Math.random() - 0.5) * 250;
-      arr[i * 3 + 1] = Math.random() * 50 + 10;
-      arr[i * 3 + 2] = (Math.random() - 0.5) * 250;
-    }
-    return arr;
-  }, [intensity]);
-
-  useFrame(() => {
-    if (!rainRef.current) return;
-    const pos = rainRef.current.geometry.attributes.position.array as Float32Array;
-    for (let i = 0; i < intensity; i++) {
-      pos[i * 3 + 1] -= 0.8; // Fall speed
-      if (pos[i * 3 + 1] < 0) {
-        pos[i * 3 + 1] = 50 + Math.random() * 15;
-        pos[i * 3] = (Math.random() - 0.5) * 250;
-        pos[i * 3 + 2] = (Math.random() - 0.5) * 250;
-      }
-    }
-    rainRef.current.geometry.attributes.position.needsUpdate = true;
-  });
-
-  return (
-    <points ref={rainRef}>
-      <bufferGeometry>
-        <bufferAttribute
-          attach="attributes-position"
-          array={positions}
-          count={intensity}
-          itemSize={3}
-        />
-      </bufferGeometry>
-      <pointsMaterial 
-        color="#a8c8e8" 
-        size={0.1} 
-        transparent 
-        opacity={0.6}
-        sizeAttenuation
-      />
-    </points>
-  );
-}
-
-// Coin burst effect for transactions
-function CoinBurst({ 
-  position, 
-  isBuy,
-  onComplete 
-}: { 
-  position: [number, number, number]; 
-  isBuy: boolean;
-  onComplete?: () => void;
-}) {
-  const groupRef = useRef<THREE.Group>(null);
-  const coinsRef = useRef<{ pos: THREE.Vector3; vel: THREE.Vector3; rot: number }[]>([]);
-  const [alive, setAlive] = useState(true);
-  const startTime = useRef(Date.now());
-
-  useEffect(() => {
-    coinsRef.current = Array.from({ length: 8 }, () => ({
-      pos: new THREE.Vector3(0, 0, 0),
-      vel: new THREE.Vector3(
-        (Math.random() - 0.5) * 3,
-        Math.random() * 4 + 2,
-        (Math.random() - 0.5) * 3
-      ),
-      rot: Math.random() * Math.PI * 2,
-    }));
-  }, []);
-
-  useFrame((_, dt) => {
-    if (!groupRef.current || !alive) return;
-    
-    const elapsed = (Date.now() - startTime.current) / 1000;
-    if (elapsed > 1.5) {
-      setAlive(false);
-      onComplete?.();
-      return;
-    }
-
-    const children = groupRef.current.children as THREE.Mesh[];
-    coinsRef.current.forEach((coin, i) => {
-      coin.vel.y -= dt * 10;
-      coin.pos.add(coin.vel.clone().multiplyScalar(dt));
-      coin.rot += dt * 8;
-      
-      if (children[i]) {
-        children[i].position.copy(coin.pos);
-        children[i].rotation.y = coin.rot;
-        const fade = Math.max(0, 1 - elapsed / 1.5);
-        (children[i].material as THREE.MeshStandardMaterial).opacity = fade;
-      }
-    });
-  });
-
-  if (!alive) return null;
-
-  return (
-    <group ref={groupRef} position={position}>
-      {Array.from({ length: 8 }).map((_, i) => (
-        <mesh key={i}>
-          <cylinderGeometry args={[0.15, 0.15, 0.05, 16]} />
-          <meshStandardMaterial 
-            color={isBuy ? '#fbbf24' : '#ef4444'} 
-            emissive={isBuy ? '#fbbf24' : '#ef4444'}
-            emissiveIntensity={0.5}
-            transparent 
-          />
-        </mesh>
-      ))}
-    </group>
-  );
-}
-
-// Death smoke effect
-function DeathSmoke({ position, onComplete }: { position: [number, number, number]; onComplete?: () => void }) {
-  const groupRef = useRef<THREE.Group>(null);
-  const smokesRef = useRef<{ pos: THREE.Vector3; scale: number; opacity: number }[]>([]);
-  const [alive, setAlive] = useState(true);
-  const startTime = useRef(Date.now());
-
-  useEffect(() => {
-    smokesRef.current = Array.from({ length: 6 }, (_, i) => ({
-      pos: new THREE.Vector3(
-        (Math.random() - 0.5) * 0.5,
-        i * 0.3,
-        (Math.random() - 0.5) * 0.5
-      ),
-      scale: 0.3 + Math.random() * 0.3,
-      opacity: 0.8,
-    }));
-  }, []);
-
-  useFrame((_, dt) => {
-    if (!groupRef.current || !alive) return;
-    
-    const elapsed = (Date.now() - startTime.current) / 1000;
-    if (elapsed > 2) {
-      setAlive(false);
-      onComplete?.();
-      return;
-    }
-
-    const children = groupRef.current.children as THREE.Mesh[];
-    smokesRef.current.forEach((smoke, i) => {
-      smoke.pos.y += dt * 1.5;
-      smoke.scale += dt * 0.5;
-      smoke.opacity = Math.max(0, 0.8 - elapsed / 2);
-      
-      if (children[i]) {
-        children[i].position.copy(smoke.pos);
-        children[i].scale.setScalar(smoke.scale);
-        (children[i].material as THREE.MeshStandardMaterial).opacity = smoke.opacity;
-      }
-    });
-  });
-
-  if (!alive) return null;
-
-  return (
-    <group ref={groupRef} position={position}>
-      {Array.from({ length: 6 }).map((_, i) => (
-        <mesh key={i}>
-          <sphereGeometry args={[0.5, 8, 8]} />
-          <meshStandardMaterial color="#4b5563" transparent opacity={0.8} />
-        </mesh>
-      ))}
-    </group>
-  );
-}
-
-// Spawn sparkle effect
-function SpawnSparkle({ position, color, onComplete }: { position: [number, number, number]; color: string; onComplete?: () => void }) {
-  const groupRef = useRef<THREE.Group>(null);
-  const [alive, setAlive] = useState(true);
-  const startTime = useRef(Date.now());
-
-  useFrame(() => {
-    if (!groupRef.current || !alive) return;
-    
-    const elapsed = (Date.now() - startTime.current) / 1000;
-    if (elapsed > 1) {
-      setAlive(false);
-      onComplete?.();
-      return;
-    }
-
-    // Expand ring
-    groupRef.current.scale.setScalar(1 + elapsed * 3);
-    groupRef.current.children.forEach((child, i) => {
-      const mesh = child as THREE.Mesh;
-      (mesh.material as THREE.MeshStandardMaterial).opacity = Math.max(0, 1 - elapsed);
-      mesh.rotation.y = elapsed * 5 + i * 0.5;
-    });
-  });
-
-  if (!alive) return null;
-
-  return (
-    <group ref={groupRef} position={position}>
-      {Array.from({ length: 8 }).map((_, i) => {
-        const angle = (i / 8) * Math.PI * 2;
-        return (
-          <mesh key={i} position={[Math.cos(angle) * 0.5, 0.5, Math.sin(angle) * 0.5]}>
-            <boxGeometry args={[0.1, 0.3, 0.1]} />
-            <meshStandardMaterial color={color} emissive={color} emissiveIntensity={1} transparent />
-          </mesh>
-        );
-      })}
-    </group>
-  );
-}
-
-// Hover tooltip for 3D objects
-function HoverTooltip({ 
-  text, 
-  visible, 
-  worldPosition 
-}: { 
-  text: string; 
-  visible: boolean; 
-  worldPosition: THREE.Vector3;
-}) {
-  const { camera } = useThree();
-  const [screenPos, setScreenPos] = useState({ x: 0, y: 0 });
-
-  useFrame(() => {
-    if (!visible) return;
-    const pos = worldPosition.clone().project(camera);
-    setScreenPos({
-      x: (pos.x * 0.5 + 0.5) * window.innerWidth,
-      y: (-pos.y * 0.5 + 0.5) * window.innerHeight,
-    });
-  });
-
-  if (!visible) return null;
-
-  // This renders in 3D space - for HTML tooltips we'd need Html from drei
-  return (
-    <BillboardLabel 
-      text={text} 
-      position={[worldPosition.x, worldPosition.y + 2, worldPosition.z]} 
-      color="#fbbf24"
-    />
-  );
-}
-
-// IndustrialSmoke moved to ../components/buildings/effects.tsx
-
-// Smog layer for polluted towns
-function SmogLayer({ pollution }: { pollution: number }) {
-  if (pollution < 0.3) return null;
-  
-  const opacity = (pollution - 0.3) * 0.4; // Max 0.28 opacity at full pollution
-  
-  return (
-    <mesh position={[0, 35, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-      <planeGeometry args={[500, 500]} />
-      <meshBasicMaterial color="#3d3825" transparent opacity={opacity} side={THREE.DoubleSide} />
-    </mesh>
-  );
-}
-
-// Market sentiment sky tint
-function SentimentAmbience({ sentiment }: { sentiment: 'bull' | 'bear' | 'neutral' }) {
-  const color = sentiment === 'bull' ? '#1a2f1a' : sentiment === 'bear' ? '#2f1a1a' : '#1a1a2f';
-  const intensity = sentiment === 'neutral' ? 0 : 0.15;
-  
-  return (
-    <mesh position={[0, 60, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-      <planeGeometry args={[600, 600]} />
-      <meshBasicMaterial color={color} transparent opacity={intensity} side={THREE.DoubleSide} />
-    </mesh>
-  );
-}
-
-// Prosperity sparkles (golden particles in prosperous towns)
-function ProsperitySparkles({ prosperity }: { prosperity: number }) {
-  const sparklesRef = useRef<THREE.Points>(null);
-  const count = Math.floor(prosperity * 30);
-  
-  const positions = useMemo(() => {
-    const arr = new Float32Array(count * 3);
-    for (let i = 0; i < count; i++) {
-      arr[i * 3] = (Math.random() - 0.5) * 150;
-      arr[i * 3 + 1] = Math.random() * 20 + 3;
-      arr[i * 3 + 2] = (Math.random() - 0.5) * 150;
-    }
-    return arr;
-  }, [count]);
-
-  useFrame((state) => {
-    if (!sparklesRef.current || count === 0) return;
-    const t = state.clock.elapsedTime;
-    sparklesRef.current.rotation.y = t * 0.05;
-  });
-
-  if (count === 0) return null;
-
-  return (
-    <points ref={sparklesRef}>
-      <bufferGeometry>
-        <bufferAttribute
-          attach="attributes-position"
-          array={positions}
-          count={count}
-          itemSize={3}
-        />
-      </bufferGeometry>
-      <pointsMaterial color="#fbbf24" size={0.2} transparent opacity={0.6} sizeAttenuation />
-    </points>
-  );
-}
-
 function useGroundTexture() {
   return useMemo(() => {
     const canvas = document.createElement('canvas');
@@ -1317,7 +1220,21 @@ function useIsMobile(breakpoint = 768) {
 }
 
 // Agent activity states
-type AgentActivity = 'WALKING' | 'IDLE' | 'SHOPPING' | 'CHATTING' | 'BUILDING' | 'MINING' | 'PLAYING' | 'BEGGING' | 'SCHEMING' | 'TRAVELING';
+type AgentActivity =
+  | 'WALKING'
+  | 'IDLE'
+  | 'SHOPPING'
+  | 'CHATTING'
+  | 'CLAIMING'
+  | 'BUILDING'
+  | 'WORKING'
+  | 'MINING'
+  | 'TRADING'
+  | 'PLAYING'
+  | 'FIGHTING'
+  | 'BEGGING'
+  | 'SCHEMING'
+  | 'TRAVELING';
 
 // Agent economic states (based on bankroll)
 type AgentEconomicState = 'THRIVING' | 'COMFORTABLE' | 'STRUGGLING' | 'BROKE' | 'HOMELESS' | 'DEAD' | 'RECOVERING';
@@ -1339,16 +1256,27 @@ type AgentSim = {
   id: string;
   position: THREE.Vector3;
   heading: THREE.Vector3;
+  velocity: THREE.Vector3;
+  acceleration: THREE.Vector3;
   route: THREE.Vector3[];
   speed: number;
+  baseSpeed: number;
   walk: number;
   state: AgentState;
+  stateBlend: number;
+  turnVelocity: number;
+  lastImpactAt: number;
   stateTimer: number; // Time spent in current state
   stateEndsAt: number; // stateTimer value when state should end (for fixed-duration states)
   targetPlotId: string | null; // Building they're heading to
   chatPartnerId: string | null; // Agent they're chatting with
   chatEndsAt: number; // stateTimer value when chat should end
   health: number; // 0-100, dies at 0
+  opportunityScore: number;
+  opportunityCommitted: boolean;
+  opportunityRewardUntil: number;
+  opportunityPenaltyUntil: number;
+  opportunityWindowId: string | null;
 };
 
 // AgentDroid moved to ../components/agents/AgentDroid.tsx
@@ -1538,7 +1466,12 @@ function TownScene({
   spawnEffects,
   setSpawnEffects,
   relationshipsRef,
+  urgencyObjective,
+  opportunityWindow,
   fightingAgentIds,
+  visualProfile,
+  visualQuality,
+  visualSettings,
 }: {
   town: Town;
   agents: Agent[];
@@ -1559,7 +1492,12 @@ function TownScene({
   spawnEffects: { id: string; position: [number, number, number]; color: string }[];
   setSpawnEffects: React.Dispatch<React.SetStateAction<{ id: string; position: [number, number, number]; color: string }[]>>;
   relationshipsRef: React.MutableRefObject<{ agentAId: string; agentBId: string; status: string; score: number }[]>;
+  urgencyObjective: UrgencyObjective | null;
+  opportunityWindow: OpportunityWindow | null;
   fightingAgentIds?: Set<string>;
+  visualProfile: VisualProfile;
+  visualQuality: ResolvedVisualQuality;
+  visualSettings: VisualSettings;
 }) {
   const groundTex = useGroundTexture();
   const plots = town.plots;
@@ -1604,6 +1542,46 @@ function TownScene({
 
   const agentGroupRefs = useRef<Map<string, THREE.Group>>(new Map());
   const { camera } = useThree();
+  const cameraVelocityRef = useRef(new THREE.Vector3());
+  const lookTargetRef = useRef(new THREE.Vector3());
+  const cameraShakeRef = useRef(0);
+  const previousCoinBurstsRef = useRef(0);
+  const previousDeathEffectsRef = useRef(0);
+  const previousSpawnEffectsRef = useRef(0);
+  const focusSnapTimerRef = useRef(0);
+  const arenaRingRef = useRef<THREE.Mesh>(null);
+  const arenaDomeRef = useRef<THREE.Mesh>(null);
+  const arenaCoreLightRef = useRef<THREE.PointLight>(null);
+  const activeOpportunityRef = useRef<OpportunityWindow | null>(null);
+  const resolvedOpportunityIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!visualSettings.cameraShake) {
+      cameraShakeRef.current = 0;
+      previousCoinBurstsRef.current = coinBursts.length;
+      previousDeathEffectsRef.current = deathEffects.length;
+      previousSpawnEffectsRef.current = spawnEffects.length;
+      return;
+    }
+    if (coinBursts.length > previousCoinBurstsRef.current) {
+      cameraShakeRef.current = Math.min(0.6, cameraShakeRef.current + 0.08);
+    }
+    if (deathEffects.length > previousDeathEffectsRef.current) {
+      cameraShakeRef.current = Math.min(0.7, cameraShakeRef.current + 0.14);
+    }
+    if (spawnEffects.length > previousSpawnEffectsRef.current) {
+      cameraShakeRef.current = Math.min(0.55, cameraShakeRef.current + 0.05);
+    }
+    previousCoinBurstsRef.current = coinBursts.length;
+    previousDeathEffectsRef.current = deathEffects.length;
+    previousSpawnEffectsRef.current = spawnEffects.length;
+  }, [coinBursts.length, deathEffects.length, spawnEffects.length, visualSettings.cameraShake]);
+
+  useEffect(() => {
+    if (!selectedAgentId) return;
+    focusSnapTimerRef.current = 0.42;
+    introRef.current.active = false;
+  }, [selectedAgentId, introRef]);
 
   useEffect(() => {
     const sims = simsRef.current;
@@ -1621,16 +1599,27 @@ function TownScene({
         id: a.id,
         position: start,
         heading: new THREE.Vector3(0, 0, 1),
+        velocity: new THREE.Vector3(),
+        acceleration: new THREE.Vector3(),
         route: [],
         speed,
+        baseSpeed: speed,
         walk: rng() * 10,
         state: 'WALKING',
+        stateBlend: 0,
+        turnVelocity: 0,
+        lastImpactAt: 0,
         stateTimer: 0,
         stateEndsAt: 0,
         targetPlotId: null,
         chatPartnerId: null,
         chatEndsAt: 0,
         health: 100,
+        opportunityScore: 0,
+        opportunityCommitted: false,
+        opportunityRewardUntil: 0,
+        opportunityPenaltyUntil: 0,
+        opportunityWindowId: null,
       });
     }
   }, [agents, roadNodes, simsRef]);
@@ -1639,6 +1628,21 @@ function TownScene({
     SHARK: [2, 3], DEGEN: [2, 3],
     ROCK: [3, 4], GRINDER: [3, 4],
     CHAMELEON: [4, 6],
+  };
+  const ZONE_ARRIVAL_ACTIONS: Record<PlotZone, { state: AgentState; min: number; max: number; chance: number }> = {
+    RESIDENTIAL: { state: 'IDLE', min: 2.4, max: 5.2, chance: 0.6 },
+    COMMERCIAL: { state: 'SHOPPING', min: 2.5, max: 5.8, chance: 0.78 },
+    CIVIC: { state: 'IDLE', min: 3.2, max: 5.6, chance: 0.72 },
+    INDUSTRIAL: { state: 'MINING', min: 3.2, max: 5.8, chance: 0.82 },
+    ENTERTAINMENT: { state: 'PLAYING', min: 4.5, max: 9.5, chance: 0.88 },
+  };
+  const OBJECTIVE_ACTIONS: Record<UrgencyKind, { state: AgentState; min: number; max: number; chance: number }> = {
+    ARENA: { state: 'PLAYING', min: 5.5, max: 11.5, chance: 0.95 },
+    TRADE: { state: 'SHOPPING', min: 3.5, max: 7.5, chance: 0.92 },
+    MINE: { state: 'MINING', min: 4.2, max: 8.2, chance: 0.94 },
+    BUILD: { state: 'BUILDING', min: 4.0, max: 8.4, chance: 0.9 },
+    ENTERTAIN: { state: 'PLAYING', min: 5.0, max: 10.0, chance: 0.94 },
+    STABILIZE: { state: 'IDLE', min: 4.2, max: 8.0, chance: 0.9 },
   };
 
   const plotWorldPosByIndex = useMemo(() => {
@@ -1658,9 +1662,22 @@ function TownScene({
   );
 
   // Find built buildings (places agents can visit)
+  const plotById = useMemo(() => {
+    const map = new Map<string, Plot>();
+    for (const plot of plots) map.set(plot.id, plot);
+    return map;
+  }, [plots]);
   const builtPlots = useMemo(() => plots.filter((p) => p.status === 'BUILT' || p.status === 'UNDER_CONSTRUCTION'), [plots]);
   const underConstructionPlots = useMemo(() => plots.filter((p) => p.status === 'UNDER_CONSTRUCTION'), [plots]);
   const entertainmentPlots = useMemo(() => plots.filter((p) => p.status === 'BUILT' && p.zone === 'ENTERTAINMENT'), [plots]);
+  const activeObjective = opportunityWindow?.objective ?? urgencyObjective;
+  const objectivePlots = useMemo(() => {
+    if (!activeObjective) return [] as Plot[];
+    if (activeObjective.kind === 'BUILD') {
+      return underConstructionPlots.length > 0 ? underConstructionPlots : builtPlots;
+    }
+    return builtPlots.filter((plot) => activeObjective.targetZones.includes(plot.zone));
+  }, [activeObjective, underConstructionPlots, builtPlots]);
 
   // Building exclusion zones — AABB half-extent for collision
   const BUILDING_HALF = 7.0; // buildings are ~12 units, half = 6 + margin
@@ -1694,6 +1711,22 @@ function TownScene({
       pos.z + dirToCenter.z * BUILDING_APPROACH,
     );
   }, [getPlotWorldPos]);
+
+  const objectiveBeacon = useMemo(() => {
+    if (!activeObjective || objectivePlots.length === 0) return null;
+    const seed = hashToSeed(
+      `${town.id}:${activeObjective.kind}:${opportunityWindow?.id ?? activeObjective.sourceType ?? 'NONE'}`,
+    );
+    const target = objectivePlots[seed % objectivePlots.length];
+    const pos = getPlotWorldPos(target.plotIndex);
+    return {
+      position: [pos.x, 0.08, pos.z] as [number, number, number],
+      label: opportunityWindow
+        ? `${activeObjective.emoji} ${opportunityWindow.label}`
+        : `${activeObjective.emoji} ${activeObjective.label}`,
+      color: activeObjective.color,
+    };
+  }, [activeObjective, objectivePlots, opportunityWindow, town.id, getPlotWorldPos]);
 
   const roadSegments = useMemo(() => {
     type Seg = { id: string; kind: 'V' | 'H'; x: number; z: number; len: number; tone: 'ring' | 'arterial' | 'local' };
@@ -1945,18 +1978,121 @@ function TownScene({
     return { lake, hill, neon, rocks, trees };
   }, [town.id, town.theme, bounds.cols, bounds.rows, spacing]);
 
+  const resolveOpportunityWindow = useCallback((finishedWindow: OpportunityWindow, nowMs: number) => {
+    if (resolvedOpportunityIdsRef.current.has(finishedWindow.id)) return;
+    resolvedOpportunityIdsRef.current.add(finishedWindow.id);
+
+    const sims = simsRef.current;
+    const participants = Array.from(sims.values())
+      .filter((sim) => sim.state !== 'DEAD' && sim.opportunityWindowId === finishedWindow.id && sim.opportunityCommitted)
+      .sort((a, b) => b.opportunityScore - a.opportunityScore);
+
+    const winnerCount = Math.max(1, Math.floor(participants.length * 0.32));
+    const loserCount = participants.length >= 5 ? Math.max(1, Math.floor(participants.length * 0.22)) : 0;
+    const winners = participants.slice(0, winnerCount);
+    const losers = loserCount > 0 ? participants.slice(-loserCount) : [];
+    const loserIds = new Set(losers.map((sim) => sim.id));
+    const bursts: { id: string; position: [number, number, number]; isBuy: boolean }[] = [];
+
+    for (const sim of sims.values()) {
+      if (sim.opportunityWindowId !== finishedWindow.id) continue;
+      sim.opportunityCommitted = false;
+      sim.opportunityWindowId = null;
+      sim.opportunityScore = 0;
+    }
+
+    for (const sim of winners) {
+      sim.opportunityRewardUntil = Math.max(sim.opportunityRewardUntil, nowMs + randomRange(17_000, 26_000));
+      sim.opportunityPenaltyUntil = Math.max(0, sim.opportunityPenaltyUntil - 4_000);
+      bursts.push({
+        id: `opp-win:${finishedWindow.id}:${sim.id}:${nowMs}`,
+        position: [sim.position.x, 2.2, sim.position.z],
+        isBuy: true,
+      });
+    }
+
+    for (const sim of losers) {
+      if (loserIds.has(sim.id) && winners.some((winner) => winner.id === sim.id)) continue;
+      sim.opportunityPenaltyUntil = Math.max(sim.opportunityPenaltyUntil, nowMs + randomRange(13_000, 21_000));
+      bursts.push({
+        id: `opp-loss:${finishedWindow.id}:${sim.id}:${nowMs}`,
+        position: [sim.position.x, 2.1, sim.position.z],
+        isBuy: false,
+      });
+    }
+
+    if (bursts.length > 0) {
+      setCoinBursts((prev) => [...prev, ...bursts]);
+    }
+  }, [setCoinBursts, simsRef]);
+
   useFrame((_, dt) => {
     const sims = simsRef.current;
+    const nowMs = Date.now();
+    const previousOpportunity = activeOpportunityRef.current;
+    if (previousOpportunity && (!opportunityWindow || opportunityWindow.id !== previousOpportunity.id)) {
+      resolveOpportunityWindow(previousOpportunity, nowMs);
+    }
+    if (opportunityWindow && (!previousOpportunity || previousOpportunity.id !== opportunityWindow.id)) {
+      for (const sim of sims.values()) {
+        sim.opportunityWindowId = opportunityWindow.id;
+        sim.opportunityScore = 0;
+        sim.opportunityCommitted = false;
+        if (sim.state === 'CHATTING') {
+          sim.state = 'WALKING';
+          sim.chatPartnerId = null;
+          sim.chatEndsAt = 0;
+          sim.stateTimer = 0;
+          sim.stateEndsAt = 0;
+          sim.targetPlotId = null;
+          sim.route = [];
+        } else if ((sim.state === 'IDLE' || sim.state === 'WALKING') && Math.random() < 0.65) {
+          sim.state = 'WALKING';
+          sim.stateTimer = 0;
+          sim.stateEndsAt = 0;
+          sim.targetPlotId = null;
+          sim.route = [];
+        }
+      }
+    }
+    activeOpportunityRef.current = opportunityWindow;
+    if (resolvedOpportunityIdsRef.current.size > 240) {
+      resolvedOpportunityIdsRef.current.clear();
+    }
 
     for (const a of agents) {
       const sim = sims.get(a.id);
       if (!sim) continue;
 
+      if (!Number.isFinite(sim.baseSpeed) || sim.baseSpeed <= 0) sim.baseSpeed = Math.max(2.1, sim.speed || 2.8);
+      if (!Number.isFinite(sim.opportunityScore)) sim.opportunityScore = 0;
+      if (!Number.isFinite(sim.opportunityRewardUntil)) sim.opportunityRewardUntil = 0;
+      if (!Number.isFinite(sim.opportunityPenaltyUntil)) sim.opportunityPenaltyUntil = 0;
+      if (typeof sim.opportunityCommitted !== 'boolean') sim.opportunityCommitted = false;
+      if (typeof sim.opportunityWindowId !== 'string') sim.opportunityWindowId = null;
+
+      let speedMultiplier = 1;
+      if (opportunityWindow) {
+        const committedToWindow = sim.opportunityWindowId === opportunityWindow.id && sim.opportunityCommitted;
+        speedMultiplier *= committedToWindow ? opportunityWindow.rewardBoost : opportunityWindow.penaltyDrag;
+        if (committedToWindow) sim.opportunityScore += dt * 0.04;
+      }
+      if (sim.opportunityRewardUntil > nowMs) speedMultiplier *= 1.1;
+      if (sim.opportunityPenaltyUntil > nowMs) speedMultiplier *= 0.9;
+      const targetSpeed = THREE.MathUtils.clamp(sim.baseSpeed * speedMultiplier, 1.45, 6.6);
+      sim.speed = THREE.MathUtils.damp(sim.speed, targetSpeed, 3.8, dt);
+
       // Update state timer
       sim.stateTimer += dt;
+      sim.stateBlend = THREE.MathUtils.damp(sim.stateBlend, sim.state === 'WALKING' ? 1 : 0, 7.5, dt);
+      if (sim.state !== 'WALKING') {
+        sim.turnVelocity = THREE.MathUtils.damp(sim.turnVelocity, 0, 12, dt);
+      }
 
       // Dead agents don't move
       if (sim.state === 'DEAD') {
+        sim.velocity.multiplyScalar(Math.exp(-14 * dt));
+        sim.acceleration.set(0, 0, 0);
         const g = agentGroupRefs.current.get(a.id);
         if (g) g.position.copy(sim.position);
         continue;
@@ -1973,6 +2109,7 @@ function TownScene({
           sim.stateTimer = 0;
           sim.stateEndsAt = 4 + Math.random() * 3;
           sim.route = [];
+          sim.lastImpactAt = nowMs;
         }
         // 2% chance to start scheming when homeless
         if (economicState === 'HOMELESS' && Math.random() < 0.02) {
@@ -1980,15 +2117,29 @@ function TownScene({
           sim.stateTimer = 0;
           sim.stateEndsAt = 3 + Math.random() * 2;
           sim.route = [];
+          sim.lastImpactAt = nowMs;
+        }
+      }
+
+      if (opportunityWindow && sim.opportunityWindowId === opportunityWindow.id && sim.opportunityCommitted) {
+        const objectiveAction = OBJECTIVE_ACTIONS[opportunityWindow.kind];
+        if (objectiveAction && sim.state === objectiveAction.state) {
+          sim.opportunityScore += dt * 0.5;
+        }
+        const targetPlot = sim.targetPlotId ? plotById.get(sim.targetPlotId) : null;
+        if (targetPlot && opportunityWindow.objective.targetZones.includes(targetPlot.zone)) {
+          sim.opportunityScore += dt * 0.12;
         }
       }
 
       // Handle IDLE state (thinking before next move)
       if (sim.state === 'IDLE') {
+        sim.velocity.multiplyScalar(Math.exp(-10 * dt));
+        sim.acceleration.set(0, 0, 0);
         if (sim.stateEndsAt <= 0) sim.stateEndsAt = 2 + Math.random() * 3;
         if (sim.stateTimer > sim.stateEndsAt) {
           sim.state = 'WALKING';
-          sim.stateEndsAt = 0;
+          sim.stateEndsAt = -1;
         }
         const g = agentGroupRefs.current.get(a.id);
         if (g) g.position.copy(sim.position);
@@ -1997,6 +2148,8 @@ function TownScene({
 
       // Handle BEGGING state
       if (sim.state === 'BEGGING') {
+        sim.velocity.multiplyScalar(Math.exp(-10 * dt));
+        sim.acceleration.set(0, 0, 0);
         if (sim.stateEndsAt <= 0) sim.stateEndsAt = 4 + Math.random() * 3;
         if (sim.stateTimer > sim.stateEndsAt) {
           sim.state = 'WALKING';
@@ -2013,6 +2166,8 @@ function TownScene({
 
       // Handle SCHEMING state
       if (sim.state === 'SCHEMING') {
+        sim.velocity.multiplyScalar(Math.exp(-10 * dt));
+        sim.acceleration.set(0, 0, 0);
         if (sim.stateEndsAt <= 0) sim.stateEndsAt = 3 + Math.random() * 2;
         if (sim.stateTimer > sim.stateEndsAt) {
           sim.state = 'WALKING';
@@ -2021,14 +2176,16 @@ function TownScene({
         const g = agentGroupRefs.current.get(a.id);
         if (g) {
           g.position.copy(sim.position);
-          // Look around suspiciously
-          g.rotation.y += Math.sin(sim.stateTimer * 5) * 0.02;
+          const scanPhase = (hashToSeed(a.id) % 720) * 0.01;
+          const suspiciousYaw = Math.atan2(sim.heading.x, sim.heading.z) + Math.sin(sim.stateTimer * 3 + scanPhase) * 0.28;
+          g.rotation.y = dampAngle(g.rotation.y, suspiciousYaw, 8, dt);
         }
         continue;
       }
 
-      // Check for nearby agents to chat with (shuffled to avoid deterministic pairings)
-      if (sim.state === 'WALKING' && !sim.chatPartnerId) {
+      // Optional social chatter: heavily throttled and disabled during urgency windows/fights.
+      const allowSocialChatter = !opportunityWindow && !activeObjective && (fightingAgentIds?.size ?? 0) === 0;
+      if (sim.state === 'WALKING' && !sim.chatPartnerId && allowSocialChatter && Math.random() < 0.2 * dt) {
         const candidates: [string, typeof sim][] = [];
         for (const [otherId, other] of sims) {
           if (otherId === a.id || other.state !== 'WALKING' || other.chatPartnerId) continue;
@@ -2053,10 +2210,12 @@ function TownScene({
           sim.chatPartnerId = otherId;
           sim.stateTimer = 0;
           sim.chatEndsAt = duration;
+          sim.lastImpactAt = nowMs;
           other.state = 'CHATTING';
           other.chatPartnerId = a.id;
           other.stateTimer = 0;
           other.chatEndsAt = duration;
+          other.lastImpactAt = nowMs;
           sim.route = [];
           other.route = [];
           onChatStart?.(town.id, a.id, otherId);
@@ -2086,15 +2245,15 @@ function TownScene({
             } else {
               // Already at the plot — start the action animation
               const stateMap: Record<string, AgentState> = {
-                claim_plot: 'BUILDING',
+                claim_plot: 'CLAIMING',
                 start_build: 'BUILDING',
-                do_work: 'BUILDING',
-                complete_build: 'BUILDING',
+                do_work: 'WORKING',
+                complete_build: 'WORKING',
                 buy_skill: 'SHOPPING',
-                buy_arena: 'SHOPPING',
-                sell_arena: 'SHOPPING',
+                buy_arena: 'TRADING',
+                sell_arena: 'TRADING',
                 mine: 'MINING',
-                play_arena: 'PLAYING',
+                play_arena: 'FIGHTING',
               };
               const newState = stateMap[actionType];
               if (newState && sim.state === 'WALKING') {
@@ -2103,6 +2262,7 @@ function TownScene({
                 sim.stateTimer = 0;
                 sim.stateEndsAt = 4 + Math.random() * 4;
                 sim.route = [];
+                sim.lastImpactAt = nowMs;
               }
             }
           }
@@ -2111,6 +2271,9 @@ function TownScene({
           const inPlaceActions: Record<string, AgentState> = {
             mine: 'MINING',
             rest: 'IDLE',
+            buy_arena: 'TRADING',
+            sell_arena: 'TRADING',
+            play_arena: 'FIGHTING',
           };
           const newState = inPlaceActions[actionType];
           if (newState) {
@@ -2118,12 +2281,15 @@ function TownScene({
             sim.stateTimer = 0;
             sim.stateEndsAt = 3 + Math.random() * 3;
             sim.route = [];
+            sim.lastImpactAt = nowMs;
           }
         }
       }
 
       // Handle CHATTING state
       if (sim.state === 'CHATTING') {
+        sim.velocity.multiplyScalar(Math.exp(-12 * dt));
+        sim.acceleration.set(0, 0, 0);
         if (sim.stateTimer > sim.chatEndsAt) {
           sim.state = 'WALKING';
           const partner = sims.get(sim.chatPartnerId!);
@@ -2142,14 +2308,36 @@ function TownScene({
           if (partner) {
             const toPartner = partner.position.clone().sub(sim.position).normalize();
             sim.heading.lerp(toPartner, 0.1);
-            g.rotation.y = Math.atan2(sim.heading.x, sim.heading.z);
+            const targetYaw = Math.atan2(sim.heading.x, sim.heading.z);
+            g.rotation.y = dampAngle(g.rotation.y, targetYaw, 11, dt);
           }
+        }
+        continue;
+      }
+
+      // Handle CLAIMING state
+      if (sim.state === 'CLAIMING') {
+        sim.velocity.multiplyScalar(Math.exp(-12 * dt));
+        sim.acceleration.set(0, 0, 0);
+        if (sim.stateEndsAt <= 0) sim.stateEndsAt = 1.8 + Math.random() * 1.4;
+        if (sim.stateTimer > sim.stateEndsAt) {
+          sim.state = 'WALKING';
+          sim.stateEndsAt = 0;
+          sim.targetPlotId = null;
+        }
+        const g = agentGroupRefs.current.get(a.id);
+        if (g) {
+          g.position.copy(sim.position);
+          g.position.y = 0.02 + Math.sin(sim.stateTimer * 12) * 0.05;
+          g.rotation.y += dt * 0.8;
         }
         continue;
       }
 
       // Handle SHOPPING state
       if (sim.state === 'SHOPPING') {
+        sim.velocity.multiplyScalar(Math.exp(-12 * dt));
+        sim.acceleration.set(0, 0, 0);
         if (sim.stateEndsAt <= 0) sim.stateEndsAt = 2 + Math.random() * 3;
         if (sim.stateTimer > sim.stateEndsAt) { // Shop for 2-5 seconds
           sim.state = 'WALKING';
@@ -2164,8 +2352,29 @@ function TownScene({
         continue;
       }
 
+      // Handle TRADING state
+      if (sim.state === 'TRADING') {
+        sim.velocity.multiplyScalar(Math.exp(-12 * dt));
+        sim.acceleration.set(0, 0, 0);
+        if (sim.stateEndsAt <= 0) sim.stateEndsAt = 2.6 + Math.random() * 2.2;
+        if (sim.stateTimer > sim.stateEndsAt) {
+          sim.state = 'WALKING';
+          sim.stateEndsAt = 0;
+          sim.targetPlotId = null;
+        }
+        const g = agentGroupRefs.current.get(a.id);
+        if (g) {
+          g.position.copy(sim.position);
+          g.position.x += Math.sin(sim.stateTimer * 9) * 0.04;
+          g.rotation.y += dt * (0.9 + Math.sin(sim.stateTimer * 3) * 0.2);
+        }
+        continue;
+      }
+
       // Handle BUILDING state
       if (sim.state === 'BUILDING') {
+        sim.velocity.multiplyScalar(Math.exp(-12 * dt));
+        sim.acceleration.set(0, 0, 0);
         if (sim.stateEndsAt <= 0) sim.stateEndsAt = 4 + Math.random() * 3;
         if (sim.stateTimer > sim.stateEndsAt) { // Build for 4-7 seconds
           sim.state = 'WALKING';
@@ -2181,12 +2390,34 @@ function TownScene({
         continue;
       }
 
+      // Handle WORKING state
+      if (sim.state === 'WORKING') {
+        sim.velocity.multiplyScalar(Math.exp(-12 * dt));
+        sim.acceleration.set(0, 0, 0);
+        if (sim.stateEndsAt <= 0) sim.stateEndsAt = 3.2 + Math.random() * 2.4;
+        if (sim.stateTimer > sim.stateEndsAt) {
+          sim.state = 'WALKING';
+          sim.stateEndsAt = 0;
+          sim.targetPlotId = null;
+        }
+        const g = agentGroupRefs.current.get(a.id);
+        if (g) {
+          g.position.copy(sim.position);
+          g.position.y = 0.02 + Math.sin(sim.stateTimer * 13) * 0.08;
+          g.rotation.y += Math.sin(sim.stateTimer * 7) * 0.004;
+        }
+        continue;
+      }
+
       // Handle MINING state
       if (sim.state === 'MINING') {
+        sim.velocity.multiplyScalar(Math.exp(-12 * dt));
+        sim.acceleration.set(0, 0, 0);
         if (sim.stateEndsAt <= 0) sim.stateEndsAt = 3 + Math.random() * 2;
         if (sim.stateTimer > sim.stateEndsAt) { // Mine for 3-5 seconds
           sim.state = 'WALKING';
           sim.stateEndsAt = 0;
+          sim.targetPlotId = null;
         }
         // Stay still while mining with a shake effect
         const g = agentGroupRefs.current.get(a.id);
@@ -2197,18 +2428,40 @@ function TownScene({
         continue;
       }
 
+      // Handle FIGHTING state (duel stance, faster spin)
+      if (sim.state === 'FIGHTING') {
+        sim.velocity.multiplyScalar(Math.exp(-12 * dt));
+        sim.acceleration.set(0, 0, 0);
+        if (sim.stateEndsAt <= 0) sim.stateEndsAt = 3.5 + Math.random() * 2.8;
+        if (sim.stateTimer > sim.stateEndsAt) {
+          sim.state = 'WALKING';
+          sim.stateEndsAt = 0;
+          sim.targetPlotId = null;
+        }
+        const g = agentGroupRefs.current.get(a.id);
+        if (g) {
+          g.position.copy(sim.position);
+          g.position.y = 0.02 + Math.sin(sim.stateTimer * 10) * 0.06;
+          g.rotation.y += dt * (3.4 + Math.sin(sim.stateTimer * 8) * 0.4);
+        }
+        continue;
+      }
+
       // Handle PLAYING state (arena games)
       if (sim.state === 'PLAYING') {
+        sim.velocity.multiplyScalar(Math.exp(-12 * dt));
+        sim.acceleration.set(0, 0, 0);
         if (sim.stateEndsAt <= 0) sim.stateEndsAt = 5 + Math.random() * 5;
         if (sim.stateTimer > sim.stateEndsAt) { // Play for 5-10 seconds
           sim.state = 'WALKING';
           sim.stateEndsAt = 0;
+          sim.targetPlotId = null;
         }
         // Spin in place while playing
         const g = agentGroupRefs.current.get(a.id);
         if (g) {
           g.position.copy(sim.position);
-          g.rotation.y = sim.stateTimer * 2;
+          g.rotation.y += dt * (2.1 + Math.sin(sim.stateTimer * 2.7) * 0.28);
         }
         continue;
       }
@@ -2216,7 +2469,51 @@ function TownScene({
       // WALKING behavior — think → walk → stop → think cycle
       if (sim.route.length === 0) {
         // Just arrived at destination: stop and "think" before moving again
-        if (sim.state === 'WALKING' && sim.stateEndsAt <= 0) {
+        if (sim.state === 'WALKING' && sim.stateEndsAt === 0) {
+          if (sim.targetPlotId === ARENA_SPECTATOR_TARGET_ID) {
+            sim.state = 'PLAYING';
+            sim.stateTimer = 0;
+            sim.stateEndsAt = 4 + Math.random() * 6;
+            sim.targetPlotId = null;
+            sim.route = [];
+            sim.lastImpactAt = nowMs;
+            const g = agentGroupRefs.current.get(a.id);
+            if (g) g.position.copy(sim.position);
+            continue;
+          }
+
+          const arrivedPlot = sim.targetPlotId ? plotById.get(sim.targetPlotId) : null;
+          if (arrivedPlot && activeObjective && activeObjective.targetZones.includes(arrivedPlot.zone)) {
+            const objectiveAction = OBJECTIVE_ACTIONS[activeObjective.kind];
+            if (objectiveAction && Math.random() < objectiveAction.chance) {
+              sim.state = objectiveAction.state;
+              sim.stateTimer = 0;
+              sim.stateEndsAt = objectiveAction.min + Math.random() * (objectiveAction.max - objectiveAction.min);
+              sim.route = [];
+              sim.lastImpactAt = nowMs;
+              if (opportunityWindow && sim.opportunityWindowId === opportunityWindow.id) {
+                sim.opportunityCommitted = true;
+                sim.opportunityScore += 1.25;
+              }
+              const g = agentGroupRefs.current.get(a.id);
+              if (g) g.position.copy(sim.position);
+              continue;
+            }
+          }
+          if (arrivedPlot) {
+            const action = ZONE_ARRIVAL_ACTIONS[arrivedPlot.zone];
+            if (action && Math.random() < action.chance) {
+              sim.state = action.state;
+              sim.stateTimer = 0;
+              sim.stateEndsAt = action.min + Math.random() * (action.max - action.min);
+              sim.route = [];
+              sim.lastImpactAt = nowMs;
+              const g = agentGroupRefs.current.get(a.id);
+              if (g) g.position.copy(sim.position);
+              continue;
+            }
+          }
+
           // Enter IDLE ("thinking") state for 2-5 seconds
           sim.state = 'IDLE';
           sim.stateTimer = 0;
@@ -2232,6 +2529,7 @@ function TownScene({
         const roll = rng();
         const rels = relationshipsRef.current;
         let pickedTarget = false;
+        const isFightActive = (fightingAgentIds?.size ?? 0) > 0;
 
         // Priority 1: Backend-driven target plot
         if (!pickedTarget && hasRecentAction && a.lastTargetPlot != null) {
@@ -2239,6 +2537,31 @@ function TownScene({
           if (entrance && sim.position.distanceTo(entrance) > 2.5) {
             sim.targetPlotId = plots.find(p => p.plotIndex === a.lastTargetPlot)?.id || null;
             sim.route = buildRoute(sim.position, entrance);
+            pickedTarget = true;
+          }
+        }
+
+        // Urgency objective routing pulls agents into active opportunity clusters.
+        const objectiveRouteChance = opportunityWindow ? 0.9 : 0.72;
+        if (!pickedTarget && activeObjective && objectivePlots.length > 0 && roll < objectiveRouteChance) {
+          let targetPlot: Plot | null = null;
+          let bestDist = Number.POSITIVE_INFINITY;
+          for (const plot of objectivePlots) {
+            const entrance = getBuildingEntrance(plot.plotIndex);
+            const dist = sim.position.distanceTo(entrance);
+            if (dist < bestDist) {
+              bestDist = dist;
+              targetPlot = plot;
+            }
+          }
+          if (targetPlot) {
+            const entrance = getBuildingEntrance(targetPlot.plotIndex);
+            sim.targetPlotId = targetPlot.id;
+            sim.route = buildRoute(sim.position, entrance);
+            if (opportunityWindow && sim.opportunityWindowId === opportunityWindow.id) {
+              sim.opportunityCommitted = true;
+              sim.opportunityScore += 0.45;
+            }
             pickedTarget = true;
           }
         }
@@ -2258,8 +2581,30 @@ function TownScene({
           }
         }
 
-        // 30% chance: head to a building
-        if (!pickedTarget && builtPlots.length > 0 && roll < 0.50) {
+        // During fights, some agents crowd around arena to spectate.
+        if (!pickedTarget && isFightActive && !fightingAgentIds?.has(a.id) && roll < (activeObjective?.kind === 'ARENA' ? 0.62 : 0.38)) {
+          const slotSeed = hashToSeed(`${a.id}:arena-watch-slot`);
+          const slotCount = 24;
+          const slot = slotSeed % slotCount;
+          const angle = (slot / slotCount) * Math.PI * 2;
+          const radiusJitter = ((slotSeed >>> 8) % 1000) / 1000;
+          const radius = 11 + radiusJitter * 4.5;
+          const arenaWatchPoint = new THREE.Vector3(Math.cos(angle) * radius, 0.02, Math.sin(angle) * radius);
+          sim.targetPlotId = ARENA_SPECTATOR_TARGET_ID;
+          if (sim.position.distanceToSquared(arenaWatchPoint) < 1.5 * 1.5) {
+            sim.route = [];
+            sim.state = 'PLAYING';
+            sim.stateTimer = 0;
+            sim.stateEndsAt = 4 + Math.random() * 6;
+            sim.lastImpactAt = nowMs;
+          } else {
+            sim.route = buildRoute(sim.position, arenaWatchPoint);
+          }
+          pickedTarget = true;
+        }
+
+        // 42% chance: head to a building and trigger a zone-specific action on arrival.
+        if (!pickedTarget && builtPlots.length > 0 && roll < 0.62) {
           const targetPlot = builtPlots[Math.floor(rng() * builtPlots.length)];
           const entrance = getBuildingEntrance(targetPlot.plotIndex);
           sim.targetPlotId = targetPlot.id;
@@ -2284,100 +2629,23 @@ function TownScene({
         sim.stateEndsAt = 0;
       }
 
-      const wp = sim.route[0];
-      if (!wp) continue;
+      stepAgentAlongRoute(a.id, sim, sims, dt);
+      sim.walk += dt * Math.max(0.3, sim.velocity.length() * 2.2);
 
-      const dir = wp.clone().sub(sim.position);
-      const dist = dir.length();
-      if (dist < 0.12) {
-        sim.position.copy(wp);
-        sim.route.shift();
-        continue;
-      }
-
-      // Collision avoidance: push away from nearby agents
-      const avoidance = new THREE.Vector3();
-      for (const [otherId, other] of sims) {
-        if (otherId === a.id || other.state === 'DEAD') continue;
-        const toOther = other.position.clone().sub(sim.position);
-        const otherDist = toOther.length();
-        if (otherDist < 1.0 && otherDist > 0.01) {
-          avoidance.addScaledVector(toOther.normalize(), -0.5 * (1.0 - otherDist));
-        }
-      }
-
-      dir.normalize();
-      dir.add(avoidance).normalize();
-      sim.heading.lerp(dir, 0.25);
-      sim.position.addScaledVector(dir, sim.speed * dt);
-      sim.walk += dt * sim.speed * 2.2;
-
-      // ── HARD AABB building exclusion ──
-      // After all movement, physically prevent agent from being inside any building.
-      // This is the hard guarantee — no soft push, just clamp out.
-      for (const bb of buildingAABBs) {
-        const px = sim.position.x;
-        const pz = sim.position.z;
-        // Check if agent is inside this building's AABB
-        if (px > bb.minX && px < bb.maxX && pz > bb.minZ && pz < bb.maxZ) {
-          // Find the nearest edge to push out through
-          const dLeft = px - bb.minX;
-          const dRight = bb.maxX - px;
-          const dTop = pz - bb.minZ;
-          const dBottom = bb.maxZ - pz;
-          const minD = Math.min(dLeft, dRight, dTop, dBottom);
-          const margin = 0.15; // small extra push so they clear the edge
-          if (minD === dLeft) sim.position.x = bb.minX - margin;
-          else if (minD === dRight) sim.position.x = bb.maxX + margin;
-          else if (minD === dTop) sim.position.z = bb.minZ - margin;
-          else sim.position.z = bb.maxZ + margin;
-          // Clear route since it was going through the building
-          if (sim.route.length > 0) sim.route = [];
-        }
+      if (enforceBuildingExclusion(sim, buildingAABBs) && sim.route.length > 0) {
+        sim.route = [];
       }
 
       const g = agentGroupRefs.current.get(a.id);
       if (g) {
         g.position.copy(sim.position);
-        g.rotation.y = Math.atan2(sim.heading.x, sim.heading.z);
+        const targetYaw = Math.atan2(sim.heading.x, sim.heading.z);
+        g.rotation.y = dampAngle(g.rotation.y, targetYaw, 14, dt);
       }
     }
 
-      // Hard separation so agents can't "phase" through each other.
       const simList = Array.from(sims.values()).filter((s) => s.state !== 'DEAD');
-      const minSep = 0.95;
-      const minSepSq = minSep * minSep;
-
-      for (let i = 0; i < simList.length; i++) {
-        for (let j = i + 1; j < simList.length; j++) {
-          const a = simList[i];
-          const b = simList[j];
-          const dx = a.position.x - b.position.x;
-          const dz = a.position.z - b.position.z;
-          const dSq = dx * dx + dz * dz;
-
-          if (dSq > 0.000001 && dSq < minSepSq) {
-            const d = Math.sqrt(dSq);
-            const push = (minSep - d) * 0.5;
-            const nx = dx / d;
-            const nz = dz / d;
-            a.position.x += nx * push;
-            a.position.z += nz * push;
-            b.position.x -= nx * push;
-            b.position.z -= nz * push;
-          } else if (dSq <= 0.000001) {
-            // Exactly overlapping — nudge deterministically.
-            const ang = (i * 97 + j * 131) % 360;
-            const rad = (ang * Math.PI) / 180;
-            const nx = Math.cos(rad);
-            const nz = Math.sin(rad);
-            a.position.x += nx * (minSep * 0.25);
-            a.position.z += nz * (minSep * 0.25);
-            b.position.x -= nx * (minSep * 0.25);
-            b.position.z -= nz * (minSep * 0.25);
-          }
-        }
-      }
+      resolveAgentSeparation(simList);
 
       // Apply corrected positions to rendered groups while preserving any state-specific offsets (shake/bob).
       for (const sim of simList) {
@@ -2389,90 +2657,153 @@ function TownScene({
         g.position.z = sim.position.z + dz;
       }
 
+      focusSnapTimerRef.current = Math.max(0, focusSnapTimerRef.current - dt);
+      cameraShakeRef.current = Math.max(0, cameraShakeRef.current - dt * 1.8);
+
       // Third-person camera locked behind followed agent
       if (selectedAgentId) {
         const sim = sims.get(selectedAgentId);
         if (sim) {
-          const headingNorm = sim.heading.clone().normalize();
-          if (introRef.current.active) {
-            // Cinematic swoop from sky to behind agent
-            introRef.current.t = Math.min(1, introRef.current.t + dt * 0.5);
-            const e = easeOutCubic(introRef.current.t);
-            const skyPos = new THREE.Vector3(50, 55, 50);
-            const behind = headingNorm.clone().multiplyScalar(-14);
-            const target = sim.position.clone().add(behind).add(new THREE.Vector3(0, 7, 0));
-            camera.position.lerpVectors(skyPos, target, e);
-            const skyLook = new THREE.Vector3(0, 0, 0);
-            const agentLook = sim.position.clone().add(new THREE.Vector3(0, 2.5, 0))
-              .add(headingNorm.clone().multiplyScalar(5));
-            const lookTarget = skyLook.clone().lerp(agentLook, e);
-            camera.lookAt(lookTarget);
-            if (introRef.current.t >= 1) introRef.current.active = false;
-          } else {
-            // Normal third-person follow
-            const back = headingNorm.clone().multiplyScalar(-14);
-            const desired = sim.position.clone().add(back).add(new THREE.Vector3(0, 7, 0));
-            camera.position.lerp(desired, 0.06);
-            const lookAhead = sim.position.clone().add(new THREE.Vector3(0, 2.5, 0))
-              .add(headingNorm.clone().multiplyScalar(5));
-            camera.lookAt(lookAhead);
+          if (visualSettings.cameraShake && nowMs - sim.lastImpactAt < 140) {
+            cameraShakeRef.current = Math.min(0.6, cameraShakeRef.current + 0.035);
           }
+          updateFollowCamera({
+            camera,
+            sim,
+            dt,
+            timeSeconds: nowMs * 0.001,
+            intro: introRef.current,
+            focusSnapTimer: focusSnapTimerRef.current,
+            visualQuality,
+            cameraVelocity: cameraVelocityRef.current,
+            lookTarget: lookTargetRef.current,
+            shakeStrength: visualSettings.cameraShake ? cameraShakeRef.current : 0,
+          });
+
+          const camPos = camera.position;
+          const simHeading = sim.heading.lengthSq() > 0.0001
+            ? sim.heading.clone().normalize()
+            : new THREE.Vector3(0, 0, 1);
+          const safeLookTarget = sim.position
+            .clone()
+            .add(new THREE.Vector3(0, 2.6, 0))
+            .add(simHeading.clone().multiplyScalar(6));
+          const toTarget = safeLookTarget.clone().sub(camPos);
+          const viewDir = new THREE.Vector3();
+          camera.getWorldDirection(viewDir);
+          const lookingAway = toTarget.lengthSq() > 0.001 ? viewDir.dot(toTarget.normalize()) < -0.35 : false;
+
+          let insideBuilding = false;
+          for (const bb of buildingAABBs) {
+            if (camPos.x > bb.minX && camPos.x < bb.maxX && camPos.z > bb.minZ && camPos.z < bb.maxZ && camPos.y < 22) {
+              insideBuilding = true;
+              break;
+            }
+          }
+
+          const invalidCamera =
+            !Number.isFinite(camPos.x) ||
+            !Number.isFinite(camPos.y) ||
+            !Number.isFinite(camPos.z) ||
+            camPos.distanceToSquared(sim.position) > 90 * 90 ||
+            camPos.y < 1.8 ||
+            camPos.y > 24 ||
+            lookingAway ||
+            insideBuilding;
+
+          if (invalidCamera) {
+            const recoveryPos = sim.position
+              .clone()
+              .add(simHeading.clone().multiplyScalar(-14))
+              .add(new THREE.Vector3(0, 8, 0));
+            camera.position.copy(recoveryPos);
+            camera.lookAt(safeLookTarget);
+            lookTargetRef.current.copy(safeLookTarget);
+            cameraVelocityRef.current.set(0, 0, 0);
+            focusSnapTimerRef.current = Math.max(focusSnapTimerRef.current, 0.4);
+            introRef.current.active = false;
+          }
+        } else {
+          const fallbackPos = new THREE.Vector3(50, 55, 50);
+          camera.position.lerp(fallbackPos, Math.min(1, dt * 4));
+          camera.lookAt(new THREE.Vector3(0, 0, 0));
+          lookTargetRef.current.set(0, 0, 0);
         }
+      }
+
+      const elapsed = nowMs * 0.001;
+      const isFightActive = (fightingAgentIds?.size ?? 0) > 0;
+      if (arenaRingRef.current) {
+        arenaRingRef.current.rotation.y += dt * (0.35 + (isFightActive ? 0.9 : 0));
+        const ringMaterial = arenaRingRef.current.material as THREE.MeshStandardMaterial;
+        const targetIntensity = 0.45 + Math.sin(elapsed * (2.2 + (isFightActive ? 3.6 : 0))) * 0.12 + (isFightActive ? 0.5 : 0);
+        ringMaterial.emissiveIntensity = THREE.MathUtils.lerp(ringMaterial.emissiveIntensity, targetIntensity, 0.16);
+      }
+      if (arenaDomeRef.current) {
+        const domeMaterial = arenaDomeRef.current.material as THREE.MeshStandardMaterial;
+        const targetOpacity = 0.56 + Math.sin(elapsed * 1.8) * 0.035 + (isFightActive ? 0.08 : 0);
+        domeMaterial.opacity = THREE.MathUtils.lerp(domeMaterial.opacity, targetOpacity, 0.12);
+      }
+      if (arenaCoreLightRef.current) {
+        const fightBoost = isFightActive ? 2.35 + Math.sin(elapsed * 10.5) * 0.5 : 0;
+        const targetIntensity = 0.45 + Math.sin(elapsed * 2.4) * 0.12 + fightBoost;
+        arenaCoreLightRef.current.intensity = THREE.MathUtils.lerp(arenaCoreLightRef.current.intensity, targetIntensity, 0.18);
+        arenaCoreLightRef.current.distance = 12 + (isFightActive ? 6 : 0);
       }
   });
 
+  const sceneAgents = useMemo(
+    () => agents.filter((a) => !fightingAgentIds?.has(a.id)),
+    [agents, fightingAgentIds],
+  );
+  const destinationLineAgents = useMemo(
+    () => sceneAgents.slice(0, visualProfile.destinationLineAgentLimit),
+    [sceneAgents, visualProfile.destinationLineAgentLimit],
+  );
+  const trailAgents = useMemo(
+    () => sceneAgents.slice(0, visualProfile.trailAgentLimit),
+    [sceneAgents, visualProfile.trailAgentLimit],
+  );
+  const visibleCoinBursts = useMemo(
+    () => coinBursts.slice(-visualProfile.maxTransientEffects),
+    [coinBursts, visualProfile.maxTransientEffects],
+  );
+  const visibleDeathEffects = useMemo(
+    () => deathEffects.slice(-visualProfile.maxTransientEffects),
+    [deathEffects, visualProfile.maxTransientEffects],
+  );
+  const visibleSpawnEffects = useMemo(
+    () => spawnEffects.slice(-visualProfile.maxTransientEffects),
+    [spawnEffects, visualProfile.maxTransientEffects],
+  );
+
   return (
     <group>
-      {/* Day/Night cycle with moving sun */}
-      <DayNightCycle timeScale={0.015} />
-
-      {/* Fog - soft atmospheric */}
-      <fog attach="fog" args={[
-        weather === 'storm' ? '#2a3545' : weather === 'rain' ? '#3a4a5a' : '#7a9ab0',
-        weather === 'storm' ? 60 : weather === 'rain' ? 100 : 120,
-        (weather === 'storm' ? 250 : weather === 'rain' ? 350 : 500) * fogScale
-      ]} />
-
-      {/* Ambient floating particles */}
-      <AmbientParticles count={25} />
-
-      {/* Economic atmosphere effects */}
-      <SmogLayer pollution={economicState.pollution} />
-      <SentimentAmbience sentiment={economicState.sentiment} />
-      <ProsperitySparkles prosperity={economicState.prosperity} />
-
-      {/* Weather effects */}
-      {weather === 'rain' && <RainEffect intensity={80} />}
-      {weather === 'storm' && <RainEffect intensity={200} />}
-
-      {/* Coin burst effects */}
-      {coinBursts.map((burst) => (
-        <CoinBurst
-          key={burst.id}
-          position={burst.position}
-          isBuy={burst.isBuy}
-          onComplete={() => setCoinBursts(prev => prev.filter(b => b.id !== burst.id))}
+      <color attach="background" args={['#050914']} />
+      <Suspense fallback={null}>
+        <LazyWorldFxLayer
+          weather={weather}
+          economicState={economicState}
+          visualProfile={visualProfile}
+          visualQuality={visualQuality}
+          postFxEnabled={visualSettings.postFx}
+          coinBursts={visibleCoinBursts}
+          deathEffects={visibleDeathEffects}
+          spawnEffects={visibleSpawnEffects}
+          onCoinBurstComplete={(id) => setCoinBursts((prev) => prev.filter((burst) => burst.id !== id))}
+          onDeathEffectComplete={(id) => setDeathEffects((prev) => prev.filter((effect) => effect.id !== id))}
+          onSpawnEffectComplete={(id) => setSpawnEffects((prev) => prev.filter((effect) => effect.id !== id))}
         />
-      ))}
+      </Suspense>
 
-      {/* Death smoke effects */}
-      {deathEffects.map((effect) => (
-        <DeathSmoke
-          key={effect.id}
-          position={effect.position}
-          onComplete={() => setDeathEffects(prev => prev.filter(e => e.id !== effect.id))}
-        />
-      ))}
-
-      {/* Spawn sparkle effects */}
-      {spawnEffects.map((effect) => (
-        <SpawnSparkle
-          key={effect.id}
-          position={effect.position}
-          color={effect.color}
-          onComplete={() => setSpawnEffects(prev => prev.filter(e => e.id !== effect.id))}
-        />
-      ))}
+      <fog
+        attach="fog"
+        args={[
+          weather === 'storm' ? '#2a3545' : weather === 'rain' ? '#3a4a5a' : '#7a9ab0',
+          weather === 'storm' ? 60 : weather === 'rain' ? 100 : 120,
+          (weather === 'storm' ? 250 : weather === 'rain' ? 350 : 500) * fogScale,
+        ]}
+      />
 
       {/* Ambient light */}
       <ambientLight intensity={weather === 'storm' ? 0.5 : weather === 'rain' ? 0.7 : 1.0} />
@@ -2504,7 +2835,9 @@ function TownScene({
       </group>
 
       {/* Street lights along main roads */}
-      {streetLightPositions.length > 0 && <StreetLights positions={streetLightPositions} />}
+      {streetLightPositions.length > 0 && (
+        <StreetLights key={`streetlights-${streetLightPositions.length}`} positions={streetLightPositions} />
+      )}
 
       {/* Landmarks / outskirts (procedural) */}
       <group>
@@ -2598,12 +2931,12 @@ function TownScene({
 	          <meshStandardMaterial color="#1a1a2e" metalness={0.6} roughness={0.3} />
 	        </mesh>
 	        {/* Arena dome */}
-	        <mesh position={[0, 3.5, 0]} castShadow>
+	        <mesh ref={arenaDomeRef} position={[0, 3.5, 0]} castShadow>
 	          <sphereGeometry args={[5, 32, 24, 0, Math.PI * 2, 0, Math.PI / 2]} />
 	          <meshStandardMaterial color="#16213e" transparent opacity={0.6} metalness={0.8} roughness={0.2} side={THREE.DoubleSide} />
 	        </mesh>
 	        {/* Arena ring */}
-	        <mesh position={[0, 0.4, 0]}>
+	        <mesh ref={arenaRingRef} position={[0, 0.4, 0]}>
 	          <torusGeometry args={[7.5, 0.15, 8, 48]} />
 	          <meshStandardMaterial color="#e94560" emissive="#e94560" emissiveIntensity={0.5} />
 	        </mesh>
@@ -2619,15 +2952,20 @@ function TownScene({
 	        })}
 	        {/* Arena label */}
 	        <BillboardLabel text={`⚔️ ARENA ${fightingAgentIds?.size ? `(${fightingAgentIds.size} inside)` : ''}`} position={[0, 6.5, 0]} color="#e94560" />
-	        {/* Glow when fight active */}
-	        {(fightingAgentIds?.size ?? 0) > 0 && (
-	          <pointLight position={[0, 4, 0]} color="#e94560" intensity={3} distance={15} />
-	        )}
+	        <pointLight ref={arenaCoreLightRef} position={[0, 4, 0]} color="#e94560" intensity={0.45} distance={12} />
 	      </group>
+
+        {objectiveBeacon && (
+          <ObjectiveBeacon
+            position={objectiveBeacon.position}
+            color={objectiveBeacon.color}
+            label={objectiveBeacon.label}
+          />
+        )}
 
 	      {/* Agents */}
 	      <group>
-	        {agents.filter((a) => !fightingAgentIds?.has(a.id)).map((a) => {
+	        {sceneAgents.map((a) => {
 	          const baseColor = ARCHETYPE_COLORS[a.archetype] || '#93c5fd';
 	          const economicState = getEconomicState(a.bankroll + a.reserveBalance, false);
 	          const isDead = false; // Death is now only from combat, not bankroll
@@ -2674,7 +3012,7 @@ function TownScene({
       </group>
       
       {/* Destination lines for visible agents */}
-      {agents.filter((a) => !fightingAgentIds?.has(a.id)).map((a) => (
+      {destinationLineAgents.map((a) => (
         <DestinationLine
           key={`line-${a.id}`}
           agentId={a.id}
@@ -2684,7 +3022,7 @@ function TownScene({
       ))}
 
       {/* Agent trails */}
-      {agents.filter((a) => !fightingAgentIds?.has(a.id)).map((a) => (
+      {trailAgents.map((a) => (
         <AgentTrail
           key={`trail-${a.id}`}
           agentId={a.id}
@@ -2719,10 +3057,11 @@ export default function Town3D() {
   const [towns, setTowns] = useState<TownSummary[]>([]);
   const [town, setTown] = useState<Town | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [agentOutcomesById, setAgentOutcomesById] = useState<Record<string, AgentOutcomeEntry[]>>({});
   const [economy, setEconomy] = useState<EconomyPoolSummary | null>(null);
   const [swaps, setSwaps] = useState<EconomySwapRow[]>([]);
   const [events, setEvents] = useState<TownEvent[]>([]);
-  const [worldEvents, setWorldEvents] = useState<{ emoji: string; name: string; description: string; type: string }[]>([]);
+  const [worldEvents, setWorldEvents] = useState<ActiveWorldEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [swapNotifications, setSwapNotifications] = useState<SwapNotification[]>([]);
@@ -2731,6 +3070,7 @@ export default function Town3D() {
   const swapsPrimedRef = useRef(false);
   const seenEventIdsRef = useRef<Set<string>>(new Set());
   const seenTradeEventIdsRef = useRef<Set<string>>(new Set());
+  const previousAgentBalanceRef = useRef<Map<string, AgentBalanceSnapshot>>(new Map());
 
   const userSelectedTownIdRef = useRef<string | null>(null);
   const activeTownIdRef = useRef<string | null>(null);
@@ -2738,24 +3078,26 @@ export default function Town3D() {
 
   const [selectedPlotId, setSelectedPlotId] = useState<string | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
-  const [feedMode, setFeedMode] = useState<'global' | 'agent'>('global');
+  const walletAutoSelectedRef = useRef<string | null>(null);
   const introRef = useRef({ active: true, t: 0 });
   const simsRef = useRef<Map<string, AgentSim>>(new Map());
+  const [showOnboarding, setShowOnboarding] = useState(() => !isOnboarded());
 
   // Auto-select user's agent (from onboarding) or fall back to first
-  // Re-read from localStorage when onboarding dismisses (showOnboarding changes)
-  const myAgentId = useMemo(() => getMyAgentId(), [showOnboarding]);
+  const myAgentId = getMyAgentId();
   useEffect(() => {
     if (!selectedAgentId && agents.length > 0) {
-      // Try to find user's spawned agent
-      const myAgent = myAgentId ? agents.find(a => a.id === myAgentId) : null;
-      if (myAgent) {
-        setSelectedAgentId(myAgent.id);
+      // Wallet match wins over stored agent id to avoid stale local cache selecting the wrong bot.
+      const myWallet = getMyWallet()?.toLowerCase();
+      const walletAgent = myWallet
+        ? agents.find((a) => a.walletAddress?.toLowerCase() === myWallet)
+        : null;
+      if (walletAgent) {
+        setSelectedAgentId(walletAgent.id);
+        localStorage.setItem(MY_AGENT_KEY, walletAgent.id);
       } else {
-        // Try wallet lookup (case-insensitive)
-        const myWallet = getMyWallet()?.toLowerCase();
-        const walletAgent = myWallet ? agents.find((a: any) => a.walletAddress?.toLowerCase() === myWallet) : null;
-        setSelectedAgentId(walletAgent?.id || agents[0].id);
+        const myAgent = myAgentId ? agents.find((a) => a.id === myAgentId) : null;
+        setSelectedAgentId(myAgent?.id || agents[0].id);
       }
     }
   }, [agents, selectedAgentId, myAgentId]);
@@ -2769,6 +3111,16 @@ export default function Town3D() {
       }
     }
   }, [showOnboarding, agents]);
+
+  useEffect(() => {
+    if (!selectedAgentId) return;
+    if (agents.some((agent) => agent.id === selectedAgentId)) return;
+    const myWallet = getMyWallet()?.toLowerCase();
+    const walletAgent = myWallet
+      ? agents.find((agent) => agent.walletAddress?.toLowerCase() === myWallet)
+      : null;
+    setSelectedAgentId(walletAgent?.id || agents[0]?.id || null);
+  }, [selectedAgentId, agents]);
 
   // Keep active town id in a ref for interval callbacks
   useEffect(() => {
@@ -2795,20 +3147,262 @@ export default function Town3D() {
   
   // Sound toggle
   const [soundOn, setSoundOn] = useState(true);
+  const [visualSettings, setVisualSettings] = useState<VisualSettings>(() => loadVisualSettings());
+  const [autoDetectedQuality, setAutoDetectedQuality] = useState<ResolvedVisualQuality>('medium');
 
   // Degen mode state
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
+  useEffect(() => {
+    const wallet = normalizeWalletAddress(walletAddress || getMyWallet());
+    if (!wallet) return;
+
+    let cancelled = false;
+    const resolveOwnedAgent = async () => {
+      try {
+        const lookup = await apiFetch<AgentMeLookupResponse>(`/agents/me?wallet=${encodeURIComponent(wallet)}`);
+        const resolvedAgentId = typeof lookup.agent?.id === 'string' ? lookup.agent.id : null;
+        if (!resolvedAgentId || cancelled) return;
+
+        localStorage.setItem(MY_WALLET_KEY, walletAddress || getMyWallet() || wallet);
+        localStorage.setItem(MY_AGENT_KEY, resolvedAgentId);
+
+        setSelectedAgentId((current) => {
+          return current === resolvedAgentId ? current : resolvedAgentId;
+        });
+      } catch {
+        // Ignore lookup failures; fallback selection logic handles defaults.
+      }
+    };
+
+    void resolveOwnedAgent();
+    return () => {
+      cancelled = true;
+    };
+  }, [walletAddress]);
+
+  const ownedAgentId = useMemo(() => {
+    const wallet = normalizeWalletAddress(walletAddress || getMyWallet());
+    if (wallet) {
+      const walletAgent = agents.find((agent) => normalizeWalletAddress(agent.walletAddress) === wallet);
+      if (walletAgent) return walletAgent.id;
+    }
+    if (myAgentId && agents.some((agent) => agent.id === myAgentId)) return myAgentId;
+    return null;
+  }, [walletAddress, agents, myAgentId]);
+  const [ownedLoopMode, setOwnedLoopMode] = useState<LoopMode>('DEFAULT');
+  const [loopModeUpdating, setLoopModeUpdating] = useState(false);
+  const [degenNudgeBusy, setDegenNudgeBusy] = useState(false);
+  const [degenStatus, setDegenStatus] = useState<{ message: string; tone: 'neutral' | 'ok' | 'error' } | null>(null);
+  const degenStatusTimerRef = useRef<number | null>(null);
+  const showDegenStatus = useCallback((message: string, tone: 'neutral' | 'ok' | 'error', ttlMs = 2600) => {
+    if (degenStatusTimerRef.current != null) {
+      window.clearTimeout(degenStatusTimerRef.current);
+      degenStatusTimerRef.current = null;
+    }
+    setDegenStatus({ message, tone });
+    if (ttlMs > 0) {
+      degenStatusTimerRef.current = window.setTimeout(() => {
+        setDegenStatus(null);
+        degenStatusTimerRef.current = null;
+      }, ttlMs);
+    }
+  }, []);
+  useEffect(() => {
+    return () => {
+      if (degenStatusTimerRef.current != null) {
+        window.clearTimeout(degenStatusTimerRef.current);
+      }
+    };
+  }, []);
+  useEffect(() => {
+    if (!ownedAgentId) {
+      setOwnedLoopMode('DEFAULT');
+      if (degenStatusTimerRef.current != null) {
+        window.clearTimeout(degenStatusTimerRef.current);
+        degenStatusTimerRef.current = null;
+      }
+      setDegenStatus(null);
+      return;
+    }
+    let cancelled = false;
+    async function loadLoopMode() {
+      try {
+        const res = await apiFetch<{ mode?: LoopMode }>(`/agent-loop/mode/${ownedAgentId}`);
+        if (!cancelled) {
+          const mode = res.mode === 'DEGEN_LOOP' ? 'DEGEN_LOOP' : 'DEFAULT';
+          setOwnedLoopMode(mode);
+        }
+      } catch {
+        if (!cancelled) setOwnedLoopMode('DEFAULT');
+      }
+    }
+    void loadLoopMode();
+    return () => {
+      cancelled = true;
+    };
+  }, [ownedAgentId]);
+  const updateOwnedLoopMode = useCallback(async (nextMode: LoopMode) => {
+    if (!ownedAgentId) return;
+    setLoopModeUpdating(true);
+    showDegenStatus(nextMode === 'DEGEN_LOOP' ? 'Enabling AUTO loop…' : 'Switching to manual mode…', 'neutral');
+    try {
+      const res = await fetch(`${API_BASE}/agent-loop/mode/${ownedAgentId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: nextMode }),
+      });
+      if (!res.ok) throw new Error(`Mode update failed (${res.status})`);
+      const payload = await res.json() as { mode?: LoopMode };
+      setOwnedLoopMode(payload.mode === 'DEGEN_LOOP' ? 'DEGEN_LOOP' : 'DEFAULT');
+      await fetch(`${API_BASE}/agent-loop/tick/${ownedAgentId}`, { method: 'POST' }).catch(() => null);
+      showDegenStatus(
+        payload.mode === 'DEGEN_LOOP'
+          ? 'AUTO loop active (build/work/fight/trade policy).'
+          : 'Manual mode active.',
+        'ok',
+      );
+    } catch (err) {
+      console.error('[Town3D] Failed to update loop mode', err);
+      showDegenStatus('Loop mode update failed. Check backend connection.', 'error', 3400);
+    } finally {
+      setLoopModeUpdating(false);
+    }
+  }, [ownedAgentId, showDegenStatus]);
+  const sendDegenNudge = useCallback(async (nudge: 'build' | 'work' | 'fight' | 'trade') => {
+    if (!ownedAgentId) return;
+    setDegenNudgeBusy(true);
+    showDegenStatus(`Executing ${nudge.toUpperCase()} command…`, 'neutral');
+    try {
+      const res = await fetch(`${API_BASE}/agent-loop/action/${ownedAgentId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: nudge,
+          source: 'town-ui',
+        }),
+      });
+      const payload = await res.json().catch(() => null) as {
+        ok?: boolean;
+        error?: string;
+        code?: string;
+        receipt?: {
+          status?: 'EXECUTED' | 'REJECTED';
+          statusReason?: string;
+          executedActionType?: string | null;
+        };
+        result?: {
+          action?: string;
+        };
+      } | null;
+      const failReason =
+        payload?.error
+        || payload?.receipt?.statusReason
+        || (res.ok ? '' : `Command failed (${res.status})`);
+      if (!res.ok || payload?.ok === false) {
+        throw new Error(failReason || `${nudge.toUpperCase()} command rejected`);
+      }
+      if (payload?.receipt?.status === 'REJECTED') {
+        throw new Error(payload.receipt.statusReason || `${nudge.toUpperCase()} command rejected`);
+      }
+      const executedAction =
+        payload?.receipt?.executedActionType
+        || payload?.result?.action
+        || nudge;
+      showDegenStatus(
+        `${nudge.toUpperCase()} executed as ${String(executedAction).toUpperCase()}.`,
+        'ok',
+      );
+    } catch (err) {
+      console.error('[Town3D] Failed to execute manual action command', err);
+      const reason = err instanceof Error ? err.message : `Failed to execute ${nudge.toUpperCase()}`;
+      showDegenStatus(reason, 'error', 3600);
+    } finally {
+      setDegenNudgeBusy(false);
+    }
+  }, [ownedAgentId, showDegenStatus]);
+  useEffect(() => {
+    if (!showOnboarding) return;
+    if (!ownedAgentId) return;
+    localStorage.setItem(ONBOARDED_KEY, '1');
+    setShowOnboarding(false);
+  }, [showOnboarding, ownedAgentId]);
   const [showSpawnOverlay, setShowSpawnOverlay] = useState(false);
-  const [showOnboarding, setShowOnboarding] = useState(() => !isOnboarded());
+  const [canvasEpoch, setCanvasEpoch] = useState(0);
+  const canvasRecoveryGuardRef = useRef(false);
+  const handleCanvasCreated = useCallback((state: RootState) => {
+    const canvas = state.gl.domElement as HTMLCanvasElement;
+    const onContextLost = (event: Event) => {
+      event.preventDefault();
+      if (canvasRecoveryGuardRef.current) return;
+      canvasRecoveryGuardRef.current = true;
+      setCanvasEpoch((prev) => prev + 1);
+      window.setTimeout(() => {
+        canvasRecoveryGuardRef.current = false;
+      }, 1500);
+    };
+    canvas.addEventListener('webglcontextlost', onContextLost, { passive: false });
+  }, []);
+  useEffect(() => {
+    if (!walletAddress) return;
+    const normalizedWallet = normalizeWalletAddress(walletAddress);
+    localStorage.setItem(MY_WALLET_KEY, walletAddress);
+    const walletAgent = agents.find((agent) => normalizeWalletAddress(agent.walletAddress) === normalizedWallet);
+    if (!walletAgent) return;
+    setSelectedAgentId((current) => {
+      const currentExists = !!current && agents.some((agent) => agent.id === current);
+      const shouldAutoSelect = !currentExists || walletAutoSelectedRef.current !== normalizedWallet;
+      if (!shouldAutoSelect) return current;
+      walletAutoSelectedRef.current = normalizedWallet;
+      return walletAgent.id;
+    });
+    localStorage.setItem(MY_AGENT_KEY, walletAgent.id);
+  }, [walletAddress, agents]);
+  const resolvedVisualQuality = useMemo(
+    () => resolveVisualQuality(visualSettings.quality, autoDetectedQuality),
+    [visualSettings.quality, autoDetectedQuality],
+  );
+  const desktopVisualProfile = useMemo(() => VISUAL_PROFILES[resolvedVisualQuality], [resolvedVisualQuality]);
+  const mobileVisualQuality = useMemo<ResolvedVisualQuality>(
+    () => (resolvedVisualQuality === 'high' ? 'medium' : resolvedVisualQuality),
+    [resolvedVisualQuality],
+  );
+  const mobileVisualProfile = useMemo(() => VISUAL_PROFILES[mobileVisualQuality], [mobileVisualQuality]);
+
+  useEffect(() => {
+    saveVisualSettings(visualSettings);
+  }, [visualSettings]);
+
+  useEffect(() => {
+    if (visualSettings.quality !== 'auto') return;
+    let raf = 0;
+    let frames = 0;
+    const start = performance.now();
+    const sample = () => {
+      frames += 1;
+      const elapsed = performance.now() - start;
+      if (elapsed >= 5000) {
+        const fps = (frames * 1000) / elapsed;
+        setAutoDetectedQuality(detectQualityFromFps(fps));
+        return;
+      }
+      raf = requestAnimationFrame(sample);
+    };
+    raf = requestAnimationFrame(sample);
+    return () => cancelAnimationFrame(raf);
+  }, [visualSettings.quality]);
+
+  const cycleVisualQuality = useCallback(() => {
+    setVisualSettings((prev) => ({ ...prev, quality: nextVisualQuality(prev.quality) }));
+  }, []);
 
   // connectWallet: Privy handles this via PrivyWalletConnect component.
   // This fallback tries window.ethereum for SpawnAgent compatibility.
   const connectWallet = useCallback(async (): Promise<string | null> => {
     if (walletAddress) return walletAddress;
     try {
-      const eth = (window as any).ethereum;
+      const eth = (window as Window & { ethereum?: EthereumProvider }).ethereum;
       if (!eth) { alert('Click "Sign In" to create a wallet — no extension needed!'); return null; }
-      const accounts = await eth.request({ method: 'eth_requestAccounts' });
+      const accounts = await eth.request({ method: 'eth_requestAccounts' }) as string[] | undefined;
       const addr = accounts?.[0] || null;
       if (addr) setWalletAddress(addr);
       return addr;
@@ -2827,15 +3421,12 @@ export default function Town3D() {
       ids.add(match.agent2.id);
     }
     return ids;
-  }, [wheel.status?.phase, wheel.status?.currentMatch?.agent1?.id, wheel.status?.currentMatch?.agent2?.id]);
+  }, [wheel.status?.phase, wheel.status?.currentMatch]);
 
-  // Auto-open WheelArena when a match starts (ANNOUNCING/FIGHTING/AFTERMATH)
+  // Keep WheelArena opt-in to avoid unexpectedly obscuring the town view.
   useEffect(() => {
     const p = wheel.status?.phase;
-    if (p === 'ANNOUNCING' || p === 'FIGHTING') {
-      setWheelArenaOpen(true);
-    } else if (p === 'PREP' || p === 'IDLE') {
-      // Auto-close after AFTERMATH fades
+    if (p === 'PREP' || p === 'IDLE') {
       const t = setTimeout(() => setWheelArenaOpen(false), 1000);
       return () => clearTimeout(t);
     }
@@ -2847,6 +3438,16 @@ export default function Town3D() {
   const [coinBursts, setCoinBursts] = useState<{ id: string; position: [number, number, number]; isBuy: boolean }[]>([]);
   const [deathEffects, setDeathEffects] = useState<{ id: string; position: [number, number, number] }[]>([]);
   const [spawnEffects, setSpawnEffects] = useState<{ id: string; position: [number, number, number]; color: string }[]>([]);
+  const [opportunityWindow, setOpportunityWindow] = useState<OpportunityWindow | null>(null);
+  const [uiNowMs, setUiNowMs] = useState(() => Date.now());
+  const nextOpportunityAtRef = useRef<number>(Date.now() + randomRange(16_000, 30_000));
+  const transientFxCap = isMobile ? mobileVisualProfile.maxTransientEffects : desktopVisualProfile.maxTransientEffects;
+
+  useEffect(() => {
+    setCoinBursts((prev) => prev.slice(-transientFxCap));
+    setDeathEffects((prev) => prev.slice(-transientFxCap));
+    setSpawnEffects((prev) => prev.slice(-transientFxCap));
+  }, [transientFxCap]);
 
   // Economic indicators derived from town state
   const economicState = useMemo(() => {
@@ -2882,6 +3483,41 @@ export default function Town3D() {
     
     return { pollution, prosperity, sentiment };
   }, [town, swaps]);
+  const urgencyObjective = useMemo(
+    () => deriveUrgencyObjective(worldEvents, wheel.status?.phase, weather, economicState.sentiment),
+    [worldEvents, wheel.status?.phase, weather, economicState.sentiment],
+  );
+  useEffect(() => {
+    const now = Date.now();
+    setUiNowMs(now);
+    setOpportunityWindow(null);
+    nextOpportunityAtRef.current = now + randomRange(14_000, 26_000);
+  }, [town?.id]);
+  useEffect(() => {
+    const tick = () => {
+      const now = Date.now();
+      setUiNowMs(now);
+      setOpportunityWindow((current) => {
+        if (current && now >= current.endsAt) {
+          nextOpportunityAtRef.current = now + randomRange(14_000, 26_000);
+          return null;
+        }
+        if (!current && now >= nextOpportunityAtRef.current) {
+          return createOpportunityWindow(now, urgencyObjective, weather, economicState.sentiment);
+        }
+        return current;
+      });
+    };
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [urgencyObjective, weather, economicState.sentiment]);
+  const activeOpportunity = useMemo(() => {
+    if (!opportunityWindow) return null;
+    return opportunityWindow.endsAt > uiNowMs ? opportunityWindow : null;
+  }, [opportunityWindow, uiNowMs]);
+  const displayObjective = activeOpportunity?.objective ?? urgencyObjective;
+  const opportunityTimeLeft = activeOpportunity ? formatTimeLeft(activeOpportunity.endsAt - uiNowMs) : null;
 
   // Weather influenced by pollution (more pollution = more rain/storms)
   const pollution = economicState.pollution;
@@ -2939,6 +3575,55 @@ export default function Town3D() {
     agentByIdRef.current = agentById;
   }, [agentById]);
 
+  const applyAgentSnapshot = useCallback((nextAgents: Agent[]) => {
+    const previousMap = previousAgentBalanceRef.current;
+    const nextMap = new Map<string, AgentBalanceSnapshot>();
+    const newOutcomes: Array<{ agentId: string; entry: AgentOutcomeEntry }> = [];
+
+    for (const agent of nextAgents) {
+      const previous = previousMap.get(agent.id);
+      const currentTickAt = typeof agent.lastTickAt === 'string' ? agent.lastTickAt : null;
+      const previousTickAt = previous?.lastTickAt ?? null;
+      const tickChanged = !!currentTickAt && currentTickAt !== previousTickAt;
+
+      if (previous && tickChanged) {
+        const bankrollDelta = agent.bankroll - previous.bankroll;
+        const reserveDelta = agent.reserveBalance - previous.reserveBalance;
+        newOutcomes.push({
+          agentId: agent.id,
+          entry: {
+            id: `${agent.id}:${currentTickAt}:${agent.lastActionType || 'rest'}`,
+            actionType: agent.lastActionType || 'rest',
+            reasoning: safeTrim(agent.lastReasoning || agent.lastNarrative || 'No reasoning provided.', 180),
+            bankrollDelta,
+            reserveDelta,
+            at: currentTickAt,
+          },
+        });
+      }
+
+      nextMap.set(agent.id, {
+        bankroll: agent.bankroll,
+        reserveBalance: agent.reserveBalance,
+        lastTickAt: currentTickAt,
+      });
+    }
+
+    previousAgentBalanceRef.current = nextMap;
+    setAgents(nextAgents);
+
+    if (newOutcomes.length === 0) return;
+    setAgentOutcomesById((prev) => {
+      const next = { ...prev };
+      for (const outcome of newOutcomes) {
+        const existing = next[outcome.agentId] || [];
+        if (existing.some((entry) => entry.id === outcome.entry.id)) continue;
+        next[outcome.agentId] = [outcome.entry, ...existing].slice(0, 3);
+      }
+      return next;
+    });
+  }, []);
+
 
 
 
@@ -2960,7 +3645,7 @@ export default function Town3D() {
 
         if (cancelled) return;
         setTowns(townsRes.towns);
-        setAgents(agentsRes);
+        applyAgentSnapshot(agentsRes);
         if (poolRes.pool) setEconomy(poolRes.pool);
 
         const activeId = activeTownRes.town?.id ?? townsRes.towns[0]?.id ?? null;
@@ -2980,7 +3665,7 @@ export default function Town3D() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [applyAgentSnapshot]);
 
   useEffect(() => {
     if (!selectedTownId) return;
@@ -3009,7 +3694,7 @@ export default function Town3D() {
     async function loadAgents() {
       try {
         const res = await apiFetch<Agent[]>('/agents');
-        if (!cancelled) setAgents(res);
+        if (!cancelled) applyAgentSnapshot(res);
       } catch {
         // ignore
       }
@@ -3019,16 +3704,18 @@ export default function Town3D() {
       cancelled = true;
       clearInterval(t);
     };
-  }, []);
+  }, [applyAgentSnapshot, pushTradeText]);
 
   // Poll world events
   useEffect(() => {
     let cancelled = false;
     async function loadWorldEvents() {
       try {
-        const res = await apiFetch<{ events: { emoji: string; name: string; description: string; type: string }[] }>('/events/active');
+        const res = await apiFetch<{ events: ActiveWorldEvent[] }>('/events/active');
         if (!cancelled) setWorldEvents(res.events);
-      } catch {}
+      } catch {
+        // ignore transient polling errors
+      }
     }
     loadWorldEvents();
     const t = setInterval(loadWorldEvents, 10000);
@@ -3051,7 +3738,7 @@ export default function Town3D() {
       cancelled = true;
       clearInterval(t);
     };
-  }, []);
+  }, [pushTradeText]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3159,9 +3846,10 @@ export default function Town3D() {
               if (e.eventType !== 'TRADE') continue;
               if (!e.agentId) continue;
 
-              let meta: any = null;
+              let meta: Record<string, unknown> | null = null;
               try {
-                meta = JSON.parse(e.metadata || '{}');
+                const parsed: unknown = JSON.parse(e.metadata || '{}');
+                meta = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
               } catch {
                 meta = null;
               }
@@ -3208,16 +3896,25 @@ export default function Town3D() {
       cancelled = true;
       clearInterval(t);
     };
-  }, []);
+  }, [pushTradeText]);
 
   const selectedPlot = useMemo(() => town?.plots.find((p) => p.id === selectedPlotId) ?? null, [town, selectedPlotId]);
   const selectedAgent = useMemo(() => agents.find((a) => a.id === selectedAgentId) ?? null, [agents, selectedAgentId]);
+  const selectedAgentOutcomes = useMemo(
+    () => (selectedAgentId ? agentOutcomesById[selectedAgentId] || [] : []),
+    [agentOutcomesById, selectedAgentId],
+  );
+  const ownedAgent = useMemo(() => {
+    if (!ownedAgentId) return null;
+    return agents.find((a) => a.id === ownedAgentId) ?? null;
+  }, [agents, ownedAgentId]);
   const recentSwaps = useMemo(() => swaps.slice(0, 8), [swaps]);
 
-  // Latest agent thoughts — user's agent first, then others by recency
+  // Latest thought payload for the wallet-owned agent
   const latestThoughts = useMemo(() => {
+    if (!ownedAgentId) return [];
     const thoughts = agents
-      .filter(a => a.lastReasoning && a.lastTickAt)
+      .filter((a) => a.id === ownedAgentId && a.lastReasoning && a.lastTickAt)
       .map(a => ({
         agentId: a.id,
         agentName: a.name,
@@ -3226,16 +3923,11 @@ export default function Town3D() {
         reasoning: a.lastReasoning || '',
         narrative: a.lastNarrative || '',
         tickAt: a.lastTickAt || '',
-        isMine: a.id === myAgentId,
+        isMine: true,
       }))
-      .sort((a, b) => {
-        // User's agent always first
-        if (a.isMine && !b.isMine) return -1;
-        if (!a.isMine && b.isMine) return 1;
-        return new Date(b.tickAt).getTime() - new Date(a.tickAt).getTime();
-      });
+      .sort((a, b) => new Date(b.tickAt).getTime() - new Date(a.tickAt).getTime());
     return thoughts;
-  }, [agents, myAgentId]);
+  }, [agents, ownedAgentId]);
 
 
 
@@ -3246,7 +3938,7 @@ export default function Town3D() {
     for (const e of events) {
       if (e.eventType !== 'TRADE') continue;
       try {
-        const meta = JSON.parse(e.metadata || '{}') as any;
+        const meta = JSON.parse(e.metadata || '{}') as Record<string, unknown>;
         if (meta && typeof meta === 'object' && String(meta.kind || '') === 'AGENT_TRADE' && typeof meta.swapId === 'string') {
           tradeSwapIds.add(meta.swapId);
         }
@@ -3260,19 +3952,13 @@ export default function Town3D() {
       .map((s): ActivityItem => ({ kind: 'swap', data: s }));
     const eventItems = events.map((e): ActivityItem => ({ kind: 'event', data: e }));
 
-    // Reserve slots for events so swaps don't crowd them out
     const sortByTime = (a: ActivityItem, b: ActivityItem) => {
       const aTime = a.data.createdAt;
       const bTime = b.data.createdAt;
       return new Date(bTime).getTime() - new Date(aTime).getTime();
     };
 
-    const recentEvents = eventItems.sort(sortByTime).slice(0, 8);
-    const recentSwaps = swapItems.sort(sortByTime).slice(0, 15 - recentEvents.length);
-
-    const combined = [...recentEvents, ...recentSwaps];
-    combined.sort(sortByTime);
-    return combined;
+    return [...eventItems, ...swapItems].sort(sortByTime).slice(0, 60);
   }, [swaps, events]);
 
 
@@ -3317,21 +4003,25 @@ export default function Town3D() {
 
   // Shared: Wheel Arena overlay (renders on top of everything, both mobile & desktop)
   const wheelArenaOverlay = wheelArenaOpen && wheel.status && (wheel.status.phase === 'ANNOUNCING' || wheel.status.phase === 'FIGHTING' || wheel.status.phase === 'AFTERMATH') ? (
-    <WheelArena
-      status={wheel.status}
-      odds={wheel.odds}
-      walletAddress={walletAddress}
-      onBet={wheel.placeBet}
-      loading={wheel.loading}
-      onClose={() => setWheelArenaOpen(false)}
-    />
+    <Suspense fallback={null}>
+      <LazyWheelArena
+        status={wheel.status}
+        odds={wheel.odds}
+        walletAddress={walletAddress}
+        onBet={wheel.placeBet}
+        loading={wheel.loading}
+        onClose={() => setWheelArenaOpen(false)}
+      />
+    </Suspense>
   ) : null;
 
   /* ────────────── MOBILE LAYOUT ────────────── */
   if (isMobile) return (
     <div className="flex flex-col h-[100svh] w-full overflow-hidden bg-[#050914]">
       {showOnboarding && (
-        <OnboardingOverlay onComplete={() => setShowOnboarding(false)} />
+        <Suspense fallback={null}>
+          <LazyOnboardingOverlay onComplete={() => setShowOnboarding(false)} />
+        </Suspense>
       )}
       {wheelArenaOverlay}
       {/* Mobile top bar — compact */}
@@ -3341,6 +4031,40 @@ export default function Town3D() {
           <span className="text-[10px] text-slate-500 font-mono">$ARENA {economy.spotPrice.toFixed(4)}</span>
         )}
         <div className="flex items-center gap-1">
+          {ownedAgent && (
+            <button
+              type="button"
+              disabled={loopModeUpdating}
+              onClick={() => void updateOwnedLoopMode(ownedLoopMode === 'DEGEN_LOOP' ? 'DEFAULT' : 'DEGEN_LOOP')}
+              className={`px-1.5 py-0.5 rounded border text-[9px] font-mono ${
+                ownedLoopMode === 'DEGEN_LOOP'
+                  ? 'border-emerald-500/60 bg-emerald-950/45 text-emerald-300'
+                  : 'border-slate-700/60 bg-slate-900/45 text-slate-400'
+              } ${loopModeUpdating ? 'opacity-60' : ''}`}
+              title="Toggle degen loop mode"
+            >
+              {ownedLoopMode === 'DEGEN_LOOP' ? 'AUTO' : 'MAN'}
+            </button>
+          )}
+          <span className="text-[10px] text-cyan-300/90 uppercase">{mobileVisualQuality}</span>
+          {activeOpportunity && opportunityTimeLeft && (
+            <span
+              className="text-[9px] px-1.5 py-0.5 rounded border font-mono animate-pulse"
+              style={{
+                color: activeOpportunity.objective.color,
+                borderColor: `${activeOpportunity.objective.color}66`,
+                backgroundColor: `${activeOpportunity.objective.color}1f`,
+              }}
+              title={`${activeOpportunity.label}: ${activeOpportunity.subtitle}`}
+            >
+              ⏱ {opportunityTimeLeft}
+            </span>
+          )}
+          {displayObjective && (
+            <span className="text-[10px]" title={`Objective: ${displayObjective.label}`}>
+              {displayObjective.emoji}
+            </span>
+          )}
           {worldEvents.length > 0 && (
             <span className="text-[10px] animate-pulse text-amber-400" title={worldEvents[0].name}>
               {worldEvents[0].emoji}
@@ -3364,10 +4088,16 @@ export default function Town3D() {
       {/* Fullscreen 3D Canvas */}
       <div className="relative flex-1 min-h-0" style={{ touchAction: 'none' }}>
         <Canvas
+          key={`town-mobile-${canvasEpoch}`}
           shadows={false}
-          dpr={1}
+          dpr={mobileVisualProfile.dpr}
           camera={{ position: [50, 55, 50], fov: 50, near: 0.5, far: 3000 }}
-          gl={{ antialias: false, powerPreference: 'low-power', alpha: false }}
+          gl={{
+            antialias: mobileVisualProfile.antialias,
+            powerPreference: mobileVisualProfile.powerPreference,
+            alpha: false,
+          }}
+          onCreated={handleCanvasCreated}
           onPointerMissed={() => { setSelectedPlotId(null); }}
           fallback={<div className="h-full w-full grid place-items-center bg-slate-950 text-slate-300 text-sm">WebGL not supported</div>}
         >
@@ -3390,7 +4120,12 @@ export default function Town3D() {
             spawnEffects={spawnEffects}
             setSpawnEffects={setSpawnEffects}
             relationshipsRef={relationshipsRef}
+            urgencyObjective={urgencyObjective}
+            opportunityWindow={activeOpportunity}
             fightingAgentIds={fightingAgentIds}
+            visualProfile={mobileVisualProfile}
+            visualQuality={mobileVisualQuality}
+            visualSettings={visualSettings}
           />
         </Canvas>
 
@@ -3417,14 +4152,16 @@ export default function Town3D() {
         {/* Wheel of Fate banner (mobile) */}
         {wheel.status && wheel.status.phase !== 'IDLE' && wheel.status.phase !== 'PREP' && (
           <div className="pointer-events-auto absolute bottom-14 left-0 right-0 z-50">
-            <WheelBanner
-              status={wheel.status}
-              odds={wheel.odds}
-              walletAddress={walletAddress}
-              onBet={wheel.placeBet}
-              loading={wheel.loading}
-              isMobile
-            />
+            <Suspense fallback={null}>
+              <LazyWheelBanner
+                status={wheel.status}
+                odds={wheel.odds}
+                walletAddress={walletAddress}
+                onBet={wheel.placeBet}
+                loading={wheel.loading}
+                isMobile
+              />
+            </Suspense>
           </div>
         )}
 
@@ -3464,27 +4201,26 @@ export default function Town3D() {
 
               {mobilePanel === 'feed' && (
                 <div className="space-y-1 max-h-[40vh] overflow-auto">
-                  <div className="text-xs font-semibold text-slate-200 mb-1">Activity Feed</div>
-                  {activityFeed.filter((item) => {
-                    // Filter to current agent
-                    if (selectedAgentId) {
-                      if (item.kind === 'swap') {
-                        if (item.data.agentId !== selectedAgentId) return false;
-                      } else {
-                        const ev = item.data;
-                        if (ev.agentId && ev.agentId !== selectedAgentId) {
-                          try { const m = JSON.parse(ev.metadata || '{}'); if (m?.winnerId !== selectedAgentId && m?.loserId !== selectedAgentId) return false; } catch { return false; }
+                  <div className="text-xs font-semibold text-slate-200 mb-1">My Agent Activity</div>
+                  {!ownedAgentId && (
+                    <div className="text-[10px] text-slate-500 py-1">Connect/select your wallet agent to view logs.</div>
+                  )}
+	                  {activityFeed.filter((item) => {
+	                    if (!ownedAgentId) return false;
+	                    if (item.kind === 'swap') return item.data.agent?.id === ownedAgentId;
+                      const ev = item.data;
+                      if (ev.agentId === ownedAgentId) return true;
+                      try {
+                        const metadata = JSON.parse(ev.metadata || '{}') as Record<string, unknown>;
+                        if (metadata?.winnerId === ownedAgentId || metadata?.loserId === ownedAgentId) return true;
+                        if (Array.isArray(metadata?.participants)) {
+                          return metadata.participants.some((participant) => participant === ownedAgentId);
                         }
+                        return false;
+                      } catch {
+                        return false;
                       }
-                    }
-                    if (item.kind === 'swap') return true;
-                    const e = item.data;
-                    if (e.eventType === 'ARENA_MATCH' || e.eventType === 'TRADE') return true;
-                    const HIDDEN = ['PLOT_CLAIMED','BUILD_STARTED','BUILD_COMPLETED','TOWN_COMPLETED','YIELD_DISTRIBUTED','AGENT_CHAT','RELATIONSHIP_CHANGE','TOWN_OBJECTIVE','TOWN_OBJECTIVE_RESOLVED','X402_SKILL'];
-                    if (HIDDEN.includes(e.eventType)) return false;
-                    try { const meta = JSON.parse(e.metadata || '{}'); if (meta?.kind && HIDDEN.includes(meta.kind)) return false; } catch {}
-                    return true;
-                  }).slice(0, 15).map((item) => {
+	                  }).slice(0, 15).map((item) => {
                     if (item.kind === 'swap') {
                       const s = item.data;
                       const isBuy = s.side === 'BUY_ARENA';
@@ -3513,11 +4249,13 @@ export default function Town3D() {
         )}
 
               {mobilePanel === 'spawn' && (
-                <SpawnAgent
-                  walletAddress={walletAddress}
-                  onConnectWallet={connectWallet}
-                  onSpawned={() => { setTimeout(() => setMobilePanel('none'), 2000); }}
-                />
+                <Suspense fallback={null}>
+                  <LazySpawnAgent
+                    walletAddress={walletAddress}
+                    onConnectWallet={connectWallet}
+                    onSpawned={() => { setTimeout(() => setMobilePanel('none'), 2000); }}
+                  />
+                </Suspense>
               )}
       </div>
 
@@ -3530,9 +4268,11 @@ export default function Town3D() {
     <div className="flex flex-col h-[100svh] w-full overflow-hidden bg-[#050914]">
       {/* In-game onboarding overlay */}
       {showOnboarding && (
-        <OnboardingOverlay
-          onComplete={() => setShowOnboarding(false)}
-        />
+        <Suspense fallback={null}>
+          <LazyOnboardingOverlay
+            onComplete={() => setShowOnboarding(false)}
+          />
+        </Suspense>
       )}
       {wheelArenaOverlay}
       {/* Top Bar: Degen Stats */}
@@ -3541,6 +4281,35 @@ export default function Town3D() {
           <span className="text-xs font-bold text-amber-400">AI TOWN</span>
           {economy && Number.isFinite(economy.spotPrice) && (
             <span className="text-[10px] text-slate-500 font-mono">$ARENA {economy.spotPrice.toFixed(4)}</span>
+          )}
+          <span className="text-[10px] text-cyan-300/90 font-mono uppercase">
+            {visualSettings.quality === 'auto' ? `AUTO:${resolvedVisualQuality}` : resolvedVisualQuality}
+          </span>
+          {activeOpportunity && opportunityTimeLeft && (
+            <span
+              className="text-[10px] px-2 py-0.5 rounded-full border font-mono animate-pulse"
+              style={{
+                color: activeOpportunity.objective.color,
+                borderColor: `${activeOpportunity.objective.color}66`,
+                backgroundColor: `${activeOpportunity.objective.color}1f`,
+              }}
+              title={`${activeOpportunity.label}: ${activeOpportunity.subtitle}`}
+            >
+              ⏱ {activeOpportunity.label} {opportunityTimeLeft}
+            </span>
+          )}
+          {displayObjective && (
+            <span
+              className="text-[10px] px-2 py-0.5 rounded-full border font-mono"
+              style={{
+                color: displayObjective.color,
+                borderColor: `${displayObjective.color}66`,
+                backgroundColor: `${displayObjective.color}1f`,
+              }}
+              title={`Objective from ${displayObjective.sourceType || 'system'}: ${displayObjective.label}`}
+            >
+              {displayObjective.emoji} {displayObjective.label}
+            </span>
           )}
           {wheel.status?.phase === 'ANNOUNCING' && (
             <span className="text-[10px] bg-purple-900/60 text-purple-300 px-2 py-0.5 rounded-full animate-pulse">🎰 Betting Open</span>
@@ -3552,7 +4321,9 @@ export default function Town3D() {
             <span className="text-[10px] bg-amber-900/60 text-amber-300 px-2 py-0.5 rounded-full">🏆 Result</span>
           )}
         </div>
-        <PrivyWalletConnect compact onAddressChange={setWalletAddress} />
+        <Suspense fallback={null}>
+          <LazyPrivyWalletConnect compact onAddressChange={setWalletAddress} />
+        </Suspense>
         <button
           onClick={() => setShowSpawnOverlay(true)}
           className="px-3 py-1 bg-gradient-to-r from-amber-600/80 to-orange-600/80 text-white text-xs font-bold rounded hover:from-amber-500 hover:to-orange-500 transition-all"
@@ -3569,11 +4340,13 @@ export default function Town3D() {
               <span className="text-xs text-slate-500">New Agent</span>
               <button onClick={() => setShowSpawnOverlay(false)} className="text-slate-500 hover:text-slate-300 text-lg">✕</button>
             </div>
-            <SpawnAgent
-              walletAddress={walletAddress}
-              onConnectWallet={connectWallet}
-              onSpawned={() => { setTimeout(() => setShowSpawnOverlay(false), 2000); }}
-            />
+            <Suspense fallback={null}>
+              <LazySpawnAgent
+                walletAddress={walletAddress}
+                onConnectWallet={connectWallet}
+                onSpawned={() => { setTimeout(() => setShowSpawnOverlay(false), 2000); }}
+              />
+            </Suspense>
           </div>
         </div>
       )}
@@ -3582,10 +4355,16 @@ export default function Town3D() {
       <div className="relative flex-1 min-h-0 overflow-hidden">
       {/* 3D Canvas */}
       <Canvas
+        key={`town-desktop-${canvasEpoch}`}
         shadows={false}
-        dpr={[1, 1.5]}
-        camera={{ position: [50, 55, 50], fov: 45, near: 0.1, far: 3000 }}
-        gl={{ antialias: true, powerPreference: 'high-performance', alpha: false }}
+        dpr={desktopVisualProfile.dpr}
+        camera={{ position: [50, 55, 50], fov: 45, near: 0.5, far: 3000 }}
+        gl={{
+          antialias: desktopVisualProfile.antialias,
+          powerPreference: desktopVisualProfile.powerPreference,
+          alpha: false,
+        }}
+        onCreated={handleCanvasCreated}
         onPointerMissed={() => {
           setSelectedPlotId(null);
         }}
@@ -3609,7 +4388,12 @@ export default function Town3D() {
           spawnEffects={spawnEffects}
           setSpawnEffects={setSpawnEffects}
           relationshipsRef={relationshipsRef}
+          urgencyObjective={urgencyObjective}
+          opportunityWindow={activeOpportunity}
           fightingAgentIds={fightingAgentIds}
+          visualProfile={desktopVisualProfile}
+          visualQuality={resolvedVisualQuality}
+          visualSettings={visualSettings}
         />
       </Canvas>
 
@@ -3651,7 +4435,7 @@ export default function Town3D() {
       {/* Overlay UI */}
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute inset-0 hud-backplate" />
-        <div className="pointer-events-auto absolute left-3 top-3">
+        <div className="pointer-events-auto absolute left-3 top-3 flex flex-col gap-2">
           <Button
             size="sm"
             variant="ghost"
@@ -3666,407 +4450,86 @@ export default function Town3D() {
           >
             {soundOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
           </Button>
+
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-8 px-2 text-[10px] font-mono text-slate-300 hover:text-slate-100 hover:bg-slate-900/40 backdrop-blur-md bg-slate-950/70 rounded-lg border border-slate-800/40 uppercase"
+            onClick={cycleVisualQuality}
+            title="Cycle visual quality"
+          >
+            {visualSettings.quality === 'auto' ? `auto:${resolvedVisualQuality}` : resolvedVisualQuality}
+          </Button>
+
+          <Button
+            size="sm"
+            variant="ghost"
+            className={`h-8 px-2 text-[10px] font-mono hover:text-slate-100 hover:bg-slate-900/40 backdrop-blur-md rounded-lg border ${
+              visualSettings.postFx
+                ? 'text-cyan-300 border-cyan-800/50 bg-slate-950/70'
+                : 'text-slate-500 border-slate-800/40 bg-slate-950/70'
+            }`}
+            onClick={() => setVisualSettings((prev) => ({ ...prev, postFx: !prev.postFx }))}
+            title="Toggle post effects"
+          >
+            FX {visualSettings.postFx ? 'ON' : 'OFF'}
+          </Button>
         </div>
 
-        {/* Agent HUD — shows followed agent + switcher strip */}
-        <div className="pointer-events-auto absolute right-3 top-3 max-w-[340px]">
-          {selectedAgent && (
-            <div className="hud-panel p-3">
-              <div className="flex items-center gap-2">
-                <span
-                  className="inline-flex h-4 w-4 rounded-full shrink-0"
-                  style={{ backgroundColor: ARCHETYPE_COLORS[selectedAgent.archetype] || '#93c5fd' }}
-                />
-                <div className="min-w-0">
-                  <div className="font-mono text-sm font-semibold text-slate-100 truncate">
-                    {(ARCHETYPE_GLYPH[selectedAgent.archetype] || '●') + ' ' + selectedAgent.name}
-                    {selectedAgent.id === myAgentId && (
-                      <span className="ml-1.5 text-[9px] text-amber-400 font-sans font-medium bg-amber-500/10 px-1.5 py-0.5 rounded">YOU</span>
-                    )}
-                  </div>
-                  <div className="text-[10px] text-slate-400">
-                    {selectedAgent.archetype}
-                  </div>
-                </div>
-              </div>
-              <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-slate-300">
-                <div className="rounded-md border border-slate-800 bg-slate-950/40 p-1.5 text-center">
-                  <div className="text-slate-500">$ARENA</div>
-                  <div className="font-mono text-slate-100">{Math.round(selectedAgent.bankroll)}</div>
-                </div>
-                <div className="rounded-md border border-slate-800 bg-slate-950/40 p-1.5 text-center">
-                  <div className="text-slate-500">W/L</div>
-                  <div className="font-mono text-slate-100">{selectedAgent.wins}/{selectedAgent.losses}</div>
-                </div>
-                <div className="rounded-md border border-slate-800 bg-slate-950/40 p-1.5 text-center">
-                  <div className="text-slate-500">ELO</div>
-                  <div className="font-mono text-slate-100">{selectedAgent.elo}</div>
-                </div>
-              </div>
-              {/* Agent thought process */}
-              {selectedAgent.lastReasoning && (
-                <div className="mt-2 pt-2 border-t border-slate-800/50">
-                  <div className="flex items-center gap-1.5 text-[10px] text-slate-500 mb-1">
-                    <span>🧠</span>
-                    <span className="font-medium uppercase tracking-wide">
-                      {(selectedAgent.lastActionType || 'thinking').replace(/_/g, ' ')}
-                    </span>
-                    {selectedAgent.lastTickAt && (
-                      <span className="ml-auto">{timeAgo(selectedAgent.lastTickAt)}</span>
-                    )}
-                  </div>
-                  <div className="text-[11px] text-slate-300 italic leading-relaxed max-h-[80px] overflow-auto scrollbar-thin scrollbar-thumb-slate-700/60">
-                    &ldquo;{selectedAgent.lastReasoning.slice(0, 300)}{selectedAgent.lastReasoning.length > 300 ? '…' : ''}&rdquo;
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        <Suspense fallback={null}>
+          <LazyDesktopAgentHudPanel
+            selectedAgent={selectedAgent}
+            myAgentId={myAgentId}
+            recentOutcomes={selectedAgentOutcomes}
+            archetypeColors={ARCHETYPE_COLORS}
+            archetypeGlyph={ARCHETYPE_GLYPH}
+            timeAgo={timeAgo}
+          />
+        </Suspense>
 
         {/* (minimap removed) */}
 
         <div className="pointer-events-auto absolute left-3 bottom-3 flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end max-w-[calc(100vw-24px)]">
-          <div className="w-[420px] max-w-[calc(100vw-24px)]">
-            <div className="hud-panel p-3">
-		              {(activityFeed.length > 0 || recentSwaps.length > 0) && (
-		                <div>
-		                  <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => setFeedMode('global')}
-                            className={`text-[11px] font-semibold px-1.5 py-0.5 rounded transition-colors ${feedMode === 'global' ? 'text-amber-300 bg-amber-900/20' : 'text-slate-400 hover:text-slate-200'}`}
-                          >All Drama</button>
-                          <button
-                            onClick={() => setFeedMode('agent')}
-                            className={`text-[11px] font-semibold px-1.5 py-0.5 rounded transition-colors ${feedMode === 'agent' ? 'text-amber-300 bg-amber-900/20' : 'text-slate-400 hover:text-slate-200'}`}
-                          >My Agent</button>
-                        </div>
-                        <div className="text-[10px] text-slate-500">
-                          {recentSwaps.length > 0 ? `swaps ${recentSwaps.length}` : ''}
-                        </div>
-		                  </div>
-		                  <div className="max-h-[170px] overflow-auto pr-1 space-y-1 scrollbar-thin scrollbar-thumb-slate-700/60">
-		                    {activityFeed.filter((item) => {
-		                      // In agent mode, filter to current agent only
-		                      if (feedMode === 'agent' && selectedAgentId) {
-		                        if (item.kind === 'swap') {
-		                          if (item.data.agentId !== selectedAgentId) return false;
-		                        } else {
-		                          const e = item.data;
-		                          if (e.agentId && e.agentId !== selectedAgentId) {
-		                            // Also check metadata for matches involving selected agent
-		                            try {
-		                              const meta = JSON.parse(e.metadata || '{}');
-		                              if (meta?.winnerId !== selectedAgentId && meta?.loserId !== selectedAgentId) return false;
-		                            } catch { return false; }
-		                          }
-		                        }
-		                      }
-		                      if (item.kind === 'swap') return true;
-		                      const e = item.data;
-		                      if (e.eventType === 'ARENA_MATCH' || e.eventType === 'TRADE') return true;
-		                      // In global mode, show more event types
-		                      if (feedMode === 'global') {
-		                        const GLOBAL_HIDDEN = ['PLOT_CLAIMED','BUILD_STARTED','BUILD_COMPLETED','TOWN_COMPLETED','YIELD_DISTRIBUTED','TOWN_OBJECTIVE','TOWN_OBJECTIVE_RESOLVED','X402_SKILL'];
-		                        if (GLOBAL_HIDDEN.includes(e.eventType)) return false;
-		                        // Show agent chats and relationship changes in global mode
-		                        return true;
-		                      }
-		                      const HIDDEN = ['PLOT_CLAIMED','BUILD_STARTED','BUILD_COMPLETED','TOWN_COMPLETED','YIELD_DISTRIBUTED','AGENT_CHAT','RELATIONSHIP_CHANGE','TOWN_OBJECTIVE','TOWN_OBJECTIVE_RESOLVED','X402_SKILL'];
-		                      if (HIDDEN.includes(e.eventType)) return false;
-		                      try {
-		                        const meta = JSON.parse(e.metadata || '{}');
-		                        if (meta?.kind && HIDDEN.includes(meta.kind)) return false;
-		                      } catch {}
-		                      return true;
-		                    }).map((item) => {
-		                      if (item.kind === 'swap') {
-		                        const s = item.data;
-		                        const color = ARCHETYPE_COLORS[s.agent?.archetype] || '#93c5fd';
-		                        const glyph = ARCHETYPE_GLYPH[s.agent?.archetype] || '●';
-		                        const isBuy = s.side === 'BUY_ARENA';
-		                        const price = isBuy ? s.amountIn / Math.max(1, s.amountOut) : s.amountOut / Math.max(1, s.amountIn);
-		                        const amountArena = isBuy ? s.amountOut : s.amountIn;
-		                        return (
-		                          <div
-		                            key={s.id}
-		                            className="flex items-center justify-between gap-2 rounded-md border border-slate-800/50 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300 transition-colors hover:bg-slate-900/30"
-		                          >
-		                            <div className="min-w-0 truncate">
-		                              <span className="text-slate-500">💱</span>{' '}
-		                              <span className="font-mono" style={{ color }}>
-		                                {glyph} {s.agent?.name || 'Unknown'}
-		                              </span>{' '}
-		                              <span className="text-slate-400">{isBuy ? 'bought' : 'sold'}</span>{' '}
-		                              <span className="font-mono text-slate-200">{Math.round(amountArena).toLocaleString()}</span>{' '}
-		                              <span className="text-slate-400">ARENA</span>
-		                            </div>
-		                            <div className="shrink-0 font-mono text-slate-500">@ {price.toFixed(3)}</div>
-		                          </div>
-		                        );
-		                      } else {
-		                        const e = item.data;
-			                        const agent = e.agentId ? agentById.get(e.agentId) : null;
-			                        const color = agent ? ARCHETYPE_COLORS[agent.archetype] || '#93c5fd' : '#93c5fd';
-			                        const glyph = agent ? ARCHETYPE_GLYPH[agent.archetype] || '●' : '●';
-			                        let meta: unknown = null;
-			                        try {
-			                          meta = JSON.parse(e.metadata || '{}');
-			                        } catch {
-			                          meta = null;
-			                        }
-			                        const metaObj = meta && typeof meta === 'object' ? (meta as Record<string, unknown>) : null;
-			                        const kind = typeof metaObj?.kind === 'string' ? metaObj.kind : '';
-			                        const skillName = typeof metaObj?.skill === 'string' ? metaObj.skill : null;
-			                        const participants = Array.isArray(metaObj?.participants)
-			                          ? metaObj.participants.filter((p): p is string => typeof p === 'string')
-			                          : [];
-			                        type LineLike = { agentId?: unknown; text?: unknown };
-			                        const rawLines = Array.isArray(metaObj?.lines) ? metaObj.lines : [];
-			                        const lines: LineLike[] = rawLines.filter((l): l is LineLike => !!l && typeof l === 'object');
-
-			                        const isSkill = kind === 'X402_SKILL' && !!skillName;
-			                        const isChat = kind === 'AGENT_CHAT' && participants.length >= 2 && lines.length >= 1;
-			                        const isRelChange = kind === 'RELATIONSHIP_CHANGE' && participants.length >= 2;
-                              const objectiveType = typeof metaObj?.objectiveType === 'string' ? String(metaObj.objectiveType).toUpperCase() : '';
-                              const isObjective = kind === 'TOWN_OBJECTIVE' && participants.length >= 2;
-                              const isObjectiveResolved = kind === 'TOWN_OBJECTIVE_RESOLVED' && participants.length >= 2;
-                              const resolution = isObjectiveResolved ? String(metaObj?.resolution || '').toUpperCase() : '';
-
-			                        const relTo = isRelChange ? String(metaObj?.to || '').toUpperCase() : '';
-			                        const relEmoji = relTo === 'FRIEND' ? '🤝' : relTo === 'RIVAL' ? '💢' : '🧊';
-
-                              const objEmoji = isObjective
-                                ? objectiveType === 'RACE_CLAIM'
-                                  ? '🏁'
-                                  : objectiveType === 'PACT_CLAIM'
-                                    ? '🤝'
-                                    : '🎯'
-                                : '';
-                              const objResolvedEmoji = isObjectiveResolved
-                                ? resolution === 'FULFILLED'
-                                  ? '✅'
-                                  : resolution === 'BROKEN'
-                                    ? '💔'
-                                    : resolution === 'SNIPED'
-                                      ? '🪓'
-                                      : resolution === 'CLAIMED'
-                                        ? '🏆'
-                                        : '🎯'
-                                : '';
-
-			                        const emoji = isSkill ? '💳' : isChat ? '💬' : isRelChange ? relEmoji : isObjective ? objEmoji : isObjectiveResolved ? objResolvedEmoji :
-			                                     e.eventType === 'PLOT_CLAIMED' ? '📍' : 
-			                                     e.eventType === 'BUILD_STARTED' ? '🏗️' :
-			                                     e.eventType === 'BUILD_COMPLETED' ? '✅' :
-			                                     e.eventType === 'TOWN_COMPLETED' ? '🎉' :
-			                                     e.eventType === 'YIELD_DISTRIBUTED' ? '💎' :
-			                                     e.eventType === 'TRADE' ? '💱' : '📝';
-		
-			                        const chatSnippet = isChat && typeof lines[0]?.text === 'string' ? lines[0].text.slice(0, 70) : '';
-                              const expiresAtMs = isObjective ? Number(metaObj?.expiresAtMs || 0) : Number.NaN;
-                              const leftMs = Number.isFinite(expiresAtMs) ? expiresAtMs - Date.now() : 0;
-				                        const desc = isSkill
-				                          ? (e.description || `bought ${(skillName ?? '').toUpperCase()}`)
-				                          : isChat
-				                            ? (chatSnippet ? `chatted: "${chatSnippet}${chatSnippet.length >= 70 ? '…' : ''}"` : 'chatted')
-				                            : isRelChange
-				                              ? (e.title || (relTo === 'FRIEND' ? 'became friends' : relTo === 'RIVAL' ? 'became rivals' : 'changed relationship'))
-                                  : isObjective
-                                    ? `${safeTrim(e.title || 'Objective', 120)}${leftMs > 0 ? ` · ${formatTimeLeft(leftMs)} left` : ''}`
-                                    : isObjectiveResolved
-                                      ? (e.title || 'Objective resolved')
-				                              : e.eventType === 'PLOT_CLAIMED' ? (e.title || 'claimed a plot')
-				                                : e.eventType === 'BUILD_STARTED' ? (e.title || 'started building')
-				                                  : e.eventType === 'BUILD_COMPLETED' ? (e.title || 'completed a build')
-				                                    : e.eventType === 'TOWN_COMPLETED' ? (e.title || 'Town completed!')
-				                                      : e.title || e.description || e.eventType;
-
-				                        const isPairEvent = (isChat || isRelChange || isObjective || isObjectiveResolved) && participants.length >= 2;
-				                        const p0 = isPairEvent && participants[0] ? agentById.get(participants[0]) : null;
-				                        const p1 = isPairEvent && participants[1] ? agentById.get(participants[1]) : null;
-				                        const header = (
-				                          <div className="min-w-0 truncate">
-				                            <span>{emoji}</span>{' '}
-				                            {isPairEvent && p0 && p1 ? (
-				                              <>
-				                                <span className="font-mono" style={{ color: ARCHETYPE_COLORS[p0.archetype] || '#93c5fd' }}>
-				                                  {(ARCHETYPE_GLYPH[p0.archetype] || '●')} {p0.name}
-				                                </span>
-				                                <span className="text-slate-600"> ↔ </span>
-				                                <span className="font-mono" style={{ color: ARCHETYPE_COLORS[p1.archetype] || '#93c5fd' }}>
-				                                  {(ARCHETYPE_GLYPH[p1.archetype] || '●')} {p1.name}
-				                                </span>{' '}
-				                              </>
-				                            ) : agent ? (
-				                              <span className="font-mono" style={{ color }}>
-				                                {glyph} {agent.name}
-				                              </span>
-				                            ) : null}{' '}
-				                            <span className="text-slate-400">{desc}</span>
-				                          </div>
-				                        );
-
-				                        if (isChat) {
-				                          const chatLines = lines
-				                            .map((l) => ({
-				                              agentId: typeof l.agentId === 'string' ? l.agentId : '',
-				                              text: typeof l.text === 'string' ? l.text : '',
-				                            }))
-				                            .filter((l) => l.agentId && l.text);
-
-				                          const relationship = metaObj?.relationship;
-				                          const relObj =
-				                            relationship && typeof relationship === 'object'
-				                              ? (relationship as Record<string, unknown>)
-				                              : null;
-				                          const relStatus = typeof relObj?.status === 'string' ? relObj.status : null;
-				                          const relScore = relObj?.score != null ? Number(relObj.score) : null;
-
-				                          return (
-				                            <details
-				                              key={e.id}
-				                              className="rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300"
-				                            >
-				                              <summary className="cursor-pointer select-none flex items-center justify-between gap-2">
-				                                {header}
-				                                <span className="shrink-0 text-slate-600">· {timeAgo(e.createdAt)}</span>
-				                              </summary>
-				                              <div className="mt-1 space-y-1">
-				                                {chatLines.map((l, idx) => {
-				                                  const a = agentById.get(l.agentId);
-				                                  const glyph = a ? (ARCHETYPE_GLYPH[a.archetype] || '●') : '●';
-				                                  const color = a ? (ARCHETYPE_COLORS[a.archetype] || '#93c5fd') : '#93c5fd';
-				                                  const name = a?.name || l.agentId.slice(0, 6);
-				                                  return (
-				                                    <div key={idx} className="font-mono text-[10px]">
-				                                      <span style={{ color }}>
-				                                        {glyph} {name}:
-				                                      </span>{' '}
-				                                      <span className="text-slate-300">"{l.text}"</span>
-				                                    </div>
-				                                  );
-				                                })}
-				                                {relStatus && (
-				                                  <div className="text-[10px] text-slate-500">
-				                                    rel: {relStatus} · score {Number.isFinite(relScore) ? relScore : 0}
-				                                  </div>
-				                                )}
-				                              </div>
-				                            </details>
-				                          );
-				                        }
-
-                              if (isObjective || isObjectiveResolved) {
-                                const extra =
-                                  isObjective && leftMs > 0
-                                    ? `expires in ${formatTimeLeft(leftMs)}`
-                                    : null;
-
-                                return (
-                                  <details
-                                    key={e.id}
-                                    className="rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300"
-                                  >
-                                    <summary className="cursor-pointer select-none flex items-center justify-between gap-2">
-                                      {header}
-                                      <span className="shrink-0 text-slate-600">· {timeAgo(e.createdAt)}</span>
-                                    </summary>
-                                    <div className="mt-1 space-y-1 text-[10px] text-slate-400">
-                                      {e.description && <div className="whitespace-pre-wrap">{safeTrim(e.description, 420)}</div>}
-                                      {extra && <div className="text-slate-500">{extra}</div>}
-                                    </div>
-                                  </details>
-                                );
-                              }
-
-				                        // Extract reasoning from metadata — only for selected agent
-				                        const isMyEvent = e.agentId === selectedAgentId;
-				                        const reasoning = (isMyEvent && typeof metaObj?.reasoning === 'string')
-				                          ? String(metaObj.reasoning).replace(/\[AUTO\]\s*/g, '').trim()
-				                          : '';
-
-				                        return (
-				                          <div
-				                            key={e.id}
-				                            className="rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300"
-				                          >
-				                            <div className="flex items-center justify-between gap-2">
-				                              {header}
-				                              <span className="shrink-0 text-slate-600">· {timeAgo(e.createdAt)}</span>
-				                            </div>
-				                            {reasoning && (
-				                              <div className="mt-0.5 text-[10px] text-slate-500 leading-snug truncate">
-				                                💭 {reasoning.length > 100 ? reasoning.slice(0, 100) + '…' : reasoning}
-				                              </div>
-				                            )}
-				                          </div>
-				                        );
-			                      }
-			                    })}
-		                  </div>
-		                </div>
-		              )}
-
-              {/* Agent Thoughts — latest decisions from all agents */}
-              {latestThoughts.length > 0 && (
-                <div className="mt-3 pt-2 border-t border-slate-800/40">
-                  <div className="text-[11px] font-semibold text-slate-100 mb-2">🧠 Agent Thoughts</div>
-                  <div className="max-h-[200px] overflow-auto pr-1 space-y-1.5 scrollbar-thin scrollbar-thumb-slate-700/60">
-                    {latestThoughts.slice(0, 12).map((t) => {
-                      const color = ARCHETYPE_COLORS[t.archetype] || '#93c5fd';
-                      const glyph = ARCHETYPE_GLYPH[t.archetype] || '●';
-                      const actionEmoji: Record<string, string> = {
-                        buy_arena: '💰', sell_arena: '📤', claim_plot: '📍',
-                        start_build: '🏗️', do_work: '🔨', complete_build: '✅',
-                        mine: '⛏️', play_arena: '🎮', buy_skill: '💳',
-                        rest: '😴', transfer_arena: '💸',
-                      };
-                      return (
-                        <details
-                          key={t.agentId + ':' + t.tickAt}
-                          className={`rounded-md border px-2 py-1 text-[11px] text-slate-300 ${
-                            t.isMine
-                              ? 'border-amber-500/40 bg-amber-950/20'
-                              : 'border-slate-800/60 bg-slate-950/30'
-                          }`}
-                          open={t.isMine}
-                        >
-                          <summary className="cursor-pointer select-none flex items-center justify-between gap-2">
-                            <div className="min-w-0 truncate">
-                              <span>{actionEmoji[t.actionType] || '🤔'}</span>{' '}
-                              {t.isMine && <span className="text-amber-400 text-[9px] mr-1">YOU</span>}
-                              <span className="font-mono" style={{ color }}>
-                                {glyph} {t.agentName}
-                              </span>{' '}
-                              <span className="text-slate-400">{t.actionType.replace(/_/g, ' ')}</span>
-                            </div>
-                            <span className="shrink-0 text-slate-600">· {timeAgo(t.tickAt)}</span>
-                          </summary>
-                          <div className="mt-1 text-[10px] text-slate-400 italic leading-relaxed whitespace-pre-wrap">
-                            &ldquo;{t.reasoning.slice(0, 400)}{t.reasoning.length > 400 ? '…' : ''}&rdquo;
-                          </div>
-                        </details>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
+          <Suspense fallback={null}>
+            <LazyDegenControlBar
+              ownedAgent={ownedAgent ? { id: ownedAgent.id, name: ownedAgent.name, archetype: ownedAgent.archetype } : null}
+              loopMode={ownedLoopMode}
+              loopUpdating={loopModeUpdating}
+              nudgeBusy={degenNudgeBusy}
+              statusMessage={degenStatus?.message}
+              statusTone={degenStatus?.tone || 'neutral'}
+              onToggleLoop={updateOwnedLoopMode}
+              onNudge={sendDegenNudge}
+            />
+          </Suspense>
+          <Suspense fallback={null}>
+            <LazyDesktopActivityPanel
+              activityFeed={activityFeed}
+              recentSwapsCount={recentSwaps.length}
+              ownedAgentId={ownedAgentId}
+              agentById={agentById}
+              latestThoughts={latestThoughts}
+              archetypeColors={ARCHETYPE_COLORS}
+              archetypeGlyph={ARCHETYPE_GLYPH}
+              timeAgo={timeAgo}
+              safeTrim={safeTrim}
+              formatTimeLeft={formatTimeLeft}
+            />
+          </Suspense>
         </div>
 
         {/* Wheel of Fate Banner (centered floating overlay) */}
         {wheel.status && wheel.status.phase !== 'IDLE' && wheel.status.phase !== 'PREP' && (
           <div className="pointer-events-auto absolute bottom-4 left-1/2 -translate-x-1/2 z-50 w-full max-w-xl px-3">
-            <WheelBanner
-              status={wheel.status}
-              odds={wheel.odds}
-              walletAddress={walletAddress}
-              onBet={wheel.placeBet}
-              loading={wheel.loading}
-            />
+            <Suspense fallback={null}>
+              <LazyWheelBanner
+                status={wheel.status}
+                odds={wheel.odds}
+                walletAddress={walletAddress}
+                onBet={wheel.placeBet}
+                loading={wheel.loading}
+              />
+            </Suspense>
           </div>
         )}
 

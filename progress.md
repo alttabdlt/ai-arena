@@ -176,3 +176,15 @@ Original prompt: "yes, but are we able to implement build/work/fight > crypto lo
       - `artifacts/playwright-crew-live-owned/town-after-raid.png`
       - `artifacts/playwright-crew-live-owned/summary.json`
       - Confirmed visible + interactive: `DEGEN LOOP`, `Crew Orders`, `Raid`, crew badge, raid status line, and zero console errors in headed run.
+
+### Backend test stabilization (2026-02-15)
+
+- Fixed `town-lifecycle` integration failure by hardening small-treasury yield math in `TownService.distributeYield`:
+  - Added a contributor floor for tiny payout ticks.
+  - Added proportional remainder allocation to prevent full round-down to zero.
+  - `recipients` now reflects actual paid recipients.
+- Fixed `degen-staking` integration flake by making backer payout deterministic in `ArenaService.resolveMatch`:
+  - Backer yield distribution now runs synchronously during match resolution.
+  - On-chain recording remains async/best-effort.
+- Validation:
+  - `cd backend && npm test` → all passing (`12` files, `94` tests).

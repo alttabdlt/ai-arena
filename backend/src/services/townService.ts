@@ -17,7 +17,6 @@ import {
 } from '@prisma/client';
 import { prisma } from '../config/database';
 import { degenStakingService } from './degenStakingService';
-import { offchainAmmService } from './offchainAmmService';
 import { worldEventService } from './worldEventService';
 
 // ============================================
@@ -31,6 +30,9 @@ const YIELD_MULTIPLIER = 1.5; // Yield scales per level
 const BASE_PLOT_COST = 10; // $ARENA to claim a plot at level 1
 const COST_PER_LEVEL = 5; // Extra cost per level
 const MIN_API_CALLS_TO_BUILD = 3; // Minimum inference calls to complete a building
+const ECONOMY_INIT_RESERVE = Number.parseInt(process.env.ECONOMY_INIT_RESERVE || '10000', 10);
+const ECONOMY_INIT_ARENA = Number.parseInt(process.env.ECONOMY_INIT_ARENA || '10000', 10);
+const ECONOMY_INIT_FEE_BPS = Number.parseInt(process.env.ECONOMY_FEE_BPS || '100', 10);
 
 // Building types and their requirements
 // Open-ended building system — agents can build ANYTHING.
@@ -408,11 +410,23 @@ export class TownService {
       // Fix 6: Scarcity multiplier on claim cost
       const claimedCount = await tx.plot.count({ where: { townId, status: { not: 'EMPTY' } } });
       const pctTaken = town.totalPlots > 0 ? claimedCount / town.totalPlots : 0;
-      const scarcityMultiplier = 1 + Math.floor(pctTaken * 3);
-      const claimCost = Math.round((BASE_PLOT_COST + (town.level - 1) * COST_PER_LEVEL) * scarcityMultiplier * worldEventService.getCostMultiplier());
+      const scarcityMultiplier = 1 + Math.floor(pctTaken * 2);
+      const claimCostPerLevel = Math.max(1, Math.round(COST_PER_LEVEL * 0.6));
+      const levelScaledClaimBase = BASE_PLOT_COST + Math.max(0, town.level - 1) * claimCostPerLevel;
+      let claimCost = Math.round(levelScaledClaimBase * scarcityMultiplier * worldEventService.getCostMultiplier());
 
       // Check agent balance
       const agent = await tx.arenaAgent.findUniqueOrThrow({ where: { id: agentId } });
+      const ownedPlotsInTown = await tx.plot.count({
+        where: {
+          townId,
+          ownerId: agentId,
+        },
+      });
+      if (ownedPlotsInTown === 0) {
+        // Bootstrap discount so broke agents can still enter fresh towns.
+        claimCost = Math.max(5, Math.round(claimCost * 0.45));
+      }
       if (agent.bankroll < claimCost) {
         throw new Error(`Not enough $ARENA. Need ${claimCost}, have ${agent.bankroll}`);
       }
@@ -711,7 +725,19 @@ export class TownService {
       // Open-ended: any building type is allowed. Cost based on zone.
       const legacyReqs = BUILDING_REQUIREMENTS[bt];
       const baseCost = legacyReqs?.baseCost || ZONE_BASE_COST[plot.zone] || 15;
-      const buildCost = Math.round(baseCost * plot.town.level * worldEventService.getCostMultiplier());
+      const levelCostMultiplier = Math.max(1, 0.6 + plot.town.level * 0.4);
+      let buildCost = Math.round(baseCost * levelCostMultiplier * worldEventService.getCostMultiplier());
+      const hasBuiltOrInProgressInTown = await tx.plot.count({
+        where: {
+          townId: plot.townId,
+          ownerId: agentId,
+          status: { in: ['UNDER_CONSTRUCTION', 'BUILT'] },
+        },
+      });
+      if (hasBuiltOrInProgressInTown === 0) {
+        // First build in a town is discounted to kickstart build/work loops.
+        buildCost = Math.max(8, Math.round(buildCost * 0.5));
+      }
       const agent = await tx.arenaAgent.findUniqueOrThrow({ where: { id: agentId } });
       if (agent.bankroll < buildCost) {
         throw new Error(`Not enough $ARENA. Building ${bt} costs ${buildCost}, have ${agent.bankroll}`);
@@ -1012,8 +1038,15 @@ export class TownService {
       // This makes the economy zero-sum: mining withdraws, building deposits
       const POOL_FLOOR = 1000; // never drain pool below this
       if (arenaEarned > 0) {
-        const pool = await tx.economyPool.findFirst({ orderBy: { createdAt: 'desc' } });
-        if (pool && pool.arenaBalance - arenaEarned >= POOL_FLOOR) {
+        const pool = await tx.economyPool.findFirst({ orderBy: { createdAt: 'desc' } })
+          || await tx.economyPool.create({
+            data: {
+              reserveBalance: Math.max(1000, Math.floor(ECONOMY_INIT_RESERVE) || 10000),
+              arenaBalance: Math.max(1000, Math.floor(ECONOMY_INIT_ARENA) || 10000),
+              feeBps: Math.max(0, Math.min(1000, Math.floor(ECONOMY_INIT_FEE_BPS) || 100)),
+            },
+          });
+        if (pool.arenaBalance - arenaEarned >= POOL_FLOOR) {
           await tx.economyPool.update({
             where: { id: pool.id },
             data: { arenaBalance: { decrement: arenaEarned } },
@@ -1075,32 +1108,72 @@ export class TownService {
         throw new Error('Town is not complete — no yield to distribute');
       }
 
+      const contributions = await tx.townContribution.findMany({
+        where: { townId, yieldShare: { gt: 0 } },
+      });
+      if (contributions.length === 0) {
+        return { distributed: 0, recipients: 0 };
+      }
+
       // Fix 9: Yield comes from town treasury (totalInvested)
       // Apply event multipliers (BOOM = 2x, FESTIVAL = 3x for entertainment)
       const eventMult = worldEventService.getYieldMultiplier();
-      const baseYield = Math.min(town.yieldPerTick, Math.floor(town.totalInvested * 0.01));
-      const maxYield = Math.floor(baseYield * eventMult);
+      const treasuryPctCap = Math.floor(town.totalInvested * 0.01);
+      const baseYield = Math.min(
+        town.yieldPerTick,
+        Math.max(town.totalInvested > 0 ? 1 : 0, treasuryPctCap),
+      );
+      // Ensure small treasuries still produce non-zero rewards for contributors.
+      // Cap this floor to avoid runaway drain in crowded towns.
+      const contributorFloor = Math.min(4, contributions.length);
+      const maxYield = Math.min(
+        town.totalInvested,
+        Math.max(Math.floor(baseYield * eventMult), contributorFloor),
+      );
       if (maxYield <= 0) {
         return { distributed: 0, recipients: 0 };
       }
 
-      const contributions = await tx.townContribution.findMany({
-        where: { townId, yieldShare: { gt: 0 } },
+      const allocations = contributions.map((c) => {
+        const raw = maxYield * c.yieldShare;
+        const amount = Math.floor(raw);
+        return {
+          contributionId: c.id,
+          agentId: c.agentId,
+          amount,
+          fraction: raw - amount,
+          yieldShare: c.yieldShare,
+        };
       });
 
+      let remainder = maxYield - allocations.reduce((sum, item) => sum + item.amount, 0);
+      if (remainder > 0) {
+        allocations.sort((a, b) => {
+          if (b.fraction !== a.fraction) return b.fraction - a.fraction;
+          if (b.yieldShare !== a.yieldShare) return b.yieldShare - a.yieldShare;
+          return a.agentId.localeCompare(b.agentId);
+        });
+        for (let i = 0; i < allocations.length && remainder > 0; i += 1) {
+          allocations[i].amount += 1;
+          remainder -= 1;
+        }
+      }
+
       let totalDistributed = 0;
-      for (const c of contributions) {
-        const amount = Math.floor(maxYield * c.yieldShare);
+      let recipients = 0;
+      for (const allocation of allocations) {
+        const amount = allocation.amount;
         if (amount > 0) {
           await tx.arenaAgent.update({
-            where: { id: c.agentId },
+            where: { id: allocation.agentId },
             data: { bankroll: { increment: amount } },
           });
           await tx.townContribution.update({
-            where: { id: c.id },
+            where: { id: allocation.contributionId },
             data: { totalYieldClaimed: { increment: amount } },
           });
           totalDistributed += amount;
+          recipients += 1;
         }
       }
 
@@ -1112,7 +1185,7 @@ export class TownService {
         },
       });
 
-      return { distributed: totalDistributed, recipients: contributions.length };
+      return { distributed: totalDistributed, recipients };
     });
 
     // After transaction: distribute 30% of each agent's yield to their backers (non-blocking)

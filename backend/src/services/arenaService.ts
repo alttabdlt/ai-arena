@@ -82,6 +82,53 @@ export class ArenaService {
     }
   }
 
+  private pickPokerFallbackAction(validActionsRaw: string[], preferred?: string): string {
+    const validActions = Array.isArray(validActionsRaw)
+      ? validActionsRaw.map((a) => String(a || '').toLowerCase())
+      : [];
+    const has = (a: string) => validActions.includes(a);
+    if (preferred && has(preferred)) return preferred;
+    if (has('check')) return 'check';
+    if (has('call')) return 'call';
+    if (has('all-in')) return 'all-in';
+    if (has('fold')) return 'fold';
+    if (has('raise')) return 'raise';
+    return validActions[0] || 'fold';
+  }
+
+  private normalizePokerAction(actionRaw: string, validActionsRaw: string[]): string | null {
+    const validActions = Array.isArray(validActionsRaw)
+      ? validActionsRaw.map((a) => String(a || '').toLowerCase())
+      : [];
+    const has = (a: string) => validActions.includes(a);
+    const action = String(actionRaw || '').toLowerCase().trim();
+    if (!action) return null;
+    if (has(action)) return action;
+
+    // Common aliases / mismatches
+    if ((action === 'allin' || action === 'all in') && has('all-in')) return 'all-in';
+    if (action === 'bet') {
+      if (has('raise')) return 'raise';
+      if (has('all-in')) return 'all-in';
+    }
+    if (action === 'raise') {
+      if (has('all-in')) return 'all-in';
+      if (has('call')) return 'call';
+    }
+    if (action === 'call') {
+      if (has('check')) return 'check';
+      if (has('all-in')) return 'all-in';
+    }
+    if (action === 'check') {
+      if (has('call')) return 'call';
+      if (has('fold')) return 'fold';
+      if (has('all-in')) return 'all-in';
+    }
+
+    // Last-resort legal fallback
+    return this.pickPokerFallbackAction(validActions, action);
+  }
+
   // ============================================
   // Agent Management
   // ============================================
@@ -381,11 +428,19 @@ export class ArenaService {
     const gameState = JSON.parse(match.gameState);
     
     // Validate the action is legal (with auto-correction for common AI mistakes)
-    const validActions = engine.getValidActions(gameState, input.agentId);
-    if (validActions.length > 0 && typeof validActions[0] === 'string') {
-      let action = input.action.toLowerCase();
-      // Auto-correct common AI mistakes
-      if (!validActions.includes(action)) {
+    const validActionsRaw = engine.getValidActions(gameState, input.agentId);
+    if (validActionsRaw.length > 0 && typeof validActionsRaw[0] === 'string') {
+      const validActions = validActionsRaw.map((a: string) => String(a || '').toLowerCase());
+      let action = String(input.action || '').toLowerCase().trim();
+
+      if (match.gameType === 'POKER') {
+        const normalized = this.normalizePokerAction(action, validActions);
+        if (!normalized || !validActions.includes(normalized)) {
+          throw new Error(`Invalid action "${input.action}". Valid: ${validActions.join(', ')}`);
+        }
+        action = normalized;
+      } else if (!validActions.includes(action)) {
+        // Auto-correct common AI mistakes
         if (action === 'call' && validActions.includes('check')) {
           action = 'check'; // Call with nothing to call → check
         } else if (action === 'check' && validActions.includes('call')) {
@@ -395,8 +450,9 @@ export class ArenaService {
         } else {
           throw new Error(`Invalid action "${input.action}". Valid: ${validActions.join(', ')}`);
         }
-        input.action = action;
       }
+
+      input.action = action;
     }
     // For object-based valid actions (Battleship), validation happens in the engine
 
@@ -560,12 +616,22 @@ export class ArenaService {
         move = { action: 'fire', data: target, reasoning: 'AI error fallback', quip: '*static noises*', confidence: 0 };
       } else if (match.gameType === 'POKER') {
         // Poker validActions are strings: ['fold', 'check', 'call', 'raise', 'all-in']
-        const safeAction = validActions.includes('check') ? 'check' : validActions.includes('call') ? 'call' : 'fold';
+        const safeAction = this.pickPokerFallbackAction(validActions as string[]);
         move = { action: safeAction, reasoning: 'AI error fallback', quip: '*static noises*', confidence: 0 };
       } else {
         move = { action: validActions[0] || 'check', reasoning: 'AI error fallback', quip: '*static noises*', confidence: 0 };
       }
       cost = { inputTokens: 0, outputTokens: 0, costCents: 0, model: 'fallback', latencyMs: 0 };
+    }
+
+    // Enforce legal poker actions before submit to avoid wheel stalls from alias mismatches.
+    if (match.gameType === 'POKER') {
+      const validActions = engine.getValidActions(gameState, agentId);
+      if (validActions.length > 0 && typeof validActions[0] === 'string') {
+        move.action =
+          this.normalizePokerAction(String(move.action || ''), validActions as string[]) ||
+          this.pickPokerFallbackAction(validActions as string[]);
+      }
     }
 
     // Record cost
@@ -700,6 +766,16 @@ export class ArenaService {
     await this.updateOpponentRecord(match.player1Id, match.player2Id, winnerId);
     await this.updateOpponentRecord(match.player2Id, match.player1Id, winnerId);
 
+    // Distribute backer yield synchronously so outcomes are immediately observable.
+    if (winnerId && payout > 0) {
+      try {
+        const backerShare = Math.floor(payout * 0.3);
+        await degenStakingService.distributeYieldToBackers(winnerId, backerShare);
+      } catch (err: any) {
+        console.warn(`[Arena] Backer yield distribution failed: ${err?.message}`);
+      }
+    }
+
     // Post-match async operations — serialized to avoid SQLite contention crashes
     // Each runs sequentially with error isolation
     setTimeout(async () => {
@@ -719,22 +795,12 @@ export class ArenaService {
           }
         }
 
-        // 2. Distribute backer yield
-        if (winnerId && payout > 0) {
-          try {
-            const backerShare = Math.floor(payout * 0.3);
-            await degenStakingService.distributeYieldToBackers(winnerId, backerShare);
-          } catch (err: any) {
-            console.warn(`[Arena] Backer yield distribution failed: ${err?.message}`);
-          }
-        }
-
-        // 3. Prediction market resolution is handled by wheelOfFateService (canonical resolver).
+        // 2. Prediction market resolution is handled by wheelOfFateService (canonical resolver).
         //    Removed duplicate resolve call to prevent double payouts.
       } catch (err: any) {
         console.error(`[Arena] Post-match operations failed: ${err?.message}`);
       }
-    }, 500); // Small delay to let the wheel's own resolution run first
+    }, 100); // Keep short for test/runtime observability while preserving async serialization
   }
 
   // ============================================

@@ -29,6 +29,7 @@ Per global tick:
 1. Upkeep and solvency logic run for active agents.
 2. Rescue system may inject bankroll (capped by cooldown and window).
 3. Agents observe world state and decide actions.
+   - If LLM decisioning fails, agent loop automatically falls back to deterministic policy action selection for that tick.
 4. Actions execute via `claim_plot`, `start_build`, `do_work`, `complete_build`, `play_arena`, and swap pathways.
 5. `play_arena` executes a turbo poker duel path (strict wager check, live opponent selection, immediate match settlement, bankroll/ELO persistence, rivalry score updates).
 6. Explicit owner/manual commands can bypass AI decisioning through strict command execution (`OVERRIDE` mode) with reject reasons instead of silent reroutes.
@@ -68,6 +69,7 @@ Implemented protections in loop/economy paths:
 - Solvency rescue grants with:
   - cooldown
   - per-window max rescue count
+  - revival path for incapacitated agents
   - debt tracking
   - automatic repayment when bankroll recovers
 

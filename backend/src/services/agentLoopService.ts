@@ -1040,7 +1040,7 @@ export class AgentLoopService {
   }
 
   private canIssueSolvencyRescue(agent: Pick<ArenaAgent, 'id' | 'bankroll' | 'reserveBalance' | 'health'>): boolean {
-    if ((agent.health ?? 100) <= 0) return false;
+    // Deadlock guard: allow rescues to revive incapacitated agents so the town doesn't freeze.
     if (agent.bankroll > SOLVENCY_RESCUE_TRIGGER_BANKROLL) return false;
     if (agent.reserveBalance > SOLVENCY_RESCUE_TRIGGER_RESERVE) return false;
     const lastTick = this.lastRescueTickByAgentId.get(agent.id);
@@ -2783,43 +2783,83 @@ ${instructionTexts}
       { role: 'user', content: scratchpadBlock + commandBlock + instructionBlock + '\n\n' + worldState },
     ];
 
-    const spec = smartAiService.getModelSpec(agent.modelId);
-    const startTime = Date.now();
-    const response = await smartAiService.callModel(
-      spec,
-      messages,
-      smartAiService.getTemperature(agent.archetype as any),
-    );
-    const latencyMs = Date.now() - startTime;
-    const cost = smartAiService.calculateCost(spec, response.inputTokens, response.outputTokens, latencyMs);
-
-    // Parse the decision
     let action: AgentAction;
     let humanReply: string | undefined;
+    let latencyMs = 0;
+    let llmFallbackReason: string | null = null;
+    let cost: AICost = {
+      inputTokens: 0,
+      outputTokens: 0,
+      costCents: 0,
+      model: `fallback:${agent.modelId}`,
+      latencyMs: 0,
+    };
     try {
-      const parsed = JSON.parse(response.content);
-      action = {
-        type: parsed.type || 'rest',
-        reasoning: parsed.reasoning || 'No reasoning provided',
-        details: {
-          ...(parsed.details || {}),
-          // Preserve calculations in details for logging/display
-          ...(parsed.calculations ? { calculations: parsed.calculations } : {}),
-        },
-      };
-      // Capture humanReply for Telegram responses
-      if (typeof parsed.humanReply === 'string' && parsed.humanReply.trim()) {
-        humanReply = parsed.humanReply.trim().slice(0, 500);
+      const spec = smartAiService.getModelSpec(agent.modelId);
+      const startTime = Date.now();
+      const response = await smartAiService.callModel(
+        spec,
+        messages,
+        smartAiService.getTemperature(agent.archetype as any),
+      );
+      latencyMs = Date.now() - startTime;
+      cost = smartAiService.calculateCost(spec, response.inputTokens, response.outputTokens, latencyMs);
+
+      try {
+        const parsed = JSON.parse(response.content);
+        action = {
+          type: parsed.type || 'rest',
+          reasoning: parsed.reasoning || 'No reasoning provided',
+          details: {
+            ...(parsed.details || {}),
+            // Preserve calculations in details for logging/display
+            ...(parsed.calculations ? { calculations: parsed.calculations } : {}),
+          },
+        };
+        // Capture humanReply for Telegram responses
+        if (typeof parsed.humanReply === 'string' && parsed.humanReply.trim()) {
+          humanReply = parsed.humanReply.trim().slice(0, 500);
+        }
+      } catch {
+        llmFallbackReason = 'invalid decision JSON';
+        const nudge = this.extractDegenLoopNudge(userInstructions || []);
+        const fallback = this.decideDegenLoopAction(agent, obs, nudge);
+        action = {
+          ...fallback,
+          reasoning: `[AUTO-FALLBACK] LLM returned malformed decision JSON. ${fallback.reasoning}`,
+        };
       }
-    } catch {
+    } catch (err: any) {
+      const errMsg = safeTrim(err?.message || 'LLM unavailable', 180) || 'LLM unavailable';
+      llmFallbackReason = errMsg;
+      const nudge = this.extractDegenLoopNudge(userInstructions || []);
+      const fallback = this.decideDegenLoopAction(agent, obs, nudge);
       action = {
-        type: 'rest',
-        reasoning: `Couldn't decide. Raw thought: ${response.content.substring(0, 200)}`,
-        details: {},
+        ...fallback,
+        reasoning: `[AUTO-FALLBACK] LLM unavailable (${errMsg}). ${fallback.reasoning}`,
       };
+      cost = {
+        inputTokens: 0,
+        outputTokens: 0,
+        costCents: 0,
+        model: `fallback:${agent.modelId}`,
+        latencyMs: 0,
+      };
+      if (!humanReply && Array.isArray(userInstructions) && userInstructions.length > 0) {
+        humanReply = `Signal received. AI uplink is unstable, so I executed ${fallback.type} via deterministic fallback.`;
+      }
+      console.warn(`[AgentLoop] ${agent.name}: LLM decision fallback engaged (${errMsg})`);
     }
 
     const policyNotes: PolicyNote[] = [];
+    if (llmFallbackReason) {
+      policyNotes.push({
+        tier: 'hard_safety',
+        code: 'LLM_DECISION_FALLBACK',
+        message: `Deterministic fallback used (${llmFallbackReason}).`,
+        applied: true,
+      });
+    }
     const autonomyRateBefore = this.getOverrideRate(agent.id);
     const softPolicyEnabled = autonomyRateBefore < SOFT_POLICY_MAX_OVERRIDE_RATE;
     let softPolicyApplied = false;

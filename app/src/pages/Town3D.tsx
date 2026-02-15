@@ -152,6 +152,12 @@ interface AgentBalanceSnapshot {
   lastTickAt: string | null;
 }
 
+type ArenaOutcomeSignal = {
+  result: 'WIN' | 'LOSS' | 'DRAW';
+  delta: number;
+  at: string;
+};
+
 interface EconomyPoolSummary {
   id: string;
   reserveBalance: number;
@@ -1469,6 +1475,7 @@ function TownScene({
   urgencyObjective,
   opportunityWindow,
   fightingAgentIds,
+  arenaOutcomeByAgentId,
   visualProfile,
   visualQuality,
   visualSettings,
@@ -1495,6 +1502,7 @@ function TownScene({
   urgencyObjective: UrgencyObjective | null;
   opportunityWindow: OpportunityWindow | null;
   fightingAgentIds?: Set<string>;
+  arenaOutcomeByAgentId: Record<string, ArenaOutcomeSignal>;
   visualProfile: VisualProfile;
   visualQuality: ResolvedVisualQuality;
   visualSettings: VisualSettings;
@@ -2979,6 +2987,7 @@ function TownScene({
 	          const modColor = baseColorObj.multiplyScalar(economicColorMod);
 	          const color = isDead ? '#4b5563' : `#${modColor.getHexString()}`;
 	          const selected = a.id === selectedAgentId;
+	          const arenaOutcome = arenaOutcomeByAgentId[a.id] ?? null;
 	          return (
 	            <group
 	              key={a.id}
@@ -2994,6 +3003,7 @@ function TownScene({
 	                onClick={() => {}}
 	                simsRef={simsRef}
 	                economicState={economicState}
+                  arenaOutcome={arenaOutcome}
 	                BillboardLabel={BillboardLabel}
 	              />
 		              {tradeByAgentId[a.id]?.text && (
@@ -3904,6 +3914,21 @@ export default function Town3D() {
     () => (selectedAgentId ? agentOutcomesById[selectedAgentId] || [] : []),
     [agentOutcomesById, selectedAgentId],
   );
+  const arenaOutcomeByAgentId = useMemo(() => {
+    const byAgent: Record<string, ArenaOutcomeSignal> = {};
+    for (const [agentId, entries] of Object.entries(agentOutcomesById)) {
+      if (!Array.isArray(entries) || entries.length === 0) continue;
+      const duel = entries.find((entry) => entry.actionType === 'play_arena');
+      if (!duel) continue;
+      const result = duel.bankrollDelta > 0 ? 'WIN' : duel.bankrollDelta < 0 ? 'LOSS' : 'DRAW';
+      byAgent[agentId] = {
+        result,
+        delta: duel.bankrollDelta,
+        at: duel.at,
+      };
+    }
+    return byAgent;
+  }, [agentOutcomesById]);
   const ownedAgent = useMemo(() => {
     if (!ownedAgentId) return null;
     return agents.find((a) => a.id === ownedAgentId) ?? null;
@@ -4123,6 +4148,7 @@ export default function Town3D() {
             urgencyObjective={urgencyObjective}
             opportunityWindow={activeOpportunity}
             fightingAgentIds={fightingAgentIds}
+            arenaOutcomeByAgentId={arenaOutcomeByAgentId}
             visualProfile={mobileVisualProfile}
             visualQuality={mobileVisualQuality}
             visualSettings={visualSettings}
@@ -4391,6 +4417,7 @@ export default function Town3D() {
           urgencyObjective={urgencyObjective}
           opportunityWindow={activeOpportunity}
           fightingAgentIds={fightingAgentIds}
+          arenaOutcomeByAgentId={arenaOutcomeByAgentId}
           visualProfile={desktopVisualProfile}
           visualQuality={resolvedVisualQuality}
           visualSettings={visualSettings}

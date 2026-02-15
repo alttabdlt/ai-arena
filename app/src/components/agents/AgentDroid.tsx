@@ -4,7 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import { type Agent, type AgentSim, type AgentEconomicState } from './types';
 import { ARCHETYPE_GLYPH, getBodyConfig } from './agentVisuals';
 import { ArchetypeAccessories } from './AgentAccessories';
-import { EconomicStateEffect, ChatAura, ActionAura } from './AgentStateEffects';
+import { EconomicStateEffect, ChatAura, ActionAura, ArenaOutcomeAura, type ArenaOutcomeResult } from './AgentStateEffects';
 
 // Reuse BillboardLabel from Town3D (will be passed via import in Town3D)
 // We accept it as a render prop to avoid circular deps
@@ -15,6 +15,11 @@ interface AgentDroidProps {
   onClick: () => void;
   simsRef: React.MutableRefObject<Map<string, AgentSim>>;
   economicState: AgentEconomicState;
+  arenaOutcome?: {
+    result: ArenaOutcomeResult;
+    delta: number;
+    at: string;
+  } | null;
   BillboardLabel: React.ComponentType<{ text: string; position: [number, number, number]; color?: string }>;
 }
 
@@ -25,6 +30,7 @@ export function AgentDroid({
   onClick,
   simsRef,
   economicState,
+  arenaOutcome,
   BillboardLabel,
 }: AgentDroidProps) {
   const body = useRef<THREE.Mesh>(null);
@@ -49,6 +55,12 @@ export function AgentDroid({
     }
     return (hash >>> 0) * 0.000001;
   }, [agent.id]);
+  const arenaOutcomeAtMs = useMemo(() => {
+    const at = arenaOutcome?.at;
+    if (!at) return null;
+    const parsed = Date.parse(at);
+    return Number.isFinite(parsed) ? parsed : null;
+  }, [arenaOutcome?.at]);
 
   // Economic visual modifiers
   const scaleMod = economicState === 'BROKE' ? 0.92 : economicState === 'HOMELESS' ? 0.85 : 1.0;
@@ -387,6 +399,7 @@ export function AgentDroid({
         {/* Activity-specific effects */}
         {activity === 'CHATTING' && <ChatAura />}
         <ActionAura state={activity} />
+        <ArenaOutcomeAura outcome={arenaOutcome?.result ?? null} triggeredAtMs={arenaOutcomeAtMs} />
 
         {/* Economic state effects */}
         <EconomicStateEffect state={economicState} />

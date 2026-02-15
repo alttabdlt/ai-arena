@@ -4,6 +4,8 @@ import { useFrame } from '@react-three/fiber';
 import { type AgentEconomicState } from './types';
 import type { AgentState } from './types';
 
+export type ArenaOutcomeResult = 'WIN' | 'LOSS' | 'DRAW';
+
 // Thriving gold ring at feet
 export function ThrivingGlow() {
   const ringRef = useRef<THREE.Mesh>(null);
@@ -109,6 +111,84 @@ export function ActionAura({ state }: { state: AgentState }) {
           opacity={config.opacity}
           roughness={0.35}
           metalness={0.15}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+const ARENA_OUTCOME_AURA_CONFIG: Record<
+  ArenaOutcomeResult,
+  { color: string; baseOpacity: number; emissive: number; lift: number }
+> = {
+  WIN: { color: '#22c55e', baseOpacity: 0.52, emissive: 0.9, lift: 0.34 },
+  LOSS: { color: '#ef4444', baseOpacity: 0.48, emissive: 0.8, lift: 0.2 },
+  DRAW: { color: '#38bdf8', baseOpacity: 0.42, emissive: 0.65, lift: 0.26 },
+};
+
+export function ArenaOutcomeAura({
+  outcome,
+  triggeredAtMs,
+}: {
+  outcome: ArenaOutcomeResult | null;
+  triggeredAtMs: number | null;
+}) {
+  const ringRef = useRef<THREE.Mesh>(null);
+  const haloRef = useRef<THREE.Mesh>(null);
+  const LIFE_MS = 12000;
+
+  useFrame((frameState) => {
+    if (!outcome || !triggeredAtMs || !ringRef.current || !haloRef.current) return;
+    const age = Date.now() - triggeredAtMs;
+    if (age < 0 || age > LIFE_MS) {
+      ringRef.current.visible = false;
+      haloRef.current.visible = false;
+      return;
+    }
+
+    ringRef.current.visible = true;
+    haloRef.current.visible = true;
+
+    const cfg = ARENA_OUTCOME_AURA_CONFIG[outcome];
+    const life = Math.max(0, Math.min(1, age / LIFE_MS));
+    const fade = 1 - life;
+    const t = frameState.clock.elapsedTime;
+    const pulse = 1 + life * 2.2 + Math.sin(t * 12.5) * 0.08;
+    const lift = cfg.lift + Math.sin(t * 9.2) * 0.03;
+
+    ringRef.current.position.y = 0.06 + lift;
+    haloRef.current.position.y = 0.04 + lift * 0.7;
+    ringRef.current.scale.set(pulse, pulse, 1);
+    haloRef.current.scale.set(pulse * 0.88, pulse * 0.88, 1);
+
+    const ringMat = ringRef.current.material as THREE.MeshStandardMaterial;
+    ringMat.opacity = cfg.baseOpacity * fade;
+    ringMat.emissiveIntensity = cfg.emissive * fade;
+
+    const haloMat = haloRef.current.material as THREE.MeshBasicMaterial;
+    haloMat.opacity = (cfg.baseOpacity * 0.5) * fade;
+  });
+
+  if (!outcome || !triggeredAtMs) return null;
+
+  const cfg = ARENA_OUTCOME_AURA_CONFIG[outcome];
+  return (
+    <group>
+      <mesh ref={haloRef} position={[0, 0.16, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.38, 0.56, 32]} />
+        <meshBasicMaterial color={cfg.color} transparent opacity={cfg.baseOpacity * 0.5} depthWrite={false} />
+      </mesh>
+      <mesh ref={ringRef} position={[0, 0.2, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[0.64, 0.04, 10, 40]} />
+        <meshStandardMaterial
+          color={cfg.color}
+          emissive={cfg.color}
+          emissiveIntensity={cfg.emissive}
+          transparent
+          opacity={cfg.baseOpacity}
+          roughness={0.28}
+          metalness={0.25}
+          depthWrite={false}
         />
       </mesh>
     </group>

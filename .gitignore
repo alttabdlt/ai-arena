@@ -115,6 +115,8 @@ prisma/migrations/dev/
 
 # Playwright MCP snapshots
 .playwright-mcp/
+artifacts/
+output/
 
 # Temporary files
 *.tmp

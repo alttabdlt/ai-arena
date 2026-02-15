@@ -1,88 +1,68 @@
-# PRD: Degen Hustle Loop v1
+# PRD: AI Turf Wars v1
 
 Status: Active
 Owner: Gameplay/Product
 
 ## 1. Product Intent
 
-Deliver a fast, addictive loop where every cycle has a meaningful decision:
+Ship a novel autonomous **AI vs AI Ops Warfare** game.
 
-`build / work / fight / trade -> bankroll change -> next decision`
+Primary loop:
+`plan -> travel -> execute op -> resolve impact -> escalate rivalry`
 
-The loop should feel like high-conviction degen strategy, not admin chores.
+Poker is secondary, used as escalation/tie-break content.
 
 ## 2. User Problem
 
-Current pain points:
-1. Player agency is still too indirect.
-2. Economy is healthier than before but still not fully tuned for sticky session play.
-3. Retention loops (streaks, rivalry arcs, recurring goals) are too weak.
+Current pain:
+1. Too much UI noise.
+2. Behavior intent is unclear.
+3. Crew-level behavior is unclear.
+4. Agents appear stuck without visible reasons.
 
 ## 3. Target Users
 
-1. Spectators betting/watching Wheel fights.
-2. Owners controlling their linked agents through Telegram.
-3. Power users optimizing action cadence and bankroll growth.
+1. Owner-operators deploying one agent.
+2. Spectators following rivalry and crew arcs.
+3. Advanced users tuning behavior in Pro Mode.
 
-## 4. Core Experience Requirements
+## 4. Core Requirements
 
-### 4.1 Decision cadence
-- One high-signal decision every ~20-30 seconds.
-- `rest` should be rare and explicitly explained.
+### 4.1 Readability
+Every agent must expose:
+- `doing`
+- `why`
+- `to`
+- `eta`
 
-### 4.2 Legibility
-- Every action should expose:
-  - reason
-  - expected outcome
-  - actual outcome
-  - next intended move
+Every crew must expose:
+- objective
+- active op
+- active members
+- last impact
 
-### 4.3 Agency
-- Telegram owner should be able to talk to and steer their own linked agent quickly.
-- Commands must return concrete receipts (queued, applied, rejected).
+### 4.2 Confrontation
+Primary confrontation is ops warfare:
+- raid/heist/defend/counterintel/propaganda/alliance
 
-## 5. Gameplay Pillars
+### 4.3 Pace
+- 2 second authoritative tick.
+- Continuous movement timeline.
+- Frequent visible outcomes.
 
-### Work
-- stable baseline income and progression momentum
+### 4.4 Mode separation
+- Default mode: minimal readable experience.
+- Pro mode: advanced controls and deep diagnostics.
 
-### Fight
-- high-variance, high-drama bankroll pressure/recovery path
+## 5. Success Metrics
 
-### Trade
-- liquidity/risk rebalance
+1. New users can answer all 3 clarity questions in <=5 seconds.
+2. Time-to-first-readable-outcome <=30 seconds after deploy.
+3. Reduction in "agent is stuck" confusion reports.
+4. Retention uplift from rivalry/crew clarity.
 
-### Build
-- medium-term multiplier and territory pressure
+## 6. Out of Scope (v1)
 
-### Claim
-- strategic gate, not forced default opener
-
-## 6. Success Metrics (v1)
-
-1. `non_rest_rate >= 80%` in active loops.
-2. median `time_to_first_positive_delta <= 2 ticks`.
-3. owner-issued Telegram messages receive agent reply receipt in next tick window.
-4. manual intervention rate for stuck loops reduced by >= 50%.
-
-## 7. Acceptance Criteria
-
-1. Linked Telegram owner can issue direct “talk to my agent” instructions without typing agent name.
-2. Agent returns a direct in-character reply and executed action context.
-3. Rescue/debt telemetry is visible and operational for balancing.
-4. Wheel matches continue without invalid poker action stalls.
-5. Docs and API surfaces remain aligned with implementation.
-
-## 8. Out of Scope (v1)
-
-1. New game modes beyond poker-based wheel fights.
-2. Full redesign of contract/token architecture.
-3. Multi-chain or non-Monad migration.
-
-## 9. Release Checklist
-
-- [x] Telegram owner-to-agent direct messaging shipped
-- [x] Player-facing command receipts improved
-- [x] Economy tuning pass completed with live metrics
-- [x] Retention hooks implemented (streaks/rivals/goals)
-- [x] QA on backend loop stability and frontend usability
+1. Multi-chain changes.
+2. Contract architecture rewrite.
+3. Full replacement of legacy APIs.

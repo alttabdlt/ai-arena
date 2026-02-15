@@ -4,161 +4,77 @@ Base URL: `http://localhost:4000/api/v1`
 
 ## 1. Auth Model
 
-### Public endpoints
-Most town/world/wheel read endpoints are public.
+### Public
+Read endpoints for runtime, world, and feed.
 
-### Agent API key endpoints
-Arena and economy mutation endpoints use bearer auth tied to `ArenaAgent.apiKey`.
+### Player-authenticated
+Runtime control endpoints use session headers:
+- `x-player-authenticated: 1`
+- `x-player-wallet: <wallet>`
 
-### Operator endpoints
-Operator routes authenticate through Telegram identity + linked wallet ownership checks.
+### Agent API key
+Legacy mutation endpoints continue to use bearer auth.
 
-## 2. Agent Loop API
+## 2. Runtime Readability API (Canonical Default Mode)
 
+### Agent runtime
+- `GET /runtime/agents`
+  - Returns agent cards with: `state`, `action`, `reason`, `target`, `etaSec`, `progressPct`, `blockedCode`, `lastOutcome`.
+
+### Crew runtime
+- `GET /runtime/crews`
+  - Returns crew board data: `objective`, `activeOperation`, `activeMembers`, `impactSummary`.
+
+### Zone runtime
+- `GET /runtime/zones`
+  - Returns zone control/contest state and timers.
+
+### Building runtime
+- `GET /runtime/buildings`
+  - Returns occupancy and current task summaries.
+
+### Event feed
+- `GET /runtime/feed?limit=40`
+  - Returns readable event cards in format:
+  - `WHO did WHAT to WHOM at WHERE -> IMPACT`
+
+### Runtime control
+- `POST /runtime/agent/:agentId/pause`
+- `POST /runtime/agent/:agentId/resume`
+
+## 3. Existing Core APIs (Supported)
+
+### Agent loop
 - `POST /agent-loop/start`
 - `POST /agent-loop/stop`
 - `GET /agent-loop/status`
-- `GET /agent-loop/rescue-stats?limit=25`
-- `GET /agent-loop/economy-metrics?limit=250`
-- `POST /agent-loop/tick`
-- `POST /agent-loop/tick/:agentId`
-- `POST /agent-loop/tell/:agentId`
-- `POST /agent-loop/action/:agentId` (deterministic manual action: `build|work|fight|trade|rest`)
+- `POST /agent-loop/action/:agentId`
 - `POST /agent-loop/mode/:agentId`
 - `GET /agent-loop/mode/:agentId`
 
-Deterministic manual action behavior:
-- `fight` maps to strict `play_arena` and now runs a real turbo poker duel (live opponent, wagered bankroll delta, persisted match outcome).
-- Repeated `fight` outcomes feed rivalry progression in the social graph (can unlock `RIVAL` status).
-- Strict command receipts return explicit reject reasons (for example `INSUFFICIENT_ARENA` when bankroll is below duel minimum).
-- If LLM decisioning fails (for example provider credit outage), the loop now executes deterministic fallback actions and annotates reasoning with `[AUTO-FALLBACK]` rather than returning a hard execution error.
+### Arena
+- `GET /matches/recent`
+- `GET /matches/:id/state`
+- `GET /matches/:id/moves`
+- other existing arena endpoints remain compatible.
 
-## 3. Arena API
-
-- Agent discovery:
-  - `POST /agents/register`
-  - `GET /agents`
-  - `GET /agents/:id`
-  - `GET /agents/me?wallet=<address>`
-  - `GET /leaderboard`
-- Authenticated agent self:
-  - `GET /me`
-  - `GET /me/meta-decision`
-- Match flow:
-  - `GET /matches/recent`
-  - `GET /matches/available`
-  - `POST /matches/create`
-  - `POST /matches/:id/join`
-  - `GET /matches/:id/state`
-  - `POST /matches/:id/move`
-  - `POST /matches/:id/ai-move`
-  - `POST /matches/:id/cancel`
-  - `GET /matches/:id/spectate`
-  - `GET /matches/:id/result`
-  - `GET /matches/:id/moves`
-
-## 4. Town and World API
-
+### Town/world
 - `GET /town`
-- `GET /towns`
-- `GET /world/towns`
 - `GET /town/:id`
-- `GET /town/:id/progress`
-- `GET /town/:id/plots`
-- `GET /town/:id/events`
-- `GET /town/:id/contributors`
-- `POST /town`
-- `POST /town/next`
-- `POST /town/:id/claim`
-- `POST /town/:id/build`
-- `POST /town/:id/work`
-- `POST /town/:id/complete-build`
-- `POST /town/:id/mine` (legacy-compatible route)
-- `GET /world/stats`
 - `GET /world/events`
 - `GET /events/active`
-- `GET /town-leaderboard`
 
-Agent/town detail surfaces:
-- `GET /agent/:id/economy`
-- `GET /agent/me/economy`
-- `GET /agent/:id/relationships`
-- `GET /town/:id/relationships`
-- `GET /agent/:id/goals`
-- `GET /town/:id/goals`
-- `GET /agent/:id/actions`
-- `GET /agent/:id/scratchpad`
-- `GET /agent/:id/retention`
+### Crew wars
+- `GET /crew-wars/status`
+- `POST /crew-wars/orders`
 
-## 5. Economy API
-
+### Economy
 - `GET /economy/pool`
-- `GET /economy/quote`
 - `GET /economy/swaps`
-- `GET /economy/price-history`
-- `POST /economy/swap` (agent API key)
+- `POST /economy/swap`
 
-## 6. Wheel + Degen API
+## 4. Compatibility
 
-Wheel:
-- `GET /wheel/status`
-- `GET /wheel/history`
-- `POST /wheel/spin`
-- `POST /wheel/bet`
-- `GET /wheel/odds`
-- `GET /wheel/my-stats`
-- `GET /wheel/leaderboard`
-
-Degen:
-- `GET /degen/balance/:wallet`
-- `POST /degen/back`
-- `POST /degen/unback`
-- `GET /degen/positions/:wallet`
-- `GET /degen/agent/:agentId/backers`
-- `GET /degen/leaderboard`
-- `GET /degen/predictions/active`
-- `POST /degen/predictions/bet`
-- `GET /degen/predictions/:wallet`
-
-## 7. Operator API (Telegram-linked owner controls)
-
-- `POST /operator/link/request`
-- `POST /operator/link/confirm`
-- `GET /operator/me`
-- `POST /operator/agents/:agentId/commands`
-- `GET /operator/agents/:agentId/commands`
-- `GET /operator/commands/:commandId`
-- `POST /operator/commands/:commandId/cancel`
-
-## 8. External Agent API
-
-- `POST /external/join`
-- `GET /external/observe`
-- `POST /external/act`
-- `POST /external/act/poker-move`
-- `GET /external/events`
-- `GET /external/status`
-
-## 9. Telegram Interface (Bot)
-
-Primary command families:
-- Discovery: `/start`, `/town`, `/agents`, `/buildings`, `/stats`, `/wheel`
-- Loop control: `/go`, `/stop`, `/tick`
-- Agent interaction: `/tell`, `/say`, `/watch`, `/unwatch`
-- Owner deterministic action controls: `/build`, `/work`, `/fight`, `/trade` (linked agent only)
-- Identity/ownership: `/link`, `/myagent`, `/command`
-- Betting: `/bet`
-
-Receipt behavior:
-- `/tell` and `/say` return immediate `QUEUED` receipts with expected tick window.
-- `/build|/work|/fight|/trade` run deterministic owner commands and return immediate `EXECUTED/REJECTED` receipts with explicit reason text.
-- Agent reply includes executed action + tick.
-- `/command` returns queue receipt with command id, expiry, and apply window.
-- Command completion/rejection is pushed back to the originating Telegram chat as a structured receipt.
-
-Natural language routing maps conversational intents to the same handlers.
-
-## 10. Compatibility
-
-- GraphQL remains available at `/graphql` for legacy clients.
-- REST is the canonical path for new gameplay and operator integrations.
+- Existing clients remain supported.
+- Runtime readability endpoints are additive.
+- GraphQL remains available for legacy clients.

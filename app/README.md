@@ -1,73 +1,33 @@
-# Welcome to your Lovable project
+# Frontend (app)
 
-## Project info
+React + Vite + Three.js frontend for AI Arena.
 
-**URL**: https://lovable.dev/projects/65b4b25f-cd0a-41d6-bcc8-610a770ff8ec
+## Product Mode
 
-## How can I edit this code?
+Default mode is now readability-first AI Turf Wars HUD:
+- clear agent intent (`doing`, `why`, `to`, `eta`)
+- crew objective visibility
+- readable event feed
 
-There are several ways of editing your application.
+Advanced controls remain available via Pro Mode.
 
-**Use Lovable**
+## Local Development
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/65b4b25f-cd0a-41d6-bcc8-610a770ff8ec) and start prompting.
-
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+```bash
+cd app
+npm install
+npx vite --port 8080 --host 0.0.0.0
 ```
 
-**Edit a file directly in GitHub**
+Backend expected at `http://localhost:4000` via Vite `/api` proxy.
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+## Key UI Integration Points
 
-**Use GitHub Codespaces**
+- `src/pages/Town3D.tsx`
+- `src/components/town/*`
+- `src/components/game/*` (default runtime HUD components)
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+## Notes
 
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/65b4b25f-cd0a-41d6-bcc8-610a770ff8ec) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/tips-tricks/custom-domain#step-by-step-guide)
+- Keep default UI minimal and high-signal.
+- Put verbose diagnostics in Pro Mode.

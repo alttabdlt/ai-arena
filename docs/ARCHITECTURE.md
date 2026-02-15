@@ -5,85 +5,89 @@
 ### Frontend (`app/`)
 - React + Vite + Three.js
 - Main route: `/town`
-- Polls backend REST APIs for town state, agents, wheel status, economy data, and event feeds.
+- Default mode: readable Ops Warfare HUD
+- Pro mode: advanced diagnostics and controls
 
 ### Backend (`backend/`)
 - Express + Prisma + SQLite
 - REST base: `/api/v1`
-- GraphQL kept for compatibility at `/graphql`
+- GraphQL remains for compatibility
 - Core services:
-  - `agentLoopService.ts`: autonomous tick engine
-  - `townService.ts`: town/plot/building lifecycle
-  - `arenaService.ts`: poker match orchestration
-  - `wheelOfFateService.ts`: recurring PvP cycle + betting window
-  - `offchainAmmService.ts`: reserve <-> $ARENA swap logic
-  - `telegramBotService.ts`: Telegram NL + command interface
+  - `agentLoopService.ts` - autonomous simulation loop
+  - `townService.ts` - world/plot/building state
+  - `arenaService.ts` - poker duel resolution
+  - `crewWarsService.ts` - crew state, orders, campaign pressure
+  - `offchainAmmService.ts` - reserve <-> $ARENA support economy
 
-### Contracts (`contracts/`)
-- Monad EVM testnet
-- `$ARENA` token contract integrated in backend config
+## 2. Simulation Model
 
-## 2. Core Game Loop
+### Three clocks
+1. Authoritative sim tick: every 2 seconds.
+2. Continuous movement timeline: interpolation and ETA.
+3. Render clock: 60fps visualization.
 
-Per global tick:
-1. Upkeep and solvency logic run for active agents.
-2. Rescue system may inject bankroll (capped by cooldown and window).
-3. Agents observe world state and decide actions.
-   - If LLM decisioning fails, agent loop automatically falls back to deterministic policy action selection for that tick.
-4. Actions execute via `claim_plot`, `start_build`, `do_work`, `complete_build`, `play_arena`, and swap pathways.
-5. `play_arena` executes a turbo poker duel path (strict wager check, live opponent selection, immediate match settlement, bankroll/ELO persistence, rivalry score updates).
-6. Explicit owner/manual commands can bypass AI decisioning through strict command execution (`OVERRIDE` mode) with reject reasons instead of silent reroutes.
-7. Decision and narrative metadata are persisted to logs/events/scratchpad.
-8. Wheel of Fate runs on its own cycle and creates poker fights plus betting opportunities.
+### Agent lifecycle (canonical)
+1. `PLAN`
+2. `TRAVEL`
+3. `SETUP`
+4. `EXECUTE`
+5. `RESOLVE`
+6. `COOLDOWN`
+7. `BLOCKED`
+8. `IDLE`
 
-## 3. Telegram Control Plane
+### Core operations
+- `RAID`
+- `HEIST`
+- `DEFEND`
+- `COUNTERINTEL`
+- `PROPAGANDA`
+- `ALLIANCE`
 
-### Current Capabilities
-- Natural language routing (tool-call based) and slash commands.
-- Spectator controls (`/town`, `/agents`, `/wheel`, `/bet`, `/watch`).
-- Agent messaging (`/tell`) via queued instruction consumed on next agent tick.
-- Owner-targeted messaging (`/say` or NL "my agent ...") resolved through Telegram identity links.
-- Owner deterministic quick commands (`/build`, `/work`, `/fight`, `/trade`) executed through strict command receipts.
-- Wallet-link and operator identity flows (`/link`, `/myagent`, `/command`).
+Poker is not the primary loop. It is a side-path used for escalation/tie-break scenarios.
 
-### Command/Identity Services
-- `operatorIdentityService.ts`
-  - maps Telegram identity to linked wallet and active agent links.
-- `agentCommandService.ts`
-  - persistent command queue + lifecycle for structured commands.
+## 3. Readability Contract
 
-## 4. Data Model (Primary)
+The runtime must expose, at minimum:
 
-Main Prisma models used by the active runtime:
-- `ArenaAgent`
-- `Town`, `Plot`, `TownContribution`, `TownEvent`, `WorkLog`
-- `EconomyPool`, `EconomySwap`
-- `PredictionMarket`, related betting models
-- `TelegramIdentity`, `AgentOperatorLink`, `AgentCommand`
+### Agent-level
+- `doing`
+- `why`
+- `to`
+- `eta`
 
-## 5. Economic Safety Layer
+### Crew-level
+- `objective`
+- `active operation`
+- `active members`
+- `last impact`
 
-Implemented protections in loop/economy paths:
-- Claim/build affordability gates and fallback redirects.
-- Work wage and completion bonus paid from economy pool (not minted from thin air).
-- Solvency rescue grants with:
-  - cooldown
-  - per-window max rescue count
-  - revival path for incapacitated agents
-  - debt tracking
-  - automatic repayment when bankroll recovers
+### Place-level
+- building occupancy with task label
+- zone control and contest state
+
+## 4. Mode Model
+
+### Default Mode
+- Minimal, readable gameplay UI
+- One primary control rail (`pause/resume`)
+- High-signal event feed only
+
+### Pro Mode
+- Existing advanced control panels and diagnostics
+- Deep logs, policy/state internals, tuning tools
+
+## 5. Data Model (Runtime View)
+
+Primary entities used by default mode:
+- Agent runtime state
+- Crew runtime state
+- Zone conflict/control state
+- Building occupancy state
+- Readable event stream
 
 ## 6. Operational Constraints
 
-- SQLite is authoritative and required.
-- Concurrent heavy writes can destabilize runtime; long async post-match operations are serialized/delayed.
-- Backend runs on port `4000`, frontend on `8080`.
-- Vite proxies `/api` to backend.
-
-## 7. Biggest Remaining Gaps
-
-1. Visual action readability/microinteraction feedback still needs stronger outcome differentiation.
-2. Retention systems (streaks, rivalry ladders, recurring goals/rewards) need a stronger product layer.
-3. Economy tuning still needs additional live calibration now that turbo duels are active.
-
-See `docs/IMPLEMENTATION-PLAN.md` for execution sequence.
+- SQLite is authoritative.
+- Backend and frontend communicate over REST.
+- Heavy writes must remain serialized where required by SQLite/Prisma stability constraints.

@@ -1,113 +1,70 @@
-# Implementation Plan: Close the 3 Biggest Gaps
+# Implementation Plan: AI Turf Wars Readability Overhaul
 
-Status: Implemented
+Status: Active
 
-## 0. Current Baseline
+## Goal
 
-Already implemented in runtime:
-- Claim/build fallback hardening and reduced dead-rest loops.
-- Solvency rescue with cooldown + per-window cap + debt repayment.
-- Poker action normalization/fallback to prevent wheel stalls.
-- Operator identity and command queue foundations (`/link`, `/myagent`, `/command`, operator API).
+Deliver a readable, high-tempo AI vs AI Ops Warfare experience where players can instantly answer:
+1. What is my agent doing?
+2. Why is it doing that?
+3. What is my crew doing right now?
 
-## 1. Gap A — Player Agency via Telegram (Highest Priority)
+## Phase 1 - Runtime Readability Foundation
 
-### Goal
-Give owners frictionless control/communication with their own agent, not generic spectator prompts.
-
-### Current Progress
-- `/say` command path implemented (owner-targeted messaging).
-- NL router supports "my agent ..." intent routing.
-- Owner messaging is ownership-gated through linked Telegram identity.
-- Receipts now include queue status, target, expected tick window, and completion callback.
-- Deterministic owner quick actions are live via `/build`, `/work`, `/fight`, `/trade`.
-- UI parity is live via `POST /agent-loop/action/:agentId` with strict executed/rejected receipts.
+### Scope
+- Add runtime-facing APIs for agents, crews, zones, buildings, and feed.
+- Standardize runtime state payloads (`state`, `action`, `reason`, `target`, `eta`).
+- Add pause/resume controls for owner runtime control.
 
 ### Deliverables
-1. Direct “message my agent” flow in Telegram without requiring agent name. ✅
-2. Ownership-gated path using linked Telegram identity. ✅
-3. Better receipts:
-   - queued instruction ✅
-   - target agent ✅
-   - expected tick window ✅
-   - final agent reply/action summary ✅
-4. Natural language router support for owner-targeted phrasing. ✅
+1. `GET /runtime/agents`
+2. `GET /runtime/crews`
+3. `GET /runtime/zones`
+4. `GET /runtime/buildings`
+5. `GET /runtime/feed`
+6. `POST /runtime/agent/:agentId/pause`
+7. `POST /runtime/agent/:agentId/resume`
 
-### Technical Tasks
-- Update `telegramBotService.ts`:
-  - add owner-targeted message handler
-  - add parser for “my agent ...”/`/say` command
-  - resolve active linked agent from `operatorIdentityService`
-- Keep `/tell` for public/spectator suggestions.
-- Add tests for linked vs unlinked user behavior.
+### Acceptance
+- Runtime payloads are stable and consumable by default HUD.
+- No existing API regressions.
 
-### Done Definition
-Owner can reliably message their linked agent and receive reply/action feedback with no manual agent lookup.
+## Phase 2 - New Default Readable HUD
 
-## 2. Gap B — Economy Pacing and Balance
-
-### Goal
-Make progression tight enough to feel rewarding while avoiding rescue dependency and passive drift.
+### Scope
+- Build default-mode overlays for intent, crew ops, occupancy, and readable feed.
+- Show agent action lifecycle and travel intent clearly in-world.
+- Introduce fixed event-card format (`WHO did WHAT... -> IMPACT`).
 
 ### Deliverables
-1. Rescue/debt dashboard usage in balancing workflow.
-2. Tuning pass on:
-   - upkeep
-   - work wage curve
-   - completion bonus
-   - claim/build cost progression
-3. Balance guardrails documented in config constants.
+1. Agent intent badges (`doing/why/to/eta`).
+2. Crew ops board.
+3. Building occupancy badges.
+4. Readable event feed panel.
 
-### Technical Tasks
-- Add lightweight metrics snapshot endpoint(s) where missing.
-- Run scripted tick simulations and compare action mix before/after tuning.
-- Record recommended default constants in docs.
+### Acceptance
+- New users can explain visible agent behavior in <=5 seconds.
+- No more silent "stuck in building" behavior without explicit label.
 
-### Shipped
-- `GET /agent-loop/economy-metrics` now returns action mix, non-rest rate, positive delta hit rate, command outcome rates, rescue debt, pool balances, and warnings.
-- Rescue parameters tuned (`trigger bankroll`, grant size, cooldown, max rescues per window).
-- Work/completion rewards tuned to reduce rescue dependence and improve action momentum.
-- Added anti-idle rest redirects so feasible `work/build/claim/trade/fight` actions are preferred over passive rest.
-- `play_arena` now settles real turbo poker duels (strict bankroll gate, live opponent selection, immediate wager/ELO outcomes persisted to `/matches/recent`).
+## Phase 3 - Pro Mode Segregation
 
-### Done Definition
-Non-rest action mix stays high without rescue overuse; debt trends downward over sustained runs.
-
-## 3. Gap C — Retention Layer
-
-### Goal
-Make the game sticky over repeated sessions, not just mechanically functional.
+### Scope
+- Move dense controls and diagnostics behind Pro Mode.
+- Keep default mode minimal and high-signal.
+- Preserve advanced capability without default cognitive overload.
 
 ### Deliverables
-1. Daily/rolling streak objective framework.
-2. Rivalry progression with visible score and rewards.
-3. Recurring short goals with payout hooks.
+1. `ui_mode=default|pro` persisted per user.
+2. Default hides dense loop controls, debug overlays, and verbose logs.
+3. Pro Mode exposes existing advanced panels.
 
-### Technical Tasks
-- Extend goal/relationship surfaces already present in town APIs.
-- Add user-visible streak/rival counters in Telegram + frontend surfaces.
-- Tie rewards to completed streak/goal milestones.
+### Acceptance
+- Default mode has one primary CTA path.
+- Advanced users retain full control in Pro Mode.
 
-### Shipped
-- Non-rest streak milestones now award bonus ARENA (`x3/x5/x8/x13`) with solvency-pool guardrails.
-- `GET /agent/:id/retention` exposes streak, rivals/friends, and active goal snapshot.
-- `/myagent` now includes retention summary (streak, active goals, top rival).
-- Duel outcomes now push social graph rivalry progression (`BEEF` deltas on wins/losses), enabling rapid `NEUTRAL -> RIVAL` ladders from repeated fights.
-- Rival fights can emit explicit rivalry unlock notes and pay a small rival takedown bonus when pool solvency allows.
+## Rollout
 
-### Done Definition
-Users have clear reasons to return and monitor outcomes over multiple cycles.
-
-## 4. Execution Order
-
-1. Gap A (Telegram agency)
-2. Gap B (economy tuning using telemetry)
-3. Gap C (retention systems)
-
-## 5. Verification Checklist
-
-- [x] `backend` build clean
-- [x] key backend tests clean
-- [x] live agent-loop run shows no high-frequency failure regressions
-- [x] wheel fights still complete under load
-- [x] docs and API references updated with shipped behavior
+1. Ship Phase 1 backend API contract.
+2. Ship Phase 2 HUD integration.
+3. Ship Phase 3 mode gating and cleanup.
+4. Tune after telemetry.

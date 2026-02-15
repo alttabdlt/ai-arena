@@ -45,11 +45,59 @@ const PERSONALITIES = [
   { type: 'VISIONARY', emoji: '🔮', label: 'Visionary', desc: 'Long-term planner. Big bets.' },
 ];
 
-const MODELS = [
+type ModelChoice = {
+  id: string;
+  label: string;
+  cost: string;
+  badge: string;
+  color: 'green' | 'purple' | 'slate';
+};
+
+type AiProfileChoice = {
+  id: 'BUDGET' | 'BALANCED' | 'MAX_AGENCY';
+  label: string;
+  description: string;
+  llmCadenceTicks: number;
+  targetRiskTolerance: number;
+  targetMaxWagerPercent: number;
+  spendHint: string;
+};
+
+const FALLBACK_MODELS: ModelChoice[] = [
   { id: 'or-gemini-2.0-flash', label: 'Gemini 2.0 Flash', cost: '~$0.001/action', badge: 'Recommended', color: 'green' },
   { id: 'or-gemini-2.5-flash', label: 'Gemini 2.5 Flash', cost: '~$0.003/action', badge: 'Smarter', color: 'purple' },
   { id: 'or-deepseek-v3', label: 'DeepSeek V3', cost: '~$0.002/action', badge: 'Budget', color: 'slate' },
   { id: 'or-gpt-4o-mini', label: 'GPT-4o Mini', cost: '~$0.005/action', badge: '', color: 'slate' },
+];
+
+const FALLBACK_PROFILES: AiProfileChoice[] = [
+  {
+    id: 'BUDGET',
+    label: 'Budget',
+    description: 'Deterministic most ticks. LLM on critical moments.',
+    llmCadenceTicks: 4,
+    targetRiskTolerance: 0.3,
+    targetMaxWagerPercent: 0.12,
+    spendHint: 'lowest',
+  },
+  {
+    id: 'BALANCED',
+    label: 'Balanced',
+    description: 'Mixed cadence: strategy heartbeat + deterministic loop.',
+    llmCadenceTicks: 2,
+    targetRiskTolerance: 0.5,
+    targetMaxWagerPercent: 0.18,
+    spendHint: 'medium',
+  },
+  {
+    id: 'MAX_AGENCY',
+    label: 'Max Agency',
+    description: 'LLM-first behavior for aggressive adaptation.',
+    llmCadenceTicks: 1,
+    targetRiskTolerance: 0.78,
+    targetMaxWagerPercent: 0.28,
+    spendHint: 'highest',
+  },
 ];
 const QUICKSTART_STEPS = [
   'Sign in, then deploy or connect one agent.',
@@ -58,6 +106,34 @@ const QUICKSTART_STEPS = [
   'Telegram nudges are optional. You can run everything from the HUD.',
   'If you see 402 credits, top up OpenRouter for the backend key, then restart backend.',
 ];
+
+function toModelChoices(
+  rows: Array<{ id: string; name: string; provider: string; costTier: string }> | null | undefined,
+): ModelChoice[] {
+  if (!Array.isArray(rows) || rows.length === 0) return FALLBACK_MODELS;
+  const mapCost = (tier: string): string => {
+    if (tier === 'cheap') return 'low spend';
+    if (tier === 'mid') return 'mid spend';
+    return 'high spend';
+  };
+  return rows.map((row, idx) => {
+    const provider = String(row.provider || '').toLowerCase();
+    const labelBase = row.id
+      .replace(/^or-/, '')
+      .replace(/-/g, ' ')
+      .replace(/\b\w/g, (m) => m.toUpperCase());
+    const badge = idx === 0 ? 'Recommended' : provider === 'openrouter' ? 'Live' : '';
+    const color: ModelChoice['color'] =
+      row.costTier === 'cheap' ? 'green' : row.costTier === 'mid' ? 'purple' : 'slate';
+    return {
+      id: row.id,
+      label: labelBase || row.name || row.id,
+      cost: mapCost(String(row.costTier || 'mid')),
+      badge,
+      color,
+    };
+  });
+}
 
 type View = 'wallet' | 'checking' | 'welcome-back' | 'choose' | 'deploy' | 'connect-api' | 'success';
 
@@ -230,7 +306,12 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
   // Deploy agent state
   const [agentName, setAgentName] = useState('');
   const [personality, setPersonality] = useState('CHAMELEON');
-  const [modelId, setModelId] = useState('or-gemini-2.0-flash');
+  const [modelChoices, setModelChoices] = useState<ModelChoice[]>(FALLBACK_MODELS);
+  const [profileChoices, setProfileChoices] = useState<AiProfileChoice[]>(FALLBACK_PROFILES);
+  const [modelId, setModelId] = useState(FALLBACK_MODELS[0]?.id || 'or-gemini-2.0-flash');
+  const [aiProfileId, setAiProfileId] = useState<AiProfileChoice['id']>('BALANCED');
+  const [riskTolerance, setRiskTolerance] = useState(0.5);
+  const [maxWagerPercent, setMaxWagerPercent] = useState(0.18);
   const [spawning, setSpawning] = useState(false);
   const [spawnError, setSpawnError] = useState<string | null>(null);
   const [spawnedAgent, setSpawnedAgent] = useState<OnboardingAgent | null>(null);
@@ -240,6 +321,25 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
   const [connectError, setConnectError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [llmStatus, setLlmStatus] = useState<LlmStatus>({ loading: false, ok: null });
+
+  useEffect(() => {
+    if (modelChoices.some((choice) => choice.id === modelId)) return;
+    const fallback = modelChoices[0]?.id;
+    if (fallback) setModelId(fallback);
+  }, [modelChoices, modelId]);
+
+  useEffect(() => {
+    if (profileChoices.some((choice) => choice.id === aiProfileId)) return;
+    const fallback = profileChoices[0]?.id || 'BALANCED';
+    setAiProfileId(fallback);
+  }, [profileChoices, aiProfileId]);
+
+  useEffect(() => {
+    const selected = profileChoices.find((choice) => choice.id === aiProfileId);
+    if (!selected) return;
+    setRiskTolerance(selected.targetRiskTolerance);
+    setMaxWagerPercent(selected.targetMaxWagerPercent);
+  }, [aiProfileId, profileChoices]);
 
   // ── After wallet connects, check if this wallet already has an agent ──
   useEffect(() => {
@@ -289,6 +389,25 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
         });
       });
 
+    fetch(`${API_BASE}/agent-loop/ai-profiles`)
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (cancelled || !res.ok || !data) return;
+        const profileRows = Array.isArray(data.profiles)
+          ? (data.profiles as AiProfileChoice[])
+          : FALLBACK_PROFILES;
+        const modelRows = Array.isArray(data.models)
+          ? (data.models as Array<{ id: string; name: string; provider: string; costTier: string }>)
+          : [];
+        setProfileChoices(profileRows.length > 0 ? profileRows : FALLBACK_PROFILES);
+        setModelChoices(toModelChoices(modelRows));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setProfileChoices(FALLBACK_PROFILES);
+        setModelChoices(FALLBACK_MODELS);
+      });
+
     return () => {
       cancelled = true;
     };
@@ -312,7 +431,15 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
       const res = await fetch(`${API_BASE}/agents/spawn`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: agentName.trim(), personality, modelId, walletAddress }),
+        body: JSON.stringify({
+          name: agentName.trim(),
+          personality,
+          modelId,
+          walletAddress,
+          aiProfileId,
+          riskTolerance: Number(riskTolerance.toFixed(2)),
+          maxWagerPercent: Number(maxWagerPercent.toFixed(2)),
+        }),
       });
       const data = await res.json();
       if (res.status === 409 && data.agent) {
@@ -330,7 +457,7 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
     } finally {
       setSpawning(false);
     }
-  }, [agentName, personality, modelId, walletAddress, finishWith]);
+  }, [agentName, personality, modelId, walletAddress, aiProfileId, riskTolerance, maxWagerPercent, finishWith]);
 
   const handleConnect = useCallback(async () => {
     if (!apiKey.trim()) { setConnectError('Enter your API key'); return; }
@@ -584,7 +711,7 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
             <div>
               <label className="text-[11px] text-slate-400 mb-1.5 block">AI Model</label>
               <div className="space-y-1.5">
-                {MODELS.map(m => (
+                {modelChoices.map((m) => (
                   <button
                     key={m.id}
                     onClick={() => setModelId(m.id)}
@@ -635,11 +762,70 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
               </div>
             </div>
 
+            <div>
+              <label className="text-[11px] text-slate-400 mb-1.5 block">Agentic Profile</label>
+              <div className="grid grid-cols-3 gap-1.5">
+                {profileChoices.map((profile) => (
+                  <button
+                    key={profile.id}
+                    onClick={() => setAiProfileId(profile.id)}
+                    className={`rounded-lg border px-2 py-1.5 text-left transition-all ${
+                      aiProfileId === profile.id
+                        ? 'border-cyan-400/70 bg-cyan-950/35'
+                        : 'border-slate-800/50 bg-slate-950/30 hover:border-slate-600/50'
+                    }`}
+                  >
+                    <div className="text-[10px] font-semibold text-cyan-200">{profile.label}</div>
+                    <div className="text-[9px] text-slate-500">
+                      LLM / {profile.llmCadenceTicks}t
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <div className="mt-1 text-[10px] text-slate-500">
+                {profileChoices.find((profile) => profile.id === aiProfileId)?.description}
+              </div>
+            </div>
+
+            <div className="space-y-2 rounded-lg border border-slate-800/40 bg-slate-950/45 p-2.5">
+              <div>
+                <div className="mb-1 flex items-center justify-between text-[10px]">
+                  <span className="text-slate-400">Risk Tolerance</span>
+                  <span className="font-mono text-amber-300">{Math.round(riskTolerance * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={0.05}
+                  max={0.95}
+                  step={0.01}
+                  value={riskTolerance}
+                  onChange={(e) => setRiskTolerance(Number(e.target.value))}
+                  className="w-full accent-amber-500"
+                />
+              </div>
+              <div>
+                <div className="mb-1 flex items-center justify-between text-[10px]">
+                  <span className="text-slate-400">Max Wager Cap</span>
+                  <span className="font-mono text-amber-300">{Math.round(maxWagerPercent * 100)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min={0.05}
+                  max={0.6}
+                  step={0.01}
+                  value={maxWagerPercent}
+                  onChange={(e) => setMaxWagerPercent(Number(e.target.value))}
+                  className="w-full accent-amber-500"
+                />
+              </div>
+            </div>
+
             {/* Cost */}
             <div className="bg-slate-950/60 rounded-lg p-3 border border-slate-800/30 space-y-1 text-[11px]">
               <div className="flex justify-between"><span className="text-slate-500">Starting funds</span><span className="text-slate-300">50 $ARENA + 100 reserve</span></div>
               <div className="flex justify-between"><span className="text-slate-500">Upkeep</span><span className="text-slate-300">1 $ARENA / tick</span></div>
-              <div className="flex justify-between"><span className="text-slate-500">Per action</span><span className="text-amber-400 font-mono">{MODELS.find(m => m.id === modelId)?.cost}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Model spend</span><span className="text-amber-400 font-mono">{modelChoices.find((m) => m.id === modelId)?.cost || 'mid spend'}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Profile spend</span><span className="text-slate-300">{profileChoices.find((profile) => profile.id === aiProfileId)?.spendHint || 'medium'}</span></div>
             </div>
 
             <LlmStatusCard status={llmStatus} />

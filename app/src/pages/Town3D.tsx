@@ -266,6 +266,15 @@ type DegenLoopStatePayload = {
   phaseIndex: number;
   phaseName: DegenLoopPhase;
   loopsCompleted: number;
+  collapseTier?: 'STABLE' | 'STRAINED' | 'COLLAPSED';
+  recoveryTier?: 'NONE' | 'CAUTION' | 'CRITICAL';
+};
+
+type DegenRecovery = {
+  tier: 'NONE' | 'CAUTION' | 'CRITICAL';
+  message: string;
+  chain: DegenNudge[];
+  nextBest: DegenNudge | null;
 };
 
 type DegenPlanResponse = {
@@ -275,6 +284,7 @@ type DegenPlanResponse = {
   loopState?: DegenLoopStatePayload;
   mission?: DegenMission;
   blocker?: DegenBlocker | null;
+  recovery?: DegenRecovery | null;
   plans: Record<DegenNudge, DegenActionPlan>;
 };
 
@@ -393,6 +403,17 @@ interface CrewWarsStatusPayload {
     createdAt: string;
   }>;
   epochTicks: number;
+  campaign?: {
+    currentTick: number;
+    nextEpochTick: number;
+    ticksUntilEpoch: number;
+    leadingCrewId: string | null;
+    leadingCrewName: string | null;
+    trailingCrewId: string | null;
+    trailingCrewName: string | null;
+    objective: string;
+    counterplayWindowTicks: number;
+  };
 }
 
 type LoopMode = 'DEFAULT' | 'DEGEN_LOOP';
@@ -4815,6 +4836,7 @@ export default function Town3D() {
   const [serverMission, setServerMission] = useState<DegenMission | null>(null);
   const [serverBlocker, setServerBlocker] = useState<DegenBlocker | null>(null);
   const [serverLoopState, setServerLoopState] = useState<DegenLoopStatePayload | null>(null);
+  const [serverRecovery, setServerRecovery] = useState<DegenRecovery | null>(null);
   const [degenStatus, setDegenStatus] = useState<{ message: string; tone: 'neutral' | 'ok' | 'error' } | null>(null);
   const [ownedLoopTelemetry, setOwnedLoopTelemetry] = useState<DegenLoopTelemetry | null>(null);
   const [degenPlans, setDegenPlans] = useState<Record<DegenNudge, DegenActionPlan> | null>(null);
@@ -4868,6 +4890,7 @@ export default function Town3D() {
       setServerMission(null);
       setServerBlocker(null);
       setServerLoopState(null);
+      setServerRecovery(null);
       return;
     }
     setDegenPlansLoading(true);
@@ -4881,12 +4904,14 @@ export default function Town3D() {
       setServerMission(res.mission || null);
       setServerBlocker(res.blocker || null);
       setServerLoopState(res.loopState || null);
+      setServerRecovery(res.recovery || null);
       setDegenPlans(res.plans || null);
     } catch {
       setDegenPlans(null);
       setServerMission(null);
       setServerBlocker(null);
       setServerLoopState(null);
+      setServerRecovery(null);
     } finally {
       setDegenPlansLoading(false);
     }
@@ -4897,6 +4922,7 @@ export default function Town3D() {
       setServerMission(null);
       setServerBlocker(null);
       setServerLoopState(null);
+      setServerRecovery(null);
       return;
     }
     void refreshDegenPlans();
@@ -5022,6 +5048,16 @@ export default function Town3D() {
     if (serverBlocker?.action && serverBlocker.action === expectedNudge && serverBlocker.fallbackAction) {
       mission = `${expectedLabel} blocked: ${serverBlocker.message}. Do ${DEGEN_NUDGE_LABEL[serverBlocker.fallbackAction]} now.`;
     }
+    if (serverRecovery && serverRecovery.tier !== 'NONE') {
+      missionWhy = `${missionWhy} ${serverRecovery.message}`;
+      if (serverRecovery.nextBest) {
+        missionFallback = `Recovery chain: ${serverRecovery.chain.map((step) => DEGEN_NUDGE_LABEL[step]).join(' -> ')}`;
+        mission = `Recovery mode: do ${DEGEN_NUDGE_LABEL[serverRecovery.nextBest]} now.`;
+        if (serverRecovery.tier === 'CRITICAL') {
+          missionSuccess = 'Stabilize bankroll/reserve before re-entering aggressive fights.';
+        }
+      }
+    }
 
     return {
       mission,
@@ -5032,7 +5068,7 @@ export default function Town3D() {
       recommended,
       blockers,
     };
-  }, [degenPlans, ownedLoopMode, ownedLoopTelemetry, serverBlocker, serverLoopState, serverMission]);
+  }, [degenPlans, ownedLoopMode, ownedLoopTelemetry, serverBlocker, serverLoopState, serverMission, serverRecovery]);
   const updateOwnedLoopMode = useCallback(async (nextMode: LoopMode) => {
     if (!ensureActionSession('toggling AUTO mode')) return;
     setLoopModeUpdating(true);
@@ -5165,6 +5201,12 @@ export default function Town3D() {
         tickResult?: {
           action?: string;
         };
+        campaignImpact?: {
+          objective?: string | null;
+        };
+        counterplayWindow?: {
+          closesAtTick?: number;
+        };
       } | null;
       const failReason =
         payload?.error
@@ -5181,7 +5223,7 @@ export default function Town3D() {
         || payload?.tickResult?.action
         || strategy.toLowerCase();
       showDegenStatus(
-        `${strategy} order executed as ${String(executedAction).toUpperCase()}.`,
+        `${strategy} order executed as ${String(executedAction).toUpperCase()}.${payload?.campaignImpact?.objective ? ` ${payload.campaignImpact.objective}` : ''}${payload?.counterplayWindow?.closesAtTick != null ? ` Counterplay closes by tick ${payload.counterplayWindow.closesAtTick}.` : ''}`,
         'ok',
         3600,
       );

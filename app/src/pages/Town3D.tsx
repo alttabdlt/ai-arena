@@ -1445,7 +1445,9 @@ function ActionBurstFx({ burst }: { burst: ActionBurst }) {
   const seededPhase = useMemo(() => hashToSeed(burst.id), [burst.id]);
   const visual = useMemo(() => actionBurstVisual(burst.kind, burst.polarity), [burst.kind, burst.polarity]);
   const iconTexture = useMemo(() => getEmojiTexture(visual.emoji), [visual.emoji]);
+  const showLabel = burst.isOwned;
   const labelAsset = useMemo(() => {
+    if (!showLabel) return null;
     const fg = burst.polarity > 0 ? '#dcfce7' : burst.polarity < 0 ? '#fecdd3' : '#e2e8f0';
     const bg = burst.polarity > 0
       ? 'rgba(6, 78, 59, 0.86)'
@@ -1453,17 +1455,18 @@ function ActionBurstFx({ burst }: { burst: ActionBurst }) {
         ? 'rgba(127, 29, 29, 0.86)'
         : 'rgba(15, 23, 42, 0.86)';
     return drawLabelTexture(burst.label, { fg, bg });
-  }, [burst.label, burst.polarity]);
-  const labelAspect = labelAsset.width / Math.max(1, labelAsset.height);
+  }, [showLabel, burst.label, burst.polarity]);
+  const labelAspect = labelAsset ? labelAsset.width / Math.max(1, labelAsset.height) : 1;
   const labelHeight = burst.isOwned ? 0.16 : 0.145;
   const labelWidth = labelHeight * labelAspect;
   const shardCount = 4;
 
   useEffect(() => {
+    if (!labelAsset) return;
     return () => {
       labelAsset.texture.dispose();
     };
-  }, [labelAsset.texture]);
+  }, [labelAsset]);
 
   useFrame((state) => {
     const group = groupRef.current;
@@ -1471,7 +1474,8 @@ function ActionBurstFx({ burst }: { burst: ActionBurst }) {
     const halo = haloRef.current;
     const sprite = spriteRef.current;
     const label = labelRef.current;
-    if (!group || !ring || !halo || !sprite || !label) return;
+    if (!group || !ring || !halo || !sprite) return;
+    if (showLabel && !label) return;
 
     const ageMs = Date.now() - burst.createdAt;
     if (ageMs < 0 || ageMs > ACTION_BURST_LIFE_MS) {
@@ -1494,9 +1498,11 @@ function ActionBurstFx({ burst }: { burst: ActionBurst }) {
     sprite.position.set(0, 0.2 + pop * 0.26, 0);
     const iconScale = 0.24 + pop * 0.18 + (burst.isOwned ? 0.05 : 0);
     sprite.scale.set(iconScale, iconScale, 1);
-    label.position.set(0, 0.5 + pop * 0.38, 0);
-    const labelScale = 1 + pop * 0.18;
-    label.scale.set(labelWidth * labelScale, labelHeight * labelScale, 1);
+    if (showLabel && label) {
+      label.position.set(0, 0.5 + pop * 0.38, 0);
+      const labelScale = 1 + pop * 0.18;
+      label.scale.set(labelWidth * labelScale, labelHeight * labelScale, 1);
+    }
 
     const ringMat = ring.material as THREE.MeshStandardMaterial;
     ringMat.color.set(visual.color);
@@ -1510,8 +1516,10 @@ function ActionBurstFx({ burst }: { burst: ActionBurst }) {
 
     const spriteMat = sprite.material as THREE.SpriteMaterial;
     spriteMat.opacity = THREE.MathUtils.clamp((0.92 - life * 0.35) * fade, 0, 0.98);
-    const labelMat = label.material as THREE.SpriteMaterial;
-    labelMat.opacity = THREE.MathUtils.clamp((0.92 - life * 0.22) * fade, 0, 0.95);
+    if (showLabel && label) {
+      const labelMat = label.material as THREE.SpriteMaterial;
+      labelMat.opacity = THREE.MathUtils.clamp((0.92 - life * 0.22) * fade, 0, 0.95);
+    }
 
     for (let index = 0; index < shardCount; index++) {
       const shard = shardRefs.current[index];
@@ -1583,9 +1591,11 @@ function ActionBurstFx({ burst }: { burst: ActionBurst }) {
           depthTest={false}
         />
       </sprite>
-      <sprite ref={labelRef} position={[0, 0.52, 0]} scale={[labelWidth, labelHeight, 1]}>
-        <spriteMaterial map={labelAsset.texture} transparent opacity={0.92} depthWrite={false} depthTest={false} />
-      </sprite>
+      {showLabel && labelAsset && (
+        <sprite ref={labelRef} position={[0, 0.52, 0]} scale={[labelWidth, labelHeight, 1]}>
+          <spriteMaterial map={labelAsset.texture} transparent opacity={0.92} depthWrite={false} depthTest={false} />
+        </sprite>
+      )}
     </group>
   );
 }
@@ -1698,8 +1708,13 @@ function DestinationLine({
 }) {
   const [points, setPoints] = useState<THREE.Vector3[]>([]);
   const lastSigRef = useRef<{ len: number; start: THREE.Vector3; end: THREE.Vector3 } | null>(null);
+  const lastSampleAtRef = useRef(0);
 
   useFrame(() => {
+    const now = performance.now();
+    if (now - lastSampleAtRef.current < 120) return;
+    lastSampleAtRef.current = now;
+
     const sim = simsRef.current.get(agentId);
     if (!sim || sim.state === 'DEAD' || sim.route.length === 0) {
       setPoints((prev) => (prev.length > 0 ? [] : prev));
@@ -2013,6 +2028,8 @@ function AgentTrail({
   const trailRef = useRef<THREE.Vector3[]>([]);
   const beadRefs = useRef<Array<THREE.Mesh | null>>([]);
   const [points, setPoints] = useState<THREE.Vector3[]>([]);
+  const samplePosRef = useRef(new THREE.Vector3());
+  const lastTrailSampleAtRef = useRef(0);
   const maxLength = 15;
   const style = useMemo(() => resolveTrailVisual(actionType, color), [actionType, color]);
   const pulseSeed = useMemo(() => hashToSeed(`${agentId}:${actionType || 'none'}:trail`), [agentId, actionType]);
@@ -2022,15 +2039,19 @@ function AgentTrail({
     if (!sim || sim.state === 'DEAD') return;
 
     const trail = trailRef.current;
-    const currentPos = sim.position.clone();
-    currentPos.y = 0.1;
+    const now = performance.now();
+    if (now - lastTrailSampleAtRef.current >= 95) {
+      lastTrailSampleAtRef.current = now;
+      const currentPos = samplePosRef.current.copy(sim.position);
+      currentPos.y = 0.1;
 
-    // Add point if moved enough
-    const lastPoint = trail[trail.length - 1];
-    if (!lastPoint || currentPos.distanceTo(lastPoint) > 0.3) {
-      trail.push(currentPos);
-      if (trail.length > maxLength) trail.shift();
-      setPoints([...trail]);
+      // Add point if moved enough.
+      const lastPoint = trail[trail.length - 1];
+      if (!lastPoint || currentPos.distanceTo(lastPoint) > 0.36) {
+        trail.push(currentPos.clone());
+        if (trail.length > maxLength) trail.shift();
+        setPoints([...trail]);
+      }
     }
 
     const beadCount = Math.min(trail.length, 10);
@@ -4711,18 +4732,51 @@ export default function Town3D() {
   const [showSpawnOverlay, setShowSpawnOverlay] = useState(false);
   const [canvasEpoch, setCanvasEpoch] = useState(0);
   const canvasRecoveryGuardRef = useRef(false);
+  const canvasListenerCleanupRef = useRef<(() => void) | null>(null);
   const handleCanvasCreated = useCallback((state: RootState) => {
+    canvasListenerCleanupRef.current?.();
     const canvas = state.gl.domElement as HTMLCanvasElement;
     const onContextLost = (event: Event) => {
       event.preventDefault();
       if (canvasRecoveryGuardRef.current) return;
       canvasRecoveryGuardRef.current = true;
-      setCanvasEpoch((prev) => prev + 1);
+      // Fallback to a cheaper profile first to reduce context pressure.
+      setVisualSettings((prev) => {
+        const nextQuality = prev.quality === 'high'
+          ? 'medium'
+          : prev.quality === 'medium'
+            ? 'low'
+            : prev.quality;
+        return {
+          ...prev,
+          quality: nextQuality,
+          postFx: false,
+        };
+      });
       window.setTimeout(() => {
+        const ctx = state.gl.getContext();
+        const stillLost = typeof ctx.isContextLost === 'function' ? ctx.isContextLost() : false;
+        if (stillLost) {
+          setCanvasEpoch((prev) => prev + 1);
+        }
         canvasRecoveryGuardRef.current = false;
-      }, 1500);
+      }, 1100);
+    };
+    const onContextRestored = () => {
+      canvasRecoveryGuardRef.current = false;
     };
     canvas.addEventListener('webglcontextlost', onContextLost, { passive: false });
+    canvas.addEventListener('webglcontextrestored', onContextRestored);
+    canvasListenerCleanupRef.current = () => {
+      canvas.removeEventListener('webglcontextlost', onContextLost);
+      canvas.removeEventListener('webglcontextrestored', onContextRestored);
+    };
+  }, []);
+  useEffect(() => {
+    return () => {
+      canvasListenerCleanupRef.current?.();
+      canvasListenerCleanupRef.current = null;
+    };
   }, []);
   useEffect(() => {
     if (!walletAddress) return;

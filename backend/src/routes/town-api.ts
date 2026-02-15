@@ -12,6 +12,8 @@ import { arenaService } from '../services/arenaService';
 import { agentConversationService, type RelationshipContext, type AgentActivity, type PairConversationMemory } from '../services/agentConversationService';
 import { socialGraphService } from '../services/socialGraphService';
 import { agentGoalService } from '../services/agentGoalService';
+import { agentGoalTrackService } from '../services/agentGoalTrackService';
+import { agentLoopService } from '../services/agentLoopService';
 import { prisma } from '../config/database';
 
 const router = Router();
@@ -756,6 +758,15 @@ router.get('/agent/:id/relationships', async (req: Request, res: Response): Prom
   }
 });
 
+router.get('/agent/:id/retention', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const snapshot = await agentLoopService.getRetentionSnapshot(req.params.id);
+    res.json(snapshot);
+  } catch (error: any) {
+    res.status(404).json({ error: error.message });
+  }
+});
+
 // Batch endpoint: all non-neutral relationships in a town (for frontend navigation)
 router.get('/town/:id/relationships', async (_req: Request, res: Response): Promise<void> => {
   try {
@@ -765,6 +776,26 @@ router.get('/town/:id/relationships', async (_req: Request, res: Response): Prom
       take: 100,
     });
     res.json({ relationships: rels });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.get('/agent/:id/goals', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const agentId = req.params.id;
+    const limit = Math.min(parseInt(req.query.limit as string) || 30, 100);
+    const status = String(req.query.status || '').toUpperCase();
+    const horizon = String(req.query.horizon || '').toUpperCase();
+
+    const rows = await agentGoalTrackService.getAgentGoalHistory(agentId, limit);
+    const filtered = rows.filter((row) => {
+      const statusOk = status ? row.status === status : true;
+      const horizonOk = horizon ? row.horizon === horizon : true;
+      return statusOk && horizonOk;
+    });
+
+    res.json({ agentId, goals: filtered });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -804,7 +835,40 @@ router.get('/town/:id/goals', async (req: Request, res: Response): Promise<void>
       agents: agents.map((a) => ({ id: a.id, name: a.name, archetype: a.archetype })) as any,
     });
 
-    res.json({ townId: town.id, goals });
+    const persistentRows = await prisma.agentGoalTrack.findMany({
+      where: { townId: town.id, status: 'ACTIVE' },
+      orderBy: [{ horizon: 'asc' }, { updatedAt: 'desc' }],
+    });
+    const persistentGoals = persistentRows.map((row) => {
+      let rewardProfile: Record<string, unknown> = {};
+      let penaltyProfile: Record<string, unknown> = {};
+      try {
+        const parsed = JSON.parse(row.rewardProfile || '{}');
+        rewardProfile = parsed && typeof parsed === 'object' ? parsed : {};
+      } catch {}
+      try {
+        const parsed = JSON.parse(row.penaltyProfile || '{}');
+        penaltyProfile = parsed && typeof parsed === 'object' ? parsed : {};
+      } catch {}
+      return {
+        id: row.id,
+        agentId: row.agentId,
+        horizon: row.horizon,
+        status: row.status,
+        title: row.title,
+        description: row.description,
+        metric: row.metric,
+        focusZone: row.focusZone,
+        targetValue: row.targetValue,
+        progressValue: row.progressValue,
+        deadlineTick: row.deadlineTick,
+        lastProgressLabel: row.lastProgressLabel,
+        rewardProfile,
+        penaltyProfile,
+      };
+    });
+
+    res.json({ townId: town.id, goals, persistentGoals });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -1062,28 +1126,32 @@ ${result.sprites.map(s => `
 // Agent Spawning (user onboarding)
 // ============================================
 
-router.post('/agents/spawn', async (req: Request, res: Response) => {
+router.post('/agents/spawn', async (req: Request, res: Response): Promise<void> => {
   try {
     const { name, personality, walletAddress, modelId: reqModelId } = req.body;
     
     if (!name || typeof name !== 'string' || name.trim().length < 2 || name.trim().length > 20) {
-      return res.status(400).json({ error: 'Name must be 2-20 characters' });
+      res.status(400).json({ error: 'Name must be 2-20 characters' });
+      return;
     }
     if (!walletAddress || typeof walletAddress !== 'string' || !walletAddress.startsWith('0x')) {
-      return res.status(400).json({ error: 'Valid wallet address required' });
+      res.status(400).json({ error: 'Valid wallet address required' });
+      return;
     }
     
     // Check if wallet already has an agent (case-insensitive for EIP-55 checksums)
-    const allAgents = await prisma.arenaAgent.findMany({ where: { walletAddress: { not: '' } }, select: { id: true, name: true, archetype: true, bankroll: true, health: true, eloRating: true, wins: true, losses: true, walletAddress: true } });
+    const allAgents = await prisma.arenaAgent.findMany({ where: { walletAddress: { not: '' } }, select: { id: true, name: true, archetype: true, bankroll: true, health: true, elo: true, wins: true, losses: true, walletAddress: true } });
     const existing = allAgents.find(a => a.walletAddress?.toLowerCase() === walletAddress.toLowerCase()) || null;
     if (existing) {
-      return res.status(409).json({ error: 'Wallet already has an agent', agent: existing });
+      res.status(409).json({ error: 'Wallet already has an agent', agent: existing });
+      return;
     }
     
     // Check if name is taken
     const nameTaken = await prisma.arenaAgent.findFirst({ where: { name: name.trim() } });
     if (nameTaken) {
-      return res.status(409).json({ error: 'Agent name already taken' });
+      res.status(409).json({ error: 'Agent name already taken' });
+      return;
     }
     
     const validPersonalities = ['SHARK', 'DEGEN', 'CHAMELEON', 'GRINDER', 'VISIONARY'];
@@ -1112,8 +1180,10 @@ router.post('/agents/spawn', async (req: Request, res: Response) => {
     
     console.log(`[Spawn] New agent created: ${agent.name} (${archetype}) by wallet ${walletAddress}`);
     res.json({ agent, assignedTown: buildingTown?.name || null });
+    return;
   } catch (error: any) {
     res.status(500).json({ error: error.message });
+    return;
   }
 });
 
@@ -1149,7 +1219,7 @@ router.get('/town-leaderboard', async (_req: Request, res: Response) => {
       select: {
         id: true, name: true, archetype: true, bankroll: true, reserveBalance: true,
         health: true, wins: true, losses: true, spawnedByUser: true, walletAddress: true,
-        ownedPlots: { where: { status: 'COMPLETE' }, select: { qualityScore: true, totalInvested: true } },
+        ownedPlots: { where: { status: 'BUILT' }, select: { qualityScore: true, totalInvested: true } },
       },
       orderBy: { bankroll: 'desc' },
     });
@@ -1163,9 +1233,9 @@ router.get('/town-leaderboard', async (_req: Request, res: Response) => {
       health: a.health,
       buildings: a.ownedPlots.length,
       avgQuality: a.ownedPlots.length > 0 
-        ? Math.round(a.ownedPlots.reduce((sum, p) => sum + (p.qualityScore || 5), 0) / a.ownedPlots.length * 10) / 10
+        ? Math.round(a.ownedPlots.reduce((sum: number, p) => sum + (p.qualityScore || 5), 0) / a.ownedPlots.length * 10) / 10
         : null,
-      totalInvested: a.ownedPlots.reduce((sum, p) => sum + (p.totalInvested || 0), 0),
+      totalInvested: a.ownedPlots.reduce((sum: number, p) => sum + (p.totalInvested || 0), 0),
       isUser: a.spawnedByUser,
     }));
     

@@ -278,6 +278,10 @@ export class AgentLoopService {
   private lastRescueTickByAgentId: Map<string, number> = new Map();
   private rescueDebtByAgentId: Map<string, number> = new Map();
   private rescueWindowByAgentId: Map<string, { windowStartTick: number; rescues: number }> = new Map();
+  private nonRestStreakByAgentId: Map<
+    string,
+    { current: number; best: number; lastRewardedMilestone: number }
+  > = new Map();
 
   // ============================================
   // Lifecycle
@@ -568,6 +572,173 @@ export class AgentLoopService {
         arenaBalance: pool?.arenaBalance ?? null,
       },
       warnings,
+    };
+  }
+
+  private getOrInitStreak(agentId: string): { current: number; best: number; lastRewardedMilestone: number } {
+    const existing = this.nonRestStreakByAgentId.get(agentId);
+    if (existing) return existing;
+    const seed = { current: 0, best: 0, lastRewardedMilestone: 0 };
+    this.nonRestStreakByAgentId.set(agentId, seed);
+    return seed;
+  }
+
+  private nextStreakMilestone(current: number): { streak: number; bonusArena: number } | null {
+    const milestones: Array<{ streak: number; bonusArena: number }> = [
+      { streak: 3, bonusArena: 6 },
+      { streak: 5, bonusArena: 10 },
+      { streak: 8, bonusArena: 14 },
+      { streak: 13, bonusArena: 20 },
+    ];
+    return milestones.find((m) => m.streak === current) || null;
+  }
+
+  private async applyRetentionHooks(
+    agent: Pick<ArenaAgent, 'id' | 'name'>,
+    actionType: AgentAction['type'],
+  ): Promise<{ currentNonRestStreak: number; bestNonRestStreak: number; milestoneStreak: number | null; bonusArena: number }> {
+    const streak = this.getOrInitStreak(agent.id);
+
+    if (actionType === 'rest') {
+      streak.current = 0;
+      streak.lastRewardedMilestone = 0;
+      this.nonRestStreakByAgentId.set(agent.id, streak);
+      return {
+        currentNonRestStreak: streak.current,
+        bestNonRestStreak: streak.best,
+        milestoneStreak: null,
+        bonusArena: 0,
+      };
+    }
+
+    streak.current += 1;
+    if (streak.current > streak.best) streak.best = streak.current;
+
+    const milestone = this.nextStreakMilestone(streak.current);
+    if (!milestone || milestone.streak <= streak.lastRewardedMilestone) {
+      this.nonRestStreakByAgentId.set(agent.id, streak);
+      return {
+        currentNonRestStreak: streak.current,
+        bestNonRestStreak: streak.best,
+        milestoneStreak: null,
+        bonusArena: 0,
+      };
+    }
+
+    let granted = 0;
+    try {
+      const pool = await this.getOrCreateEconomyPool();
+      const available = Math.max(0, pool.arenaBalance - SOLVENCY_POOL_FLOOR);
+      granted = Math.max(0, Math.min(milestone.bonusArena, available));
+      if (granted > 0) {
+        await prisma.$transaction(async (tx) => {
+          await tx.economyPool.update({
+            where: { id: pool.id },
+            data: { arenaBalance: { decrement: granted } },
+          });
+          await tx.arenaAgent.update({
+            where: { id: agent.id },
+            data: { bankroll: { increment: granted } },
+          });
+        });
+      }
+    } catch {
+      granted = 0;
+    }
+
+    if (granted > 0) {
+      streak.lastRewardedMilestone = milestone.streak;
+      console.log(`[AgentLoop] ${agent.name} streak milestone x${milestone.streak}: +${granted} $ARENA`);
+    }
+    this.nonRestStreakByAgentId.set(agent.id, streak);
+
+    return {
+      currentNonRestStreak: streak.current,
+      bestNonRestStreak: streak.best,
+      milestoneStreak: granted > 0 ? milestone.streak : null,
+      bonusArena: granted,
+    };
+  }
+
+  async getRetentionSnapshot(agentId: string): Promise<{
+    agentId: string;
+    name: string;
+    currentTick: number;
+    streak: {
+      currentNonRest: number;
+      bestNonRest: number;
+      nextMilestone: number | null;
+      nextMilestoneBonusArena: number;
+    };
+    rivals: Array<{ agentId: string; name: string; score: number; since: string | null }>;
+    friends: Array<{ agentId: string; name: string; score: number; since: string | null }>;
+    goals: {
+      active: number;
+      completedRecent: number;
+      failedRecent: number;
+      topActive: Array<{ id: string; horizon: string; title: string; progressLabel: string; deadlineTick: number | null }>;
+    };
+  }> {
+    const agent = await prisma.arenaAgent.findUnique({
+      where: { id: agentId },
+      select: { id: true, name: true },
+    });
+    if (!agent) throw new Error('Agent not found');
+
+    const relationships = await socialGraphService.listRelationships(agent.id).catch(() => ({
+      maxFriends: 5,
+      friends: [],
+      rivals: [],
+    }));
+
+    const goalHistory = await agentGoalTrackService.getAgentGoalHistory(agent.id, 40);
+    const activeGoals = goalHistory.filter((goal) => goal.status === 'ACTIVE');
+    const completedRecent = goalHistory.filter((goal) => goal.status === 'COMPLETED').length;
+    const failedRecent = goalHistory.filter((goal) => goal.status === 'FAILED').length;
+
+    const streak = this.getOrInitStreak(agent.id);
+    const upcomingMilestones = [
+      { streak: 3, bonusArena: 6 },
+      { streak: 5, bonusArena: 10 },
+      { streak: 8, bonusArena: 14 },
+      { streak: 13, bonusArena: 20 },
+    ];
+    const nextMilestone = upcomingMilestones.find((m) => m.streak > streak.current) || null;
+
+    return {
+      agentId: agent.id,
+      name: agent.name,
+      currentTick: this.currentTick,
+      streak: {
+        currentNonRest: streak.current,
+        bestNonRest: streak.best,
+        nextMilestone: nextMilestone?.streak ?? null,
+        nextMilestoneBonusArena: nextMilestone?.bonusArena ?? 0,
+      },
+      rivals: (relationships.rivals || []).slice(0, 3).map((rival) => ({
+        agentId: rival.agentId,
+        name: rival.name,
+        score: rival.score,
+        since: rival.since,
+      })),
+      friends: (relationships.friends || []).slice(0, 3).map((friend) => ({
+        agentId: friend.agentId,
+        name: friend.name,
+        score: friend.score,
+        since: friend.since,
+      })),
+      goals: {
+        active: activeGoals.length,
+        completedRecent,
+        failedRecent,
+        topActive: activeGoals.slice(0, 3).map((goal) => ({
+          id: goal.id,
+          horizon: goal.horizon,
+          title: goal.title,
+          progressLabel: goal.lastProgressLabel || `${goal.progressValue}/${goal.targetValue}`,
+          deadlineTick: goal.deadlineTick ?? null,
+        })),
+      },
     };
   }
 
@@ -1218,6 +1389,32 @@ export class AgentLoopService {
       }
     }
 
+    const retention = await this.applyRetentionHooks(
+      refreshedAfterAction || agent,
+      effectiveAction.type,
+    );
+    if (observation.town && retention.bonusArena > 0 && retention.milestoneStreak) {
+      try {
+        await townService.logEvent(
+          observation.town.id,
+          'CUSTOM' as any,
+          `🔥 ${agent.name} hit streak x${retention.milestoneStreak}`,
+          `${agent.name} chained ${retention.milestoneStreak} non-rest actions and earned +${retention.bonusArena} $ARENA.`,
+          agent.id,
+          {
+            kind: 'RETENTION_STREAK',
+            streakType: 'NON_REST',
+            streak: retention.milestoneStreak,
+            bonusArena: retention.bonusArena,
+            currentNonRestStreak: retention.currentNonRestStreak,
+            bestNonRestStreak: retention.bestNonRestStreak,
+          },
+        );
+      } catch {
+        // non-fatal
+      }
+    }
+
     const decisionMetadata = this.buildDecisionMetadata(action, effectiveAction, success, {
       ...policyContext,
       autonomyRateAfter,
@@ -1226,6 +1423,7 @@ export class AgentLoopService {
       goalTransitions: combinedGoalTransitions,
       economyDelta,
       tick: this.currentTick,
+      retention,
       command: commandMetadata || undefined,
     });
 
@@ -1959,6 +2157,12 @@ export class AgentLoopService {
         healthDelta: number;
       };
       tick?: number;
+      retention?: {
+        currentNonRestStreak: number;
+        bestNonRestStreak: number;
+        milestoneStreak: number | null;
+        bonusArena: number;
+      };
       command?: {
         commandId: string;
         mode: AgentCommandView['mode'];
@@ -1995,6 +2199,7 @@ export class AgentLoopService {
       goalTransitions: policy?.goalTransitions || [],
       economyDelta: policy?.economyDelta || { arenaDelta: 0, reserveDelta: 0, healthDelta: 0 },
       tick: policy?.tick ?? this.currentTick,
+      retention: policy?.retention || null,
       command: policy?.command || null,
       chosenReasoning,
       executedReasoning,

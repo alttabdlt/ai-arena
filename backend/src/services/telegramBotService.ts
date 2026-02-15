@@ -1285,6 +1285,21 @@ export class TelegramBotService {
               )
               .join('\n')
           : '• No active agent links';
+      const retentionLines: string[] = [];
+      for (const link of activeLinks.slice(0, 3)) {
+        try {
+          const snapshot = await agentLoopService.getRetentionSnapshot(link.agentId);
+          const topRival = snapshot.rivals[0]?.name || 'none';
+          retentionLines.push(
+            `• <b>${esc(link.agentName)}</b> streak x${snapshot.streak.currentNonRest} (best x${snapshot.streak.bestNonRest})` +
+              ` | goals ${snapshot.goals.active} active` +
+              ` | rival: ${esc(topRival)}`,
+          );
+        } catch {
+          retentionLines.push(`• <b>${esc(link.agentName)}</b> retention data unavailable`);
+        }
+      }
+      const retentionBlock = retentionLines.length > 0 ? retentionLines.join('\n') : '• No retention data yet';
 
       await this.send(
         chatId,
@@ -1292,7 +1307,8 @@ export class TelegramBotService {
           `Telegram: <code>${esc(profile.telegramUserId)}</code>\n` +
           `Wallet: <code>${esc(profile.linkedWalletAddress || 'not linked')}</code>\n` +
           `State: <b>${esc(profile.verificationState)}</b>\n\n` +
-          `<b>Active Agent Links</b>\n${linkLines}`,
+          `<b>Active Agent Links</b>\n${linkLines}\n\n` +
+          `<b>Retention Snapshot</b>\n${retentionBlock}`,
       );
     } catch (err: any) {
       await this.send(chatId, `❌ Could not load profile: ${esc(err.message || 'unknown error')}`);

@@ -5122,6 +5122,7 @@ export default function Town3D() {
   const [degenPlans, setDegenPlans] = useState<Record<DegenNudge, DegenActionPlan> | null>(null);
   const [degenPlansLoading, setDegenPlansLoading] = useState(false);
   const [fundingModalOpen, setFundingModalOpen] = useState(false);
+  const [fundingAgentId, setFundingAgentId] = useState<string | null>(null);
   const [fundingTxHash, setFundingTxHash] = useState('');
   const [fundingReceipts, setFundingReceipts] = useState<AgentFundingReceipt[]>([]);
   const [fundingTotals, setFundingTotals] = useState<{ creditedArena: number; receiptCount: number } | null>(null);
@@ -5571,15 +5572,16 @@ export default function Town3D() {
       window.clearInterval(timer);
     };
   }, []);
-  const refreshFundingHistory = useCallback(async () => {
-    if (!ownedAgentId || !isPlayerAuthenticated) {
+  const refreshFundingHistory = useCallback(async (agentIdOverride?: string | null) => {
+    const targetAgentId = agentIdOverride || fundingAgentId || ownedAgentId;
+    if (!targetAgentId || !isPlayerAuthenticated) {
       setFundingReceipts([]);
       setFundingTotals(null);
       return;
     }
     setFundingLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/agents/${ownedAgentId}/funding`, {
+      const res = await fetch(`${API_BASE}/agents/${targetAgentId}/funding`, {
         headers: buildPlayerHeaders(false),
       });
       if (!res.ok) throw new Error(`Funding history unavailable (${res.status})`);
@@ -5593,30 +5595,73 @@ export default function Town3D() {
     } finally {
       setFundingLoading(false);
     }
-  }, [buildPlayerHeaders, isPlayerAuthenticated, ownedAgentId]);
+  }, [buildPlayerHeaders, fundingAgentId, isPlayerAuthenticated, ownedAgentId]);
   useEffect(() => {
-    if (!ownedAgentId || !isPlayerAuthenticated) {
+    const targetAgentId = fundingAgentId || ownedAgentId;
+    if (!targetAgentId || !isPlayerAuthenticated) {
       setFundingReceipts([]);
       setFundingTotals(null);
       return;
     }
-    void refreshFundingHistory();
+    void refreshFundingHistory(targetAgentId);
     const timer = window.setInterval(() => {
-      void refreshFundingHistory();
+      void refreshFundingHistory(targetAgentId);
     }, 18000);
     return () => window.clearInterval(timer);
-  }, [isPlayerAuthenticated, ownedAgentId, refreshFundingHistory]);
+  }, [fundingAgentId, isPlayerAuthenticated, ownedAgentId, refreshFundingHistory]);
   const [showSpawnOverlay, setShowSpawnOverlay] = useState(false);
-  const openFundingFlow = useCallback(() => {
-    if (!ensureActionSession('funding this agent')) return;
+  const openFundingFlow = useCallback(async () => {
+    if (!isPlayerAuthenticated) {
+      showDegenStatus('Sign in required before funding this agent.', 'error', 3800);
+      setShowOnboarding(true);
+      return;
+    }
+
+    let targetAgentId = ownedAgentId;
+    if (!targetAgentId && normalizedSessionWallet) {
+      try {
+        const lookup = await apiFetch<AgentMeLookupResponse>(`/agents/me?wallet=${encodeURIComponent(normalizedSessionWallet)}`);
+        const recoveredId = typeof lookup.agent?.id === 'string' ? lookup.agent.id : null;
+        if (recoveredId) {
+          targetAgentId = recoveredId;
+          localStorage.setItem(MY_AGENT_KEY, recoveredId);
+          setSelectedAgentId(recoveredId);
+        }
+      } catch {
+        // Ignore and fall through to deploy/select prompt.
+      }
+    }
+
+    if (!targetAgentId) {
+      showDegenStatus('No wallet-linked agent found. Deploy one before funding.', 'error', 4200);
+      setShowSpawnOverlay(true);
+      return;
+    }
+
+    setFundingAgentId(targetAgentId);
     setFundingError(null);
     setFundingSuccess(null);
     setFundingModalOpen(true);
-    void refreshFundingHistory();
-  }, [ensureActionSession, refreshFundingHistory]);
+    void refreshFundingHistory(targetAgentId);
+  }, [
+    isPlayerAuthenticated,
+    normalizedSessionWallet,
+    ownedAgentId,
+    refreshFundingHistory,
+    showDegenStatus,
+  ]);
   const submitFundingTx = useCallback(async () => {
-    if (!ensureActionSession('funding this agent')) return;
-    if (!ownedAgentId) return;
+    if (!isPlayerAuthenticated) {
+      showDegenStatus('Sign in required before funding this agent.', 'error', 3800);
+      setShowOnboarding(true);
+      return;
+    }
+    const targetAgentId = fundingAgentId || ownedAgentId;
+    if (!targetAgentId) {
+      showDegenStatus('Select or deploy your wallet-linked agent before funding.', 'error', 4200);
+      setShowSpawnOverlay(true);
+      return;
+    }
     const txHash = fundingTxHash.trim();
     if (!txHash) {
       setFundingError('Paste a Monad tx hash first.');
@@ -5626,7 +5671,7 @@ export default function Town3D() {
     setFundingError(null);
     setFundingSuccess(null);
     try {
-      const res = await fetch(`${API_BASE}/agents/${ownedAgentId}/fund`, {
+      const res = await fetch(`${API_BASE}/agents/${targetAgentId}/fund`, {
         method: 'POST',
         headers: buildPlayerHeaders(true),
         body: JSON.stringify({ txHash }),
@@ -5650,7 +5695,7 @@ export default function Town3D() {
       setFundingSuccess(`Credited +${Math.round(credited)} $ARENA from ${shortTx}.`);
       setFundingTxHash('');
       showDegenStatus(`Funding credited +${Math.round(credited)}A`, 'ok', 4200);
-      await refreshFundingHistory();
+      await refreshFundingHistory(targetAgentId);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Funding verification failed';
       setFundingError(message);
@@ -5660,21 +5705,23 @@ export default function Town3D() {
     }
   }, [
     buildPlayerHeaders,
-    ensureActionSession,
+    fundingAgentId,
     fundingTxHash,
+    isPlayerAuthenticated,
     ownedAgentId,
     refreshFundingHistory,
     showDegenStatus,
   ]);
   useEffect(() => {
-    if (isPlayerAuthenticated && ownedAgentId) return;
+    if (isPlayerAuthenticated && (fundingAgentId || ownedAgentId)) return;
     setFundingModalOpen(false);
+    setFundingAgentId(null);
     setFundingTxHash('');
     setFundingError(null);
     setFundingSuccess(null);
     setFundingReceipts([]);
     setFundingTotals(null);
-  }, [isPlayerAuthenticated, ownedAgentId]);
+  }, [fundingAgentId, isPlayerAuthenticated, ownedAgentId]);
   const openDeployFlow = useCallback(() => {
     if (!isPlayerAuthenticated) {
       setShowOnboarding(true);
@@ -6770,6 +6817,7 @@ export default function Town3D() {
         onSubmit={submitFundingTx}
         onClose={() => {
           setFundingModalOpen(false);
+          setFundingAgentId(null);
           setFundingError(null);
           setFundingSuccess(null);
         }}

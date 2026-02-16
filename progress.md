@@ -434,3 +434,19 @@ Original prompt: "yes, but are we able to implement build/work/fight > crypto lo
 
 - Commit:
   - `50443df` — `onboarding: make auth gate opaque and remove spectator skip`
+
+### Funding flow bounce fix (2026-02-16)
+
+- Fixed `Fund` CTA redirecting users back into onboarding (`Enter AI Town`) when agent ownership resolution was momentarily missing.
+- Updated `Town3D` funding flow:
+  - `openFundingFlow` now resolves wallet-linked agent via `/agents/me?wallet=...` before opening modal.
+  - If no wallet-linked agent exists, it shows a precise status and opens deploy overlay (instead of reopening onboarding).
+  - Funding history / submit now use `fundingAgentId` context, not only `ownedAgentId`.
+  - Prevents false onboarding bounce on authenticated users.
+
+- Validation:
+  - `cd app && npx tsc --noEmit` passed.
+  - `cd app && npm run build` passed.
+
+- Commit:
+  - `082dcd7` — `funding: avoid onboarding bounce and resolve wallet agent before modal`

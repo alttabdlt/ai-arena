@@ -33,6 +33,8 @@ interface DegenControlBarProps {
   crewName?: string | null;
   crewColor?: string | null;
   actionsLockedReason?: string | null;
+  bankroll?: number | null;
+  reserveBalance?: number | null;
   loopTelemetry: DegenLoopTelemetry | null;
   nowMs: number;
   statusMessage?: string;
@@ -40,6 +42,7 @@ interface DegenControlBarProps {
   onToggleLoop: (nextMode: 'DEFAULT' | 'DEGEN_LOOP') => void;
   onNudge: (nudge: DegenNudge) => void;
   onCrewOrder?: (strategy: CrewOrderStrategy) => void;
+  onOpenFunding?: () => void;
 }
 
 const NUDGES: Array<{ key: DegenNudge; label: string; emoji: string }> = [
@@ -79,6 +82,8 @@ export function DegenControlBar({
   crewName = null,
   crewColor = null,
   actionsLockedReason = null,
+  bankroll = null,
+  reserveBalance = null,
   loopTelemetry,
   nowMs,
   statusMessage,
@@ -86,6 +91,7 @@ export function DegenControlBar({
   onToggleLoop,
   onNudge,
   onCrewOrder,
+  onOpenFunding,
 }: DegenControlBarProps) {
   if (!ownedAgent) {
     return (
@@ -109,6 +115,7 @@ export function DegenControlBar({
   const loopsCompleted = Math.max(0, loopTelemetry?.loopsCompleted ?? 0);
   const lastPhase = loopTelemetry?.lastPhase;
   const recommendedLabel = NUDGES.find((nudge) => nudge.key === recommendedNudge)?.label ?? null;
+  const lowFuel = Number.isFinite(Number(bankroll)) && Number(bankroll) < 30;
 
   return (
     <div className="w-[420px] max-w-[calc(100vw-24px)] rounded-xl border border-amber-500/30 bg-slate-950/85 p-3 backdrop-blur-md shadow-lg shadow-black/35">
@@ -135,6 +142,30 @@ export function DegenControlBar({
         </button>
       </div>
       <div className="mb-2 rounded-lg border border-amber-500/25 bg-slate-900/45 px-2 py-1.5">
+        <div className="mb-1 flex items-center justify-between gap-2 text-[10px]">
+          <span className="font-mono text-slate-300">
+            FUEL ${Math.round(bankroll || 0)}A / {Math.round(reserveBalance || 0)}R
+          </span>
+          {onOpenFunding && (
+            <button
+              type="button"
+              onClick={onOpenFunding}
+              className={`rounded border px-1.5 py-0.5 font-mono text-[9px] transition-colors ${
+                lowFuel
+                  ? 'border-rose-500/60 bg-rose-950/35 text-rose-200 hover:bg-rose-900/40'
+                  : 'border-cyan-500/55 bg-cyan-950/30 text-cyan-200 hover:bg-cyan-900/35'
+              }`}
+              title="Buy $ARENA on nad.fun and verify tx hash to credit bankroll"
+            >
+              {lowFuel ? '⛽ TOP UP' : '➕ ADD FUNDS'}
+            </button>
+          )}
+        </div>
+        {lowFuel && (
+          <div className="mb-1 text-[9px] text-rose-300">
+            Low bankroll detected. Fund before forcing more FIGHT actions.
+          </div>
+        )}
         <div className="mb-1 flex items-center justify-between text-[10px]">
           <span className="font-mono text-amber-200" title="Loop heat = consecutive non-rest loop actions (higher means stronger momentum).">
             HEAT x{chain}

@@ -1,5 +1,5 @@
 /**
- * PrivyWalletConnect — Email/Social login → embedded wallet via Privy.
+ * PrivyWalletConnect — Wallet-only login via Privy.
  * Gracefully degrades when Privy is not configured (no app ID).
  */
 import { usePrivy, useWallets, useLogin, useLogout } from '@privy-io/react-auth';
@@ -8,7 +8,7 @@ import { Badge } from '@ui/badge';
 import { Component, useEffect, type ReactNode } from 'react';
 import { HAS_PRIVY } from '../config/privy';
 
-const ARENA_TOKEN_ADDRESS = '0x0bA5E04470Fe327AC191179Cf6823E667B007777';
+const ARENA_TOKEN_ADDRESS = '0xC9795A42b7f31D2c1a0B67E7E1b8ea6729957777';
 type EthereumProvider = { request: (args: { method: string; params?: unknown[] | object }) => Promise<unknown> };
 
 export interface WalletSessionState {
@@ -69,7 +69,7 @@ function PrivyInner({ compact = false, onAddressChange, onSessionChange }: Privy
         {authenticated && address ? (
           <>
             <Badge variant="outline" className="border-green-600/50 text-green-400 text-[10px]">
-              🟢 {user?.email?.address || user?.twitter?.username || 'Connected'}
+              🟢 Connected
             </Badge>
             <Button size="sm" variant="ghost" className="text-xs font-mono" onClick={logout}>
               {shortAddress}
@@ -77,7 +77,7 @@ function PrivyInner({ compact = false, onAddressChange, onSessionChange }: Privy
           </>
         ) : (
           <Button size="sm" variant="outline" onClick={login} data-privy-connect>
-            ✨ Sign In
+            Connect Wallet
           </Button>
         )}
       </div>
@@ -90,10 +90,10 @@ function PrivyInner({ compact = false, onAddressChange, onSessionChange }: Privy
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <span className="text-xs text-slate-400">
-              {user?.email?.address || user?.twitter?.username || 'Connected'}
+              Connected
             </span>
             <Badge variant="outline" className="border-green-600/50 text-green-400">
-              🟢 Monad Testnet
+              🟢 Monad
             </Badge>
           </div>
           <div className="flex items-center gap-2">
@@ -102,7 +102,7 @@ function PrivyInner({ compact = false, onAddressChange, onSessionChange }: Privy
           </div>
           <Button 
             size="sm" variant="outline" className="w-full text-xs border-amber-600/50 text-amber-300"
-            onClick={() => window.open(`https://testnet.nad.fun/token/${ARENA_TOKEN_ADDRESS}`, '_blank')}
+            onClick={() => window.open(`https://nad.fun/tokens/${ARENA_TOKEN_ADDRESS}`, '_blank')}
           >
             Buy $ARENA on nad.fun
           </Button>
@@ -114,10 +114,10 @@ function PrivyInner({ compact = false, onAddressChange, onSessionChange }: Privy
             onClick={login}
             data-privy-connect
           >
-            ✨ Sign In (Email, Google, Twitter)
+            Connect Wallet
           </Button>
           <div className="text-[10px] text-slate-500 text-center">
-            No wallet needed — we create one for you instantly
+            MetaMask · Coinbase · WalletConnect
           </div>
         </div>
       )}

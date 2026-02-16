@@ -70,6 +70,17 @@ export interface GameSnapshot {
   handRanks?: Record<string, string>;     // agentId → hand rank name
   handWinner?: string | null;             // winner of this hand
   handResult?: string;                    // e.g. "FULL HOUSE beats TWO PAIR"
+  // Split or Steal fields
+  sosRound?: number;
+  sosMaxRounds?: number;
+  sosDialogue?: Array<{ agentId: string; agentName: string; round: number; message: string; isDecisionRound: boolean }>;
+  sosDecisions?: Record<string, string>;  // agentId → 'split'|'steal' (only after reveal)
+  sosOutcome?: { type: string; winnerId: string | null; p1Payout: number; p2Payout: number; houseRake: number } | null;
+  // RPS fields
+  rpsRound?: number;
+  rpsMaxRounds?: number;
+  rpsScores?: Record<string, number>;
+  rpsHistory?: Array<{ round: number; moves: Record<string, string>; winnerId: string | null }>;
 }
 
 export interface WheelMove {
@@ -80,6 +91,7 @@ export interface WheelMove {
   reasoning: string;
   quip: string;
   amount?: number;
+  data?: any;             // Game-specific data (e.g. SoS dialogue message)
   gameSnapshot?: GameSnapshot;
 }
 
@@ -540,7 +552,53 @@ class WheelOfFateService {
           const gameState = updatedMatch ? JSON.parse(updatedMatch.gameState) : null;
 
           let snapshot: GameSnapshot | undefined;
-          if (gameState && gameState.players) {
+          if (gameState && gameType === 'RPS') {
+            // RPS snapshot
+            const scores: Record<string, number> = {};
+            for (const p of gameState.players || []) {
+              scores[p.id] = p.score ?? 0;
+            }
+            snapshot = {
+              communityCards: [],
+              pot: gameState.pot || 0,
+              phase: gameState.phase || 'playing',
+              chips: {},
+              bets: {},
+              handNumber: 1,
+              maxHands: 1,
+              smallBlind: 0,
+              bigBlind: 0,
+              rpsRound: gameState.round ?? 1,
+              rpsMaxRounds: gameState.maxRounds ?? 3,
+              rpsScores: scores,
+              rpsHistory: gameState.history || [],
+            };
+          } else if (gameState && gameType === 'SPLIT_OR_STEAL') {
+            // Split or Steal snapshot
+            const decisions: Record<string, string> = {};
+            if (gameState.phase === 'complete' || gameState.phase === 'reveal') {
+              for (const p of gameState.players || []) {
+                if (p.decision) decisions[p.id] = p.decision;
+              }
+            }
+            snapshot = {
+              communityCards: [],
+              pot: gameState.pot || 0,
+              phase: gameState.phase || 'negotiation',
+              chips: {},
+              bets: {},
+              handNumber: 1,
+              maxHands: 1,
+              smallBlind: 0,
+              bigBlind: 0,
+              sosRound: gameState.round,
+              sosMaxRounds: gameState.maxRounds || 4,
+              sosDialogue: gameState.dialogue || [],
+              sosDecisions: Object.keys(decisions).length > 0 ? decisions : undefined,
+              sosOutcome: gameState.outcome || null,
+            };
+          } else if (gameState && gameState.players) {
+            // Poker snapshot
             const chips: Record<string, number> = {};
             const bets: Record<string, number> = {};
             for (const p of gameState.players) {
@@ -605,6 +663,7 @@ class WheelOfFateService {
             reasoning: (result.move?.reasoning || '').slice(0, 200),
             quip: (result.move?.quip || '').slice(0, 100),
             amount: result.move?.amount,
+            data: result.move?.data,
             gameSnapshot: snapshot,
           };
           moves.push(move);
@@ -882,7 +941,9 @@ class WheelOfFateService {
   // ---- Game Type Selection ----
 
   private pickGameType(): string {
-    return 'POKER';
+    // 3-game rotation: POKER → SPLIT_OR_STEAL → RPS
+    const matchCount = this.resultHistory.length;
+    return (['POKER', 'SPLIT_OR_STEAL', 'RPS'] as const)[matchCount % 3];
   }
 
   // ---- Building Buffs ----

@@ -948,14 +948,14 @@ export class TelegramBotService {
   }
 
   private async handleShowToken(chatId: number | string): Promise<void> {
-    const addr = process.env.ARENA_TOKEN_ADDRESS || '0x0bA5E04470Fe327AC191179Cf6823E667B007777';
+    const addr = process.env.ARENA_TOKEN_ADDRESS || '0xC9795A42b7f31D2c1a0B67E7E1b8ea6729957777';
     const nadUrl = `https://nad.fun/tokens/${addr}`;
     const explorerUrl = `https://explorer.monad.xyz/address/${addr}`;
     await this.send(chatId,
       `🪙 <b>$ARENA Token</b>\n\n` +
-      `<b>Name:</b> Arena Town\n` +
+      `<b>Name:</b> AI Arena\n` +
       `<b>Symbol:</b> $ARENA\n` +
-      `<b>Network:</b> Monad Testnet\n` +
+      `<b>Network:</b> Monad\n` +
       `<b>Address:</b> <code>${addr}</code>\n\n` +
       `Every building costs $ARENA. Completed towns yield passive $ARENA. The real cost? LLM inference — every design step is a real API call.\n\n` +
       `<a href="${nadUrl}">📈 Trade on nad.fun</a>  |  <a href="${explorerUrl}">🔍 Explorer</a>`,

@@ -47,7 +47,7 @@ export function Header() {
         {/* Right: chain badge */}
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="border-purple-500/30 text-purple-300 text-xs hidden sm:flex">
-            ⛓️ Monad Testnet
+            ⛓️ Monad
           </Badge>
           <a
             href="https://github.com/aiarena"

@@ -167,7 +167,7 @@ Flow: `claim_plot` → `start_build` → `do_work` (repeat) → `complete_build`
 - **$ARENA**: The token. Every action = 1 $ARENA burned = "Proof of Inference."
 - **AMM**: Constant-product pool. Price rises as agents buy. 1% fee on swaps.
 - **Upkeep**: ~1 $ARENA/tick. Can't pay → lose 5 HP. 0 HP → death (permanent).
-- **$ARENA on nad.fun**: `0x0bA5E04470Fe327AC191179Cf6823E667B007777` (Monad testnet)
+- **$ARENA on nad.fun**: Monad mainnet (address in server config)
 
 ---
 

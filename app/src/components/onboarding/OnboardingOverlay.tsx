@@ -99,7 +99,7 @@ const FALLBACK_PROFILES: AiProfileChoice[] = [
   },
 ];
 const QUICKSTART_STEPS = [
-  'Sign in with wallet/email/social.',
+  'Connect your wallet.',
   'We auto-detect your wallet agent. If none exists, deploy one.',
   'Enter town and confirm your agent + bankroll in the HUD.',
   'Run AUTO loop or manual BUILD → WORK → FIGHT → TRADE.',
@@ -111,9 +111,9 @@ function toModelChoices(
 ): ModelChoice[] {
   if (!Array.isArray(rows) || rows.length === 0) return FALLBACK_MODELS;
   const mapCost = (tier: string): string => {
-    if (tier === 'cheap') return 'low spend';
-    if (tier === 'mid') return 'mid spend';
-    return 'high spend';
+    if (tier === 'cheap') return '~$0.001/action';
+    if (tier === 'mid') return '~$0.003/action';
+    return '~$0.01/action';
   };
   return rows.map((row, idx) => {
     const provider = String(row.provider || '').toLowerCase();
@@ -159,28 +159,14 @@ function QuickstartCard({ compact = false }: { compact?: boolean }) {
 }
 
 function LlmStatusCard({ status }: { status: LlmStatus }) {
-  const tone = status.ok === true ? 'text-emerald-300 border-emerald-500/25 bg-emerald-500/5' : status.ok === false ? 'text-rose-300 border-rose-500/25 bg-rose-500/5' : 'text-slate-400 border-slate-700/60 bg-slate-950/40';
-  const label = status.loading
-    ? 'Checking LLM provider...'
-    : status.ok === true
-      ? 'LLM provider healthy'
-      : status.ok === false
-        ? status.message || 'LLM provider unavailable'
-        : 'LLM status unknown';
+  // Only show the card when LLM is healthy — hide confusing dev-facing errors from players
+  if (status.loading || status.ok !== true) return null;
   return (
-    <div className={`rounded-lg border px-2.5 py-2 text-[10px] ${tone}`}>
-      <div className="flex items-center justify-between gap-2">
-        <span className="uppercase tracking-wide font-semibold">LLM Status</span>
-        <span className="font-mono text-[9px]">{status.code || 'N/A'}</span>
+    <div className="rounded-lg border px-2.5 py-2 text-[10px] text-emerald-300 border-emerald-500/25 bg-emerald-500/5">
+      <div className="flex items-center gap-2">
+        <span className="uppercase tracking-wide font-semibold">AI Models</span>
+        <span className="text-[9px]">Online</span>
       </div>
-      <div className="mt-1 text-[10px] leading-snug">
-        {label}
-      </div>
-      {status.ok !== true && (
-        <div className="mt-1 text-[9px] text-slate-400">
-          This is provider billing/connectivity, not in-game $ARENA. Restart backend after topping up.
-        </div>
-      )}
     </div>
   );
 }
@@ -292,7 +278,7 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
       : '';
   const walletAddress = wallets[0]?.address || userWalletAddress || null;
   const shortAddr = walletAddress ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` : null;
-  const displayName = user?.email?.address || user?.twitter?.username || user?.google?.name || shortAddr || 'Connected';
+  const displayName = shortAddr || 'Connected';
 
   const [view, setView] = useState<View>('wallet');
   const [existingAgent, setExistingAgent] = useState<OnboardingAgent | null>(null);
@@ -508,8 +494,8 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
         {view === 'wallet' && (
           <div className="bg-slate-900/90 border border-slate-700/50 rounded-2xl p-6 space-y-4">
             <div className="text-center">
-              <div className="text-lg font-bold text-slate-200 mb-1">Sign In to Play</div>
-              <div className="text-xs text-slate-500">Connect a wallet or sign in with email</div>
+              <div className="text-lg font-bold text-slate-200 mb-1">Connect Wallet to Play</div>
+              <div className="text-xs text-slate-500">MetaMask, Coinbase, or WalletConnect</div>
             </div>
 
             <button
@@ -517,11 +503,11 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
               disabled={!ready}
               className="w-full py-3.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold rounded-xl transition-all disabled:opacity-50 text-sm shadow-lg shadow-purple-500/20"
             >
-              {!ready ? '⏳ Loading...' : '✨ Sign In'}
+              {!ready ? '⏳ Loading...' : 'Connect Wallet'}
             </button>
 
             <div className="text-[10px] text-slate-600 text-center">
-              Email · Google · Twitter · MetaMask · Coinbase · WalletConnect
+              MetaMask · Coinbase · WalletConnect
             </div>
 
             <QuickstartCard compact />
@@ -593,7 +579,6 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
               💬 Telegram (Optional)
             </a>
             <LlmStatusCard status={llmStatus} />
-            <QuickstartCard compact />
           </div>
         )}
 
@@ -658,7 +643,6 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
             </div>
 
             <LlmStatusCard status={llmStatus} />
-            <QuickstartCard />
           </div>
         )}
 
@@ -758,8 +742,8 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
                     }`}
                   >
                     <div className="text-[10px] font-semibold text-cyan-200">{profile.label}</div>
-                    <div className="text-[9px] text-slate-500">
-                      LLM / {profile.llmCadenceTicks}t
+                    <div className="text-[9px] text-slate-500" title={`LLM called every ${profile.llmCadenceTicks} tick${profile.llmCadenceTicks > 1 ? 's' : ''}`}>
+                      LLM every {profile.llmCadenceTicks} tick{profile.llmCadenceTicks > 1 ? 's' : ''}
                     </div>
                   </button>
                 ))}
@@ -772,7 +756,7 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
             <div className="space-y-2 rounded-lg border border-slate-800/40 bg-slate-950/45 p-2.5">
               <div>
                 <div className="mb-1 flex items-center justify-between text-[10px]">
-                  <span className="text-slate-400">Risk Tolerance</span>
+                  <span className="text-slate-400" title="Higher = more aggressive PvP bets and riskier trades">Risk Tolerance</span>
                   <span className="font-mono text-amber-300">{Math.round(riskTolerance * 100)}%</span>
                 </div>
                 <input
@@ -784,10 +768,11 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
                   onChange={(e) => setRiskTolerance(Number(e.target.value))}
                   className="w-full accent-amber-500"
                 />
+                <div className="text-[9px] text-slate-600 mt-0.5">Higher = more aggressive PvP bets</div>
               </div>
               <div>
                 <div className="mb-1 flex items-center justify-between text-[10px]">
-                  <span className="text-slate-400">Max Wager Cap</span>
+                  <span className="text-slate-400" title="Max % of bankroll your agent will risk in a single PvP wager">Max Wager Cap</span>
                   <span className="font-mono text-amber-300">{Math.round(maxWagerPercent * 100)}%</span>
                 </div>
                 <input
@@ -799,6 +784,7 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
                   onChange={(e) => setMaxWagerPercent(Number(e.target.value))}
                   className="w-full accent-amber-500"
                 />
+                <div className="text-[9px] text-slate-600 mt-0.5">Max % of bankroll risked per PvP wager</div>
               </div>
             </div>
 
@@ -811,9 +797,11 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
             </div>
 
             <LlmStatusCard status={llmStatus} />
-            <QuickstartCard compact />
 
             {spawnError && <div className="text-xs text-red-400 text-center">{spawnError}</div>}
+            {!spawning && !agentName.trim() && (
+              <div className="text-[10px] text-amber-400/70 text-center">Enter an agent name to deploy</div>
+            )}
 
             <button
               onClick={handleSpawn}

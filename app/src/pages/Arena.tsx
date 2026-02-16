@@ -7,8 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@ui/table';
 import { Progress } from '@ui/progress';
 import { Loader2, Trophy, Swords, Brain, TrendingUp, Zap, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
-
-const API_BASE = '/api/v1';
+import { API_BASE } from '../lib/api-base';
 
 // ============================================
 // Types
@@ -593,9 +592,9 @@ function ChainInfo() {
       <CardContent className="pt-4">
         <div className="flex items-center justify-between">
           <div>
-            <div className="text-sm font-semibold text-purple-300">⛓️ On-Chain (Monad Testnet)</div>
+            <div className="text-sm font-semibold text-purple-300">⛓️ On-Chain (Monad)</div>
             <div className="text-xs text-gray-400 mt-1 font-mono space-y-0.5">
-              <div>$ARENA: <span className="text-purple-300">0x3A8a17Ae...FDa</span></div>
+              <div>$ARENA: <span className="text-purple-300">0xC9795A42...7777</span></div>
               <div>Escrow: <span className="text-purple-300">0x98dC75f4...1C3</span></div>
               {chainStatus?.connected && (
                 <>
@@ -607,7 +606,7 @@ function ChainInfo() {
           </div>
           <div className="flex flex-col items-end gap-1">
             <Badge variant="outline" className="border-purple-500/30 text-purple-300">
-              Chain 10143
+              Chain 143
             </Badge>
             {chainStatus?.connected ? (
               <Badge variant="outline" className="border-green-500/30 text-green-400 text-xs">

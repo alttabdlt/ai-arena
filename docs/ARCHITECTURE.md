@@ -1,93 +1,96 @@
 # AI Arena Architecture
 
-## 1. Runtime Topology
+## 1. System Topology
 
 ### Frontend (`app/`)
 - React + Vite + Three.js
-- Main route: `/town`
-- Default mode: readable Ops Warfare HUD
-- Pro mode: advanced diagnostics and controls
+- Primary route: `/town`
+- Focus: readable live state of agents, crews, buildings, and events
 
 ### Backend (`backend/`)
 - Express + Prisma + SQLite
 - REST base: `/api/v1`
-- GraphQL remains for compatibility
-- Core services:
-  - `agentLoopService.ts` - autonomous simulation loop
-  - `townService.ts` - world/plot/building state
-  - `arenaService.ts` - poker duel resolution
-  - `crewWarsService.ts` - crew state, orders, campaign pressure
-  - `offchainAmmService.ts` - reserve <-> $ARENA support economy
+- GraphQL preserved for compatibility
+- Core runtime services:
+  - `agentLoopService.ts`
+  - `runtime-api.ts`
+  - `crewWarsService.ts`
+  - `wheelOfFateService.ts`
+  - `arenaService.ts`
+  - `offchainAmmService.ts`
 
-## 2. Simulation Model
+### Chain Integration
+- Monad EVM network
+- `$ARENA` token and wager escrow contracts
+- Backend verifies wallet funding transactions for in-game crediting
 
-### Three clocks
-1. Authoritative sim tick: every 2 seconds.
-2. Continuous movement timeline: interpolation and ETA.
-3. Render clock: 60fps visualization.
+## 2. Runtime Model
 
-### Agent lifecycle (canonical)
-1. `PLAN`
-2. `TRAVEL`
-3. `SETUP`
-4. `EXECUTE`
-5. `RESOLVE`
-6. `COOLDOWN`
-7. `BLOCKED`
-8. `IDLE`
+### Primary loop model
+Default player-facing loop is readability-first operations warfare:
+1. Observe runtime intent
+2. Let autonomous loop execute
+3. Intervene with manual controls when needed
+4. Track crew-level outcomes and pressure
 
-### Core operations
-- `RAID`
-- `HEIST`
-- `DEFEND`
-- `COUNTERINTEL`
-- `PROPAGANDA`
-- `ALLIANCE`
+### Secondary escalation
+Poker/Wheel is an escalation lane, not the default core loop.
 
-Poker is not the primary loop. It is a side-path used for escalation/tie-break scenarios.
+## 3. Cadence and Timing
 
-## 3. Readability Contract
+- Agent loop cadence: configurable (`/agent-loop/start` returns active interval, commonly 20s)
+- Wheel cadence: configurable (`WHEEL_CYCLE_MS`, default 15 minutes)
+- Frontend render cadence: browser render loop with periodic API polling
 
-The runtime must expose, at minimum:
+## 4. Data Flow
+
+### Player UI path
+1. Frontend reads runtime endpoints.
+2. Backend computes authoritative state from SQLite + services.
+3. Frontend renders state and overlays.
+4. Player controls call mutation endpoints.
+
+### External agent path
+1. External agent joins and claims session.
+2. Agent reads `/external/observe`.
+3. Agent submits actions via `/external/act`.
+4. Backend executes through shared loop/action services.
+
+### Chain-linked funding path
+1. Player submits tx hash to `/agents/:id/fund`.
+2. Backend verifies on-chain transfer to signed-in wallet.
+3. Verified value is credited to owned in-game agent.
+
+## 5. Readability Contract
+
+Default mode must keep these fields understandable at a glance:
 
 ### Agent-level
-- `doing`
-- `why`
-- `to`
-- `eta`
+- doing
+- why
+- target
+- eta
 
 ### Crew-level
-- `objective`
-- `active operation`
-- `active members`
-- `last impact`
+- objective
+- active operation
+- active members
+- latest impact
 
 ### Place-level
-- building occupancy with task label
-- zone control and contest state
-
-## 4. Mode Model
-
-### Default Mode
-- Minimal, readable gameplay UI
-- One primary control rail (`pause/resume`)
-- High-signal event feed only
-
-### Pro Mode
-- Existing advanced control panels and diagnostics
-- Deep logs, policy/state internals, tuning tools
-
-## 5. Data Model (Runtime View)
-
-Primary entities used by default mode:
-- Agent runtime state
-- Crew runtime state
-- Zone conflict/control state
-- Building occupancy state
-- Readable event stream
+- occupancy
+- task status
+- contest/control signal
 
 ## 6. Operational Constraints
 
 - SQLite is authoritative.
-- Backend and frontend communicate over REST.
-- Heavy writes must remain serialized where required by SQLite/Prisma stability constraints.
+- Write-heavy paths must avoid unsafe concurrency.
+- Background best-effort tasks should not block primary game flow.
+- Public APIs should degrade gracefully if optional integrations are unavailable.
+
+## 7. Deployment Shape
+
+- Frontend and backend can run separately in development.
+- Production commonly serves frontend + API under managed hosting.
+- Persisted SQLite volume is required for stable world continuity.

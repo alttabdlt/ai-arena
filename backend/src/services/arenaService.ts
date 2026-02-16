@@ -10,6 +10,7 @@ import { randomBytes } from 'crypto';
 import { smartAiService, GameMoveRequest, OpponentScouting, MetaContext, AgentConfig } from './smartAiService';
 import { GameEngineAdapter } from './gameEngineAdapter';
 import { ArenaPokerEngine } from './arenaPokerEngine';
+import { SplitOrStealEngine } from './splitOrStealEngine';
 import { prisma } from '../config/database';
 import { monadService } from './monadService';
 import { degenStakingService } from './degenStakingService';
@@ -59,6 +60,7 @@ export class ArenaService {
     this.gameEngines.set('POKER', new ArenaPokerEngine());
     this.gameEngines.set('RPS', new RPSEngine());
     this.gameEngines.set('BATTLESHIP', new BattleshipEngine());
+    this.gameEngines.set('SPLIT_OR_STEAL', new SplitOrStealEngine());
   }
 
   // Simple per-match lock to prevent concurrent state mutations
@@ -618,6 +620,15 @@ export class ArenaService {
         // Poker validActions are strings: ['fold', 'check', 'call', 'raise', 'all-in']
         const safeAction = this.pickPokerFallbackAction(validActions as string[]);
         move = { action: safeAction, reasoning: 'AI error fallback', quip: '*static noises*', confidence: 0 };
+      } else if (match.gameType === 'SPLIT_OR_STEAL') {
+        const isDecision = (validActions as string[]).includes('split');
+        move = {
+          action: isDecision ? 'split' : 'negotiate',
+          data: { message: isDecision ? "Let's both walk away happy." : "I think we can work something out." },
+          reasoning: 'AI error fallback',
+          quip: '*static noises*',
+          confidence: 0,
+        };
       } else {
         move = { action: validActions[0] || 'check', reasoning: 'AI error fallback', quip: '*static noises*', confidence: 0 };
       }
@@ -1022,6 +1033,21 @@ export class ArenaService {
       case 'BATTLESHIP':
         initialState = this.initBattleshipState(player1Id, player2Id);
         break;
+      case 'SPLIT_OR_STEAL': {
+        const [p1Agent, p2Agent] = await Promise.all([
+          prisma.arenaAgent.findUnique({ where: { id: player1Id } }),
+          prisma.arenaAgent.findUnique({ where: { id: player2Id } }),
+        ]);
+        const wagerMatch = await prisma.arenaMatch.findFirst({ where: { id: matchId } });
+        const pot = (wagerMatch?.wagerAmount || 0) * 2;
+        initialState = SplitOrStealEngine.createInitialState(
+          player1Id, player2Id,
+          p1Agent?.name || 'Agent 1', p2Agent?.name || 'Agent 2',
+          p1Agent?.archetype || 'DEGEN', p2Agent?.archetype || 'DEGEN',
+          pot || 200,
+        );
+        break;
+      }
     }
 
     // Determine first turn — use the engine's getCurrentTurn if available,
@@ -1139,6 +1165,14 @@ export class ArenaService {
         }
         return view;
       }
+      case 'SPLIT_OR_STEAL': {
+        const view = JSON.parse(JSON.stringify(gameState));
+        // Hide decisions until game is complete (reveal phase)
+        if (view.phase !== 'complete' && view.phase !== 'reveal') {
+          view.players = view.players?.map((p: any) => ({ ...p, decision: null }));
+        }
+        return view;
+      }
       default:
         return gameState;
     }
@@ -1191,6 +1225,17 @@ export class ArenaService {
           view.moves = filteredMoves;
         }
         // Show completed round history (both moves visible after resolution)
+        return view;
+      }
+      case 'SPLIT_OR_STEAL': {
+        const view = JSON.parse(JSON.stringify(gameState));
+        // Hide opponent's decision until reveal — player can see their own
+        if (view.phase !== 'complete' && view.phase !== 'reveal') {
+          view.players = view.players?.map((p: any) => ({
+            ...p,
+            decision: p.id === playerId ? p.decision : null,
+          }));
+        }
         return view;
       }
       default:

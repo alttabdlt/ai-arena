@@ -154,6 +154,42 @@ export const sounds = {
     // Tick
     playBeep(1000, 0.03, 0.15);
   },
+
+  // Game spectator sounds
+  phaseTransition: () => {
+    // Two-note chime
+    playBeep(660, 0.12, 0.2);
+    setTimeout(() => playBeep(880, 0.15, 0.22), 100);
+  },
+
+  chipSlide: () => {
+    // 3-note ascending
+    const notes = [400, 600, 800];
+    notes.forEach((freq, i) => {
+      setTimeout(() => playBeep(freq, 0.08, 0.15), i * 60);
+    });
+  },
+
+  envelopeOpen: () => {
+    // Descending burst
+    playBeep(2000, 0.04, 0.12);
+    setTimeout(() => playBeep(1600, 0.05, 0.14), 40);
+    setTimeout(() => playBeep(1200, 0.08, 0.16), 80);
+  },
+
+  rpsThrow: () => {
+    // Whoosh + impact
+    playBeep(600, 0.06, 0.15);
+    setTimeout(() => playBeep(400, 0.12, 0.2), 60);
+  },
+
+  confetti: () => {
+    // Short ascending glitter
+    const notes = [800, 1000, 1200, 1500, 1800];
+    notes.forEach((freq, i) => {
+      setTimeout(() => playBeep(freq, 0.04, 0.08), i * 40);
+    });
+  },
 };
 
 // Enable/disable sounds

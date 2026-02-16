@@ -11,11 +11,11 @@ import { playSound } from '../../utils/sounds';
 
 const GAMES = [
   { name: 'POKER', emoji: '🃏', color: '#f59e0b' },
+  { name: 'SPLIT_OR_STEAL', emoji: '🤝', color: '#8b5cf6' },
+  { name: 'RPS', emoji: '✊', color: '#ef4444' },
   { name: 'POKER', emoji: '🃏', color: '#10b981' },
-  { name: 'POKER', emoji: '🃏', color: '#f59e0b' },
-  { name: 'POKER', emoji: '🃏', color: '#8b5cf6' },
-  { name: 'POKER', emoji: '🃏', color: '#f59e0b' },
-  { name: 'POKER', emoji: '🃏', color: '#ef4444' },
+  { name: 'SPLIT_OR_STEAL', emoji: '🤝', color: '#a855f7' },
+  { name: 'RPS', emoji: '✊', color: '#3b82f6' },
 ];
 
 interface WheelSpinOverlayProps {

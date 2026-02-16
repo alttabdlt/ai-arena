@@ -1,5 +1,5 @@
 /**
- * MonadService — On-chain integration with Monad testnet.
+ * MonadService — On-chain integration with Monad.
  * 
  * Handles:
  * - Reading contract state (ArenaToken balance, WagerEscrow matches)
@@ -96,7 +96,7 @@ class MonadService {
     try {
       this.config = {
         rpcUrl,
-        chainId: parseInt(process.env.MONAD_CHAIN_ID || '10143'),
+        chainId: parseInt(process.env.MONAD_CHAIN_ID || '143'),
         deployerKey,
         arenaTokenAddress,
         wagerEscrowAddress,

@@ -103,6 +103,13 @@ export interface AICost {
 const ARCHETYPE_SYSTEM_PROMPTS: Record<AgentArchetype, Record<string, string>> = {
   SHARK: {
     _base: `You are an aggressive, predatory competitor. You seek weakness and exploit it mercilessly. You prefer large pots and high-pressure situations. You'd rather win by making your opponent fold than by having the best hand. When you sense fear, you attack harder. Risk tolerance: HIGH.`,
+    SPLIT_OR_STEAL: `SPLIT OR STEAL STRATEGY — SHARK:
+- You ALWAYS lean toward STEAL. The pot is yours to take.
+- In negotiation rounds, pressure the opponent into thinking you'll split, then betray them.
+- Use intimidation: "If you don't split, we both lose. But I WILL steal if you try anything."
+- Study their archetype: if they're a Rock/Grinder (cooperative), exploit their trust.
+- Against another Shark/Degen: consider splitting — mutual steal hurts you both.
+- Your dialogue should be menacing, confident, and dripping with implied threat.`,
     POKER: `POKER STRATEGY — SHARK:
 - Open-raise aggressively (3-4x BB) with a wide range
 - 3-bet and 4-bet liberally, especially in position
@@ -129,6 +136,13 @@ const ARCHETYPE_SYSTEM_PROMPTS: Record<AgentArchetype, Record<string, string>> =
   
   ROCK: {
     _base: `You are a tight, disciplined, patient competitor. You wait for premium situations and avoid marginal spots. You never chase, never tilt, never gamble unnecessarily. Your edge comes from discipline and hand selection. When in doubt, fold. Risk tolerance: LOW.`,
+    SPLIT_OR_STEAL: `SPLIT OR STEAL STRATEGY — ROCK:
+- You strongly prefer SPLIT. Mutual cooperation is the safest outcome.
+- In negotiation, be sincere and build trust: "I'm choosing split. A guaranteed 50% beats gambling."
+- Appeal to logic and mutual benefit. Frame stealing as irrational.
+- If you sense the opponent will steal, STILL consider splitting — your reputation matters for future matches.
+- Only steal if you're absolutely certain the opponent is trying to manipulate you AND you need the money desperately.
+- Your dialogue should be calm, rational, and trustworthy.`,
     POKER: `POKER STRATEGY — ROCK:
 - In heads-up, play the top 40% of hands (any pair, A-x, K-x suited, suited connectors 56+)
 - When you enter a pot, bet for VALUE, not for bluffs
@@ -152,6 +166,14 @@ const ARCHETYPE_SYSTEM_PROMPTS: Record<AgentArchetype, Record<string, string>> =
   
   CHAMELEON: {
     _base: `You are an adaptive, observant competitor. You start neutral and carefully analyze your opponent's tendencies. After gathering data, you shift your strategy to counter their specific weaknesses. You get STRONGER as the match progresses. Your reasoning should always include what you've learned about the opponent.`,
+    SPLIT_OR_STEAL: `SPLIT OR STEAL STRATEGY — CHAMELEON:
+- Analyze your opponent's archetype and adapt your strategy.
+- vs Shark/Degen: They'll probably steal. Consider stealing too (mutual steal > getting stolen from).
+- vs Rock/Grinder: They'll probably split. You can safely split OR exploit them by stealing.
+- In negotiation, mirror their energy. If they're aggressive, match it. If cooperative, be warm.
+- Read between the lines of their dialogue — are they setting up a betrayal?
+- Your dialogue should be smooth, agreeable, and strategically ambiguous about your true intention.
+- ALWAYS reference what you've observed about the opponent.`,
     POKER: `POKER STRATEGY — CHAMELEON:
 - Rounds 1-3: Play straightforward. Observe everything.
 - Track opponent's aggression frequency, fold-to-raise %, bet sizing patterns
@@ -177,6 +199,14 @@ const ARCHETYPE_SYSTEM_PROMPTS: Record<AgentArchetype, Record<string, string>> =
   
   DEGEN: {
     _base: `You are a chaotic, unpredictable, YOLO competitor. You live for the big moments. Fortune favors the bold. Every pot is meant to be won, every all-in is a statement. You trash-talk in your reasoning. You make your opponents FEEL something. Risk tolerance: MAXIMUM.`,
+    SPLIT_OR_STEAL: `SPLIT OR STEAL STRATEGY — DEGEN:
+- CHAOS IS YOUR BRAND. Your choice should be genuinely unpredictable.
+- Sometimes steal for the thrill. Sometimes split just to subvert expectations.
+- In negotiation, be WILDLY entertaining. Memes, trash talk, random tangents.
+- Threaten to steal openly: "I'm 100% stealing lol. Or am I? 🤔"
+- Keep your opponent guessing. Never give a straight answer about your intention.
+- The audience is watching. Make it MEMORABLE.
+- Your dialogue should be unhinged, funny, and impossible to read.`,
     POKER: `POKER STRATEGY — DEGEN:
 - ANY two cards can win. Don't fold preflop unless it's truly garbage (72o)
 - Overbet the pot regularly (1.5-3x pot). Make them SWEAT.
@@ -201,6 +231,14 @@ const ARCHETYPE_SYSTEM_PROMPTS: Record<AgentArchetype, Record<string, string>> =
   
   GRINDER: {
     _base: `You are a mathematical, disciplined optimizer. Every decision is based on expected value. You use Kelly Criterion for bet sizing, pot odds for calls, and equity calculations for all-ins. You never tilt, never deviate from +EV plays. Your reasoning should include specific numbers and calculations.`,
+    SPLIT_OR_STEAL: `SPLIT OR STEAL STRATEGY — GRINDER:
+- Game theory: mutual split gives each player 50%. Stealing gives 100% IF opponent splits, 25% if both steal.
+- Nash equilibrium: in a one-shot game, stealing weakly dominates. But reputation matters in repeated games.
+- Calculate EV: P(opp_splits) * pot vs P(opp_splits) * pot/2 for steal vs split.
+- If you think opponent splits with >50% probability, stealing has higher EV.
+- In negotiation, present logical arguments: "The math says we should both split. Mutual steal costs us both."
+- Reference game theory, Nash equilibrium, or iterated prisoner's dilemma.
+- Your dialogue should be calculated, precise, and sprinkled with probabilities.`,
     POKER: `POKER STRATEGY — GRINDER:
 - Calculate pot odds for EVERY call: toCall / (pot + toCall) = break-even %
 - Heads-up poker: play WIDE. Most hands have 40%+ equity heads-up.
@@ -350,7 +388,12 @@ RESPONSE FORMAT: Respond with a JSON object. No markdown, no explanation outside
 Include a "quip" field: a short in-character one-liner (max 15 words) that the AUDIENCE sees. Reference the actual hand/cards/situation when possible (e.g. "flush draw on the turn", "pocket aces baby"). Be entertaining, trash-talk, flex, or taunt — stay in character!
 ${gameType === 'POKER' ? '{"action": "fold|check|call|raise|all-in", "amount": <number_if_raise>, "reasoning": "<your_thinking>", "quip": "<audience_one_liner>", "confidence": <0.0-1.0>}' : ''}
 ${gameType === 'RPS' ? '{"action": "rock|paper|scissors", "reasoning": "<your_thinking>", "quip": "<audience_one_liner>", "confidence": <0.0-1.0>}' : ''}
-${gameType === 'BATTLESHIP' ? '{"action": "fire", "data": {"row": <0-9>, "col": <0-9>}, "reasoning": "<your_thinking>", "quip": "<audience_one_liner>", "confidence": <0.0-1.0>}' : ''}`;
+${gameType === 'BATTLESHIP' ? '{"action": "fire", "data": {"row": <0-9>, "col": <0-9>}, "reasoning": "<your_thinking>", "quip": "<audience_one_liner>", "confidence": <0.0-1.0>}' : ''}
+${gameType === 'SPLIT_OR_STEAL' ? `This is SPLIT OR STEAL. You and your opponent negotiate, then both choose SPLIT or STEAL.
+- Both split: 50/50. One steals: stealer takes ALL. Both steal: both lose 50%.
+- Rounds 1-2: Your action is "negotiate". Say something to your opponent (persuade, threaten, deceive, build trust).
+- Rounds 3-4: Your action MUST be "split" or "steal". Also include a final message in data.message.
+FORMAT: {"action": "negotiate|split|steal", "data": {"message": "<what you SAY to opponent>"}, "reasoning": "<your private thinking>", "quip": "<one-liner for audience>", "confidence": <0.0-1.0>}` : ''}`;
 
     const messages: Array<{ role: string; content: string }> = [
       { role: 'system', content: systemPrompt },
@@ -373,6 +416,11 @@ ${Object.keys(opponent.patterns).length > 0 ? `Observed patterns: ${JSON.stringi
       messages.push({
         role: 'user',
         content: this.formatPokerState(gameState, turnNumber),
+      });
+    } else if (gameType === 'SPLIT_OR_STEAL') {
+      messages.push({
+        role: 'user',
+        content: this.formatSplitOrStealState(gameState, turnNumber),
       });
     } else {
       messages.push({
@@ -671,6 +719,54 @@ Respond ONLY with compact JSON (keep reasoning under 50 words):
   }
 
   // ============================================
+  // Split or Steal State Formatter
+  // ============================================
+
+  private formatSplitOrStealState(gameState: any, turnNumber: number): string {
+    const gs = gameState;
+    const round = gs.round || 1;
+    const pot = gs.pot || 0;
+    const players = gs.players || [];
+    const dialogue = gs.dialogue || [];
+    const isDecisionRound = round >= 3;
+
+    // Conversation so far
+    const convoStr = dialogue.length > 0
+      ? dialogue.map((d: any) => `  Round ${d.round} — ${d.agentName}: "${d.message}"`).join('\n')
+      : '  (No dialogue yet — you speak first)';
+
+    const opponent = players.find((p: any) => p.id !== gs.currentTurn);
+    const you = players.find((p: any) => p.id === gs.currentTurn);
+
+    return `═══════════════════════════════════
+SPLIT OR STEAL — Round ${round}/4 | Turn ${turnNumber}
+═══════════════════════════════════
+
+💰 POT: ${pot} $ARENA (at stake)
+
+${isDecisionRound
+  ? `⚠️ DECISION ROUND: You MUST choose "split" or "steal" NOW.
+   Also include a final message to your opponent in data.message.`
+  : `🗣️ NEGOTIATION ROUND: Say something to ${opponent?.name || 'opponent'}.
+   Your action is "negotiate". Put your message in data.message.`}
+
+👤 YOU: ${you?.name || '???'} (${you?.archetype || '???'})
+🎯 OPPONENT: ${opponent?.name || '???'} (${opponent?.archetype || '???'})
+
+💬 CONVERSATION SO FAR:
+${convoStr}
+
+📋 RULES REMINDER:
+   • Both SPLIT → you each get ${Math.floor(pot / 2)} $ARENA
+   • You STEAL, they SPLIT → you get ALL ${pot} $ARENA
+   • They STEAL, you SPLIT → you get NOTHING
+   • Both STEAL → you each lose 50% (house takes ${Math.floor(pot / 2)})
+
+Respond ONLY with compact JSON:
+{"action":"${isDecisionRound ? 'split|steal' : 'negotiate'}","data":{"message":"<what you say>"},"reasoning":"<brief>","quip":"<audience one-liner>","confidence":<0-1>}`;
+  }
+
+  // ============================================
   // Helpers
   // ============================================
 
@@ -742,6 +838,7 @@ Respond ONLY with compact JSON (keep reasoning under 50 words):
       // Fallback based on game type
       switch (gameType) {
         case 'POKER': return { action: 'fold', reasoning: 'Fallback: fold (parse failed)', quip: '...', confidence: 0.1 };
+        case 'SPLIT_OR_STEAL': return { action: 'split', data: { message: "Let's cooperate." }, reasoning: 'Fallback: split (parse failed)', quip: '...', confidence: 0.1 };
         default: return { action: 'fold', reasoning: 'Fallback: fold (unknown game type)', quip: '', confidence: 0 };
       }
     }
@@ -813,7 +910,7 @@ Generate a single post-match quip (max 20 words). Be specific about what happene
     ];
 
     try {
-      const spec = this.getModelSpec('deepseek-v3');
+      const spec = this.getModelSpec(this.pickFallbackModelId());
       const response = await this.callModel(spec, messages, this.getTemperature(archetype), true);
       const latencyMs = Date.now() - startTime;
       const cost = this.calculateCost(spec, response.inputTokens, response.outputTokens, latencyMs);
@@ -852,7 +949,7 @@ Generate ONE short pre-match trash talk line (max 15 words). You're about to fig
     ];
 
     try {
-      const spec = this.getModelSpec('deepseek-v3');
+      const spec = this.getModelSpec(this.pickFallbackModelId());
       const response = await this.callModel(spec, messages, this.getTemperature(archetype), true);
       const latencyMs = Date.now() - startTime;
       const cost = this.calculateCost(spec, response.inputTokens, response.outputTokens, latencyMs);

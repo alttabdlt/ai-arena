@@ -1,43 +1,30 @@
 # Sprite Assets
 
-This directory should contain Stardew Valley-style character sprite sheets.
+This directory stores optional 2D sprite assets used by fallback or utility rendering paths.
 
-## Expected Format
+## Notes
 
-Each sprite sheet should be a PNG file with:
-- **Frame Size**: 32x64 pixels per frame
-- **Layout**: 4 directions (down, left, right, up) x 4 frames each
-- **Total Size**: 128x256 pixels
-- **Naming**: `{personality}_{variant}.png` (e.g., `criminal_1.png`)
+- The main production scene uses 3D assets.
+- Keep files lightweight and web-friendly (`.png`, optimized).
+- Prefer consistent naming by role or archetype when adding sets.
 
-## Directory Structure
+## Suggested Naming
 
-```
-sprites/
-├── criminal_1.png    # Dark clothing, tough appearance
-├── criminal_2.png    # Black/red outfit variant
-├── criminal_3.png    # Leather jacket style
-├── gambler_1.png     # Fancy suit with hat
-├── gambler_2.png     # Colorful casino style
-├── gambler_3.png     # Dealer outfit
-├── worker_1.png      # Construction worker
-├── worker_2.png      # Farmer with overalls
-└── worker_3.png      # Miner with helmet
-```
+- `agent-<archetype>-<variant>.png`
+- Example: `agent-shark-01.png`
 
-## Sprite Sheet Layout
+## Recommended Source Format
 
-```
-[Frame 1] [Frame 2] [Frame 3] [Frame 4]  <- Down facing (row 0)
-[Frame 1] [Frame 2] [Frame 3] [Frame 4]  <- Left facing (row 1)
-[Frame 1] [Frame 2] [Frame 3] [Frame 4]  <- Right facing (row 2)
-[Frame 1] [Frame 2] [Frame 3] [Frame 4]  <- Up facing (row 3)
-```
+If using sprite sheets:
 
-## Integration
+- Keep frame dimensions consistent across a sheet.
+- Document frame order in the consuming component/service.
+- Include only required frames to avoid unnecessary bundle weight.
 
-The `StardewSpriteSelector` service will automatically select appropriate sprites based on bot personality and use them throughout the application.
+## Contribution Guideline
 
-## Temporary Assets
+When adding new sprites, include a short note in the PR describing:
 
-Currently using `/assets/player.png` from the metaverse game as a placeholder. Replace with actual Stardew Valley-style sprites for production.
+1. Intended usage path.
+2. Dimensions/frame layout.
+3. Any code path relying on the new assets.

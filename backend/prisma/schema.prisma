@@ -810,6 +810,7 @@ model ArenaAgent {
   townContributions TownContribution[]
 
   economySwaps      EconomySwap[]
+  fundingReceipts   AgentFundingReceipt[]
 
   // Degen staking
   stakes            AgentStake[]
@@ -1001,6 +1002,7 @@ enum ArenaGameType {
   POKER
   RPS
   BATTLESHIP
+  SPLIT_OR_STEAL
 }
 
 enum ArenaMatchStatus {
@@ -1542,6 +1544,22 @@ model EconomySwap {
 
   @@index([agentId])
   @@index([createdAt])
+}
+
+model AgentFundingReceipt {
+  id            String    @id @default(cuid())
+  txHash        String    @unique
+  walletAddress String
+  agentId       String
+  arenaAmount   Int
+  rawAmount     String
+  blockNumber   Int?
+  createdAt     DateTime  @default(now())
+
+  agent         ArenaAgent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@index([agentId, createdAt])
+  @@index([walletAddress, createdAt])
 }
 
 // ============================================

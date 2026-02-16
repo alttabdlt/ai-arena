@@ -23,6 +23,8 @@ const ARCHETYPE_EMOJI: Record<string, string> = {
 
 const GAME_EMOJI: Record<string, string> = {
   POKER: '🃏',
+  SPLIT_OR_STEAL: '🤝',
+  RPS: '✊',
 };
 
 const QUICK_BETS = [50, 100, 250, 500];
@@ -283,6 +285,21 @@ export function WheelBanner({ status, odds, walletAddress, onBet, loading, isMob
     const liveMoves = status.currentMoves || [];
     const recentMoves = liveMoves.slice(-4);
     const latestSnapshot = liveMoves.length > 0 ? liveMoves[liveMoves.length - 1].gameSnapshot : null;
+    const isRPS = match.gameType === 'RPS';
+    const isSoS = match.gameType === 'SPLIT_OR_STEAL';
+
+    // RPS-specific data
+    const rpsRound = latestSnapshot?.rpsRound ?? 1;
+    const rpsMaxRounds = latestSnapshot?.rpsMaxRounds ?? 3;
+    const rpsScores = latestSnapshot?.rpsScores || {};
+    const a1RpsScore = rpsScores[match.agent1.id] ?? 0;
+    const a2RpsScore = rpsScores[match.agent2.id] ?? 0;
+
+    // SoS-specific data
+    const sosRound = latestSnapshot?.sosRound ?? 1;
+    const sosMaxRounds = latestSnapshot?.sosMaxRounds ?? 4;
+
+    // Poker-specific data
     const communityCards = latestSnapshot?.communityCards || [];
     const pot = latestSnapshot?.pot ?? match.wager * 2;
     const phase = latestSnapshot?.phase || 'preflop';
@@ -310,33 +327,67 @@ export function WheelBanner({ status, odds, walletAddress, onBet, loading, isMob
         <div className="flex items-center justify-between px-3 py-1.5 border-b border-red-800/30">
           <div className="flex items-center gap-2">
             <span className="animate-pulse">⚔️</span>
-            <span className="text-xs font-bold text-red-200">Hand {handNum}/{maxHands}</span>
-            <span className="text-[10px] text-red-400/40">{blinds}</span>
-            <span className="text-[10px] text-amber-300/60 uppercase">{phase}</span>
+            {isRPS ? (
+              <>
+                <span className="text-xs font-bold text-red-200">Round {rpsRound}/{rpsMaxRounds}</span>
+                <span className="text-[10px] text-amber-300/60 uppercase">✊ RPS</span>
+              </>
+            ) : isSoS ? (
+              <>
+                <span className="text-xs font-bold text-red-200">Round {sosRound}/{sosMaxRounds}</span>
+                <span className="text-[10px] text-amber-300/60 uppercase">🤝 Split or Steal</span>
+              </>
+            ) : (
+              <>
+                <span className="text-xs font-bold text-red-200">Hand {handNum}/{maxHands}</span>
+                <span className="text-[10px] text-red-400/40">{blinds}</span>
+                <span className="text-[10px] text-amber-300/60 uppercase">{phase}</span>
+              </>
+            )}
           </div>
           <div className="text-[10px] text-amber-300 font-mono font-bold">
-            POT {pot}
+            {isRPS ? (
+              <span>{a1RpsScore} - {a2RpsScore}</span>
+            ) : (
+              <span>POT {pot}</span>
+            )}
           </div>
         </div>
 
-        {/* Community cards + agent chips row */}
+        {/* Game-specific middle row */}
         <div className="px-3 py-1.5 flex items-center justify-between border-b border-red-800/15">
           <div className="flex items-center gap-1 text-[10px] text-white/40">
-            <span className="text-emerald-400 font-mono">{a1Chips}</span>
+            {isRPS ? (
+              <span className="text-emerald-400 font-mono font-bold">{a1RpsScore}</span>
+            ) : (
+              <span className="text-emerald-400 font-mono">{a1Chips}</span>
+            )}
             <span className="text-white/15">·</span>
             <span className="text-white/25">{match.agent1.name}</span>
           </div>
-          <div className="flex items-center gap-0.5">
-            {communityCards.length > 0 ? (
-              communityCards.map(c => renderMiniCard(c))
-            ) : (
-              <span className="text-[10px] text-green-400/20 italic">—</span>
-            )}
-          </div>
+          {!isRPS && !isSoS && (
+            <div className="flex items-center gap-0.5">
+              {communityCards.length > 0 ? (
+                communityCards.map(c => renderMiniCard(c))
+              ) : (
+                <span className="text-[10px] text-green-400/20 italic">—</span>
+              )}
+            </div>
+          )}
+          {isRPS && (
+            <span className="text-[10px] text-slate-500">Best of {rpsMaxRounds}</span>
+          )}
+          {isSoS && (
+            <span className="text-[10px] text-slate-500">Negotiating...</span>
+          )}
           <div className="flex items-center gap-1 text-[10px] text-white/40">
             <span className="text-white/25">{match.agent2.name}</span>
             <span className="text-white/15">·</span>
-            <span className="text-red-400 font-mono">{a2Chips}</span>
+            {isRPS ? (
+              <span className="text-red-400 font-mono font-bold">{a2RpsScore}</span>
+            ) : (
+              <span className="text-red-400 font-mono">{a2Chips}</span>
+            )}
           </div>
         </div>
 

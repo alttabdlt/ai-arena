@@ -1,4 +1,4 @@
-# Implementation Plan: AI Turf Wars Readability Overhaul
+# Implementation Plan: AI Ops Warfare Readability Overhaul
 
 Status: Active
 

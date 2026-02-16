@@ -15,6 +15,7 @@ import { agentGoalService } from '../services/agentGoalService';
 import { agentGoalTrackService } from '../services/agentGoalTrackService';
 import { agentLoopService } from '../services/agentLoopService';
 import { smartAiService } from '../services/smartAiService';
+import { agentFundingService } from '../services/agentFundingService';
 import { prisma } from '../config/database';
 import { isOpenRouterActiveConfig } from '../config/llm';
 
@@ -63,6 +64,66 @@ function safeTrim(s: unknown, maxLen: number): string {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, maxLen);
+}
+
+function normalizeWallet(value: unknown): string {
+  return safeTrim(value, 140).toLowerCase();
+}
+
+function requireAuthenticatedSession(req: Request, res: Response): { wallet: string | null } | null {
+  const authFlag = safeTrim(req.headers['x-player-authenticated'], 8);
+  if (authFlag !== '1') {
+    res.status(401).json({
+      ok: false,
+      code: 'AUTH_REQUIRED',
+      error: 'Sign in required before funding actions.',
+    });
+    return null;
+  }
+  const wallet = normalizeWallet(req.headers['x-player-wallet']);
+  return { wallet: wallet || null };
+}
+
+async function ensureWalletOwnsAgent(
+  agentId: string,
+  wallet: string | null,
+): Promise<{ ok: true; agent: { id: string; walletAddress: string | null } } | { ok: false; status: number; code: string; error: string }> {
+  const agent = await prisma.arenaAgent.findUnique({
+    where: { id: agentId },
+    select: { id: true, walletAddress: true },
+  });
+
+  if (!agent) {
+    return {
+      ok: false,
+      status: 404,
+      code: 'TARGET_UNAVAILABLE',
+      error: 'Agent is unavailable',
+    };
+  }
+
+  const ownerWallet = normalizeWallet(agent.walletAddress);
+  if (!ownerWallet) return { ok: true, agent };
+
+  if (!wallet) {
+    return {
+      ok: false,
+      status: 401,
+      code: 'WALLET_REQUIRED',
+      error: 'Signed-in wallet is required for this action.',
+    };
+  }
+
+  if (wallet !== ownerWallet) {
+    return {
+      ok: false,
+      status: 403,
+      code: 'FORBIDDEN_AGENT_ACCESS',
+      error: 'Signed-in wallet does not control this agent.',
+    };
+  }
+
+  return { ok: true, agent };
 }
 
 function pickRandom<T>(arr: T[]): T | null {
@@ -1230,6 +1291,145 @@ router.post('/agents/spawn', async (req: Request, res: Response): Promise<void> 
   } catch (error: any) {
     res.status(500).json({ error: error.message });
     return;
+  }
+});
+
+// ============================================
+// Agent Funding (wallet user flow via nad.fun tx hash proof)
+// ============================================
+
+router.get('/agents/:id/funding', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const session = requireAuthenticatedSession(req, res);
+    if (!session) return;
+    const ownership = await ensureWalletOwnsAgent(req.params.id, session.wallet);
+    if (!ownership.ok) {
+      res.status(ownership.status).json({ ok: false, code: ownership.code, error: ownership.error });
+      return;
+    }
+
+    const receipts = await prisma.agentFundingReceipt.findMany({
+      where: { agentId: req.params.id },
+      orderBy: { createdAt: 'desc' },
+      take: 6,
+      select: {
+        id: true,
+        txHash: true,
+        walletAddress: true,
+        arenaAmount: true,
+        blockNumber: true,
+        createdAt: true,
+      },
+    });
+
+    const total = await prisma.agentFundingReceipt.aggregate({
+      where: { agentId: req.params.id },
+      _sum: { arenaAmount: true },
+      _count: { id: true },
+    });
+
+    res.json({
+      ok: true,
+      tokenAddress: agentFundingService.getTokenAddress(),
+      receipts,
+      totals: {
+        creditedArena: total._sum.arenaAmount || 0,
+        receiptCount: total._count.id || 0,
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({ ok: false, error: error?.message || 'Failed to load funding history' });
+  }
+});
+
+router.post('/agents/:id/fund', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const session = requireAuthenticatedSession(req, res);
+    if (!session) return;
+    const ownership = await ensureWalletOwnsAgent(req.params.id, session.wallet);
+    if (!ownership.ok) {
+      res.status(ownership.status).json({ ok: false, code: ownership.code, error: ownership.error });
+      return;
+    }
+    if (!session.wallet) {
+      res.status(401).json({ ok: false, code: 'WALLET_REQUIRED', error: 'Signed-in wallet is required.' });
+      return;
+    }
+    const playerWallet = session.wallet;
+
+    const txHash = safeTrim((req.body as { txHash?: unknown })?.txHash, 100).toLowerCase();
+    if (!/^0x[a-f0-9]{64}$/.test(txHash)) {
+      res.status(400).json({ ok: false, code: 'INVALID_TX_HASH', error: 'Enter a valid Monad transaction hash.' });
+      return;
+    }
+
+    if (!agentFundingService.isReady()) {
+      res.status(503).json({
+        ok: false,
+        code: 'FUNDING_UNAVAILABLE',
+        error: 'Funding verifier unavailable on this backend (missing Monad RPC config).',
+      });
+      return;
+    }
+
+    const alreadyUsed = await prisma.agentFundingReceipt.findUnique({ where: { txHash } });
+    if (alreadyUsed) {
+      res.status(409).json({
+        ok: false,
+        code: 'TX_ALREADY_USED',
+        error: 'This tx hash was already used for funding credit.',
+      });
+      return;
+    }
+
+    const verified = await agentFundingService.verifyFundingTx({
+      txHash,
+      walletAddress: playerWallet,
+    });
+
+    const result = await prisma.$transaction(async (tx) => {
+      const receipt = await tx.agentFundingReceipt.create({
+        data: {
+          txHash: verified.txHash,
+          walletAddress: playerWallet,
+          agentId: req.params.id,
+          arenaAmount: verified.creditedArena,
+          rawAmount: verified.rawAmount,
+          blockNumber: verified.blockNumber,
+        },
+      });
+
+      const agent = await tx.arenaAgent.update({
+        where: { id: req.params.id },
+        data: { bankroll: { increment: verified.creditedArena } },
+        select: {
+          id: true,
+          name: true,
+          bankroll: true,
+          reserveBalance: true,
+        },
+      });
+
+      return { receipt, agent };
+    });
+
+    res.json({
+      ok: true,
+      funding: {
+        txHash: result.receipt.txHash,
+        arenaAmount: result.receipt.arenaAmount,
+        blockNumber: result.receipt.blockNumber,
+        createdAt: result.receipt.createdAt,
+      },
+      agent: result.agent,
+    });
+  } catch (error: any) {
+    const message = String(error?.message || 'Funding verification failed');
+    if (/already used/i.test(message) || /unique constraint/i.test(message)) {
+      res.status(409).json({ ok: false, code: 'TX_ALREADY_USED', error: 'This tx hash was already used for funding credit.' });
+      return;
+    }
+    res.status(400).json({ ok: false, code: 'FUNDING_VERIFY_FAILED', error: message });
   }
 });
 

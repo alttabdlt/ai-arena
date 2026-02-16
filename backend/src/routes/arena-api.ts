@@ -8,8 +8,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { arenaService } from '../services/arenaService';
 import { ArenaAgent, ArenaGameType } from '@prisma/client';
-import { PrismaClient } from '@prisma/client';
-const prismaForMe = new PrismaClient();
+import { prisma } from '../config/database';
 
 const router = Router();
 
@@ -116,7 +115,7 @@ router.get('/agents/me', async (req: Request, res: Response): Promise<void> => {
     if (!wallet) { res.status(400).json({ error: 'wallet query param required' }); return; }
     
     // Case-insensitive wallet lookup (EIP-55 checksummed vs lowercased)
-    const allWithWallet = await prismaForMe.arenaAgent.findMany({
+    const allWithWallet = await prisma.arenaAgent.findMany({
       where: { NOT: { walletAddress: null } },
     });
     const agent = allWithWallet.find(a => a.walletAddress?.toLowerCase() === wallet.toLowerCase()) || null;

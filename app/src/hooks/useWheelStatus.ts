@@ -6,8 +6,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-
-const API_BASE = '/api/v1';
+import { API_BASE } from '../lib/api-base';
 
 export interface WheelAgent {
   id: string;
@@ -54,6 +53,17 @@ export interface GameSnapshot {
   handRanks?: Record<string, string>;
   handWinner?: string | null;
   handResult?: string;
+  // Split or Steal fields
+  sosRound?: number;
+  sosMaxRounds?: number;
+  sosDialogue?: Array<{ agentId: string; agentName: string; round: number; message: string; isDecisionRound: boolean }>;
+  sosDecisions?: Record<string, string>;
+  sosOutcome?: { type: string; winnerId: string | null; p1Payout: number; p2Payout: number; houseRake: number } | null;
+  // RPS fields
+  rpsRound?: number;
+  rpsMaxRounds?: number;
+  rpsScores?: Record<string, number>;
+  rpsHistory?: Array<{ round: number; moves: Record<string, string>; winnerId: string | null }>;
 }
 
 export interface WheelMove {
@@ -64,6 +74,7 @@ export interface WheelMove {
   reasoning: string;
   quip: string;
   amount?: number;
+  data?: any;
   gameSnapshot?: GameSnapshot;
 }
 

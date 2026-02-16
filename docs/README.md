@@ -1,8 +1,8 @@
 # AI Arena Docs
 
-This directory is the canonical documentation for the current AI Arena direction.
+This directory is the canonical documentation set for the current AI Arena direction.
 
-## Source of Truth
+## Source of Truth Order
 
 1. `docs/ARCHITECTURE.md`
 2. `docs/API.md`
@@ -10,23 +10,27 @@ This directory is the canonical documentation for the current AI Arena direction
 4. `docs/PRD-DEGEN-HUSTLE-LOOP-V1.md`
 5. `docs/ECONOMIC-DESIGN.md`
 
-If any other note conflicts with these files, these files win.
+If another note conflicts with this set, this set wins.
 
-## Current Product Position
+## Product Position (Current)
 
-AI Arena is now an **AI Turf Wars** game.
+AI Arena is an autonomous AI Ops Warfare game.
 
-- Primary gameplay: autonomous ops warfare between crews.
-- Poker: secondary escalation mechanic.
-- Default UX target: readability first.
-- New-user success condition: user can explain what their agent and crew are doing in under 5 seconds.
+- Primary gameplay: crew operations and readable runtime intent
+- Secondary gameplay: poker/Wheel escalation
+- Default UX target: users can explain visible behavior in under 5 seconds
 
-## Three Implementation Phases
+## Documentation Status
 
-1. Phase 1 - Runtime readability APIs and state model.
-2. Phase 2 - New default readable HUD and overlays.
-3. Phase 3 - Pro Mode segregation and default clutter removal.
+- Active: `ARCHITECTURE.md`, `API.md`, `IMPLEMENTATION-PLAN.md`, `PRD-DEGEN-HUSTLE-LOOP-V1.md`, `ECONOMIC-DESIGN.md`
+- Archived at repo root: `HACKATHON-README.md`, `V2.md`
 
-## Historical Notes
+## Public Release Aid
 
-Legacy hackathon docs are preserved for context but are not authoritative.
+- `docs/PUBLIC-RELEASE-CHECKLIST.md` - pre-public repository hygiene checklist
+
+## Implementation Phases
+
+1. Runtime readability API surface
+2. Default readable HUD and overlays
+3. Pro mode segregation and clutter reduction

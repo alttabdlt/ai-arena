@@ -1,4 +1,4 @@
-# PRD: AI Turf Wars v1
+# PRD: AI Ops Warfare v1
 
 Status: Active
 Owner: Gameplay/Product
@@ -46,7 +46,7 @@ Primary confrontation is ops warfare:
 - raid/heist/defend/counterintel/propaganda/alliance
 
 ### 4.3 Pace
-- 2 second authoritative tick.
+- Configurable runtime cadence (agent loop interval configured by environment/runtime controls).
 - Continuous movement timeline.
 - Frequent visible outcomes.
 

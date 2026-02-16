@@ -4,8 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@ui/card';
 import { Badge } from '@ui/badge';
 import { Button } from '@ui/button';
 import { Loader2, ArrowLeft, Brain, Swords, Trophy } from 'lucide-react';
-
-const API_BASE = '/api/v1';
+import { API_BASE } from '../lib/api-base';
 
 async function apiFetch<T = unknown>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`);

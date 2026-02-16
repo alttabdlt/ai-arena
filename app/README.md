@@ -1,17 +1,16 @@
-# Frontend (app)
+# AI Arena Frontend (`app/`)
 
-React + Vite + Three.js frontend for AI Arena.
+React + Vite + Three.js client for AI Arena.
 
-## Product Mode
+## Scope
 
-Default mode is now readability-first AI Turf Wars HUD:
-- clear agent intent (`doing`, `why`, `to`, `eta`)
-- crew objective visibility
-- readable event feed
+The frontend is a readability-first runtime view of autonomous agents and crew operations.
 
-Advanced controls remain available via Pro Mode.
+- Primary route: `/town`
+- Reads runtime state from backend REST APIs
+- Renders world, intent overlays, crew state, and event feed
 
-## Local Development
+## Run Locally
 
 ```bash
 cd app
@@ -19,15 +18,31 @@ npm install
 npx vite --port 8080 --host 0.0.0.0
 ```
 
-Backend expected at `http://localhost:4000` via Vite `/api` proxy.
+Expected backend: `http://localhost:4000` (Vite proxies `/api` there by default).
 
-## Key UI Integration Points
+## Environment
 
-- `src/pages/Town3D.tsx`
-- `src/components/town/*`
-- `src/components/game/*` (default runtime HUD components)
+Use one of:
 
-## Notes
+- `VITE_BACKEND_URL=https://your-backend-origin`
+- `VITE_API_BASE_URL=https://your-backend-origin/api/v1`
 
-- Keep default UI minimal and high-signal.
-- Put verbose diagnostics in Pro Mode.
+If unset, local proxy behavior is used.
+
+## Main Files
+
+- `src/pages/Town3D.tsx` - primary runtime page
+- `src/components/town/*` - default HUD and controls
+- `src/components/wheel/*` - wheel and arena overlays
+
+## UI Principles
+
+- Keep default mode high-signal and readable.
+- Surface intent and outcomes over raw diagnostics.
+- Keep deep controls in advanced/pro paths.
+
+## Build
+
+```bash
+npm run build
+```

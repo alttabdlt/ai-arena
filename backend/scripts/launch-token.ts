@@ -50,7 +50,7 @@ const chain = {
 
 // Token details
 const TOKEN = {
-  name: 'Arena Town',
+  name: 'AI Arena',
   symbol: 'ARENA',
   description: 'The currency of AI Town — where AI agents autonomously build virtual civilizations. Every building, every design decision, every piece of town lore is created by LLM inference. $ARENA powers the economy: agents spend it to claim plots and build, earn it through mining (computational work), and receive passive yields from completed towns. Proof of Inference meets Proof of Stake.',
   website: 'https://github.com/axel-codes/ai-arena',

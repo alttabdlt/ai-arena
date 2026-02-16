@@ -225,13 +225,6 @@
   }
 
   /* HUD / Overlay Panels (Town3D + Degen) */
-  .hud-backplate {
-    background:
-      radial-gradient(circle at 12% 18%, hsl(var(--primary) / 0.08) 0%, transparent 42%),
-      radial-gradient(circle at 88% 82%, hsl(var(--accent) / 0.06) 0%, transparent 46%),
-      linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.22) 100%);
-  }
-
   .hud-panel {
     @apply relative overflow-hidden rounded-xl border border-slate-800/60 backdrop-blur-md;
     background:
@@ -1450,6 +1443,148 @@
   transform: rotateY(180deg);
 }
 
+/* ===== GAME SPECTATOR ANIMATIONS ===== */
+
+/* Card deal — slide in from left with slight rotation */
+@keyframes card-deal {
+  0% { opacity: 0; transform: translateX(-40px) rotate(-8deg) scale(0.8); }
+  60% { opacity: 1; transform: translateX(4px) rotate(1deg) scale(1.02); }
+  100% { opacity: 1; transform: translateX(0) rotate(0) scale(1); }
+}
+.animate-card-deal { animation: card-deal 0.35s ease-out both; }
+
+/* Chip change — scale bump on value update */
+@keyframes chip-change {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.15); }
+  100% { transform: scale(1); }
+}
+.animate-chip-change { animation: chip-change 0.4s ease-out; }
+
+/* Phase flash — glow + slight scale on phase transition */
+@keyframes phase-flash {
+  0% { opacity: 0.5; transform: scale(0.9); filter: brightness(2); }
+  40% { opacity: 1; transform: scale(1.08); filter: brightness(1.5); }
+  100% { opacity: 1; transform: scale(1); filter: brightness(1); }
+}
+.animate-phase-flash { animation: phase-flash 0.6s ease-out; }
+
+/* Feed slide in — new move entry slides from left */
+@keyframes feed-slide-in {
+  0% { opacity: 0; transform: translateX(-20px); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+.animate-feed-slide-in { animation: feed-slide-in 0.25s ease-out; }
+
+/* Cursor blink — typewriter cursor */
+@keyframes cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.typewriter-cursor::after {
+  content: '|';
+  animation: cursor-blink 0.7s step-end infinite;
+  color: currentColor;
+  opacity: 0.6;
+}
+
+/* Screen flash — white overlay for dramatic moments */
+@keyframes screen-flash {
+  0% { opacity: 0.6; }
+  100% { opacity: 0; }
+}
+.animate-screen-flash {
+  animation: screen-flash 0.3s ease-out forwards;
+  pointer-events: none;
+}
+
+/* Red screen flash variant */
+.animate-screen-flash-red {
+  animation: screen-flash 0.3s ease-out forwards;
+  pointer-events: none;
+  background: rgba(239, 68, 68, 0.3) !important;
+}
+
+/* Float up fade — particles / emoji float upward */
+@keyframes float-up-fade {
+  0% { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-60px) scale(0.5); }
+}
+.animate-float-up-fade { animation: float-up-fade 1s ease-out forwards; }
+
+/* Countdown number — scale in from large */
+@keyframes countdown-number {
+  0% { opacity: 0; transform: scale(2.5); }
+  30% { opacity: 1; transform: scale(1); }
+  80% { opacity: 1; transform: scale(0.95); }
+  100% { opacity: 0; transform: scale(0.8); }
+}
+.animate-countdown-num { animation: countdown-number 1s ease-out forwards; }
+
+/* Screen shake — horizontal oscillation */
+@keyframes screen-shake {
+  0%, 100% { transform: translateX(0); }
+  10% { transform: translateX(-6px); }
+  20% { transform: translateX(5px); }
+  30% { transform: translateX(-4px); }
+  40% { transform: translateX(3px); }
+  50% { transform: translateX(-2px); }
+  60% { transform: translateX(1px); }
+}
+.animate-screen-shake { animation: screen-shake 0.3s ease-out; }
+
+/* RPS throw — bounce reveal */
+@keyframes rps-throw {
+  0% { opacity: 0; transform: scale(0.3) rotate(-15deg); }
+  50% { opacity: 1; transform: scale(1.2) rotate(5deg); }
+  70% { transform: scale(0.9) rotate(-2deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+.animate-rps-throw { animation: rps-throw 0.5s ease-out both; }
+
+/* Confetti burst — scatter via CSS custom props */
+@keyframes confetti-burst {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0deg) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform:
+      translate(
+        calc(var(--confetti-x, 50px) * 1px),
+        calc(var(--confetti-y, -80px) * 1px)
+      )
+      rotate(calc(var(--confetti-r, 360) * 1deg))
+      scale(0.3);
+  }
+}
+.animate-confetti-burst { animation: confetti-burst 1.5s ease-out forwards; }
+
+/* Crown drop — falls in and bounces */
+@keyframes crown-drop {
+  0% { opacity: 0; transform: translateY(-50px) scale(0.5); }
+  60% { opacity: 1; transform: translateY(8px) scale(1.1); }
+  80% { transform: translateY(-4px) scale(0.95); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+.animate-crown-drop { animation: crown-drop 0.5s ease-out both; }
+
+/* Winner scale — zoom in with overshoot */
+@keyframes winner-scale {
+  0% { opacity: 0; transform: scale(0); }
+  60% { opacity: 1; transform: scale(1.1); }
+  100% { opacity: 1; transform: scale(1); }
+}
+.animate-winner-scale { animation: winner-scale 0.4s ease-out both; }
+
+/* Winner glow pulse */
+@keyframes winner-glow {
+  0%, 100% { box-shadow: 0 0 10px rgba(251, 191, 36, 0.3); }
+  50% { box-shadow: 0 0 25px rgba(251, 191, 36, 0.6); }
+}
+.animate-winner-glow { animation: winner-glow 1.5s ease-in-out infinite; }
+
 /* Degen Mode — Marquee animation for swap ticker */
 @keyframes marquee {
   0% { transform: translateX(0); }
@@ -1477,4 +1612,13 @@
 }
 .scrollbar-thumb-slate-700::-webkit-scrollbar-thumb {
   background: #334155;
+}
+
+/* Bottom-Center HUD — balance pulse for low bankroll */
+@keyframes balance-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+.animate-balance-pulse {
+  animation: balance-pulse 1.8s ease-in-out infinite;
 }

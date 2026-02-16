@@ -4,8 +4,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-
-const API_BASE = '/api/v1';
+import { API_BASE } from '../lib/api-base';
 
 export interface UserBalance {
   id: string;

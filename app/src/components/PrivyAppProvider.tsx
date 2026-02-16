@@ -13,13 +13,13 @@ type ChainConfig = {
 };
 
 const MONAD_CHAIN = {
-  id: 10143,
-  name: 'Monad Testnet',
-  network: 'monad-testnet',
+  id: 143,
+  name: 'Monad',
+  network: 'monad',
   nativeCurrency: { name: 'MON', symbol: 'MON', decimals: 18 },
   rpcUrls: {
-    default: { http: ['https://testnet-rpc.monad.xyz'] },
-    public: { http: ['https://testnet-rpc.monad.xyz'] },
+    default: { http: ['https://monad-mainnet.drpc.org'] },
+    public: { http: ['https://monad-mainnet.drpc.org'] },
   },
 } as ChainConfig;
 
@@ -38,10 +38,10 @@ export default function PrivyAppProvider({ appId, children }: PrivyAppProviderPr
           accentColor: '#F59E0B',
           logo: undefined,
         },
-        loginMethods: ['email', 'google', 'twitter', 'wallet'],
+        loginMethods: ['wallet'],
         embeddedWallets: {
           ethereum: {
-            createOnLogin: 'users-without-wallets',
+            createOnLogin: 'off',
           },
         },
         defaultChain: MONAD_CHAIN,

@@ -28,9 +28,9 @@ services:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: MONAD_RPC_URL
-        value: https://testnet-rpc.monad.xyz
+        value: https://monad-mainnet.drpc.org
       - key: MONAD_CHAIN_ID
-        value: "10143"
+        value: "143"
       - key: MONAD_DEPLOYER_KEY
         sync: false
     disk:

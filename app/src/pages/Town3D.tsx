@@ -19,7 +19,6 @@ import {
   MY_AGENT_KEY,
   MY_WALLET_KEY,
   ONBOARDED_KEY,
-  DEGEN_TOUR_KEY,
 } from '../components/onboarding/storage';
 import { buildRoadGraph, findPath, type RoadGraph, type RoadSegInput } from '../world/roadGraph';
 import { WorldScene } from '../world/WorldScene';
@@ -61,28 +60,9 @@ const ARENA_IMPACT_BURST_LIFE_MS = 620;
 const ARENA_IMPACT_BURST_CAP = 28;
 const ACTION_BURST_LIFE_MS = 1280;
 const CREW_BATTLE_TOAST_LIFE_MS = 5200;
-const UI_MODE_KEY = 'ai_arena_ui_mode';
-const ARENA_TOKEN_ADDRESS = '0x0bA5E04470Fe327AC191179Cf6823E667B007777';
+const ARENA_TOKEN_ADDRESS = '0xC9795A42b7f31D2c1a0B67E7E1b8ea6729957777';
 const NAD_FUN_TOKEN_URL = `https://nad.fun/tokens/${ARENA_TOKEN_ADDRESS}`;
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
-const MISSION_TOUR_STEPS = [
-  {
-    title: 'Core Loop',
-    body: 'Run BUILD -> WORK -> FIGHT -> TRADE in sequence. The HUD always shows your next mission.',
-  },
-  {
-    title: 'Mission Contract',
-    body: 'Read DO / WHY / IF BLOCKED / SUCCESS. If blocked, the loop auto-redirects and explains the reason.',
-  },
-  {
-    title: 'Controls',
-    body: 'AUTO ON keeps cycling. Manual buttons force one phase when you want tighter control.',
-  },
-  {
-    title: 'Optional Telegram',
-    body: 'Telegram is optional. The in-game HUD can operate the full loop without it.',
-  },
-] as const;
 const LazyPrivyWalletConnect = lazy(async () => {
   const mod = await import('../components/PrivyWalletConnect');
   return { default: mod.PrivyWalletConnect };
@@ -126,6 +106,10 @@ const LazyAgentFundingModal = lazy(async () => {
 const LazyReadableRuntimeHud = lazy(async () => {
   const mod = await import('../components/game/ReadableRuntimeHud');
   return { default: mod.ReadableRuntimeHud };
+});
+const LazyBottomCenterHud = lazy(async () => {
+  const mod = await import('../components/town/BottomCenterHud');
+  return { default: mod.BottomCenterHud };
 });
 
 type EthereumProvider = {
@@ -506,8 +490,6 @@ interface CrewWarsStatusPayload {
 
 type LoopMode = 'DEFAULT' | 'DEGEN_LOOP';
 type CrewOrderStrategy = 'RAID' | 'DEFEND' | 'FARM' | 'TRADE';
-type UiMode = 'default' | 'pro';
-
 type CrewBattleToast = {
   id: string;
   winnerCrewName: string;
@@ -4956,11 +4938,7 @@ class CanvasErrorBoundary extends React.Component<
 
 export default function Town3D() {
   const isMobile = useIsMobile();
-  const [mobilePanel, setMobilePanel] = useState<'none' | 'info' | 'feed' | 'chat' | 'agent' | 'spawn'>('none');
-  const [uiMode, setUiMode] = useState<UiMode>(() => {
-    const stored = safeTrim(localStorage.getItem(UI_MODE_KEY), 24).toLowerCase();
-    return stored === 'pro' ? 'pro' : 'default';
-  });
+  // (mobilePanel and uiMode state removed — single clean mode)
   const [towns, setTowns] = useState<TownSummary[]>([]);
   const [town, setTown] = useState<Town | null>(null);
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -5010,13 +4988,7 @@ export default function Town3D() {
     authenticated: false,
     provider: HAS_PRIVY ? 'privy' : 'wallet_fallback',
   });
-  const [showMissionTour, setShowMissionTour] = useState(false);
-  const [missionTourStep, setMissionTourStep] = useState(0);
-  const missionTourShownRef = useRef(false);
   const [aiMode, setAiMode] = useState<'LIVE' | 'SIMULATION'>('SIMULATION');
-  useEffect(() => {
-    localStorage.setItem(UI_MODE_KEY, uiMode);
-  }, [uiMode]);
 
   // Auto-select user's agent (from onboarding) or fall back to first
   const myAgentId = getMyAgentId();
@@ -5581,22 +5553,7 @@ export default function Town3D() {
     localStorage.setItem(ONBOARDED_KEY, '1');
     setShowOnboarding(false);
   }, [isPlayerAuthenticated, ownedAgentId, showOnboarding]);
-  useEffect(() => {
-    if (showOnboarding) return;
-    if (uiMode !== 'pro') return;
-    if (!isPlayerAuthenticated || !ownedAgentId) return;
-    if (missionTourShownRef.current) return;
-    const seen = localStorage.getItem(DEGEN_TOUR_KEY) === '1';
-    if (seen) return;
-    missionTourShownRef.current = true;
-    setMissionTourStep(0);
-    setShowMissionTour(true);
-  }, [isPlayerAuthenticated, ownedAgentId, showOnboarding, uiMode]);
-  useEffect(() => {
-    if (uiMode === 'pro') return;
-    if (!showMissionTour) return;
-    setShowMissionTour(false);
-  }, [showMissionTour, uiMode]);
+  // (mission tour effects removed)
   useEffect(() => {
     let cancelled = false;
     const refreshLlmMode = async () => {
@@ -5781,17 +5738,7 @@ export default function Town3D() {
     }
     setShowSpawnOverlay(true);
   }, [isPlayerAuthenticated, showDegenStatus]);
-  const closeMissionTour = useCallback(() => {
-    localStorage.setItem(DEGEN_TOUR_KEY, '1');
-    setShowMissionTour(false);
-  }, []);
-  const advanceMissionTour = useCallback(() => {
-    if (missionTourStep >= MISSION_TOUR_STEPS.length - 1) {
-      closeMissionTour();
-      return;
-    }
-    setMissionTourStep((step) => Math.min(step + 1, MISSION_TOUR_STEPS.length - 1));
-  }, [closeMissionTour, missionTourStep]);
+  // (mission tour callbacks removed)
   const [canvasEpoch, setCanvasEpoch] = useState(0);
   const [canvasRecovering, setCanvasRecovering] = useState(false);
   const canvasRecoveryGuardRef = useRef(false);
@@ -6811,44 +6758,7 @@ export default function Town3D() {
       />
     </Suspense>
   ) : null;
-  const missionTourOverlay = uiMode === 'pro' && showMissionTour ? (
-    <div className="fixed inset-0 z-[210] flex items-center justify-center px-4 py-6">
-      <div className="absolute inset-0 bg-black/72 backdrop-blur-sm" />
-      <div className="relative z-10 w-full max-w-lg rounded-2xl border border-cyan-500/35 bg-slate-950/92 p-5 shadow-2xl">
-        <div className="mb-3 flex items-start justify-between gap-3">
-          <div>
-            <div className="text-[11px] uppercase tracking-[0.2em] text-cyan-300">Guided Mission Tour</div>
-            <div className="mt-1 text-xl font-black text-amber-300">{MISSION_TOUR_STEPS[missionTourStep].title}</div>
-          </div>
-          <div className="text-[10px] font-mono text-slate-400">
-            {missionTourStep + 1}/{MISSION_TOUR_STEPS.length}
-          </div>
-        </div>
-        <p className="text-[12px] leading-relaxed text-slate-200">
-          {MISSION_TOUR_STEPS[missionTourStep].body}
-        </p>
-        <div className="mt-4 rounded-lg border border-amber-500/20 bg-slate-900/40 px-3 py-2 text-[11px] text-slate-300">
-          Open the bottom-left DEGEN LOOP HUD and follow the NEXT MISSION card. Telegram is optional.
-        </div>
-        <div className="mt-4 flex items-center justify-between gap-2">
-          <button
-            type="button"
-            onClick={closeMissionTour}
-            className="rounded-lg border border-slate-700/70 px-3 py-1.5 text-[11px] text-slate-400 hover:border-slate-600 hover:text-slate-200"
-          >
-            Skip Tour
-          </button>
-          <button
-            type="button"
-            onClick={advanceMissionTour}
-            className="rounded-lg border border-cyan-400/65 bg-cyan-500/20 px-3 py-1.5 text-[11px] font-semibold text-cyan-100 hover:border-cyan-300 hover:bg-cyan-500/28"
-          >
-            {missionTourStep >= MISSION_TOUR_STEPS.length - 1 ? 'Start Loop' : 'Next'}
-          </button>
-        </div>
-      </div>
-    </div>
-  ) : null;
+  // (mission tour overlay removed)
   const fundingModalOverlay = (
     <Suspense fallback={null}>
       <LazyAgentFundingModal
@@ -6886,114 +6796,37 @@ export default function Town3D() {
         </Suspense>
       )}
       {wheelArenaOverlay}
-      {missionTourOverlay}
       {fundingModalOverlay}
-      {/* Mobile top bar — compact */}
-      <div className="shrink-0 flex items-center justify-between px-3 py-1 bg-slate-950/95 border-b border-slate-800/40 z-50">
-        <span className="text-xs font-bold text-amber-400">AI TOWN</span>
-        {economy && Number.isFinite(economy.spotPrice) && (
-          <span className="text-[10px] text-slate-500 font-mono">$ARENA {economy.spotPrice.toFixed(4)}</span>
-        )}
-        {onboardingEntryLock ? (
-          <span className="rounded border border-slate-700/70 bg-slate-900/55 px-2 py-0.5 text-[10px] font-mono text-slate-400">
-            ONBOARDING
-          </span>
-        ) : (
-          <Suspense fallback={null}>
-            <LazyPrivyWalletConnect
-              compact
-              onAddressChange={setWalletAddress}
-              onSessionChange={setPlayerSession}
-            />
-          </Suspense>
-        )}
-        <div className="flex items-center gap-1">
-          {ownedAgent && (
-            <button
-              type="button"
-              disabled={loopModeUpdating}
-              onClick={() => void updateOwnedLoopMode(ownedLoopMode === 'DEGEN_LOOP' ? 'DEFAULT' : 'DEGEN_LOOP')}
-              className={`px-1.5 py-0.5 rounded border text-[9px] font-mono ${
-                ownedLoopMode === 'DEGEN_LOOP'
-                  ? 'border-emerald-500/60 bg-emerald-950/45 text-emerald-300'
-                  : 'border-slate-700/60 bg-slate-900/45 text-slate-400'
-              } ${loopModeUpdating ? 'opacity-60' : ''}`}
-              title="Toggle degen loop mode"
-            >
-              {ownedLoopMode === 'DEGEN_LOOP' ? 'AUTO' : 'MAN'}
-            </button>
-          )}
-          {ownedLoopTelemetry && (
-            <span
-              className="text-[9px] px-1.5 py-0.5 rounded border border-amber-500/45 bg-amber-500/15 text-amber-200 font-mono"
-              title="Loop Heat = consecutive non-rest actions. Higher heat means stronger loop momentum."
-            >
-              🔥Heat x{Math.max(1, ownedLoopTelemetry.chain)}
-            </span>
-          )}
-          {ownedCrewLink && (
-            <span
-              className="text-[9px] px-1.5 py-0.5 rounded border font-mono"
-              style={{
-                color: ownedCrewLink.colorHex,
-                borderColor: `${ownedCrewLink.colorHex}66`,
-                backgroundColor: `${ownedCrewLink.colorHex}1f`,
-              }}
-              title={`Crew: ${ownedCrewLink.crewName}`}
-            >
-              ⚑ {ownedCrewLink.crewName.split(' ')[0]}
-            </span>
-          )}
-          {leadingCrew && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded border border-rose-400/35 bg-rose-950/30 text-rose-200 font-mono">
-              ⚔️ {leadingCrew.territoryControl}
-            </span>
-          )}
-          <span
-            className={`text-[9px] px-1.5 py-0.5 rounded border font-mono ${
-              aiMode === 'LIVE'
-                ? 'border-emerald-500/50 bg-emerald-950/35 text-emerald-200'
-                : 'border-slate-700/70 bg-slate-900/40 text-slate-300'
-            }`}
-            title={aiMode === 'LIVE' ? 'Live model calls enabled' : 'Simulation mode (no live model spend)'}
+      {/* Minimal mobile top bar */}
+      <div className="shrink-0 flex items-center justify-between px-3 py-1.5 bg-slate-950/95 border-b border-slate-800/30 z-50">
+        <span className="text-xs font-black tracking-wider text-amber-300">AI TOWN</span>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 w-7 p-0 text-slate-400 hover:text-slate-100 bg-slate-950/70 rounded-lg border border-slate-800/40"
+            onClick={() => {
+              const newState = !soundOn;
+              setSoundOn(newState);
+              setSoundEnabled(newState);
+              if (newState) playSound('click');
+            }}
+            title={soundOn ? 'Mute sounds' : 'Enable sounds'}
           >
-            AI:{aiMode}
-          </span>
-          <span className="text-[10px] text-cyan-300/90 uppercase">{mobileVisualQuality}</span>
-          {activeOpportunity && opportunityTimeLeft && (
-            <span
-              className="text-[9px] px-1.5 py-0.5 rounded border font-mono animate-pulse"
-              style={{
-                color: activeOpportunity.objective.color,
-                borderColor: `${activeOpportunity.objective.color}66`,
-                backgroundColor: `${activeOpportunity.objective.color}1f`,
-              }}
-              title={`${activeOpportunity.label}: ${activeOpportunity.subtitle}`}
-            >
-              ⏱ {opportunityTimeLeft}
+            {soundOn ? <Volume2 className="h-3.5 w-3.5" /> : <VolumeX className="h-3.5 w-3.5" />}
+          </Button>
+          {onboardingEntryLock ? (
+            <span className="rounded border border-slate-700/70 bg-slate-900/55 px-2 py-0.5 text-[10px] font-mono text-slate-400">
+              ONBOARDING
             </span>
-          )}
-          {displayObjective && (
-            <span className="text-[10px]" title={`Objective: ${displayObjective.label}`}>
-              {displayObjective.emoji}
-            </span>
-          )}
-          {worldEvents.length > 0 && (
-            <span className="text-[10px] animate-pulse text-amber-400" title={worldEvents[0].name}>
-              {worldEvents[0].emoji}
-            </span>
-          )}
-          <span className="text-[10px]" title={`Weather: ${weather}`}>
-            {weather === 'clear' ? '☀️' : weather === 'rain' ? '🌧️' : '⛈️'}
-          </span>
-          <span className="text-[10px]">
-            {economicState.sentiment === 'bull' ? '📈' : economicState.sentiment === 'bear' ? '📉' : '➡️'}
-          </span>
-          {wheel.status?.phase === 'ANNOUNCING' && (
-            <span className="text-[10px] animate-pulse text-purple-400" title="Betting open!">🎰</span>
-          )}
-          {wheel.status?.phase === 'FIGHTING' && (
-            <span className="text-[10px] animate-pulse text-red-400" title="Fight in progress">⚔️</span>
+          ) : (
+            <Suspense fallback={null}>
+              <LazyPrivyWalletConnect
+                compact
+                onAddressChange={setWalletAddress}
+                onSessionChange={setPlayerSession}
+              />
+            </Suspense>
           )}
         </div>
       </div>
@@ -7054,54 +6887,9 @@ export default function Town3D() {
         </Canvas>
         </CanvasErrorBoundary>
 
-        {/* Swap Notifications — center-top mobile */}
-        <div className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 z-50">
-          {swapNotifications.slice(0, 2).map((notif) => {
-            const isBuy = notif.side === 'BUY_ARENA';
-            return (
-              <div key={notif.id} className="animate-in slide-in-from-top-2 fade-in duration-300">
-                <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] backdrop-blur-md ${
-                  isBuy ? 'bg-emerald-950/80 text-emerald-200' : 'bg-rose-950/80 text-rose-200'
-                }`}>
-                  <span>{isBuy ? '📈' : '📉'}</span>
-                  <span className="font-mono">{notif.agentName}</span>
-                  <span className="font-mono font-semibold">{Math.round(notif.amount)}</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        <div className="pointer-events-none absolute top-14 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 z-[55]">
-          {arenaMomentumToasts.slice(0, 1).map((toast) => {
-            const isWin = toast.direction === 'WIN';
-            return (
-              <div key={toast.id} className="animate-in zoom-in-95 slide-in-from-top-2 fade-in duration-300">
-                <div className={`rounded-full px-2.5 py-1 text-[10px] font-bold backdrop-blur-md ${
-                  isWin ? 'bg-emerald-900/85 text-emerald-100' : 'bg-rose-900/85 text-rose-100'
-                }`}>
-                  {isWin ? '🔥' : '☠️'} {isWin ? 'WIN STREAK' : 'LOSS STREAK'} x{toast.streak}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        <div className="pointer-events-none absolute top-2 left-2 flex flex-col items-start gap-1 z-[56]">
-          {crewBattleToasts.slice(0, 1).map((toast) => (
-            <div key={toast.id} className="animate-in slide-in-from-left-2 fade-in duration-300">
-              <div className="rounded-lg border border-cyan-500/35 bg-slate-950/84 px-2 py-1 text-[10px] font-mono text-cyan-100">
-                ⚔ {toast.winnerCrewName} +{toast.territorySwing} terr
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* (mobile town info removed) */}
-
-        {/* Wheel of Fate banner (mobile) */}
+        {/* Wheel of Fate banner (mobile — floats above HUD) */}
         {wheel.status && wheel.status.phase !== 'IDLE' && wheel.status.phase !== 'PREP' && (
-          <div className="pointer-events-auto absolute bottom-14 left-0 right-0 z-50">
+          <div className="pointer-events-auto absolute bottom-[180px] left-0 right-0 z-50">
             <Suspense fallback={null}>
               <LazyWheelBanner
                 status={wheel.status}
@@ -7115,111 +6903,30 @@ export default function Town3D() {
           </div>
         )}
 
-        {/* Mobile bottom nav buttons */}
-        <div className="pointer-events-auto absolute bottom-2 left-2 right-2 z-50 flex items-center justify-between">
-          <div className="flex gap-1.5">
-            <button
-              className={`px-3 py-1.5 rounded-lg text-xs backdrop-blur-md border transition-all ${
-                mobilePanel === 'feed' ? 'bg-primary/20 border-primary/50 text-primary' : 'bg-slate-950/70 border-slate-800/40 text-slate-300'
-              }`}
-              onClick={() => setMobilePanel(mobilePanel === 'feed' ? 'none' : 'feed')}
-            >
-              📋 Feed
-            </button>
-            <button
-              className={`px-3 py-1.5 rounded-lg text-xs backdrop-blur-md border transition-all ${
-                mobilePanel === 'spawn' ? 'bg-amber-500/20 border-amber-500/50 text-amber-300' : 'bg-slate-950/70 border-slate-800/40 text-slate-300'
-              }`}
-              onClick={() => setMobilePanel(mobilePanel === 'spawn' ? 'none' : 'spawn')}
-            >
-              🤖+
-            </button>
-            <button
-              className={`px-3 py-1.5 rounded-lg text-xs backdrop-blur-md border transition-all ${
-                ownedAgent && ownedAgent.bankroll < 30
-                  ? 'bg-rose-500/20 border-rose-500/45 text-rose-200'
-                  : 'bg-slate-950/70 border-slate-800/40 text-slate-300'
-              }`}
-              onClick={openFundingFlow}
-            >
-              ⛽ Fund
-            </button>
-          </div>
+        {/* Bottom-Center HUD (mobile) */}
+        <div className="pointer-events-auto absolute bottom-3 left-1/2 -translate-x-1/2 z-50">
+          <Suspense fallback={null}>
+            <LazyBottomCenterHud
+              agentName={ownedAgent?.name ?? null}
+              archetype={ownedAgent?.archetype ?? null}
+              bankroll={ownedAgent?.bankroll ?? null}
+              wins={ownedAgent?.wins ?? 0}
+              losses={ownedAgent?.losses ?? 0}
+              elo={ownedAgent?.elo ?? 0}
+              loopMode={ownedLoopMode}
+              loopUpdating={loopModeUpdating}
+              nudgeBusy={degenNudgeBusy}
+              recommendedNudge={degenGuidance.recommended}
+              blockers={degenGuidance.blockers}
+              onToggleLoop={updateOwnedLoopMode}
+              onNudge={sendDegenNudge}
+              onOpenFunding={openFundingFlow}
+              onDeploy={openDeployFlow}
+              hasAgent={Boolean(ownedAgentId)}
+            />
+          </Suspense>
         </div>
-
-        {/* Mobile bottom sheet */}
-        {mobilePanel !== 'none' && (
-          <div className="absolute bottom-12 left-0 right-0 z-40 max-h-[50vh] overflow-auto">
-            <div className="mx-2 backdrop-blur-xl bg-slate-950/90 rounded-t-xl border border-slate-800/40 p-3">
-              {/* Close handle */}
-              <div className="flex justify-center mb-2">
-                <button
-                  className="w-10 h-1 rounded-full bg-slate-600"
-                  onClick={() => setMobilePanel('none')}
-                />
-              </div>
-
-              {mobilePanel === 'feed' && (
-                <div className="space-y-1 max-h-[40vh] overflow-auto">
-                  <div className="text-xs font-semibold text-slate-200 mb-1">My Agent Activity</div>
-                  {!ownedAgentId && (
-                    <div className="text-[10px] text-slate-500 py-1">Connect/select your wallet agent to view logs.</div>
-                  )}
-	                  {activityFeed.filter((item) => {
-	                    if (!ownedAgentId) return false;
-	                    if (item.kind === 'swap') return item.data.agent?.id === ownedAgentId;
-                      const ev = item.data;
-                      if (ev.agentId === ownedAgentId) return true;
-                      try {
-                        const metadata = JSON.parse(ev.metadata || '{}') as Record<string, unknown>;
-                        if (metadata?.winnerId === ownedAgentId || metadata?.loserId === ownedAgentId) return true;
-                        if (Array.isArray(metadata?.participants)) {
-                          return metadata.participants.some((participant) => participant === ownedAgentId);
-                        }
-                        return false;
-                      } catch {
-                        return false;
-                      }
-	                  }).slice(0, 15).map((item) => {
-                    if (item.kind === 'swap') {
-                      const s = item.data;
-                      const isBuy = s.side === 'BUY_ARENA';
-                      const amountArena = isBuy ? s.amountOut : s.amountIn;
-                      return (
-                        <div key={s.id} className="text-[10px] text-slate-300 py-0.5 border-b border-slate-800/30">
-                          💱 <span className="font-mono">{s.agent?.name || '?'}</span> {isBuy ? 'bought' : 'sold'}{' '}
-                          <span className="font-mono text-slate-200">{Math.round(amountArena)}</span> ARENA
-                        </div>
-                      );
-                    }
-                    const e = item.data;
-                    return (
-                      <div key={e.id} className="text-[10px] text-slate-300 py-0.5 border-b border-slate-800/30">
-                        📝 {e.title || e.eventType}
-                        <span className="text-slate-600 ml-1">· {timeAgo(e.createdAt)}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* [removed: mobile agent panel] */}
-            </div>
-          </div>
-        )}
-
-              {mobilePanel === 'spawn' && (
-                <Suspense fallback={null}>
-                  <LazySpawnAgent
-                    walletAddress={walletAddress}
-                    onConnectWallet={connectWallet}
-                    onSpawned={() => { setTimeout(() => setMobilePanel('none'), 2000); }}
-                  />
-                </Suspense>
-              )}
       </div>
-
-      {/* [removed: mobile SwapTicker] */}
     </div>
   );
 
@@ -7235,199 +6942,39 @@ export default function Town3D() {
         </Suspense>
       )}
       {wheelArenaOverlay}
-      {missionTourOverlay}
       {fundingModalOverlay}
-      {/* Top Bar: Degen Stats */}
-      <div className="shrink-0 border-b border-cyan-950/40 bg-gradient-to-r from-slate-950/95 via-slate-950/92 to-slate-900/92 px-3 py-2.5 z-50">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-2.5">
-            <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 leading-tight shadow-[0_0_20px_rgba(245,158,11,0.12)]">
-              <div className="text-[13px] font-black tracking-[0.14em] text-amber-300">AI TOWN</div>
-              <div className="text-[9px] font-mono uppercase text-slate-400">Agent Arena Live</div>
-            </div>
-            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-              {uiMode === 'default' ? (
-                <>
-                  {onboardingEntryLock ? (
-                    <span className="rounded-full border border-slate-700/60 bg-slate-900/45 px-2 py-0.5 text-[10px] font-mono text-slate-400">
-                      NO AGENT YET
-                    </span>
-                  ) : (
-                    <span
-                      className={`rounded-full border px-2 py-0.5 text-[10px] font-mono ${
-                        runtimeLoopRunning
-                          ? 'border-emerald-500/55 bg-emerald-950/35 text-emerald-200'
-                          : 'border-rose-500/50 bg-rose-950/30 text-rose-200'
-                      }`}
-                    >
-                      AGENT {runtimeLoopRunning ? 'RUNNING' : 'PAUSED'}
-                    </span>
-                  )}
-                  {ownedAgent && (
-                    <span className="rounded-full border border-slate-700/70 bg-slate-900/45 px-2 py-0.5 text-[10px] font-mono text-slate-200">
-                      BAL ${Math.round(ownedAgent.bankroll)}A / {Math.round(ownedAgent.reserveBalance)}R
-                    </span>
-                  )}
-                  {ownedAgent && !onboardingEntryLock && (
-                    <button
-                      type="button"
-                      onClick={openFundingFlow}
-                      className={`rounded-full border px-2 py-0.5 text-[10px] font-mono transition-colors ${
-                        ownedAgent.bankroll < 30
-                          ? 'border-rose-500/60 bg-rose-950/35 text-rose-100 hover:bg-rose-900/40'
-                          : 'border-amber-500/55 bg-amber-950/35 text-amber-100 hover:bg-amber-900/42'
-                      }`}
-                      title="Top up your agent bankroll using a verified nad.fun transaction hash"
-                    >
-                      {ownedAgent.bankroll < 30 ? '⛽ TOP UP' : '➕ FUND'}
-                    </button>
-                  )}
-                  {!onboardingEntryLock && (
-                    <span className="rounded-full border border-cyan-500/45 bg-cyan-950/30 px-2 py-0.5 text-[10px] font-mono text-cyan-100">
-                      {ownedRuntimeAgent?.action || 'WAIT'} · {ownedRuntimeAgent?.targetLabel || 'Awaiting target'}
-                    </span>
-                  )}
-                  {ownedRuntimeAgent?.lastOutcome && (
-                    <span className="rounded-full border border-amber-400/45 bg-amber-950/35 px-2 py-0.5 text-[10px] font-mono text-amber-100">
-                      LAST {ownedRuntimeAgent.lastOutcome}
-                    </span>
-                  )}
-                </>
-              ) : (
-                <>
-                  {economy && Number.isFinite(economy.spotPrice) && (
-                    <span className="rounded-full border border-slate-700/70 bg-slate-900/50 px-2 py-0.5 text-[10px] font-mono text-slate-300">
-                      $ARENA {economy.spotPrice.toFixed(4)}
-                    </span>
-                  )}
-                  <span className="rounded-full border border-slate-700/70 bg-slate-900/45 px-2 py-0.5 text-[10px] font-mono uppercase text-cyan-300/90">
-                    {visualSettings.quality === 'auto' ? `AUTO:${resolvedVisualQuality}` : resolvedVisualQuality}
-                  </span>
-                  <span
-                    className={`rounded-full border px-2 py-0.5 text-[10px] font-mono ${
-                      aiMode === 'LIVE'
-                        ? 'border-emerald-500/55 bg-emerald-950/35 text-emerald-200'
-                        : 'border-slate-700/70 bg-slate-900/40 text-slate-300'
-                    }`}
-                    title={aiMode === 'LIVE' ? 'Live model calls enabled' : 'Simulation mode (no live model spend)'}
-                  >
-                    AI:{aiMode}
-                  </span>
-                  {ownedLoopTelemetry && (
-                    <span
-                      className="rounded-full border border-amber-500/45 bg-amber-900/45 px-2 py-0.5 text-[10px] font-mono text-amber-200"
-                      title="Loop Heat = consecutive non-rest actions. Streak toasts: WIN STREAK = consecutive duel wins, LOSS STREAK = consecutive duel losses."
-                    >
-                      🔥 LOOP HEAT x{Math.max(1, ownedLoopTelemetry.chain)} · loops {Math.max(0, ownedLoopTelemetry.loopsCompleted)}
-                    </span>
-                  )}
-                  <span
-                    className="rounded-full border border-slate-700/65 bg-slate-900/35 px-2 py-0.5 text-[10px] font-mono text-slate-300"
-                    title="Definitions: LOOP HEAT tracks non-rest loop momentum. WIN/LOSS STREAK toasts track consecutive duel outcomes."
-                  >
-                    ℹ HEAT = loop momentum · STREAK = duel run
-                  </span>
-                  {ownedCrewLink && (
-                    <span
-                      className="rounded-full border px-2 py-0.5 text-[10px] font-mono"
-                      style={{
-                        color: ownedCrewLink.colorHex,
-                        borderColor: `${ownedCrewLink.colorHex}66`,
-                        backgroundColor: `${ownedCrewLink.colorHex}1f`,
-                      }}
-                      title={`Crew role: ${ownedCrewLink.role}`}
-                    >
-                      ⚑ {ownedCrewLink.crewName}
-                    </span>
-                  )}
-                  {leadingCrew && (
-                    <span className="rounded-full border border-rose-400/35 bg-rose-950/30 px-2 py-0.5 text-[10px] font-mono text-rose-200">
-                      ⚔️ {leadingCrew.name} · terr {leadingCrew.territoryControl} · score {leadingCrew.warScore}
-                    </span>
-                  )}
-                  {activeOpportunity && opportunityTimeLeft && (
-                    <span
-                      className="rounded-full border px-2 py-0.5 text-[10px] font-mono animate-pulse"
-                      style={{
-                        color: activeOpportunity.objective.color,
-                        borderColor: `${activeOpportunity.objective.color}66`,
-                        backgroundColor: `${activeOpportunity.objective.color}1f`,
-                      }}
-                      title={`${activeOpportunity.label}: ${activeOpportunity.subtitle}`}
-                    >
-                      ⏱ {activeOpportunity.label} {opportunityTimeLeft}
-                    </span>
-                  )}
-                  {displayObjective && (
-                    <span
-                      className="rounded-full border px-2 py-0.5 text-[10px] font-mono"
-                      style={{
-                        color: displayObjective.color,
-                        borderColor: `${displayObjective.color}66`,
-                        backgroundColor: `${displayObjective.color}1f`,
-                      }}
-                      title={`Objective from ${displayObjective.sourceType || 'system'}: ${displayObjective.label}`}
-                    >
-                      {displayObjective.emoji} {displayObjective.label}
-                    </span>
-                  )}
-                  {wheel.status?.phase === 'ANNOUNCING' && (
-                    <span className="rounded-full border border-fuchsia-400/45 bg-fuchsia-950/35 px-2 py-0.5 text-[10px] text-fuchsia-200 animate-pulse">🎰 Betting Open</span>
-                  )}
-                  {wheel.status?.phase === 'FIGHTING' && (
-                    <span className="rounded-full border border-red-400/45 bg-red-950/35 px-2 py-0.5 text-[10px] text-red-200 animate-pulse">⚔️ Fight!</span>
-                  )}
-                  {wheel.status?.phase === 'AFTERMATH' && (
-                    <span className="rounded-full border border-amber-400/45 bg-amber-950/35 px-2 py-0.5 text-[10px] text-amber-200">🏆 Result</span>
-                  )}
-                </>
-              )}
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {onboardingEntryLock ? (
-              <span className="rounded border border-slate-700/70 bg-slate-900/55 px-2 py-0.5 text-[10px] font-mono text-slate-400">
-                ONBOARDING
-              </span>
-            ) : (
-              <Suspense fallback={null}>
-                <LazyPrivyWalletConnect
-                  compact
-                  onAddressChange={setWalletAddress}
-                  onSessionChange={setPlayerSession}
-                />
-              </Suspense>
-            )}
-            {!onboardingEntryLock && <button
-              onClick={() => setUiMode((current) => (current === 'default' ? 'pro' : 'default'))}
-              className={`rounded-lg border px-2.5 py-1 text-[10px] font-mono uppercase transition-colors ${
-                uiMode === 'pro'
-                  ? 'border-cyan-400/65 bg-cyan-500/20 text-cyan-100 hover:bg-cyan-500/28'
-                  : 'border-slate-700/70 bg-slate-900/45 text-slate-300 hover:border-slate-600/80 hover:text-slate-100'
-              }`}
-              title="Toggle between default readability mode and advanced pro mode"
-            >
-              {uiMode === 'pro' ? 'Pro Mode' : 'Default Mode'}
-            </button>}
-            {!onboardingEntryLock && !showOnboarding && !showSpawnOverlay && !fundingModalOpen && (
-              <button
-                onClick={openDeployFlow}
-                className="rounded-lg border border-amber-500/65 bg-gradient-to-r from-amber-600/80 to-orange-600/80 px-3 py-1 text-xs font-bold text-white transition-all hover:from-amber-500 hover:to-orange-500"
-              >
-                {isPlayerAuthenticated ? '🤖 Deploy Agent' : '✨ Sign In & Deploy'}
-              </button>
-            )}
-          </div>
+      {/* Minimal Top Bar */}
+      <div className="shrink-0 flex items-center justify-between px-4 py-2 bg-slate-950/95 border-b border-slate-800/30 z-50">
+        <span className="text-sm font-black tracking-wider text-amber-300">AI TOWN</span>
+        <div className="flex items-center gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-8 w-8 p-0 text-slate-400 hover:text-slate-100 hover:bg-slate-900/40 backdrop-blur-md bg-slate-950/70 rounded-lg border border-slate-800/40"
+            onClick={() => {
+              const newState = !soundOn;
+              setSoundOn(newState);
+              setSoundEnabled(newState);
+              if (newState) playSound('click');
+            }}
+            title={soundOn ? 'Mute sounds' : 'Enable sounds'}
+          >
+            {soundOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+          </Button>
+          {onboardingEntryLock ? (
+            <span className="rounded border border-slate-700/70 bg-slate-900/55 px-2 py-0.5 text-[10px] font-mono text-slate-400">
+              ONBOARDING
+            </span>
+          ) : (
+            <Suspense fallback={null}>
+              <LazyPrivyWalletConnect
+                compact
+                onAddressChange={setWalletAddress}
+                onSessionChange={setPlayerSession}
+              />
+            </Suspense>
+          )}
         </div>
-        {!ownedAgentId && (
-          <div className="mt-2 rounded-xl border border-cyan-500/25 bg-cyan-500/8 px-3 py-1.5">
-            <div className="text-[11px] text-cyan-100/90">
-              {onboardingEntryLock
-                ? 'Complete onboarding to deploy your agent.'
-                : 'Spectator mode: deploy from top-right when ready.'}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Spawn Agent Overlay */}
@@ -7519,270 +7066,11 @@ export default function Town3D() {
         </div>
       )}
 
-      {uiMode === 'pro' && (
-      <>
-      {/* Swap Notifications - floating toasts (center-top) */}
-      <div className="pointer-events-none absolute top-14 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1.5 z-50">
-        {swapNotifications.slice(0, 3).map((notif) => {
-          const isBuy = notif.side === 'BUY_ARENA';
-          const color = ARCHETYPE_COLORS[notif.archetype] || '#93c5fd';
-          const glyph = ARCHETYPE_GLYPH[notif.archetype] || '●';
-          return (
-            <div
-              key={notif.id}
-              className="animate-in slide-in-from-top-2 fade-in duration-300 pointer-events-auto"
-            >
-              <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border backdrop-blur-md shadow-lg ${
-                isBuy
-                  ? 'bg-emerald-950/80 border-emerald-700/50 text-emerald-200'
-                  : 'bg-rose-950/80 border-rose-700/50 text-rose-200'
-              }`}>
-                <span className="text-sm">{isBuy ? '📈' : '📉'}</span>
-                <span style={{ color }} className="font-mono text-xs">
-                  {glyph} {notif.agentName}
-                </span>
-                <span className="text-[10px] opacity-80">
-                  {isBuy ? 'bought' : 'sold'}
-                </span>
-                <span className="font-mono text-xs font-semibold">
-                  {Math.round(notif.amount).toLocaleString()}
-                </span>
-                <span className="text-[10px] opacity-80">$ARENA</span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Crew Wars epoch toasts (top-left) */}
-      <div className="pointer-events-none absolute top-14 left-3 flex flex-col items-start gap-2 z-[52]">
-        {crewBattleToasts.slice(0, 3).map((toast) => {
-          const winnerColor = crewWarsStatus?.crews?.find((crew) => crew.name === toast.winnerCrewName)?.colorHex || '#22d3ee';
-          return (
-            <div key={toast.id} className="animate-in slide-in-from-left-2 fade-in duration-300">
-              <div className="rounded-xl border border-cyan-500/35 bg-slate-950/84 px-3 py-2 backdrop-blur-md shadow-xl">
-                <div className="text-[9px] uppercase tracking-[0.18em] text-cyan-200/80">Crew Wars Epoch</div>
-                <div className="mt-0.5 text-[11px] font-mono leading-tight">
-                  <span style={{ color: winnerColor }}>⚔ {toast.winnerCrewName}</span>
-                  <span className="text-slate-300"> over </span>
-                  <span className="text-slate-200">{toast.loserCrewName}</span>
-                </div>
-                <div className="mt-1 text-[10px] font-mono text-slate-400">
-                  +{toast.territorySwing} terr · +{Math.round(toast.treasurySwing)} $ARENA
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Arena momentum combo toasts (center-mid) */}
-      <div className="pointer-events-none absolute top-28 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 z-[55]">
-        {arenaMomentumToasts.slice(0, 3).map((toast) => {
-          const glyph = ARCHETYPE_GLYPH[toast.archetype] || '●';
-          const color = ARCHETYPE_COLORS[toast.archetype] || '#93c5fd';
-          const isWin = toast.direction === 'WIN';
-          return (
-            <div key={toast.id} className="animate-in zoom-in-95 slide-in-from-top-2 fade-in duration-300">
-              <div className={`rounded-2xl border px-4 py-2 backdrop-blur-md shadow-2xl ${
-                isWin
-                  ? 'bg-emerald-900/80 border-emerald-400/40 text-emerald-100'
-                  : 'bg-rose-900/80 border-rose-400/40 text-rose-100'
-              }`} title={isWin ? 'Consecutive duel wins' : 'Consecutive duel losses'}>
-                <div className="flex items-center gap-2">
-                  <span className="text-lg">{isWin ? '🔥' : '☠️'}</span>
-                  <span style={{ color }} className="font-mono text-xs">
-                    {glyph} {toast.agentName}
-                  </span>
-                  <span className="text-[10px] uppercase tracking-wider opacity-85">
-                    {isWin ? 'Win Streak' : 'Loss Streak'}
-                  </span>
-                  <span className="font-black text-base tracking-wide">x{toast.streak}</span>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Arena Outcome Notifications - floating toasts (top-right) */}
-      <div className="pointer-events-none absolute top-14 right-3 flex flex-col items-end gap-1.5 z-50">
-        {arenaOutcomeToasts.slice(0, 4).map((toast) => {
-          const glyph = ARCHETYPE_GLYPH[toast.archetype] || '●';
-          const color = ARCHETYPE_COLORS[toast.archetype] || '#93c5fd';
-          const deltaPrefix = toast.delta > 0 ? '+' : '';
-          const resultTone = toast.result === 'WIN'
-            ? 'bg-emerald-950/80 border-emerald-700/50 text-emerald-200'
-            : toast.result === 'LOSS'
-              ? 'bg-rose-950/80 border-rose-700/50 text-rose-200'
-              : 'bg-sky-950/80 border-sky-700/50 text-sky-200';
-          return (
-            <div
-              key={toast.id}
-              className="animate-in slide-in-from-right-2 fade-in duration-300"
-            >
-              <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border backdrop-blur-md shadow-lg ${resultTone}`}>
-                <span className="text-sm">⚔️</span>
-                <span style={{ color }} className="font-mono text-xs">
-                  {glyph} {toast.agentName}
-                </span>
-                <span className="text-[10px] uppercase tracking-wide opacity-85">{toast.result}</span>
-                <span className="font-mono text-xs font-semibold">
-                  {deltaPrefix}{Math.round(toast.delta).toLocaleString()}
-                </span>
-                <span className="text-[10px] opacity-80">$ARENA</span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {arenaImpactFlash && (
-        <div
-          className="pointer-events-none absolute inset-0 z-40 animate-pulse"
-          style={{
-            opacity: arenaImpactFlash.intensity,
-            background: arenaImpactFlash.tone === 'WIN'
-              ? 'radial-gradient(circle at 50% 56%, rgba(34,197,94,0.24) 0%, rgba(16,185,129,0.12) 22%, rgba(0,0,0,0) 62%)'
-              : 'radial-gradient(circle at 50% 56%, rgba(244,63,94,0.26) 0%, rgba(220,38,38,0.14) 22%, rgba(0,0,0,0) 62%)',
-          }}
-        />
-      )}
-      </>
-      )}
-
-      {/* (world event banner and build completion banners removed) */}
-
       {/* Overlay UI */}
       <div className="pointer-events-none absolute inset-0">
-        <div className="absolute inset-0 hud-backplate" />
-        <div className="pointer-events-auto absolute left-3 top-3 flex flex-col gap-2">
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-8 w-8 p-0 text-slate-400 hover:text-slate-100 hover:bg-slate-900/40 backdrop-blur-md bg-slate-950/70 rounded-lg border border-slate-800/40"
-            onClick={() => {
-              const newState = !soundOn;
-              setSoundOn(newState);
-              setSoundEnabled(newState);
-              if (newState) playSound('click');
-            }}
-            title={soundOn ? 'Mute sounds' : 'Enable sounds'}
-          >
-            {soundOn ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-          </Button>
-
-          {uiMode === 'pro' && (
-            <>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-8 px-2 text-[10px] font-mono text-slate-300 hover:text-slate-100 hover:bg-slate-900/40 backdrop-blur-md bg-slate-950/70 rounded-lg border border-slate-800/40 uppercase"
-                onClick={cycleVisualQuality}
-                title="Cycle visual quality"
-              >
-                {visualSettings.quality === 'auto' ? `auto:${resolvedVisualQuality}` : resolvedVisualQuality}
-              </Button>
-
-              <Button
-                size="sm"
-                variant="ghost"
-                className={`h-8 px-2 text-[10px] font-mono hover:text-slate-100 hover:bg-slate-900/40 backdrop-blur-md rounded-lg border ${
-                  visualSettings.postFx
-                    ? 'text-cyan-300 border-cyan-800/50 bg-slate-950/70'
-                    : 'text-slate-500 border-slate-800/40 bg-slate-950/70'
-                }`}
-                onClick={() => setVisualSettings((prev) => ({ ...prev, postFx: !prev.postFx }))}
-                title="Toggle post effects"
-              >
-                FX {visualSettings.postFx ? 'ON' : 'OFF'}
-              </Button>
-            </>
-          )}
-        </div>
-
-        {uiMode === 'pro' && (
-          <Suspense fallback={null}>
-            <LazyDesktopAgentHudPanel
-              selectedAgent={selectedAgent}
-              myAgentId={myAgentId}
-              recentOutcomes={selectedAgentOutcomes}
-              archetypeColors={ARCHETYPE_COLORS}
-              archetypeGlyph={ARCHETYPE_GLYPH}
-              timeAgo={timeAgo}
-            />
-          </Suspense>
-        )}
-
-        {/* (minimap removed) */}
-
-        {uiMode === 'pro' && (
-          <div className="pointer-events-auto absolute left-3 bottom-3 flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end max-w-[calc(100vw-24px)]">
-            <Suspense fallback={null}>
-            <LazyDegenControlBar
-                ownedAgent={ownedAgent ? { id: ownedAgent.id, name: ownedAgent.name, archetype: ownedAgent.archetype } : null}
-                loopMode={ownedLoopMode}
-                loopUpdating={loopModeUpdating}
-                nudgeBusy={degenNudgeBusy}
-                plansLoading={degenPlansLoading}
-                guidanceMission={degenGuidance.mission}
-                missionWhy={degenGuidance.missionWhy}
-                missionBlocked={degenGuidance.missionBlocked}
-                missionFallback={degenGuidance.missionFallback}
-                missionSuccess={degenGuidance.missionSuccess}
-                recommendedNudge={degenGuidance.recommended}
-                blockers={degenGuidance.blockers}
-                crewOrderBusy={crewOrderBusy}
-                crewName={ownedCrewLink?.crewName || null}
-                crewColor={ownedCrewLink?.colorHex || null}
-                actionsLockedReason={authRequiredForActions ? actionLockReason : null}
-                bankroll={ownedAgent?.bankroll ?? null}
-                reserveBalance={ownedAgent?.reserveBalance ?? null}
-                loopTelemetry={ownedLoopTelemetry}
-                nowMs={uiNowMs}
-                statusMessage={degenStatus?.message}
-                statusTone={degenStatus?.tone || 'neutral'}
-                onToggleLoop={updateOwnedLoopMode}
-                onNudge={sendDegenNudge}
-                onCrewOrder={sendCrewOrder}
-                onOpenFunding={openFundingFlow}
-              />
-            </Suspense>
-            <Suspense fallback={null}>
-              <LazyDesktopActivityPanel
-                activityFeed={activityFeed}
-                recentSwapsCount={recentSwaps.length}
-                ownedAgentId={ownedAgentId}
-                agentById={agentById}
-                latestThoughts={latestThoughts}
-                archetypeColors={ARCHETYPE_COLORS}
-                archetypeGlyph={ARCHETYPE_GLYPH}
-                timeAgo={timeAgo}
-                safeTrim={safeTrim}
-                formatTimeLeft={formatTimeLeft}
-              />
-            </Suspense>
-          </div>
-        )}
-
-        <div className="pointer-events-auto absolute right-3 bottom-3 z-[57] hidden lg:block">
-          <Suspense fallback={null}>
-            <LazyReadableRuntimeHud
-              ownedAgentId={ownedAgentId}
-              agents={runtimeAgents}
-              crews={runtimeCrews}
-              buildings={runtimeBuildings}
-              feed={runtimeFeed}
-              running={runtimeLoopRunning}
-              tick={runtimeTick}
-              loading={runtimeLoading}
-            />
-          </Suspense>
-        </div>
-
-        {/* Wheel of Fate Banner (centered floating overlay) */}
-        {uiMode === 'pro' && wheel.status && wheel.status.phase !== 'IDLE' && wheel.status.phase !== 'PREP' && (
-          <div className="pointer-events-auto absolute bottom-4 left-1/2 -translate-x-1/2 z-50 w-full max-w-xl px-3">
+        {/* Wheel of Fate Banner (floats above bottom HUD) */}
+        {wheel.status && wheel.status.phase !== 'IDLE' && wheel.status.phase !== 'PREP' && (
+          <div className="pointer-events-auto absolute bottom-[180px] left-1/2 -translate-x-1/2 z-50 w-full max-w-xl px-3">
             <Suspense fallback={null}>
               <LazyWheelBanner
                 status={wheel.status}
@@ -7795,7 +7083,30 @@ export default function Town3D() {
           </div>
         )}
 
-	      </div>
+        {/* Bottom-Center HUD */}
+        <div className="pointer-events-auto absolute bottom-4 left-1/2 -translate-x-1/2 z-50">
+          <Suspense fallback={null}>
+            <LazyBottomCenterHud
+              agentName={ownedAgent?.name ?? null}
+              archetype={ownedAgent?.archetype ?? null}
+              bankroll={ownedAgent?.bankroll ?? null}
+              wins={ownedAgent?.wins ?? 0}
+              losses={ownedAgent?.losses ?? 0}
+              elo={ownedAgent?.elo ?? 0}
+              loopMode={ownedLoopMode}
+              loopUpdating={loopModeUpdating}
+              nudgeBusy={degenNudgeBusy}
+              recommendedNudge={degenGuidance.recommended}
+              blockers={degenGuidance.blockers}
+              onToggleLoop={updateOwnedLoopMode}
+              onNudge={sendDegenNudge}
+              onOpenFunding={openFundingFlow}
+              onDeploy={openDeployFlow}
+              hasAgent={Boolean(ownedAgentId)}
+            />
+          </Suspense>
+        </div>
+      </div>
       </div>
     </div>
 	  );

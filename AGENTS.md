@@ -3,7 +3,7 @@
 ## Project Structure
 - `backend/` — Express + Prisma + SQLite (port 4000). All game logic, agent loop, economy.
 - `app/` — React + Vite + Three.js frontend (port 8080, route `/town`).
-- `contracts/` — Solidity (Foundry). ArenaToken + WagerEscrow on Monad testnet.
+- `contracts/` — Solidity (Foundry). ArenaToken + WagerEscrow on Monad mainnet.
 - `shared/` — Legacy TypeScript packages (logger, utils, types, events). Still used by backend.
 
 ## Quick Commands
@@ -31,7 +31,7 @@ cd contracts && forge build && forge test
 
 ## Key Architecture Facts
 - **Blockchain = Monad (EVM)**, not Solana. `ethers.js`/`viem`.
-- **$ARENA token:** `0x0bA5E04470Fe327AC191179Cf6823E667B007777` (nad.fun)
+- **$ARENA token:** on nad.fun (mainnet). Address set in `ARENA_TOKEN_ADDRESS` env var.
 - **Database:** SQLite only. Concurrent writes cause segfaults — serialize with setTimeout.
 - **Wheel of Fate** auto-starts with server. Agent loop does NOT auto-start with FAST_STARTUP.
 - **LLM:** DeepSeek V3 primary, OpenAI/Anthropic optional. Routed via `smartAiService.ts`.

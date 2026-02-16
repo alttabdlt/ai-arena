@@ -2,8 +2,7 @@
  * SpawnAgent — Wallet connect + personality picker to spawn a new autonomous agent
  */
 import { useState, useCallback } from 'react';
-
-const API_BASE = '/api/v1';
+import { API_BASE } from '../lib/api-base';
 
 const PERSONALITIES = [
   { type: 'SHARK', emoji: '🦈', label: 'Shark', desc: 'Ruthless optimizer. Dominates markets.' },

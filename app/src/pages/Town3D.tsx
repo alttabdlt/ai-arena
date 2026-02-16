@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
 import { Canvas, useFrame, useThree, type RootState } from '@react-three/fiber';
 import { Line } from '@react-three/drei';
@@ -3093,6 +3093,7 @@ function TownScene({
   }, [plots]);
   const runtimeAgentById = useMemo(() => {
     const map = new Map<string, RuntimeAgentCard>();
+    if (!Array.isArray(runtimeAgents)) return map;
     for (const runtimeAgent of runtimeAgents) {
       map.set(runtimeAgent.agentId, runtimeAgent);
     }
@@ -3100,12 +3101,14 @@ function TownScene({
   }, [runtimeAgents]);
   const runtimeBuildingByPlotId = useMemo(() => {
     const map = new Map<string, RuntimeBuildingCard>();
+    if (!Array.isArray(runtimeBuildings)) return map;
     for (const building of runtimeBuildings) {
       map.set(building.plotId, building);
     }
     return map;
   }, [runtimeBuildings]);
   const crewOpsBeacons = useMemo(() => {
+    if (!Array.isArray(runtimeCrews)) return [];
     const prioritized = [...runtimeCrews]
       .sort((a, b) => (b.activeMembers.length - a.activeMembers.length))
       .slice(0, 3);
@@ -3120,7 +3123,7 @@ function TownScene({
     });
   }, [runtimeCrews]);
   const latestFeedSignal = useMemo(
-    () => runtimeFeed.find((item) => safeTrim(item.line, 80).length > 0) || null,
+    () => Array.isArray(runtimeFeed) ? runtimeFeed.find((item) => safeTrim(item.line, 80).length > 0) || null : null,
     [runtimeFeed],
   );
   const builtPlots = useMemo(() => plots.filter((p) => p.status === 'BUILT' || p.status === 'UNDER_CONSTRUCTION'), [plots]);
@@ -4912,6 +4915,45 @@ interface ArenaImpactFlash {
 // Preload building GLB models as soon as module is imported
 preloadBuildingModels();
 
+/** Error boundary around Canvas to catch WebGL / render crashes instead of black-screening */
+class CanvasErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error('[CanvasErrorBoundary]', error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="h-full w-full grid place-items-center bg-slate-950">
+          <div className="text-center space-y-3 max-w-xs">
+            <div className="text-2xl">⚠️</div>
+            <div className="text-sm font-semibold text-slate-200">Renderer crashed</div>
+            <div className="text-[11px] text-slate-400">
+              {this.state.error?.message?.slice(0, 120) || 'WebGL context lost'}
+            </div>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-black text-xs font-bold rounded-lg transition-colors"
+            >
+              Reload Page
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function Town3D() {
   const isMobile = useIsMobile();
   const [mobilePanel, setMobilePanel] = useState<'none' | 'info' | 'feed' | 'chat' | 'agent' | 'spawn'>('none');
@@ -5088,7 +5130,13 @@ export default function Town3D() {
   }, [normalizedSessionWallet, agents, myAgentId]);
   const isPlayerAuthenticated = useMemo(() => {
     if (!HAS_PRIVY) return Boolean(normalizedSessionWallet);
-    return Boolean(playerSession.authenticated && normalizedSessionWallet);
+    // Privy confirmed live session — strongest signal
+    if (playerSession.authenticated && normalizedSessionWallet) return true;
+    // Returning user with localStorage wallet (Privy session may have expired
+    // or SDK still loading). Frontend auth is a UX gate; backend validates
+    // tx hashes on-chain independently.
+    if (normalizedSessionWallet && isOnboarded()) return true;
+    return false;
   }, [normalizedSessionWallet, playerSession.authenticated]);
   const actionLockReason = useMemo(() => {
     if (!isPlayerAuthenticated) return 'Sign in to unlock Build/Work/Fight/Trade controls.';
@@ -5155,13 +5203,13 @@ export default function Town3D() {
   }, []);
   const ensureActionSession = useCallback((contextLabel: string): boolean => {
     if (!isPlayerAuthenticated) {
-      showDegenStatus(`Sign in required before ${contextLabel}.`, 'error', 3800);
-      setShowOnboarding(true);
+      showDegenStatus(`Sign in from the top bar before ${contextLabel}.`, 'error', 3800);
+      if (!isOnboarded()) setShowOnboarding(true);
       return false;
     }
     if (!ownedAgentId) {
       showDegenStatus('Deploy or select your agent before issuing loop commands.', 'error', 3800);
-      setShowOnboarding(true);
+      if (!isOnboarded()) setShowOnboarding(true);
       return false;
     }
     return true;
@@ -5612,8 +5660,8 @@ export default function Town3D() {
   const [showSpawnOverlay, setShowSpawnOverlay] = useState(false);
   const openFundingFlow = useCallback(async () => {
     if (!isPlayerAuthenticated) {
-      showDegenStatus('Sign in required before funding this agent.', 'error', 3800);
-      setShowOnboarding(true);
+      showDegenStatus('Sign in from the top bar before funding.', 'error', 3800);
+      if (!isOnboarded()) setShowOnboarding(true);
       return;
     }
 
@@ -5652,8 +5700,8 @@ export default function Town3D() {
   ]);
   const submitFundingTx = useCallback(async () => {
     if (!isPlayerAuthenticated) {
-      showDegenStatus('Sign in required before funding this agent.', 'error', 3800);
-      setShowOnboarding(true);
+      showDegenStatus('Sign in from the top bar before funding.', 'error', 3800);
+      if (!isOnboarded()) setShowOnboarding(true);
       return;
     }
     const targetAgentId = fundingAgentId || ownedAgentId;
@@ -5724,11 +5772,15 @@ export default function Town3D() {
   }, [fundingAgentId, isPlayerAuthenticated, ownedAgentId]);
   const openDeployFlow = useCallback(() => {
     if (!isPlayerAuthenticated) {
-      setShowOnboarding(true);
+      if (!isOnboarded()) {
+        setShowOnboarding(true);
+      } else {
+        showDegenStatus('Sign in from the top bar before deploying.', 'error', 3800);
+      }
       return;
     }
     setShowSpawnOverlay(true);
-  }, [isPlayerAuthenticated]);
+  }, [isPlayerAuthenticated, showDegenStatus]);
   const closeMissionTour = useCallback(() => {
     localStorage.setItem(DEGEN_TOUR_KEY, '1');
     setShowMissionTour(false);
@@ -6948,6 +7000,7 @@ export default function Town3D() {
 
       {/* Fullscreen 3D Canvas */}
       <div className="relative flex-1 min-h-0" style={{ touchAction: 'none' }}>
+        <CanvasErrorBoundary>
         <Canvas
           key={`town-mobile-${canvasEpoch}`}
           shadows={false}
@@ -6966,6 +7019,10 @@ export default function Town3D() {
             town={town}
             agents={agents}
             agentCrewById={crewWarsStatus?.agentCrewById ?? {}}
+            runtimeAgents={runtimeAgents}
+            runtimeCrews={runtimeCrews}
+            runtimeBuildings={runtimeBuildings}
+            runtimeFeed={runtimeFeed}
             ownedAgentId={ownedAgentId}
             ownedLoopTelemetry={ownedLoopTelemetry}
             selectedPlotId={selectedPlotId}
@@ -6995,6 +7052,7 @@ export default function Town3D() {
             visualSettings={visualSettings}
           />
         </Canvas>
+        </CanvasErrorBoundary>
 
         {/* Swap Notifications — center-top mobile */}
         <div className="pointer-events-none absolute top-2 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 z-50">
@@ -7190,15 +7248,21 @@ export default function Town3D() {
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
               {uiMode === 'default' ? (
                 <>
-                  <span
-                    className={`rounded-full border px-2 py-0.5 text-[10px] font-mono ${
-                      runtimeLoopRunning
-                        ? 'border-emerald-500/55 bg-emerald-950/35 text-emerald-200'
-                        : 'border-rose-500/50 bg-rose-950/30 text-rose-200'
-                    }`}
-                  >
-                    AGENT {runtimeLoopRunning ? 'RUNNING' : 'PAUSED'}
-                  </span>
+                  {onboardingEntryLock ? (
+                    <span className="rounded-full border border-slate-700/60 bg-slate-900/45 px-2 py-0.5 text-[10px] font-mono text-slate-400">
+                      NO AGENT YET
+                    </span>
+                  ) : (
+                    <span
+                      className={`rounded-full border px-2 py-0.5 text-[10px] font-mono ${
+                        runtimeLoopRunning
+                          ? 'border-emerald-500/55 bg-emerald-950/35 text-emerald-200'
+                          : 'border-rose-500/50 bg-rose-950/30 text-rose-200'
+                      }`}
+                    >
+                      AGENT {runtimeLoopRunning ? 'RUNNING' : 'PAUSED'}
+                    </span>
+                  )}
                   {ownedAgent && (
                     <span className="rounded-full border border-slate-700/70 bg-slate-900/45 px-2 py-0.5 text-[10px] font-mono text-slate-200">
                       BAL ${Math.round(ownedAgent.bankroll)}A / {Math.round(ownedAgent.reserveBalance)}R
@@ -7218,9 +7282,11 @@ export default function Town3D() {
                       {ownedAgent.bankroll < 30 ? '⛽ TOP UP' : '➕ FUND'}
                     </button>
                   )}
-                  <span className="rounded-full border border-cyan-500/45 bg-cyan-950/30 px-2 py-0.5 text-[10px] font-mono text-cyan-100">
-                    {ownedRuntimeAgent?.action || 'WAIT'} · {ownedRuntimeAgent?.targetLabel || 'Awaiting target'}
-                  </span>
+                  {!onboardingEntryLock && (
+                    <span className="rounded-full border border-cyan-500/45 bg-cyan-950/30 px-2 py-0.5 text-[10px] font-mono text-cyan-100">
+                      {ownedRuntimeAgent?.action || 'WAIT'} · {ownedRuntimeAgent?.targetLabel || 'Awaiting target'}
+                    </span>
+                  )}
                   {ownedRuntimeAgent?.lastOutcome && (
                     <span className="rounded-full border border-amber-400/45 bg-amber-950/35 px-2 py-0.5 text-[10px] font-mono text-amber-100">
                       LAST {ownedRuntimeAgent.lastOutcome}
@@ -7323,7 +7389,7 @@ export default function Town3D() {
               <span className="rounded border border-slate-700/70 bg-slate-900/55 px-2 py-0.5 text-[10px] font-mono text-slate-400">
                 ONBOARDING
               </span>
-            ) : isPlayerAuthenticated ? (
+            ) : (
               <Suspense fallback={null}>
                 <LazyPrivyWalletConnect
                   compact
@@ -7331,12 +7397,8 @@ export default function Town3D() {
                   onSessionChange={setPlayerSession}
                 />
               </Suspense>
-            ) : (
-              <span className="rounded border border-slate-700/70 bg-slate-900/55 px-2 py-0.5 text-[10px] font-mono text-slate-400">
-                SPECTATOR
-              </span>
             )}
-            <button
+            {!onboardingEntryLock && <button
               onClick={() => setUiMode((current) => (current === 'default' ? 'pro' : 'default'))}
               className={`rounded-lg border px-2.5 py-1 text-[10px] font-mono uppercase transition-colors ${
                 uiMode === 'pro'
@@ -7346,7 +7408,7 @@ export default function Town3D() {
               title="Toggle between default readability mode and advanced pro mode"
             >
               {uiMode === 'pro' ? 'Pro Mode' : 'Default Mode'}
-            </button>
+            </button>}
             {!onboardingEntryLock && !showOnboarding && !showSpawnOverlay && !fundingModalOpen && (
               <button
                 onClick={openDeployFlow}
@@ -7361,7 +7423,7 @@ export default function Town3D() {
           <div className="mt-2 rounded-xl border border-cyan-500/25 bg-cyan-500/8 px-3 py-1.5">
             <div className="text-[11px] text-cyan-100/90">
               {onboardingEntryLock
-                ? 'Sign in from the center panel to unlock deploy.'
+                ? 'Complete onboarding to deploy your agent.'
                 : 'Spectator mode: deploy from top-right when ready.'}
             </div>
           </div>
@@ -7390,6 +7452,7 @@ export default function Town3D() {
       {/* Main content: fullscreen 3D */}
       <div className="relative flex-1 min-h-0 overflow-hidden">
       {/* 3D Canvas */}
+      <CanvasErrorBoundary>
       <Canvas
         key={`town-desktop-${canvasEpoch}`}
         shadows={false}
@@ -7443,6 +7506,7 @@ export default function Town3D() {
           visualSettings={visualSettings}
         />
       </Canvas>
+      </CanvasErrorBoundary>
 
       {canvasRecovering && (
         <div className="pointer-events-none absolute inset-0 z-[58] grid place-items-center">

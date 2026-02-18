@@ -1,0 +1,276 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'codex/**'
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: true
+
+jobs:
+  backend-verify:
+    name: Backend Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: TypeScript build
+        run: npm run build
+
+      - name: Full backend tests
+        run: npm test
+
+  backend-autonomy-gate:
+    name: Backend Autonomy Gate
+    runs-on: ubuntu-latest
+    needs: backend-verify
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run deterministic autonomy + economy suites
+        run: npx vitest run src/services/agentLoopService.test.ts src/services/__tests__/agent-autonomy-flow.integration.test.ts src/services/__tests__/economy-flow.integration.test.ts
+
+  frontend-verify:
+    name: Frontend Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+  e2e-autonomy-smoke:
+    name: E2E Autonomy Smoke
+    runs-on: ubuntu-latest
+    needs:
+      - backend-verify
+      - backend-autonomy-gate
+      - frontend-verify
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Install frontend dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Prepare artifact directory
+        run: mkdir -p artifacts/e2e-autonomy-smoke
+
+      - name: Install Playwright runtime
+        run: npm install --no-save playwright@1.50.1
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Start backend
+        run: |
+          cd backend
+          FAST_STARTUP=true DISABLE_WHEEL=1 ENABLE_TEST_UTILS=1 TEST_UTILS_KEY=ci-test-utils-key MONAD_RECORD_MATCHES=0 ./node_modules/.bin/ts-node-transpile-only src/index.ts > ../artifacts/e2e-autonomy-smoke/backend.log 2>&1 &
+          echo $! > ../artifacts/e2e-autonomy-smoke/backend.pid
+
+      - name: Start frontend
+        run: |
+          cd app
+          npx vite --port 8080 --host 127.0.0.1 > ../artifacts/e2e-autonomy-smoke/frontend.log 2>&1 &
+          echo $! > ../artifacts/e2e-autonomy-smoke/frontend.pid
+
+      - name: Wait for backend and frontend
+        run: |
+          for i in {1..120}; do
+            if curl -fsS http://127.0.0.1:4000/health > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+          for i in {1..120}; do
+            if curl -fsS http://127.0.0.1:8080/town > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+          curl -fsS http://127.0.0.1:4000/health > /dev/null
+          curl -fsS http://127.0.0.1:8080/town > /dev/null
+
+      - name: Run autonomy smoke
+        run: E2E_REQUIRE_RESET_ENDPOINT=1 E2E_TEST_UTILS_KEY=ci-test-utils-key node scripts/e2e-autonomy-smoke.mjs
+
+      - name: Publish smoke summary
+        if: always()
+        run: |
+          if [ -f artifacts/e2e-autonomy-smoke/report.json ]; then
+            node scripts/autonomy-report-summary.mjs artifacts/e2e-autonomy-smoke/report.json "E2E autonomy smoke" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-autonomy-smoke
+          path: artifacts/e2e-autonomy-smoke
+          if-no-files-found: warn
+
+      - name: Stop background services
+        if: always()
+        run: |
+          if [ -f artifacts/e2e-autonomy-smoke/frontend.pid ]; then
+            kill "$(cat artifacts/e2e-autonomy-smoke/frontend.pid)" || true
+          fi
+          if [ -f artifacts/e2e-autonomy-smoke/backend.pid ]; then
+            kill "$(cat artifacts/e2e-autonomy-smoke/backend.pid)" || true
+          fi
+
+  e2e-autonomy-stress:
+    name: E2E Autonomy Stress
+    runs-on: ubuntu-latest
+    needs:
+      - backend-verify
+      - backend-autonomy-gate
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Prepare artifact directory
+        run: mkdir -p artifacts/e2e-autonomy-stress
+
+      - name: Start backend
+        run: |
+          cd backend
+          FAST_STARTUP=true DISABLE_WHEEL=1 ENABLE_TEST_UTILS=1 TEST_UTILS_KEY=ci-test-utils-key MONAD_RECORD_MATCHES=0 ./node_modules/.bin/ts-node-transpile-only src/index.ts > ../artifacts/e2e-autonomy-stress/backend.log 2>&1 &
+          echo $! > ../artifacts/e2e-autonomy-stress/backend.pid
+
+      - name: Wait for backend
+        run: |
+          for i in {1..120}; do
+            if curl -fsS http://127.0.0.1:4000/health > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:4000/health > /dev/null
+          curl -fsS -H 'x-test-utils-key: ci-test-utils-key' http://127.0.0.1:4000/api/v1/test-utils/status > /dev/null
+
+      - name: Run autonomy stress soak
+        run: |
+          E2E_ARTIFACT_DIR=artifacts/e2e-autonomy-stress \
+          E2E_REQUIRE_RESET_ENDPOINT=1 \
+          E2E_TEST_UTILS_KEY=ci-test-utils-key \
+          E2E_SOAK_DURATION_MS=420000 \
+          E2E_SOAK_AGENT_COUNT=8 \
+          E2E_SOAK_ROUND_PAUSE_MS=200 \
+          E2E_SOAK_MIN_REASONING_COVERAGE=0.80 \
+          E2E_SOAK_MIN_UNIQUE_FAMILIES_PER_AGENT=3 \
+          E2E_SOAK_MIN_TOTAL_TICKS=150 \
+          E2E_SOAK_MIN_LEDGER_ROWS=120 \
+          E2E_SOAK_MIN_CRITICAL_LEDGER_TYPES=3 \
+          node scripts/e2e-autonomy-soak.mjs
+
+      - name: Publish stress summary
+        if: always()
+        run: |
+          if [ -f artifacts/e2e-autonomy-stress/report.json ]; then
+            node scripts/autonomy-report-summary.mjs artifacts/e2e-autonomy-stress/report.json "E2E autonomy stress" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload stress artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-autonomy-stress
+          path: artifacts/e2e-autonomy-stress
+          if-no-files-found: warn
+
+      - name: Stop backend
+        if: always()
+        run: |
+          if [ -f artifacts/e2e-autonomy-stress/backend.pid ]; then
+            kill "$(cat artifacts/e2e-autonomy-stress/backend.pid)" || true
+          fi

@@ -118,6 +118,10 @@ router.post('/economy/swap', authenticateAgent, async (req: AuthenticatedRequest
         feeBps: result.pool.feeBps,
         cumulativeFeesReserve: result.pool.cumulativeFeesReserve,
         cumulativeFeesArena: result.pool.cumulativeFeesArena,
+        opsBudget: result.pool.opsBudget,
+        pvpBudget: result.pool.pvpBudget,
+        rescueBudget: result.pool.rescueBudget,
+        insuranceBudget: result.pool.insuranceBudget,
       },
     });
   } catch (error: any) {

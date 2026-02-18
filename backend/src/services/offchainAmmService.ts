@@ -10,8 +10,9 @@
  * agents autonomously decide when to buy/sell $ARENA as "fuel" for actions.
  */
 
-import { EconomyPool, EconomySwap, EconomySwapSide } from '@prisma/client';
+import { EconomyLedgerType, EconomyPool, EconomySwap, EconomySwapSide } from '@prisma/client';
 import { prisma } from '../config/database';
+import { appendEconomyLedger, splitArenaFeeToBudgets } from './economyAccountingService';
 
 const INIT_RESERVE = Number.parseInt(process.env.ECONOMY_INIT_RESERVE || '10000', 10);
 const INIT_ARENA = Number.parseInt(process.env.ECONOMY_INIT_ARENA || '10000', 10);
@@ -71,6 +72,10 @@ export class OffchainAmmService {
       feeBps: pool.feeBps,
       cumulativeFeesReserve: pool.cumulativeFeesReserve,
       cumulativeFeesArena: pool.cumulativeFeesArena,
+      opsBudget: pool.opsBudget,
+      pvpBudget: pool.pvpBudget,
+      rescueBudget: pool.rescueBudget,
+      insuranceBudget: pool.insuranceBudget,
       spotPrice: spotPrice(pool),
       updatedAt: pool.updatedAt,
     };
@@ -159,6 +164,7 @@ export class OffchainAmmService {
       if (minAmountOut > 0 && q.amountOut < minAmountOut) {
         throw new Error(`Slippage: expected >= ${minAmountOut}, got ${q.amountOut}`);
       }
+      const arenaFeeSplit = side === 'SELL_ARENA' ? splitArenaFeeToBudgets(q.feeAmount) : null;
 
       const poolUpdate: Partial<EconomyPool> = {};
       const agentUpdate: any = {};
@@ -174,6 +180,10 @@ export class OffchainAmmService {
         poolUpdate.arenaBalance = pool.arenaBalance + q.amountInAfterFee;
         poolUpdate.reserveBalance = pool.reserveBalance - q.amountOut;
         poolUpdate.cumulativeFeesArena = pool.cumulativeFeesArena + q.feeAmount;
+        if (arenaFeeSplit) {
+          poolUpdate.opsBudget = pool.opsBudget + arenaFeeSplit.opsBudget;
+          poolUpdate.insuranceBudget = pool.insuranceBudget + arenaFeeSplit.insuranceBudget;
+        }
 
         agentUpdate.bankroll = { decrement: q.amountIn };
         agentUpdate.reserveBalance = { increment: q.amountOut };
@@ -198,6 +208,42 @@ export class OffchainAmmService {
           },
         }),
       ]);
+      if (side === 'SELL_ARENA' && arenaFeeSplit && q.feeAmount > 0) {
+        await appendEconomyLedger(tx, [
+          ...(arenaFeeSplit.opsBudget > 0
+            ? [{
+                poolId: pool.id,
+                source: 'AMM_SELL_FEE',
+                destination: 'POOL_OPS_BUDGET',
+                amount: arenaFeeSplit.opsBudget,
+                type: EconomyLedgerType.TRADE_FEE_SPLIT,
+                agentId,
+                metadata: {
+                  side,
+                  amountIn: q.amountIn,
+                  feeAmount: q.feeAmount,
+                  to: 'opsBudget',
+                },
+              }]
+            : []),
+          ...(arenaFeeSplit.insuranceBudget > 0
+            ? [{
+                poolId: pool.id,
+                source: 'AMM_SELL_FEE',
+                destination: 'POOL_INSURANCE_BUDGET',
+                amount: arenaFeeSplit.insuranceBudget,
+                type: EconomyLedgerType.TRADE_FEE_SPLIT,
+                agentId,
+                metadata: {
+                  side,
+                  amountIn: q.amountIn,
+                  feeAmount: q.feeAmount,
+                  to: 'insuranceBudget',
+                },
+              }]
+            : []),
+        ]);
+      }
 
       return { pool: updatedPool, agent: updatedAgent, swap: swapRow };
     });
@@ -225,4 +271,3 @@ export class OffchainAmmService {
 }
 
 export const offchainAmmService = new OffchainAmmService();
-

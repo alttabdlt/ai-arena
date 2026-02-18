@@ -1,3 +1,5 @@
+Original prompt: i need to test interaction for all agents and also all the features, like build, work, fight, etc, when each will trigger, how to make this dynamic and autonomous. and the models thought process and decision making must also be shown CLEARLY on the right.
+
 # Progress Log (Public Summary)
 
 This repository previously kept a long-form running implementation journal in this file.

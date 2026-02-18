@@ -5323,7 +5323,7 @@ export default function Town3D() {
     const expectedLabel = DEGEN_NUDGE_LABEL[expectedNudge];
     const expectedReason = blockers[expectedNudge];
     let missionWhy = serverMission?.reason || `${expectedLabel} is next in loop order.`;
-    let missionBlocked = serverBlocker?.message || expectedReason || null;
+    const missionBlocked = serverBlocker?.message || expectedReason || null;
     const fallbackTarget = serverBlocker?.fallbackAction || null;
     let missionFallback =
       fallbackTarget && fallbackTarget !== expectedNudge
@@ -6612,10 +6612,14 @@ export default function Town3D() {
   }, []);
 
   const selectedPlot = useMemo(() => town?.plots.find((p) => p.id === selectedPlotId) ?? null, [town, selectedPlotId]);
-  const selectedAgent = useMemo(() => agents.find((a) => a.id === selectedAgentId) ?? null, [agents, selectedAgentId]);
-  const selectedAgentOutcomes = useMemo(
-    () => (selectedAgentId ? agentOutcomesById[selectedAgentId] || [] : []),
-    [agentOutcomesById, selectedAgentId],
+  const focusedAgentId = selectedAgentId || ownedAgentId || null;
+  const focusedAgent = useMemo(
+    () => (focusedAgentId ? agents.find((a) => a.id === focusedAgentId) ?? null : null),
+    [agents, focusedAgentId],
+  );
+  const focusedAgentOutcomes = useMemo(
+    () => (focusedAgentId ? agentOutcomesById[focusedAgentId] || [] : []),
+    [agentOutcomesById, focusedAgentId],
   );
   const arenaOutcomeByAgentId = useMemo(() => {
     const byAgent: Record<string, ArenaOutcomeSignal> = {};
@@ -6652,20 +6656,18 @@ export default function Town3D() {
   }, [runtimeAgents, ownedAgentId]);
   const recentSwaps = useMemo(() => swaps.slice(0, 8), [swaps]);
 
-  // Latest thought payload for the wallet-owned agent
+  // Latest thought payload for the focused/owned decision panel
   const latestThoughts = useMemo(() => {
-    if (!ownedAgentId) return [];
     const thoughts = agents
-      .filter((a) => a.id === ownedAgentId && a.lastReasoning && a.lastTickAt)
+      .filter((a) => a.lastTickAt && (a.lastReasoning || a.lastNarrative))
       .map(a => ({
         agentId: a.id,
         agentName: a.name,
         archetype: a.archetype,
         actionType: a.lastActionType || 'rest',
-        reasoning: a.lastReasoning || '',
-        narrative: a.lastNarrative || '',
+        reasoning: safeTrim(a.lastReasoning || a.lastNarrative || '', 1400),
         tickAt: a.lastTickAt || '',
-        isMine: true,
+        isMine: a.id === ownedAgentId,
       }))
       .sort((a, b) => new Date(b.tickAt).getTime() - new Date(a.tickAt).getTime());
     return thoughts;
@@ -7082,6 +7084,38 @@ export default function Town3D() {
             </Suspense>
           </div>
         )}
+
+        {/* Right-side focused agent panel (selected agent, falls back to owned agent) */}
+        <div
+          className="pointer-events-none absolute right-3 top-3 z-50 flex items-end gap-2"
+          data-testid="town-right-panel"
+        >
+          <Suspense fallback={null}>
+            <LazyDesktopAgentHudPanel
+              selectedAgent={focusedAgent}
+              myAgentId={ownedAgentId}
+              recentOutcomes={focusedAgentOutcomes}
+              archetypeColors={ARCHETYPE_COLORS}
+              archetypeGlyph={ARCHETYPE_GLYPH}
+              timeAgo={timeAgo}
+            />
+          </Suspense>
+          <Suspense fallback={null}>
+            <LazyDesktopActivityPanel
+              activityFeed={activityFeed}
+              recentSwapsCount={recentSwaps.length}
+              ownedAgentId={ownedAgentId}
+              focusAgentId={focusedAgentId}
+              agentById={agentById}
+              latestThoughts={latestThoughts}
+              archetypeColors={ARCHETYPE_COLORS}
+              archetypeGlyph={ARCHETYPE_GLYPH}
+              timeAgo={timeAgo}
+              safeTrim={safeTrim}
+              formatTimeLeft={formatTimeLeft}
+            />
+          </Suspense>
+        </div>
 
         {/* Bottom-Center HUD */}
         <div className="pointer-events-auto absolute bottom-4 left-1/2 -translate-x-1/2 z-50">

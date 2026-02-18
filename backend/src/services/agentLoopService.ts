@@ -10,7 +10,7 @@
  * The "work" IS the inference. Every LLM call is tracked as proof of inference.
  */
 
-import { ArenaAgent, ArenaGameType, TownEventType } from '@prisma/client';
+import { ArenaAgent, ArenaGameType, EconomyLedgerType, TownEventType } from '@prisma/client';
 import { prisma } from '../config/database';
 import { townService } from './townService';
 import { smartAiService, AICost } from './smartAiService';
@@ -24,6 +24,12 @@ import { worldEventService } from './worldEventService';
 import { agentCommandService, type AgentCommandView } from './agentCommandService';
 import { wheelOfFateService } from './wheelOfFateService';
 import { crewWarsService } from './crewWarsService';
+import {
+  creditPoolBudgets,
+  debitPoolBudget,
+  getOrCreateEconomyPool as getOrCreateEconomyPoolRecord,
+  splitArenaFeeToBudgets,
+} from './economyAccountingService';
 
 function safeTrim(s: unknown, maxLen: number): string {
   return String(s ?? '')
@@ -84,18 +90,8 @@ const SOLVENCY_RESCUE_WINDOW_TICKS = 16;
 const SOLVENCY_RESCUE_MAX_PER_WINDOW = 2;
 const SOLVENCY_RESCUE_REPAYMENT_BPS = 2500;
 const SOLVENCY_RESCUE_REPAYMENT_FLOOR = 90;
-const SOLVENCY_POOL_FLOOR = 1000;
-const ECONOMY_ARENA_BACKSTOP_ENABLED = process.env.ECONOMY_ARENA_BACKSTOP !== 'false';
-const ECONOMY_ARENA_BACKSTOP_BUFFER = 200;
-const ECONOMY_ARENA_BACKSTOP_MAX_MINT_PER_TICK = Math.max(
-  100,
-  Math.min(5000, Number.parseInt(process.env.ECONOMY_ARENA_BACKSTOP_MAX_MINT || '1500', 10) || 1500),
-);
 const ARENA_MIN_WAGER = 10;
 const ARENA_TURBO_MAX_ACTIONS = 14;
-const ECONOMY_INIT_RESERVE = Number.parseInt(process.env.ECONOMY_INIT_RESERVE || '10000', 10);
-const ECONOMY_INIT_ARENA = Number.parseInt(process.env.ECONOMY_INIT_ARENA || '10000', 10);
-const ECONOMY_INIT_FEE_BPS = Number.parseInt(process.env.ECONOMY_FEE_BPS || '100', 10);
 
 type PolicyTier = 'hard_safety' | 'economic_warning' | 'strategy_nudge';
 
@@ -288,6 +284,10 @@ interface WorldObservation {
     feeBps: number;
     reserveBalance: number;
     arenaBalance: number;
+    opsBudget: number;
+    pvpBudget: number;
+    rescueBudget: number;
+    insuranceBudget: number;
   } | null;
 }
 
@@ -371,6 +371,27 @@ export class AgentLoopService {
       this.tickInterval = null;
     }
     console.log('🤖 Agent loop stopped');
+  }
+
+  resetRuntimeState(options?: { stopLoop?: boolean; resetTick?: boolean }) {
+    const stopLoop = options?.stopLoop !== false;
+    const resetTick = options?.resetTick !== false;
+    if (stopLoop) {
+      this.stop();
+    }
+    this.tickInFlight = false;
+    this.pendingInstructions.clear();
+    this.lastTradeTickByAgentId.clear();
+    this.overrideHistoryByAgentId.clear();
+    this.loopModeByAgentId.clear();
+    this.lastRescueTickByAgentId.clear();
+    this.rescueDebtByAgentId.clear();
+    this.rescueWindowByAgentId.clear();
+    this.nonRestStreakByAgentId.clear();
+    this.lastLlmDecisionTickByAgentId.clear();
+    if (resetTick) {
+      this.currentTick = 0;
+    }
   }
 
   setLoopMode(agentId: string, mode: AgentLoopMode): AgentLoopMode {
@@ -829,6 +850,10 @@ export class AgentLoopService {
       feeBps: number | null;
       reserveBalance: number | null;
       arenaBalance: number | null;
+      opsBudget: number | null;
+      pvpBudget: number | null;
+      rescueBudget: number | null;
+      insuranceBudget: number | null;
     };
     warnings: string[];
   }> {
@@ -941,7 +966,9 @@ export class AgentLoopService {
     if (nonRestRate < 0.8) warnings.push(`non_rest_rate low (${(nonRestRate * 100).toFixed(1)}%)`);
     if (commandReceipts.rejectRate > 0.25) warnings.push(`command reject rate elevated (${(commandReceipts.rejectRate * 100).toFixed(1)}%)`);
     if (rescueSnapshot.totalDebt > 200) warnings.push(`rescue debt elevated (${rescueSnapshot.totalDebt} ARENA)`);
-    if ((pool?.arenaBalance || 0) < SOLVENCY_POOL_FLOOR + 200) warnings.push('pool arena balance near solvency floor');
+    if (((pool?.rescueBudget || 0) + (pool?.insuranceBudget || 0)) < SOLVENCY_RESCUE_ARENA) {
+      warnings.push('rescue runway low (rescue + insurance budgets)');
+    }
 
     return {
       currentTick: this.currentTick,
@@ -967,6 +994,10 @@ export class AgentLoopService {
         feeBps: pool?.feeBps ?? null,
         reserveBalance: pool?.reserveBalance ?? null,
         arenaBalance: pool?.arenaBalance ?? null,
+        opsBudget: pool?.opsBudget ?? null,
+        pvpBudget: pool?.pvpBudget ?? null,
+        rescueBudget: pool?.rescueBudget ?? null,
+        insuranceBudget: pool?.insuranceBudget ?? null,
       },
       warnings,
     };
@@ -1024,21 +1055,28 @@ export class AgentLoopService {
 
     let granted = 0;
     try {
-      const pool = await this.getOrCreateEconomyPool();
-      const available = Math.max(0, pool.arenaBalance - SOLVENCY_POOL_FLOOR);
-      granted = Math.max(0, Math.min(milestone.bonusArena, available));
-      if (granted > 0) {
-        await prisma.$transaction(async (tx) => {
-          await tx.economyPool.update({
-            where: { id: pool.id },
-            data: { arenaBalance: { decrement: granted } },
-          });
-          await tx.arenaAgent.update({
-            where: { id: agent.id },
-            data: { bankroll: { increment: granted } },
-          });
+      granted = await prisma.$transaction(async (tx) => {
+        const pool = await this.getOrCreateEconomyPool(tx);
+        const payout = await debitPoolBudget(
+          tx,
+          pool.id,
+          'pvpBudget',
+          milestone.bonusArena,
+          {
+            type: EconomyLedgerType.STREAK_BONUS,
+            agentId: agent.id,
+            tick: this.currentTick,
+            metadata: { milestoneStreak: milestone.streak },
+          },
+          { allowPartial: true, minimumPayout: 1 },
+        );
+        if (payout <= 0) return 0;
+        await tx.arenaAgent.update({
+          where: { id: agent.id },
+          data: { bankroll: { increment: payout } },
         });
-      }
+        return payout;
+      });
     } catch {
       granted = 0;
     }
@@ -1139,16 +1177,19 @@ export class AgentLoopService {
     };
   }
 
-  private async getOrCreateEconomyPool(tx: any = prisma): Promise<{ id: string; reserveBalance: number; arenaBalance: number; feeBps: number }> {
-    const existing = await tx.economyPool.findFirst({ orderBy: { createdAt: 'desc' } });
-    if (existing) return existing;
-    return tx.economyPool.create({
-      data: {
-        reserveBalance: Math.max(1000, Math.floor(ECONOMY_INIT_RESERVE) || 10000),
-        arenaBalance: Math.max(1000, Math.floor(ECONOMY_INIT_ARENA) || 10000),
-        feeBps: Math.max(0, Math.min(1000, Math.floor(ECONOMY_INIT_FEE_BPS) || 100)),
-      },
-    });
+  private async getOrCreateEconomyPool(
+    tx: any = prisma,
+  ): Promise<{
+    id: string;
+    reserveBalance: number;
+    arenaBalance: number;
+    feeBps: number;
+    opsBudget: number;
+    pvpBudget: number;
+    rescueBudget: number;
+    insuranceBudget: number;
+  }> {
+    return getOrCreateEconomyPoolRecord(tx);
   }
 
   private getRescueDebt(agentId: string): number {
@@ -1217,10 +1258,18 @@ export class AgentLoopService {
         where: { id: agent.id },
         data: { bankroll: { decrement: repayment } },
       });
-      await tx.economyPool.update({
-        where: { id: pool.id },
-        data: { arenaBalance: { increment: repayment } },
-      });
+      await creditPoolBudgets(
+        tx,
+        pool.id,
+        { rescueBudget: repayment },
+        {
+          type: EconomyLedgerType.RESCUE_REPAID,
+          source: 'AGENT_BANKROLL',
+          agentId: agent.id,
+          tick: this.currentTick,
+          metadata: { reason: 'solvency_rescue_repayment' },
+        },
+      );
       return repayment;
     });
 
@@ -1254,16 +1303,37 @@ export class AgentLoopService {
       if (!fresh || !this.canIssueSolvencyRescue(fresh)) return 0;
 
       const pool = await this.getOrCreateEconomyPool(tx);
-      const maxGrant = Math.max(0, pool.arenaBalance - SOLVENCY_POOL_FLOOR);
-      if (maxGrant <= 0) return 0;
+      let grant = await debitPoolBudget(
+        tx,
+        pool.id,
+        'rescueBudget',
+        SOLVENCY_RESCUE_ARENA,
+        {
+          type: EconomyLedgerType.RESCUE_ISSUED,
+          agentId: agent.id,
+          tick: this.currentTick,
+          metadata: { reason: 'solvency_rescue', sourceBucket: 'rescueBudget' },
+        },
+        { allowPartial: true, minimumPayout: 1 },
+      );
 
-      const grant = Math.min(SOLVENCY_RESCUE_ARENA, maxGrant);
+      if (grant <= 0) {
+        grant = await debitPoolBudget(
+          tx,
+          pool.id,
+          'insuranceBudget',
+          SOLVENCY_RESCUE_ARENA,
+          {
+            type: EconomyLedgerType.RESCUE_ISSUED,
+            agentId: agent.id,
+            tick: this.currentTick,
+            metadata: { reason: 'solvency_rescue', sourceBucket: 'insuranceBudget' },
+          },
+          { allowPartial: true, minimumPayout: 1 },
+        );
+      }
       if (grant <= 0) return 0;
 
-      await tx.economyPool.update({
-        where: { id: pool.id },
-        data: { arenaBalance: { decrement: grant } },
-      });
       await tx.arenaAgent.update({
         where: { id: agent.id },
         data: {
@@ -1283,41 +1353,6 @@ export class AgentLoopService {
     }
 
     return granted;
-  }
-
-  private async applyArenaLiquidityBackstop(
-    agents: Array<Pick<ArenaAgent, 'bankroll' | 'reserveBalance' | 'health'>>,
-  ): Promise<number> {
-    if (!ECONOMY_ARENA_BACKSTOP_ENABLED) return 0;
-    if (!Array.isArray(agents) || agents.length === 0) return 0;
-
-    const criticalAgents = agents.filter((agent) => {
-      const health = agent.health ?? 100;
-      const criticalLiquidity =
-        agent.bankroll <= SOLVENCY_RESCUE_TRIGGER_BANKROLL &&
-        agent.reserveBalance <= SOLVENCY_RESCUE_TRIGGER_RESERVE;
-      return health <= 0 || criticalLiquidity;
-    }).length;
-
-    const minimumTarget = SOLVENCY_POOL_FLOOR + ECONOMY_ARENA_BACKSTOP_BUFFER;
-    const rescueTarget = SOLVENCY_POOL_FLOOR + criticalAgents * SOLVENCY_RESCUE_ARENA + ECONOMY_ARENA_BACKSTOP_BUFFER;
-    const targetArena = Math.max(minimumTarget, rescueTarget);
-
-    const pool = await this.getOrCreateEconomyPool();
-    if (pool.arenaBalance >= targetArena) return 0;
-
-    const mintAmount = Math.max(0, Math.min(ECONOMY_ARENA_BACKSTOP_MAX_MINT_PER_TICK, targetArena - pool.arenaBalance));
-    if (mintAmount <= 0) return 0;
-
-    await prisma.economyPool.update({
-      where: { id: pool.id },
-      data: { arenaBalance: { increment: mintAmount } },
-    });
-
-    console.log(
-      `[AgentLoop] 🛟 Arena backstop: +${mintAmount} $ARENA liquidity (pool ${pool.arenaBalance} -> ${pool.arenaBalance + mintAmount}, target ${targetArena}, critical ${criticalAgents})`
-    );
-    return mintAmount;
   }
 
   // Process one agent tick (called by interval OR manually)
@@ -1369,13 +1404,6 @@ export class AgentLoopService {
         }
       } catch (e: any) {
         console.error(`[AgentLoop] Auto-create town failed: ${e.message}`);
-      }
-
-      // === LIQUIDITY BACKSTOP: keep enough ARENA in pool to prevent full economic deadlock ===
-      try {
-        await this.applyArenaLiquidityBackstop(agents);
-      } catch (e: any) {
-        console.error(`[AgentLoop] Arena liquidity backstop failed: ${e.message}`);
       }
 
       // === UPKEEP: deduct survival cost from all agents ===
@@ -2865,6 +2893,10 @@ export class AgentLoopService {
           feeBps: economy.feeBps,
           reserveBalance: economy.reserveBalance,
           arenaBalance: economy.arenaBalance,
+          opsBudget: economy.opsBudget,
+          pvpBudget: economy.pvpBudget,
+          rescueBudget: economy.rescueBudget,
+          insuranceBudget: economy.insuranceBudget,
         } : null,
       };
     }
@@ -2916,6 +2948,10 @@ export class AgentLoopService {
         feeBps: economy.feeBps,
         reserveBalance: economy.reserveBalance,
         arenaBalance: economy.arenaBalance,
+        opsBudget: economy.opsBudget,
+        pvpBudget: economy.pvpBudget,
+        rescueBudget: economy.rescueBudget,
+        insuranceBudget: economy.insuranceBudget,
       } : null,
     };
   }
@@ -3701,7 +3737,7 @@ ${instructionTexts}
 Your balances:
 - $ARENA: ${obs.myBalance}
 - Reserve: ${obs.myReserve}
-${obs.economy ? `\nEconomy: 1 $ARENA ≈ ${obs.economy.spotPrice.toFixed(4)} reserve (fee ${obs.economy.feeBps / 100}%)` : ''}`;
+${obs.economy ? `\nEconomy: 1 $ARENA ≈ ${obs.economy.spotPrice.toFixed(4)} reserve (fee ${obs.economy.feeBps / 100}%). Budgets: ops ${obs.economy.opsBudget}, pvp ${obs.economy.pvpBudget}, rescue ${obs.economy.rescueBudget}, insurance ${obs.economy.insuranceBudget}` : ''}`;
     }
 
     const myPlotsDesc = obs.myPlots.length === 0
@@ -3817,7 +3853,7 @@ Status: ${obs.town.status}
 Balance: ${obs.myBalance} $ARENA
 Reserve: ${obs.myReserve}
 	${obs.myContributions ? `Contributed: ${obs.myContributions.arenaSpent} $ARENA, ${obs.myContributions.apiCallsMade} work units, ${obs.myContributions.plotsBuilt} buildings` : 'No contributions yet.'}
-	${obs.economy ? `\n💱 ECONOMY:\nSpot price: 1 $ARENA ≈ ${obs.economy.spotPrice.toFixed(4)} reserve (fee ${obs.economy.feeBps / 100}%)\nTrade sparingly: buy_arena / sell_arena are mostly for funding specific actions.` : ''}
+	${obs.economy ? `\n💱 ECONOMY:\nSpot price: 1 $ARENA ≈ ${obs.economy.spotPrice.toFixed(4)} reserve (fee ${obs.economy.feeBps / 100}%)\nBudgets: ops ${obs.economy.opsBudget}, pvp ${obs.economy.pvpBudget}, rescue ${obs.economy.rescueBudget}, insurance ${obs.economy.insuranceBudget}\nTrade sparingly: buy_arena / sell_arena are mostly for funding specific actions.` : ''}
 
 💳 YOUR RECENT PAID SKILLS (X402):
 ${skillsDesc}
@@ -4000,14 +4036,34 @@ What do you want to do?`;
     } catch (err: any) {
       // Fix 8: Burn 1 $ARENA on failed actions (fumble tax)
       try {
-        const freshAgent = await prisma.arenaAgent.findUnique({ where: { id: agent.id } });
-        if (freshAgent && freshAgent.bankroll > 5) {
-          await prisma.arenaAgent.update({ where: { id: agent.id }, data: { bankroll: { decrement: 1 } } });
-          const pool = await prisma.economyPool.findFirst({ orderBy: { createdAt: 'desc' } });
-          if (pool) {
-            await prisma.economyPool.update({ where: { id: pool.id }, data: { arenaBalance: { increment: 1 } } });
-          }
-        }
+        await prisma.$transaction(async (tx) => {
+          const freshAgent = await tx.arenaAgent.findUnique({ where: { id: agent.id }, select: { bankroll: true } });
+          if (!freshAgent || freshAgent.bankroll <= 5) return;
+
+          await tx.arenaAgent.update({ where: { id: agent.id }, data: { bankroll: { decrement: 1 } } });
+
+          const pool = await this.getOrCreateEconomyPool(tx);
+          const feeSplit = splitArenaFeeToBudgets(1);
+          await tx.economyPool.update({
+            where: { id: pool.id },
+            data: { cumulativeFeesArena: { increment: 1 } },
+          });
+          await creditPoolBudgets(
+            tx,
+            pool.id,
+            {
+              opsBudget: feeSplit.opsBudget,
+              insuranceBudget: feeSplit.insuranceBudget,
+            },
+            {
+              type: EconomyLedgerType.FUMBLE_TAX,
+              source: 'AGENT_BANKROLL',
+              agentId: agent.id,
+              tick: this.currentTick,
+              metadata: { reason: 'failed_action_fumble_tax' },
+            },
+          );
+        });
       } catch {}
       return { success: false, narrative: `${agent.name} failed: ${err.message}`, error: err.message };
     }
@@ -4959,12 +5015,30 @@ Be creative, detailed, and in-character for the town's theme. Response should be
     const targetWorkReward = Math.max(3, Math.min(6, baseFromBuildCost));
     let workReward = 0;
     try {
-      const pool = await this.getOrCreateEconomyPool();
-      if (pool.arenaBalance - targetWorkReward >= SOLVENCY_POOL_FLOOR) {
-        await prisma.economyPool.update({ where: { id: pool.id }, data: { arenaBalance: { decrement: targetWorkReward } } });
-        await prisma.arenaAgent.update({ where: { id: agent.id }, data: { bankroll: { increment: targetWorkReward } } });
-        workReward = targetWorkReward;
-      }
+      workReward = await prisma.$transaction(async (tx) => {
+        const pool = await this.getOrCreateEconomyPool(tx);
+        const payout = await debitPoolBudget(
+          tx,
+          pool.id,
+          'opsBudget',
+          targetWorkReward,
+          {
+            type: EconomyLedgerType.WORK_PAYOUT,
+            agentId: agent.id,
+            townId: plot.townId,
+            tick: this.currentTick,
+            metadata: {
+              plotId,
+              plotIndex: plot.plotIndex,
+              buildingType: bt,
+            },
+          },
+          { allowPartial: true, minimumPayout: 1 },
+        );
+        if (payout <= 0) return 0;
+        await tx.arenaAgent.update({ where: { id: agent.id }, data: { bankroll: { increment: payout } } });
+        return payout;
+      });
     } catch {}
 
     const rewardNote = workReward > 0 ? ` and earned ${workReward} $ARENA` : '';
@@ -5004,11 +5078,31 @@ Be creative, detailed, and in-character for the town's theme. Response should be
     let completionBonusNote = '';
     try {
       const completionBonusTarget = Math.max(6, Math.min(24, Math.round(Math.max(10, plot.buildCostArena || 10) * 0.45)));
-      const pool = await this.getOrCreateEconomyPool();
-      const grant = Math.min(completionBonusTarget, Math.max(0, pool.arenaBalance - SOLVENCY_POOL_FLOOR));
+      const grant = await prisma.$transaction(async (tx) => {
+        const pool = await this.getOrCreateEconomyPool(tx);
+        const payout = await debitPoolBudget(
+          tx,
+          pool.id,
+          'opsBudget',
+          completionBonusTarget,
+          {
+            type: EconomyLedgerType.BUILD_COMPLETION_PAYOUT,
+            agentId: agent.id,
+            townId: plot.townId,
+            tick: this.currentTick,
+            metadata: {
+              plotId,
+              plotIndex: plot.plotIndex,
+              buildingType: plot.buildingType,
+            },
+          },
+          { allowPartial: true, minimumPayout: 1 },
+        );
+        if (payout <= 0) return 0;
+        await tx.arenaAgent.update({ where: { id: agent.id }, data: { bankroll: { increment: payout } } });
+        return payout;
+      });
       if (grant > 0) {
-        await prisma.economyPool.update({ where: { id: pool.id }, data: { arenaBalance: { decrement: grant } } });
-        await prisma.arenaAgent.update({ where: { id: agent.id }, data: { bankroll: { increment: grant } } });
         completionBonusNote = ` 💰 Completion bonus: +${grant} $ARENA.`;
       }
     } catch {}
@@ -5395,20 +5489,33 @@ Be creative, detailed, and in-character for the town's theme. Response should be
         rivalryNote = ` 🔥 New rivalry: ${agent.name} vs ${selectedOpponent.name} (score ${relUpdate.relationship.score}).`;
       }
       if (outcome === 'WIN' && relUpdate.relationship.status === 'RIVAL') {
-        const pool = await this.getOrCreateEconomyPool();
         const bonusTarget = 3;
-        const grant = Math.min(bonusTarget, Math.max(0, pool.arenaBalance - SOLVENCY_POOL_FLOOR));
-        if (grant > 0) {
-          await prisma.$transaction(async (tx) => {
-            await tx.economyPool.update({
-              where: { id: pool.id },
-              data: { arenaBalance: { decrement: grant } },
-            });
-            await tx.arenaAgent.update({
-              where: { id: agent.id },
-              data: { bankroll: { increment: grant } },
-            });
+        const grant = await prisma.$transaction(async (tx) => {
+          const pool = await this.getOrCreateEconomyPool(tx);
+          const payout = await debitPoolBudget(
+            tx,
+            pool.id,
+            'pvpBudget',
+            bonusTarget,
+            {
+              type: EconomyLedgerType.RIVAL_BONUS,
+              agentId: agent.id,
+              tick: this.currentTick,
+              metadata: {
+                opponentId: selectedOpponent.id,
+                matchId: createdMatchId,
+              },
+            },
+            { allowPartial: true, minimumPayout: 1 },
+          );
+          if (payout <= 0) return 0;
+          await tx.arenaAgent.update({
+            where: { id: agent.id },
+            data: { bankroll: { increment: payout } },
           });
+          return payout;
+        });
+        if (grant > 0) {
           myBankrollAfter += grant;
           rivalryNote += ` 🏴 Rival takedown bonus: +${grant} $ARENA.`;
         }

@@ -58,9 +58,12 @@ export function DesktopAgentHudPanel({
   const staleCreditFallback = hasCreditFallback && typeof reasoningAgeMs === 'number' && Number.isFinite(reasoningAgeMs) && reasoningAgeMs > 5 * 60 * 1000;
 
   return (
-    <div className="pointer-events-auto absolute right-3 top-3 max-w-[340px]">
+    <div
+      className="pointer-events-auto w-[340px] max-w-[calc(100vw-24px)]"
+      data-testid="agent-hud-panel"
+    >
       {selectedAgent && (
-        <div className="hud-panel p-3">
+        <div className="hud-panel p-3" data-testid="agent-hud-card">
           <div className="flex items-center gap-2">
             <span
               className="inline-flex h-4 w-4 rounded-full shrink-0"
@@ -99,7 +102,7 @@ export function DesktopAgentHudPanel({
             </div>
           </div>
           {selectedAgent.lastReasoning && (
-            <div className="mt-2 pt-2 border-t border-slate-800/50">
+            <div className="mt-2 pt-2 border-t border-slate-800/50" data-testid="agent-hud-reasoning">
               <div className="flex items-center gap-1.5 text-[10px] text-slate-500 mb-1">
                 <span>🧠</span>
                 <span className="font-medium uppercase tracking-wide">
@@ -131,7 +134,10 @@ export function DesktopAgentHudPanel({
             </div>
           )}
           {recentOutcomes.length > 0 && (
-            <div className="mt-2 rounded-md border border-slate-800/70 bg-slate-950/30 p-2">
+            <div
+              className="mt-2 rounded-md border border-slate-800/70 bg-slate-950/30 p-2"
+              data-testid="agent-hud-outcomes"
+            >
               <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">Recent Outcomes</div>
               <div className="space-y-1.5">
                 {recentOutcomes.slice(0, 3).map((outcome) => (

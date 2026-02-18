@@ -10,10 +10,15 @@
  * This is NOT the HTTP x402 middleware. It's an in-world economic mechanic.
  */
 
-import { PlotZone } from '@prisma/client';
+import { EconomyLedgerType, PlotZone } from '@prisma/client';
 import { prisma } from '../config/database';
 import { offchainAmmService } from './offchainAmmService';
 import { smartAiService } from './smartAiService';
+import {
+  creditPoolBudgets,
+  getOrCreateEconomyPool as getOrCreateEconomyPoolRecord,
+  splitArenaFeeToBudgets,
+} from './economyAccountingService';
 
 export type X402SkillName = 'MARKET_DEPTH' | 'BLUEPRINT_INDEX' | 'SCOUT_REPORT';
 
@@ -428,14 +433,30 @@ export class X402SkillService {
         },
       });
 
-      // Track "treasury" as cumulativeFeesArena for now (demo-friendly).
-      const pool = await tx.economyPool.findFirst({ orderBy: { createdAt: 'desc' } });
-      if (pool) {
-        await tx.economyPool.update({
-          where: { id: pool.id },
-          data: { cumulativeFeesArena: { increment: priceArena } },
-        });
-      }
+      const pool = await getOrCreateEconomyPoolRecord(tx);
+      await tx.economyPool.update({
+        where: { id: pool.id },
+        data: { cumulativeFeesArena: { increment: priceArena } },
+      });
+      const feeSplit = splitArenaFeeToBudgets(priceArena);
+      await creditPoolBudgets(
+        tx,
+        pool.id,
+        {
+          opsBudget: feeSplit.opsBudget,
+          insuranceBudget: feeSplit.insuranceBudget,
+        },
+        {
+          type: EconomyLedgerType.X402_FEE,
+          source: 'AGENT_BANKROLL',
+          agentId: opts.agentId,
+          tick: opts.currentTick,
+          metadata: {
+            skill: opts.request.skill,
+            priceArena,
+          },
+        },
+      );
 
       await tx.workLog.create({
         data: {

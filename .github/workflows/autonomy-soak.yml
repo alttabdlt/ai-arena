@@ -1,0 +1,106 @@
+name: Nightly Autonomy Soak
+
+on:
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+    inputs:
+      duration_ms:
+        description: 'Soak duration in milliseconds'
+        required: false
+        default: '1200000'
+      agent_count:
+        description: 'Number of autonomous agents to spawn'
+        required: false
+        default: '10'
+      min_total_ticks:
+        description: 'Minimum total ticks required to pass'
+        required: false
+        default: '320'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-autonomy-soak-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: true
+
+jobs:
+  autonomy-soak:
+    name: Autonomy Soak Gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Prepare artifact directory
+        run: mkdir -p artifacts/e2e-autonomy-soak
+
+      - name: Start backend
+        run: |
+          cd backend
+          FAST_STARTUP=true DISABLE_WHEEL=1 ENABLE_TEST_UTILS=1 TEST_UTILS_KEY=ci-test-utils-key MONAD_RECORD_MATCHES=0 ./node_modules/.bin/ts-node-transpile-only src/index.ts > ../artifacts/e2e-autonomy-soak/backend.log 2>&1 &
+          echo $! > ../artifacts/e2e-autonomy-soak/backend.pid
+
+      - name: Wait for backend
+        run: |
+          for i in {1..120}; do
+            if curl -fsS http://127.0.0.1:4000/health > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:4000/health > /dev/null
+          curl -fsS -H 'x-test-utils-key: ci-test-utils-key' http://127.0.0.1:4000/api/v1/test-utils/status > /dev/null
+
+      - name: Run autonomy soak
+        run: |
+          E2E_ARTIFACT_DIR=artifacts/e2e-autonomy-soak \
+          E2E_REQUIRE_RESET_ENDPOINT=1 \
+          E2E_TEST_UTILS_KEY=ci-test-utils-key \
+          E2E_SOAK_DURATION_MS=${{ github.event.inputs.duration_ms || '1200000' }} \
+          E2E_SOAK_AGENT_COUNT=${{ github.event.inputs.agent_count || '10' }} \
+          E2E_SOAK_ROUND_PAUSE_MS=180 \
+          E2E_SOAK_MIN_REASONING_COVERAGE=0.80 \
+          E2E_SOAK_MIN_UNIQUE_FAMILIES_PER_AGENT=3 \
+          E2E_SOAK_MIN_TOTAL_TICKS=${{ github.event.inputs.min_total_ticks || '320' }} \
+          E2E_SOAK_MIN_LEDGER_ROWS=260 \
+          E2E_SOAK_MIN_CRITICAL_LEDGER_TYPES=4 \
+          node scripts/e2e-autonomy-soak.mjs
+
+      - name: Publish soak summary
+        if: always()
+        run: |
+          if [ -f artifacts/e2e-autonomy-soak/report.json ]; then
+            node scripts/autonomy-report-summary.mjs artifacts/e2e-autonomy-soak/report.json "Nightly autonomy soak" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload soak artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autonomy-soak
+          path: artifacts/e2e-autonomy-soak
+          if-no-files-found: warn
+
+      - name: Stop backend
+        if: always()
+        run: |
+          if [ -f artifacts/e2e-autonomy-soak/backend.pid ]; then
+            kill "$(cat artifacts/e2e-autonomy-soak/backend.pid)" || true
+          fi

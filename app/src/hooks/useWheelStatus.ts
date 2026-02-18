@@ -74,7 +74,7 @@ export interface WheelMove {
   reasoning: string;
   quip: string;
   amount?: number;
-  data?: any;
+  data?: Record<string, unknown> | null;
   gameSnapshot?: GameSnapshot;
 }
 

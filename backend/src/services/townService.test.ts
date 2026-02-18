@@ -1,7 +1,7 @@
 /// <reference types="vitest/globals" />
 import { describe, it, expect } from 'vitest';
 import { prisma } from '../config/database';
-import { createTestAgent, createTestTown } from '../__tests__/helpers/fixtures';
+import { createTestAgent, createTestTown, seedPool } from '../__tests__/helpers/fixtures';
 import { TownService } from './townService';
 
 let ts: TownService;
@@ -238,6 +238,7 @@ describe('TownService', () => {
     it('creates WorkLog MINE type and credits bankroll', async () => {
       const town = await createTestTown(prisma);
       const agent = await createTestAgent(prisma, { bankroll: 1000 });
+      await seedPool(prisma, { opsBudget: 500 });
 
       const wl = await ts.submitMiningWork(agent.id, town.id, 'mining', 'prompt', 'output', 1, 0, 'mock', 50);
       expect(wl.workType).toBe('MINE');

@@ -355,6 +355,17 @@ async function startServer() {
   console.log('🛰️ Runtime API ready at /api/v1/runtime');
 
   // ============================================
+  // Test Utils API (strictly opt-in for CI/local determinism)
+  // ============================================
+  if (process.env.ENABLE_TEST_UTILS === '1' && (process.env.NODE_ENV !== 'production' || process.env.ALLOW_PROD_TEST_UTILS === '1')) {
+    const testUtilsApiRouter = (await import('./routes/test-utils-api')).default;
+    app.use('/api/v1', cors<cors.CorsRequest>({ origin: '*' }), testUtilsApiRouter);
+    console.log('🧪 Test Utils API ready at /api/v1/test-utils');
+  } else if (process.env.ENABLE_TEST_UTILS === '1' && process.env.NODE_ENV === 'production') {
+    console.warn('🧪 Test Utils API requested but blocked in production (set ALLOW_PROD_TEST_UTILS=1 to override)');
+  }
+
+  // ============================================
   // Market Pulse (demo dopamine)
   // ============================================
   // Disabled by default: it creates high-frequency buy/sell swaps that can drown out the actual town sim.
@@ -519,9 +530,14 @@ async function startServer() {
     }
   }
 
-  // Start Wheel of Fate (PvP match scheduler — the core game mechanic)
-  const { wheelOfFateService } = await import('./services/wheelOfFateService');
-  wheelOfFateService.start();
+  // Start Wheel of Fate (PvP match scheduler — the core game mechanic).
+  // Allow deterministic test runs to opt out without changing default prod behavior.
+  if (process.env.DISABLE_WHEEL !== '1') {
+    const { wheelOfFateService } = await import('./services/wheelOfFateService');
+    wheelOfFateService.start();
+  } else {
+    console.log('🎡 Wheel of Fate disabled via DISABLE_WHEEL=1');
+  }
 
   app.get('/health', async (_req, res) => {
     const memoryUsage = process.memoryUsage();

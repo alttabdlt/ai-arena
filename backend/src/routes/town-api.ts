@@ -6,7 +6,7 @@
  */
 
 import { Router, Request, Response, NextFunction } from 'express';
-import { ArenaAgent } from '@prisma/client';
+import { ArenaAgent, EconomyLedgerType } from '@prisma/client';
 import { townService } from '../services/townService';
 import { arenaService } from '../services/arenaService';
 import { agentConversationService, type RelationshipContext, type AgentActivity, type PairConversationMemory } from '../services/agentConversationService';
@@ -18,6 +18,11 @@ import { smartAiService } from '../services/smartAiService';
 import { agentFundingService } from '../services/agentFundingService';
 import { prisma } from '../config/database';
 import { isOpenRouterActiveConfig } from '../config/llm';
+import {
+  creditPoolBudgets,
+  getOrCreateEconomyPool as getOrCreateEconomyPoolRecord,
+  splitArenaFeeToBudgets,
+} from '../services/economyAccountingService';
 
 const router = Router();
 
@@ -588,13 +593,31 @@ router.post('/town/:id/chat', async (req: Request, res: Response): Promise<void>
 
     // Credit beef tax to pool treasury
     if (economicEffect?.type === 'BEEF_TAX') {
-      const pool = await prisma.economyPool.findFirst();
-      if (pool) {
-        await prisma.economyPool.update({
+      await prisma.$transaction(async (tx) => {
+        const pool = await getOrCreateEconomyPoolRecord(tx);
+        await tx.economyPool.update({
           where: { id: pool.id },
           data: { cumulativeFeesArena: { increment: economicEffect.amount } },
         });
-      }
+        const feeSplit = splitArenaFeeToBudgets(economicEffect.amount);
+        await creditPoolBudgets(
+          tx,
+          pool.id,
+          {
+            opsBudget: feeSplit.opsBudget,
+            insuranceBudget: feeSplit.insuranceBudget,
+          },
+          {
+            type: EconomyLedgerType.CHAT_BEEF_TAX,
+            source: 'AGENT_BANKROLL',
+            townId,
+            metadata: {
+              participants: [agentA.id, agentB.id],
+              amount: economicEffect.amount,
+            },
+          },
+        );
+      });
     }
 
     const linesForDesc = convo.lines
@@ -1225,7 +1248,7 @@ router.post('/agents/spawn', async (req: Request, res: Response): Promise<void> 
       return;
     }
     
-    const validPersonalities = ['SHARK', 'DEGEN', 'CHAMELEON', 'GRINDER', 'VISIONARY'];
+    const validPersonalities = ['SHARK', 'ROCK', 'DEGEN', 'CHAMELEON', 'GRINDER'];
     const archetype = validPersonalities.includes(personality?.toUpperCase()) ? personality.toUpperCase() : 'CHAMELEON';
     const selectedProfile = aiProfileId ? agentLoopService.getAiProfilePresetById(aiProfileId) : null;
     if (aiProfileId && !selectedProfile) {

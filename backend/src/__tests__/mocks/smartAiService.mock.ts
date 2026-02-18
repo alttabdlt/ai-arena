@@ -64,6 +64,14 @@ export const mockSmartAiService = {
     inputCostPer1K: 0,
     outputCostPer1K: 0,
   }),
+
+  calculateCost: vi.fn().mockReturnValue({
+    inputTokens: 0,
+    outputTokens: 0,
+    costCents: 0,
+    model: 'mock-model',
+    latencyMs: 0,
+  }),
 };
 
 /**

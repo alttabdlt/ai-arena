@@ -14,10 +14,19 @@ import {
   PlotZone,
   WorkType,
   TownEventType,
+  EconomyLedgerType,
 } from '@prisma/client';
 import { prisma } from '../config/database';
 import { degenStakingService } from './degenStakingService';
 import { worldEventService } from './worldEventService';
+import {
+  appendEconomyLedger,
+  creditPoolBudgets,
+  debitPoolBudget,
+  getOrCreateEconomyPool,
+  splitBuildContribution,
+  splitClaimContribution,
+} from './economyAccountingService';
 
 // ============================================
 // Constants
@@ -30,9 +39,6 @@ const YIELD_MULTIPLIER = 1.5; // Yield scales per level
 const BASE_PLOT_COST = 10; // $ARENA to claim a plot at level 1
 const COST_PER_LEVEL = 5; // Extra cost per level
 const MIN_API_CALLS_TO_BUILD = 3; // Minimum inference calls to complete a building
-const ECONOMY_INIT_RESERVE = Number.parseInt(process.env.ECONOMY_INIT_RESERVE || '10000', 10);
-const ECONOMY_INIT_ARENA = Number.parseInt(process.env.ECONOMY_INIT_ARENA || '10000', 10);
-const ECONOMY_INIT_FEE_BPS = Number.parseInt(process.env.ECONOMY_FEE_BPS || '100', 10);
 
 // Building types and their requirements
 // Open-ended building system — agents can build ANYTHING.
@@ -437,13 +443,40 @@ export class TownService {
         data: { bankroll: { decrement: claimCost } },
       });
 
-      // Fix 3: Recycle cost into AMM pool
-      try {
-        const pool = await tx.economyPool.findFirst({ orderBy: { createdAt: 'desc' } });
-        if (pool) {
-          await tx.economyPool.update({ where: { id: pool.id }, data: { arenaBalance: { increment: claimCost } } });
-        }
-      } catch {}
+      const contributionSplit = splitClaimContribution(claimCost);
+      const pool = await getOrCreateEconomyPool(tx);
+      await creditPoolBudgets(
+        tx,
+        pool.id,
+        {
+          opsBudget: contributionSplit.opsBudget,
+          pvpBudget: contributionSplit.pvpBudget,
+          insuranceBudget: contributionSplit.insuranceBudget,
+        },
+        {
+          type: EconomyLedgerType.CLAIM_SPLIT,
+          source: 'AGENT_BANKROLL',
+          agentId,
+          townId,
+          metadata: {
+            plotIndex,
+            claimCost,
+            townInvested: contributionSplit.townInvested,
+          },
+        },
+      );
+      await appendEconomyLedger(tx, [
+        {
+          poolId: pool.id,
+          source: 'AGENT_BANKROLL',
+          destination: 'TOWN_TREASURY',
+          amount: contributionSplit.townInvested,
+          type: EconomyLedgerType.CLAIM_SPLIT,
+          agentId,
+          townId,
+          metadata: { plotIndex, claimCost },
+        },
+      ]);
 
       // Update plot
       const updated = await tx.plot.update({
@@ -457,7 +490,7 @@ export class TownService {
       // Update town investment
       await tx.town.update({
         where: { id: townId },
-        data: { totalInvested: { increment: claimCost } },
+        data: { totalInvested: { increment: contributionSplit.townInvested } },
       });
 
       // Log event
@@ -749,13 +782,47 @@ export class TownService {
         data: { bankroll: { decrement: buildCost } },
       });
 
-      // Fix 3: Recycle build cost into AMM pool
-      try {
-        const pool = await tx.economyPool.findFirst({ orderBy: { createdAt: 'desc' } });
-        if (pool) {
-          await tx.economyPool.update({ where: { id: pool.id }, data: { arenaBalance: { increment: buildCost } } });
-        }
-      } catch {}
+      const contributionSplit = splitBuildContribution(buildCost);
+      const pool = await getOrCreateEconomyPool(tx);
+      await creditPoolBudgets(
+        tx,
+        pool.id,
+        {
+          opsBudget: contributionSplit.opsBudget,
+          pvpBudget: contributionSplit.pvpBudget,
+          insuranceBudget: contributionSplit.insuranceBudget,
+        },
+        {
+          type: EconomyLedgerType.BUILD_SPLIT,
+          source: 'AGENT_BANKROLL',
+          agentId,
+          townId: plot.townId,
+          metadata: {
+            plotId,
+            plotIndex: plot.plotIndex,
+            buildCost,
+            buildingType: bt,
+            townInvested: contributionSplit.townInvested,
+          },
+        },
+      );
+      await appendEconomyLedger(tx, [
+        {
+          poolId: pool.id,
+          source: 'AGENT_BANKROLL',
+          destination: 'TOWN_TREASURY',
+          amount: contributionSplit.townInvested,
+          type: EconomyLedgerType.BUILD_SPLIT,
+          agentId,
+          townId: plot.townId,
+          metadata: {
+            plotId,
+            plotIndex: plot.plotIndex,
+            buildCost,
+            buildingType: bt,
+          },
+        },
+      ]);
 
       // Update plot
       const updated = await tx.plot.update({
@@ -775,7 +842,7 @@ export class TownService {
       // Update town investment
       await tx.town.update({
         where: { id: plot.townId },
-        data: { totalInvested: { increment: buildCost } },
+        data: { totalInvested: { increment: contributionSplit.townInvested } },
       });
 
       // Log event
@@ -1034,27 +1101,25 @@ export class TownService {
     }
 
     return prisma.$transaction(async (tx) => {
-      // Mining extracts $ARENA from the AMM pool — NOT from thin air
-      // This makes the economy zero-sum: mining withdraws, building deposits
-      const POOL_FLOOR = 1000; // never drain pool below this
       if (arenaEarned > 0) {
-        const pool = await tx.economyPool.findFirst({ orderBy: { createdAt: 'desc' } })
-          || await tx.economyPool.create({
-            data: {
-              reserveBalance: Math.max(1000, Math.floor(ECONOMY_INIT_RESERVE) || 10000),
-              arenaBalance: Math.max(1000, Math.floor(ECONOMY_INIT_ARENA) || 10000),
-              feeBps: Math.max(0, Math.min(1000, Math.floor(ECONOMY_INIT_FEE_BPS) || 100)),
+        const pool = await getOrCreateEconomyPool(tx);
+        // Mining payout is explicit: it must come from ops budget (no implicit minting).
+        arenaEarned = await debitPoolBudget(
+          tx,
+          pool.id,
+          'opsBudget',
+          arenaEarned,
+          {
+            type: EconomyLedgerType.MINING_PAYOUT,
+            agentId,
+            townId,
+            metadata: {
+              reason: 'mining_reward',
+              requestedArena: arenaEarned,
             },
-          });
-        if (pool.arenaBalance - arenaEarned >= POOL_FLOOR) {
-          await tx.economyPool.update({
-            where: { id: pool.id },
-            data: { arenaBalance: { decrement: arenaEarned } },
-          });
-        } else {
-          // Pool too low — mining yields nothing
-          arenaEarned = 0;
-        }
+          },
+          { allowPartial: true, minimumPayout: 1 },
+        );
       }
 
       const workLog = await tx.workLog.create({

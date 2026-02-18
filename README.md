@@ -1,16 +1,29 @@
 # AI Arena
 
-AI Arena is a spectator-first autonomous AI operations game on Monad.
+AI Arena is an autonomous agent game on Monad where agents build, trade, and fight with readable runtime intent.
 
-Players deploy agents, watch crew-level operations unfold in real time, and intervene when needed. Poker exists as a secondary escalation path, not the primary gameplay loop.
-
-## Core Loop
+Primary experience:
 
 1. Spawn or link your agent.
 2. Start the autonomous loop.
-3. Watch readable runtime intent (`doing`, `why`, `to`, `eta`).
-4. Intervene with manual controls when needed.
-5. Track crew pressure and territory outcomes.
+3. Watch `doing`, `why`, `target`, and `eta`.
+4. Intervene when needed (`build`, `work`, `fight`, `trade`, `rest`).
+5. Track rivalry and territory pressure over time.
+
+Poker/Wheel is an escalation lane, not the only loop.
+
+## Economic Model Status
+
+This repository currently runs a hybrid off-chain game economy with on-chain funding verification.
+
+Documentation in this branch now defines the target launch model:
+
+1. No implicit `$ARENA` issuance in runtime loops.
+2. Every payout must have an explicit source bucket.
+3. On-chain verified funding remains the source for redeemable agent bankroll credit.
+4. Right-side runtime UI must show decision rationale and payout source.
+
+See `docs/ECONOMIC-DESIGN.md` and `docs/IMPLEMENTATION-PLAN.md` for the exact migration spec.
 
 ## Tech Stack
 
@@ -36,10 +49,10 @@ npx vite --port 8080 --host 0.0.0.0
 curl -X POST http://localhost:4000/api/v1/agent-loop/start
 ```
 
-## Important Runtime Notes
+## Runtime Notes
 
 - `FAST_STARTUP=true` disables non-essential services for faster local boot.
-- Wheel of Fate auto-starts with the backend.
+- Wheel of Fate auto-starts with backend startup.
 - Agent loop does not auto-start in fast startup mode.
 - SQLite is authoritative; avoid unbounded parallel write bursts.
 
@@ -53,21 +66,25 @@ Key backend env vars:
 - `ARENA_TOKEN_ADDRESS`
 - `WAGER_ESCROW_ADDRESS`
 - `MONAD_DEPLOYER_KEY`
-- `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` (as configured)
+- `OPENAI_API_KEY` / `DEEPSEEK_API_KEY`
 
 ## Documentation Map
 
-Canonical docs live in `docs/`:
+Canonical docs in `docs/`:
 
 - `docs/README.md`
 - `docs/ARCHITECTURE.md`
 - `docs/API.md`
+- `docs/ECONOMIC-DESIGN.md`
 - `docs/IMPLEMENTATION-PLAN.md`
 - `docs/PRD-DEGEN-HUSTLE-LOOP-V1.md`
-- `docs/ECONOMIC-DESIGN.md`
 - `docs/PUBLIC-RELEASE-CHECKLIST.md`
 
-## Public Repository Notes
+Frontend-specific docs:
 
-- `HACKATHON-README.md` and `V2.md` are archived context only.
-- Current product direction is Ops Warfare readability-first UX with optional advanced controls.
+- `app/README.md`
+- `app/CLAUDE.md`
+
+## Archived Notes
+
+- `HACKATHON-README.md` and `V2.md` are historical/superseded.

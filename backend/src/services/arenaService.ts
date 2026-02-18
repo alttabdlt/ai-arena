@@ -5,7 +5,7 @@
  * wager tracking, ELO updates, and opponent record management.
  */
 
-import { ArenaAgent, ArenaMatch, ArenaGameType, AgentArchetype } from '@prisma/client';
+import { ArenaAgent, ArenaMatch, ArenaGameType, AgentArchetype, EconomyLedgerType } from '@prisma/client';
 import { randomBytes } from 'crypto';
 import { smartAiService, GameMoveRequest, OpponentScouting, MetaContext, AgentConfig } from './smartAiService';
 import { GameEngineAdapter } from './gameEngineAdapter';
@@ -15,6 +15,9 @@ import { prisma } from '../config/database';
 import { monadService } from './monadService';
 import { degenStakingService } from './degenStakingService';
 import { predictionService } from './predictionService';
+import { creditPoolBudgets, getOrCreateEconomyPool as getOrCreateEconomyPoolRecord } from './economyAccountingService';
+
+const MONAD_RECORD_MATCHES = process.env.MONAD_RECORD_MATCHES === '1';
 
 // ============================================
 // Types
@@ -764,13 +767,28 @@ export class ArenaService {
 
     // Credit rake to pool treasury
     if (rake > 0) {
-      const pool = await prisma.economyPool.findFirst();
-      if (pool) {
-        await prisma.economyPool.update({
+      await prisma.$transaction(async (tx) => {
+        const pool = await getOrCreateEconomyPoolRecord(tx);
+        await tx.economyPool.update({
           where: { id: pool.id },
           data: { cumulativeFeesArena: { increment: rake } },
         });
-      }
+        await creditPoolBudgets(
+          tx,
+          pool.id,
+          { pvpBudget: rake },
+          {
+            type: EconomyLedgerType.FIGHT_RAKE,
+            source: 'ARENA_RAKE',
+            agentId: winnerId || null,
+            metadata: {
+              matchId,
+              gameType: match.gameType,
+              rake,
+            },
+          },
+        );
+      });
     }
 
     // Update opponent records
@@ -792,7 +810,7 @@ export class ArenaService {
     setTimeout(async () => {
       try {
         // 1. On-chain recording (best-effort)
-        if (monadService.isInitialized()) {
+        if (MONAD_RECORD_MATCHES && monadService.isInitialized()) {
           try {
             const txHash = await monadService.recordMatchOnChain(matchId, winnerId);
             if (txHash) {

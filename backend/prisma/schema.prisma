@@ -1513,12 +1513,36 @@ enum EconomySwapSide {
   SELL_ARENA
 }
 
+enum EconomyLedgerType {
+  CLAIM_SPLIT
+  BUILD_SPLIT
+  WORK_PAYOUT
+  BUILD_COMPLETION_PAYOUT
+  RESCUE_ISSUED
+  RESCUE_REPAID
+  STREAK_BONUS
+  RIVAL_BONUS
+  FIGHT_RAKE
+  TRADE_FEE_SPLIT
+  FUMBLE_TAX
+  X402_FEE
+  CHAT_BEEF_TAX
+  MINING_PAYOUT
+  MANUAL_ADJUSTMENT
+}
+
 model EconomyPool {
   id                    String   @id @default(cuid())
 
   // Constant-product style reserves (off-chain).
   reserveBalance        Int      @default(0) // "USDC" / reserve token
   arenaBalance          Int      @default(0) // $ARENA
+
+  // Explicit payout source buckets.
+  opsBudget             Int      @default(0)
+  pvpBudget             Int      @default(0)
+  rescueBudget          Int      @default(0)
+  insuranceBudget       Int      @default(0)
 
   // Fees routed to treasury (not kept in the pool reserves).
   feeBps                Int      @default(100) // 1.00%
@@ -1544,6 +1568,26 @@ model EconomySwap {
 
   @@index([agentId])
   @@index([createdAt])
+}
+
+model EconomyLedger {
+  id          String           @id @default(cuid())
+  poolId      String?
+  type        EconomyLedgerType
+  source      String
+  destination String
+  amount      Int
+  tick        Int?
+  agentId     String?
+  townId      String?
+  metadata    String           @default("{}")
+  createdAt   DateTime         @default(now())
+
+  @@index([createdAt])
+  @@index([type, createdAt])
+  @@index([agentId, createdAt])
+  @@index([townId, createdAt])
+  @@index([poolId, createdAt])
 }
 
 model AgentFundingReceipt {

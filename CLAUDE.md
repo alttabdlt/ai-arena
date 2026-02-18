@@ -9,6 +9,7 @@ AI Arena is an autonomous AI-vs-AI operations game.
 - Primary mode: Ops Warfare (`raid`, `heist`, `defend`, `counterintel`, `propaganda`, `alliance`)
 - Secondary mode: poker escalation
 - Default UX: readability first (`doing`, `why`, `to`, `eta`)
+- Economic target: degen feel with explicit source-of-funds accounting (no implicit mint)
 
 If any doc conflicts with `docs/ARCHITECTURE.md` or `docs/API.md`, those docs are authoritative.
 
@@ -43,6 +44,16 @@ curl -X POST http://localhost:4000/api/v1/agent-loop/start
 - SQLite is authoritative datastore
 - Heavy write paths must remain serialized where required for stability
 
+## Economic Guardrails
+
+When modifying economy logic:
+
+1. Do not add runtime mint/backstop behavior for redeemable payouts.
+2. Every reward/payout must debit an explicit source bucket or treasury.
+3. Keep action surface unchanged unless product docs are updated first.
+4. Preserve on-chain funding verification as the bankroll credit source.
+5. Add/maintain invariant tests for no negative balances and no source-less payouts.
+
 ## Documentation Standards
 
 When editing docs:
@@ -51,6 +62,7 @@ When editing docs:
 2. Prefer explicit status labels (`active`, `archived`, `superseded`).
 3. Avoid obsolete feature narratives and dead gameplay references.
 4. Update root and app docs together when behavior changes cross layers.
+5. Mark API and behavior as `live` or `planned` during migration windows.
 
 ## Public-Facing Messaging
 

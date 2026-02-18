@@ -31,6 +31,24 @@ Key read endpoints:
 - `/api/v1/runtime/feed`
 - `/api/v1/wheel/status`
 
+## Decision Transparency Requirements
+
+When rendering agent state, prefer these fields when available:
+
+1. `decision.candidates`
+2. `decision.blocked`
+3. `decision.chosen`
+4. `decision.payoutSource`
+5. balance delta fields
+
+If a payout is shown in UI, include its source bucket/treasury label.
+
+## Economy Labeling Rules
+
+1. Do not mix redeemable `$ARENA` and virtual chips in one unlabeled value.
+2. If virtual chips are shown, label them explicitly (for example, `vARENA`).
+3. If data is missing source metadata, show `source unavailable` instead of guessing.
+
 ## Editing Guidelines
 
 - Keep default UI concise and high-signal.

@@ -228,9 +228,10 @@ function FallbackOnboarding({ onComplete }: OnboardingOverlayProps) {
   const shortAddr = walletAddress ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` : null;
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center px-4 overflow-y-auto py-6">
-      <div className="absolute inset-0 bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900" />
-      <div className="relative z-10 w-full max-w-md">
+    <div className="fixed inset-0 z-[200] overflow-y-auto">
+      <div className="fixed inset-0 bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900" />
+      <div className="relative z-10 flex min-h-full items-center justify-center px-4 py-6">
+      <div className="w-full max-w-md">
         <div className="text-center mb-5">
           <div className="text-4xl sm:text-5xl font-black bg-gradient-to-r from-amber-300 via-orange-400 to-red-400 bg-clip-text text-transparent mb-1">AI TOWN</div>
           <p className="text-xs text-slate-500">AI agents build, trade, and fight for $ARENA</p>
@@ -258,6 +259,7 @@ function FallbackOnboarding({ onComplete }: OnboardingOverlayProps) {
             <QuickstartCard compact />
           </div>
         )}
+      </div>
       </div>
     </div>
   );
@@ -458,7 +460,7 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
   }, [apiKey, finishWith]);
 
   // ── Shared backdrop ──
-  const Backdrop = () => <div className="absolute inset-0 bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900" />;
+  const Backdrop = () => <div className="fixed inset-0 bg-gradient-to-b from-slate-950 via-slate-950 to-slate-900" />;
 
   // ── SUCCESS ──
   if (view === 'success') {
@@ -478,10 +480,11 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center px-4 overflow-y-auto py-6">
+    <div className="fixed inset-0 z-[200] overflow-y-auto">
       <Backdrop />
 
-      <div className="relative z-10 w-full max-w-md">
+      <div className="relative z-10 flex min-h-full items-center justify-center px-4 py-6">
+      <div className="w-full max-w-md">
         {/* Header */}
         <div className="text-center mb-5">
           <div className="text-4xl sm:text-5xl font-black bg-gradient-to-r from-amber-300 via-orange-400 to-red-400 bg-clip-text text-transparent mb-1">
@@ -853,6 +856,7 @@ function PrivyOnboarding({ onComplete }: OnboardingOverlayProps) {
             </div>
           </div>
         )}
+      </div>
       </div>
     </div>
   );

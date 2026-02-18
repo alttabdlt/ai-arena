@@ -1,96 +1,123 @@
 # AI Arena Architecture
 
+Status: `target architecture (docs-locked, implementation pending)`
+
 ## 1. System Topology
 
 ### Frontend (`app/`)
+
 - React + Vite + Three.js
 - Primary route: `/town`
-- Focus: readable live state of agents, crews, buildings, and events
+- Must expose readable runtime state and clear decision transparency on the right panel
 
 ### Backend (`backend/`)
+
 - Express + Prisma + SQLite
 - REST base: `/api/v1`
-- GraphQL preserved for compatibility
+- GraphQL remains for compatibility
 - Core runtime services:
   - `agentLoopService.ts`
   - `runtime-api.ts`
-  - `crewWarsService.ts`
-  - `wheelOfFateService.ts`
+  - `townService.ts`
   - `arenaService.ts`
+  - `wheelOfFateService.ts`
   - `offchainAmmService.ts`
 
 ### Chain Integration
+
 - Monad EVM network
-- `$ARENA` token and wager escrow contracts
-- Backend verifies wallet funding transactions for in-game crediting
+- `$ARENA` token + wager escrow contracts
+- On-chain funding proof endpoint verifies transfers and credits owned agent bankroll
 
-## 2. Runtime Model
+## 2. Gameplay Model (Unchanged)
 
-### Primary loop model
-Default player-facing loop is readability-first operations warfare:
-1. Observe runtime intent
-2. Let autonomous loop execute
-3. Intervene with manual controls when needed
-4. Track crew-level outcomes and pressure
+Core action set remains:
 
-### Secondary escalation
-Poker/Wheel is an escalation lane, not the default core loop.
+1. `build`
+2. `work`
+3. `fight`
+4. `trade`
+5. `rest`
 
-## 3. Cadence and Timing
+No new primary loop types are introduced.
 
-- Agent loop cadence: configurable (`/agent-loop/start` returns active interval, commonly 20s)
-- Wheel cadence: configurable (`WHEEL_CYCLE_MS`, default 15 minutes)
-- Frontend render cadence: browser render loop with periodic API polling
+## 3. Economic Topology (Target)
 
-## 4. Data Flow
+### 3.1 Assets
 
-### Player UI path
+1. Redeemable `$ARENA` for agent bankroll flows.
+2. Reserve balance for swaps (`reserveBalance`).
+3. Optional virtual chips (`vARENA`) for non-redeemable spectator systems.
+
+### 3.2 Pool Buckets
+
+`EconomyPool` will hold explicit payout budgets:
+
+1. `opsBudget` (work wages, build completion bonuses)
+2. `pvpBudget` (fight incentives, rivalry bonuses)
+3. `rescueBudget` (bounded solvency rescue)
+4. `insuranceBudget` (shock absorber / safety reserve)
+
+### 3.3 Treasury
+
+`town.totalInvested` remains a separate town treasury used for town yield distribution.
+
+### 3.4 Hard Rule
+
+No implicit minting in runtime logic. Every payout debits one explicit bucket/treasury source.
+
+## 4. Decision Transparency Contract
+
+Runtime payloads shown in UI must include:
+
+1. Candidate actions considered.
+2. Blocked actions with reason codes.
+3. Chosen action and rationale.
+4. Expected deltas (`bankroll`, `reserve`, health, objective).
+5. If payout occurs, source bucket used.
+
+This applies to both autonomous loop ticks and owner-triggered manual actions.
+
+## 5. Data Flows
+
+### Player UI Path
+
 1. Frontend reads runtime endpoints.
-2. Backend computes authoritative state from SQLite + services.
-3. Frontend renders state and overlays.
-4. Player controls call mutation endpoints.
+2. Backend computes authoritative world + decision state.
+3. Frontend renders state and right-rail reasoning.
+4. Player controls submit manual actions.
 
-### External agent path
-1. External agent joins and claims session.
+### External Agent Path
+
+1. External agent authenticates.
 2. Agent reads `/external/observe`.
-3. Agent submits actions via `/external/act`.
-4. Backend executes through shared loop/action services.
+3. Agent submits `/external/act`.
+4. Shared execution path enforces the same budget and invariants.
 
-### Chain-linked funding path
+### Funding Path
+
 1. Player submits tx hash to `/agents/:id/fund`.
-2. Backend verifies on-chain transfer to signed-in wallet.
-3. Verified value is credited to owned in-game agent.
+2. Backend verifies Monad transfer to signed-in wallet.
+3. Verified amount credits the wallet-owned agent bankroll.
 
-## 5. Readability Contract
+## 6. Invariants and Operational Constraints
 
-Default mode must keep these fields understandable at a glance:
+### Economic Invariants
 
-### Agent-level
-- doing
-- why
-- target
-- eta
+1. No negative balances.
+2. No payout without an explicit source bucket.
+3. Bucket balances cannot underflow.
+4. Redeemable liabilities must remain under configured backing limits.
 
-### Crew-level
-- objective
-- active operation
-- active members
-- latest impact
+### Runtime Constraints
 
-### Place-level
-- occupancy
-- task status
-- contest/control signal
-
-## 6. Operational Constraints
-
-- SQLite is authoritative.
-- Write-heavy paths must avoid unsafe concurrency.
-- Background best-effort tasks should not block primary game flow.
-- Public APIs should degrade gracefully if optional integrations are unavailable.
+1. SQLite is authoritative.
+2. Write-heavy paths must remain concurrency-safe.
+3. Background best-effort tasks must not block core simulation.
+4. Optional integrations must fail soft, not break loop progression.
 
 ## 7. Deployment Shape
 
-- Frontend and backend can run separately in development.
-- Production commonly serves frontend + API under managed hosting.
-- Persisted SQLite volume is required for stable world continuity.
+1. Frontend and backend may run separately in development.
+2. Production commonly serves both under managed hosting.
+3. Persisted SQLite volume is required for world continuity.

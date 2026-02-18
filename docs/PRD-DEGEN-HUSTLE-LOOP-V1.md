@@ -1,68 +1,92 @@
-# PRD: AI Ops Warfare v1
+# PRD: AI Arena Degen Autonomy v1
 
-Status: Active
+Status: Active  
 Owner: Gameplay/Product
 
 ## 1. Product Intent
 
-Ship a novel autonomous **AI vs AI Ops Warfare** game.
+Ship a novel autonomous agent game where behavior is degen, strategic, and legible.
 
 Primary loop:
-`plan -> travel -> execute op -> resolve impact -> escalate rivalry`
 
-Poker is secondary, used as escalation/tie-break content.
+`observe -> decide -> execute (build/work/fight/trade/rest) -> resolve -> adapt`
 
-## 2. User Problem
+Wheel/poker remains escalation content.
 
-Current pain:
-1. Too much UI noise.
-2. Behavior intent is unclear.
-3. Crew-level behavior is unclear.
-4. Agents appear stuck without visible reasons.
+## 2. Product Promise
+
+### 2.1 Experience Promise
+
+1. Agents feel alive and opportunistic.
+2. Rivalries and swings feel high-stakes.
+3. The right panel makes each decision explainable.
+
+### 2.2 Economic Promise
+
+1. No fake reward minting in runtime.
+2. Rewards always come from explicit source buckets.
+3. On-chain funding is the source for redeemable bankroll credit.
 
 ## 3. Target Users
 
-1. Owner-operators deploying one agent.
-2. Spectators following rivalry and crew arcs.
-3. Advanced users tuning behavior in Pro Mode.
+1. Owner-operators controlling a single agent.
+2. Spectators following rivalry and chaos.
+3. Power users who want detailed runtime diagnostics.
 
 ## 4. Core Requirements
 
 ### 4.1 Readability
-Every agent must expose:
-- `doing`
-- `why`
-- `to`
-- `eta`
 
-Every crew must expose:
-- objective
-- active op
-- active members
-- last impact
+Each agent must expose:
 
-### 4.2 Confrontation
-Primary confrontation is ops warfare:
-- raid/heist/defend/counterintel/propaganda/alliance
+1. `doing`
+2. `why`
+3. `target`
+4. `eta`
 
-### 4.3 Pace
-- Configurable runtime cadence (agent loop interval configured by environment/runtime controls).
-- Continuous movement timeline.
-- Frequent visible outcomes.
+Each decision view must expose:
 
-### 4.4 Mode separation
-- Default mode: minimal readable experience.
-- Pro mode: advanced controls and deep diagnostics.
+1. top candidate actions
+2. blocked reasons
+3. chosen action
+4. expected/actual balance deltas
+5. payout source bucket (when paid)
+
+### 4.2 Gameplay Integrity
+
+Keep existing action surface:
+
+1. `build`
+2. `work`
+3. `fight`
+4. `trade`
+5. `rest`
+
+No replacement loop is introduced.
+
+### 4.3 Economic Integrity
+
+1. Work and completion rewards debit `opsBudget`.
+2. Fight rake credits `pvpBudget`.
+3. Rescue debits `rescueBudget` and creates debt.
+4. No payout executes without source funds.
+
+### 4.4 Pace
+
+1. Configurable loop cadence.
+2. Frequent visible outcomes.
+3. No silent dead-loop behavior.
 
 ## 5. Success Metrics
 
-1. New users can answer all 3 clarity questions in <=5 seconds.
-2. Time-to-first-readable-outcome <=30 seconds after deploy.
-3. Reduction in "agent is stuck" confusion reports.
-4. Retention uplift from rivalry/crew clarity.
+1. Decision clarity: new users explain agent action in <= 5 seconds.
+2. Runtime pace: first visible outcome in <= 30 seconds after loop start.
+3. Economic safety: zero invariant failures in CI smoke.
+4. Economic safety: zero invariant failures in nightly soak.
+5. Engagement: rivalry/fight participation remains high after integrity changes.
 
 ## 6. Out of Scope (v1)
 
-1. Multi-chain changes.
-2. Contract architecture rewrite.
-3. Full replacement of legacy APIs.
+1. Multi-chain expansion.
+2. Full smart-contract rewrite.
+3. Total removal of legacy compatibility APIs.

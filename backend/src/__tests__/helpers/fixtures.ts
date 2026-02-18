@@ -87,13 +87,25 @@ export async function createTestUser(
 
 export async function seedPool(
   prisma: PrismaClient,
-  reserves?: { reserveBalance?: number; arenaBalance?: number; feeBps?: number },
+  reserves?: {
+    reserveBalance?: number;
+    arenaBalance?: number;
+    feeBps?: number;
+    opsBudget?: number;
+    pvpBudget?: number;
+    rescueBudget?: number;
+    insuranceBudget?: number;
+  },
 ) {
   return prisma.economyPool.create({
     data: {
       reserveBalance: reserves?.reserveBalance ?? 1_000_000,
       arenaBalance: reserves?.arenaBalance ?? 1_000_000,
       feeBps: reserves?.feeBps ?? 100,
+      opsBudget: reserves?.opsBudget ?? 0,
+      pvpBudget: reserves?.pvpBudget ?? 0,
+      rescueBudget: reserves?.rescueBudget ?? 0,
+      insuranceBudget: reserves?.insuranceBudget ?? 0,
     },
   });
 }

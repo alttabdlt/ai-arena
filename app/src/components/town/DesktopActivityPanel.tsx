@@ -39,6 +39,7 @@ interface DesktopActivityPanelProps {
   activityFeed: ActivityItem[];
   recentSwapsCount: number;
   ownedAgentId: string | null;
+  focusAgentId?: string | null;
   agentById: ReadonlyMap<string, AgentLite>;
   latestThoughts: LatestThought[];
   archetypeColors: Record<string, string>;
@@ -52,6 +53,7 @@ export function DesktopActivityPanel({
   activityFeed,
   recentSwapsCount,
   ownedAgentId,
+  focusAgentId,
   agentById,
   latestThoughts,
   archetypeColors,
@@ -60,10 +62,12 @@ export function DesktopActivityPanel({
   safeTrim,
   formatTimeLeft,
 }: DesktopActivityPanelProps) {
-  const ownedAgent = ownedAgentId ? agentById.get(ownedAgentId) ?? null : null;
-  const ownedThoughts = ownedAgentId
-    ? latestThoughts.filter((thought) => thought.agentId === ownedAgentId)
+  const targetAgentId = focusAgentId || ownedAgentId;
+  const targetAgent = targetAgentId ? agentById.get(targetAgentId) ?? null : null;
+  const targetThoughts = targetAgentId
+    ? latestThoughts.filter((thought) => thought.agentId === targetAgentId)
     : [];
+  const isOwnedFocus = !!targetAgentId && targetAgentId === ownedAgentId;
 
   const formatBlock = (value: unknown): string => {
     if (value == null) return '';
@@ -75,16 +79,16 @@ export function DesktopActivityPanel({
     }
   };
 
-  const includesOwnedAgent = (item: ActivityItem): boolean => {
-    if (!ownedAgentId) return false;
-    if (item.kind === 'swap') return item.data.agent?.id === ownedAgentId;
+  const includesTargetAgent = (item: ActivityItem): boolean => {
+    if (!targetAgentId) return false;
+    if (item.kind === 'swap') return item.data.agent?.id === targetAgentId;
     const eventItem = item.data;
-    if (eventItem.agentId === ownedAgentId) return true;
+    if (eventItem.agentId === targetAgentId) return true;
     try {
       const metadata = JSON.parse(eventItem.metadata || '{}') as Record<string, unknown>;
-      if (metadata?.winnerId === ownedAgentId || metadata?.loserId === ownedAgentId) return true;
+      if (metadata?.winnerId === targetAgentId || metadata?.loserId === targetAgentId) return true;
       if (Array.isArray(metadata?.participants)) {
-        return metadata.participants.some((participant) => participant === ownedAgentId);
+        return metadata.participants.some((participant) => participant === targetAgentId);
       }
       return false;
     } catch {
@@ -92,19 +96,23 @@ export function DesktopActivityPanel({
     }
   };
 
-  const ownedFeed = activityFeed.filter(includesOwnedAgent);
+  const targetFeed = activityFeed.filter(includesTargetAgent);
 
   return (
-    <div className="w-[420px] max-w-[calc(100vw-24px)]">
-      <div className="hud-panel p-3">
-        {(ownedFeed.length > 0 || recentSwapsCount > 0) && (
+    <div
+      className="pointer-events-auto w-[420px] max-w-[calc(100vw-24px)]"
+      data-testid="activity-panel"
+    >
+      <div className="hud-panel p-3" data-testid="agent-activity-log">
+        {(targetFeed.length > 0 || recentSwapsCount > 0 || targetAgentId) && (
           <div>
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-100">
-                <span>📋 Your Agent Log</span>
-                {ownedAgent && (
+                <span>{isOwnedFocus ? '📋 Your Agent Log' : '📋 Agent Log'}</span>
+                {targetAgent && (
                   <span className="font-mono text-amber-300">
-                    {archetypeGlyph[ownedAgent.archetype] || '●'} {ownedAgent.name}
+                    {archetypeGlyph[targetAgent.archetype] || '●'} {targetAgent.name}
+                    {isOwnedFocus && <span className="ml-1 text-[9px] text-amber-400">YOU</span>}
                   </span>
                 )}
               </div>
@@ -112,13 +120,13 @@ export function DesktopActivityPanel({
                 {recentSwapsCount > 0 ? `swaps ${recentSwapsCount}` : ''}
               </div>
             </div>
-            {!ownedAgentId && (
+            {!targetAgentId && (
               <div className="rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-400">
-                Connect/select your wallet-owned agent to see a personal activity log.
+                Select an agent or connect your wallet-owned agent to see a focused activity log.
               </div>
             )}
             <div className="max-h-[220px] overflow-auto pr-1 space-y-1 scrollbar-thin scrollbar-thumb-slate-700/60">
-              {ownedFeed
+              {targetFeed
                 .map((item) => {
                   if (item.kind === 'swap') {
                     const swap = item.data;
@@ -294,6 +302,7 @@ export function DesktopActivityPanel({
                       <details
                         key={eventItem.id}
                         className="rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300"
+                        data-testid="agent-log-chat"
                       >
                         <summary className="cursor-pointer select-none flex items-center justify-between gap-2">
                           {header}
@@ -330,6 +339,7 @@ export function DesktopActivityPanel({
                       <details
                         key={eventItem.id}
                         className="rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300"
+                        data-testid="agent-log-objective"
                       >
                         <summary className="cursor-pointer select-none flex items-center justify-between gap-2">
                           {header}
@@ -419,6 +429,7 @@ export function DesktopActivityPanel({
                     <details
                       key={eventItem.id}
                       className="rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[11px] text-slate-300"
+                      data-testid="agent-log-breakdown"
                     >
                       <summary className="cursor-pointer select-none flex items-center justify-between gap-2">
                         {header}
@@ -594,11 +605,11 @@ export function DesktopActivityPanel({
           </div>
         )}
 
-        {ownedThoughts.length > 0 && (
-          <div className="mt-3 pt-2 border-t border-slate-800/40">
-            <div className="text-[11px] font-semibold text-slate-100 mb-2">🧠 Agent Thoughts</div>
+        {targetThoughts.length > 0 && (
+          <div className="mt-3 pt-2 border-t border-slate-800/40" data-testid="decision-trace-panel">
+            <div className="text-[11px] font-semibold text-slate-100 mb-2">🧠 Decision Trace</div>
             <div className="max-h-[200px] overflow-auto pr-1 space-y-1.5 scrollbar-thin scrollbar-thumb-slate-700/60">
-              {ownedThoughts.slice(0, 12).map((thought) => {
+              {targetThoughts.slice(0, 12).map((thought, idx) => {
                 const color = archetypeColors[thought.archetype] || '#93c5fd';
                 const glyph = archetypeGlyph[thought.archetype] || '●';
                 const actionEmoji: Record<string, string> = {
@@ -619,11 +630,12 @@ export function DesktopActivityPanel({
                     key={`${thought.agentId}:${thought.tickAt}`}
                     className="rounded-md border border-amber-500/40 bg-amber-950/20 px-2 py-1 text-[11px] text-slate-300"
                     open
+                    data-testid={`decision-trace-item-${idx}`}
                   >
                     <summary className="cursor-pointer select-none flex items-center justify-between gap-2">
                       <div className="min-w-0 truncate">
                         <span>{actionEmoji[thought.actionType] || '🤔'}</span>{' '}
-                        <span className="text-amber-400 text-[9px] mr-1">YOU</span>
+                        {thought.isMine && <span className="text-amber-400 text-[9px] mr-1">YOU</span>}
                         <span className="font-mono" style={{ color }}>
                           {glyph} {thought.agentName}
                         </span>{' '}

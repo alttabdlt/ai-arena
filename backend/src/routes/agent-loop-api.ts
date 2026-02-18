@@ -434,6 +434,18 @@ router.get('/agent-loop/economy-metrics', async (req: Request, res: Response): P
   }
 });
 
+// Live economy invariant audit (conservation drift, pool safety, ledger rollups).
+router.get('/agent-loop/economy-audit', async (req: Request, res: Response): Promise<void> => {
+  try {
+    const rawLookback = Number.parseInt(String(req.query.ledgerLookback ?? '250'), 10);
+    const ledgerLookback = Number.isFinite(rawLookback) ? rawLookback : 250;
+    const snapshot = await agentLoopService.getEconomyAudit({ ledgerLookback });
+    res.json(snapshot);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Manually trigger one tick (process all agents once)
 router.post('/agent-loop/tick', async (_req: Request, res: Response): Promise<void> => {
   try {

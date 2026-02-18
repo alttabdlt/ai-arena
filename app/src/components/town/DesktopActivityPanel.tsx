@@ -35,6 +35,39 @@ type LatestThought = {
   isMine: boolean;
 };
 
+type EconomyAuditCheck = {
+  code: string;
+  ok: boolean;
+  message: string;
+};
+
+type EconomyAuditSnapshot = {
+  ok: boolean;
+  currentTick: number;
+  loopRunning: boolean;
+  sampledAt: string;
+  baseline: {
+    trackedArenaFloat: number;
+    capturedAtTick: number;
+    capturedAt: string;
+    driftSinceBaseline: number;
+  } | null;
+  snapshot: {
+    agentCount: number;
+    trackedArenaFloat: number;
+    budgetTotals: {
+      sum: number;
+      warBudget: number;
+    };
+  };
+  ledger: {
+    totalRows: number;
+    lookbackRows: number;
+    latestEntryAt: string | null;
+  };
+  checks: EconomyAuditCheck[];
+};
+
 interface DesktopActivityPanelProps {
   activityFeed: ActivityItem[];
   recentSwapsCount: number;
@@ -42,6 +75,7 @@ interface DesktopActivityPanelProps {
   focusAgentId?: string | null;
   agentById: ReadonlyMap<string, AgentLite>;
   latestThoughts: LatestThought[];
+  economyAudit: EconomyAuditSnapshot | null;
   archetypeColors: Record<string, string>;
   archetypeGlyph: Record<string, string>;
   timeAgo: (ts: string) => string;
@@ -56,6 +90,7 @@ export function DesktopActivityPanel({
   focusAgentId,
   agentById,
   latestThoughts,
+  economyAudit,
   archetypeColors,
   archetypeGlyph,
   timeAgo,
@@ -398,6 +433,23 @@ export function DesktopActivityPanel({
                     (transition): transition is GoalTransition => !!transition && typeof transition === 'object',
                   );
 
+                  // War Market V1: multi-option decisioning fields
+                  type WarOption = { type?: unknown; target?: unknown; ev?: unknown; risk?: unknown; confidence?: unknown; ttp?: unknown; reasoning?: unknown };
+                  const rawWarOptions = Array.isArray(decision?.warOptions) ? decision.warOptions : [];
+                  const warOptions: WarOption[] = rawWarOptions.filter(
+                    (opt): opt is WarOption => !!opt && typeof opt === 'object',
+                  );
+                  const warObjective = typeof decision?.warObjective === 'string' ? decision.warObjective : null;
+                  const fundingSource = typeof decision?.fundingSource === 'string' ? decision.fundingSource : null;
+                  const chosenOptionIndex = typeof decision?.chosenOptionIndex === 'number' ? decision.chosenOptionIndex : 0;
+                  const postmortemRaw = decision?.postmortem && typeof decision.postmortem === 'object' ? (decision.postmortem as Record<string, unknown>) : null;
+                  const postmortem = postmortemRaw
+                    ? {
+                        expectedEV: typeof postmortemRaw.expectedEV === 'number' ? postmortemRaw.expectedEV : 0,
+                        actualDelta: typeof postmortemRaw.actualDelta === 'number' ? postmortemRaw.actualDelta : 0,
+                      }
+                    : null;
+
                   const hasBreakdown =
                     !!executedReasoning ||
                     !!chosenReasoning ||
@@ -409,7 +461,10 @@ export function DesktopActivityPanel({
                     autonomyRateAfter != null ||
                     goalStackBefore.length > 0 ||
                     goalStackAfter.length > 0 ||
-                    goalTransitions.length > 0;
+                    goalTransitions.length > 0 ||
+                    warOptions.length > 0 ||
+                    !!warObjective ||
+                    !!postmortem;
 
                   if (!hasBreakdown) {
                     return (
@@ -473,6 +528,60 @@ export function DesktopActivityPanel({
                             <pre className="mt-0.5 rounded border border-slate-800/60 bg-slate-950/70 px-1.5 py-1 whitespace-pre-wrap break-all text-slate-300">
                               {formatBlock(calculations)}
                             </pre>
+                          </div>
+                        )}
+                        {warObjective && (
+                          <div>
+                            <div className="text-slate-500 text-[9px] uppercase tracking-wide">Objective</div>
+                            <div className="text-slate-300 text-[10px]">{warObjective}</div>
+                          </div>
+                        )}
+                        {warOptions.length > 0 && (
+                          <div className="space-y-1">
+                            <div className="text-slate-500 text-[9px] uppercase tracking-wide">Options Evaluated</div>
+                            {warOptions.map((opt, idx) => {
+                              const isChosen = idx === chosenOptionIndex;
+                              const ev = typeof opt.ev === 'number' ? opt.ev : 0;
+                              const risk = typeof opt.risk === 'number' ? opt.risk : 0;
+                              const ttp = typeof opt.ttp === 'string' ? opt.ttp : '';
+                              const optType = typeof opt.type === 'string' ? opt.type : '?';
+                              const optTarget = typeof opt.target === 'string' ? opt.target : null;
+                              const optReasoning = typeof opt.reasoning === 'string' ? opt.reasoning : '';
+                              return (
+                                <div key={idx} className={`rounded border px-1.5 py-0.5 ${isChosen ? 'border-amber-500/50 bg-amber-950/20' : 'border-slate-700/50'}`}>
+                                  <div className="flex items-center gap-2 text-[9px] uppercase font-mono">
+                                    <span className="text-slate-300">{isChosen ? '► ' : '  '}{optType}{optTarget ? ` → ${optTarget}` : ''}</span>
+                                    <span className="ml-auto" style={{ color: ev >= 0 ? '#34d399' : '#f87171' }}>
+                                      EV {ev >= 0 ? '+' : ''}{ev}
+                                    </span>
+                                    <span className="text-slate-500">risk {Math.round(risk * 100)}%</span>
+                                    {ttp && <span className="text-slate-600">{ttp}</span>}
+                                  </div>
+                                  <div className="mt-0.5 h-0.5 w-full rounded bg-slate-800">
+                                    <div className="h-0.5 rounded" style={{
+                                      width: `${Math.min(100, Math.abs(ev))}%`,
+                                      background: ev >= 0 ? '#34d399' : '#f87171'
+                                    }} />
+                                  </div>
+                                  {isChosen && optReasoning && (
+                                    <div className="text-[10px] text-slate-400 italic mt-0.5">{optReasoning.slice(0, 100)}</div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {fundingSource && (
+                          <div className="text-[10px] text-slate-500">
+                            Funding: <span className="text-slate-300">{fundingSource}</span>
+                          </div>
+                        )}
+                        {postmortem && (
+                          <div className="flex gap-3 text-[10px]">
+                            <span className="text-slate-500">Expected EV: <span className="text-slate-300">{postmortem.expectedEV >= 0 ? '+' : ''}{postmortem.expectedEV}</span></span>
+                            <span style={{ color: postmortem.actualDelta >= 0 ? '#34d399' : '#f87171' }}>
+                              Actual: {postmortem.actualDelta >= 0 ? '+' : ''}{postmortem.actualDelta}
+                            </span>
                           </div>
                         )}
                         {chosenDetails != null && (
@@ -624,6 +733,9 @@ export function DesktopActivityPanel({
                   buy_skill: '💳',
                   rest: '😴',
                   transfer_arena: '💸',
+                  raid: '⚔️',
+                  heist: '🥷',
+                  defend: '🛡️',
                 };
                 return (
                   <details
@@ -649,6 +761,73 @@ export function DesktopActivityPanel({
                   </details>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {economyAudit && (
+          <div className="mt-3 pt-2 border-t border-slate-800/40" data-testid="economy-audit-panel">
+            <div className="mb-2 flex items-center justify-between text-[11px] font-semibold">
+              <span className="text-slate-100">🏦 Economy Audit</span>
+              <span className={economyAudit.ok ? 'text-emerald-300' : 'text-rose-300'}>
+                {economyAudit.ok ? 'PASS' : 'FAIL'}
+              </span>
+            </div>
+            <div className="space-y-1 rounded-md border border-slate-800/60 bg-slate-950/30 px-2 py-1 text-[10px] text-slate-300">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-slate-500">Tick</span>
+                <span className="font-mono">{economyAudit.currentTick}</span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-slate-500">Loop</span>
+                <span className={economyAudit.loopRunning ? 'text-emerald-300' : 'text-amber-300'}>
+                  {economyAudit.loopRunning ? 'running' : 'paused'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-slate-500">Tracked Float</span>
+                <span className="font-mono">{Math.round(economyAudit.snapshot.trackedArenaFloat).toLocaleString()} $A</span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-slate-500">Drift</span>
+                <span
+                  className="font-mono"
+                  style={{
+                    color:
+                      Number(economyAudit.baseline?.driftSinceBaseline || 0) === 0
+                        ? '#34d399'
+                        : '#f87171',
+                  }}
+                >
+                  {(Number(economyAudit.baseline?.driftSinceBaseline || 0) >= 0 ? '+' : '')}
+                  {Number(economyAudit.baseline?.driftSinceBaseline || 0)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-slate-500">War Budget</span>
+                <span className="font-mono">{Math.round(economyAudit.snapshot.budgetTotals.warBudget).toLocaleString()} $A</span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-slate-500">Ledger</span>
+                <span className="font-mono">{economyAudit.ledger.totalRows} rows</span>
+              </div>
+            </div>
+            <div className="mt-1.5 space-y-1">
+              {economyAudit.checks.map((check) => (
+                <div
+                  key={check.code}
+                  className={`rounded border px-1.5 py-1 text-[10px] ${
+                    check.ok
+                      ? 'border-emerald-800/40 bg-emerald-950/15 text-emerald-200'
+                      : 'border-rose-800/40 bg-rose-950/15 text-rose-200'
+                  }`}
+                >
+                  <div className="font-mono text-[9px] uppercase tracking-wide">
+                    {check.ok ? 'PASS' : 'FAIL'} · {check.code}
+                  </div>
+                  <div>{safeTrim(check.message, 200)}</div>
+                </div>
+              ))}
             </div>
           </div>
         )}

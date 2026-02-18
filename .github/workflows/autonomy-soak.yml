@@ -81,6 +81,8 @@ jobs:
           E2E_SOAK_MIN_TOTAL_TICKS=${{ github.event.inputs.min_total_ticks || '320' }} \
           E2E_SOAK_MIN_LEDGER_ROWS=260 \
           E2E_SOAK_MIN_CRITICAL_LEDGER_TYPES=4 \
+          E2E_SOAK_REQUIRED_AUDIT_CHECKS=HAS_ECONOMY_POOL,NON_NEGATIVE_POOL_BUDGETS \
+          E2E_SOAK_MIN_AUDIT_OK_RATIO=1 \
           node scripts/e2e-autonomy-soak.mjs
 
       - name: Publish soak summary

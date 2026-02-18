@@ -151,13 +151,21 @@ describe('ExternalAgentAuthService onboarding edge cases', () => {
       }),
     ).toThrow(/expired/i);
 
-    const enrollment2 = service.createEnrollmentChallenge('agent_ttl2', toHex(keys.publicKey));
-    const claimed = service.claimEnrollment({
+    restoreEnv();
+    restoreEnv = withEnv({
+      EXTERNAL_REQUIRE_SIGNED_CLAIM: '1',
+      EXTERNAL_ENROLLMENT_TTL_MS: '100',
+      EXTERNAL_ACCESS_TTL_MS: '5',
+      EXTERNAL_REFRESH_TTL_MS: '20',
+    });
+    const accessService = new ExternalAgentAuthService();
+    const enrollment2 = accessService.createEnrollmentChallenge('agent_ttl2', toHex(keys.publicKey));
+    const claimed = accessService.claimEnrollment({
       enrollmentId: enrollment2.enrollmentId,
       authPubkey: toHex(keys.publicKey),
       signature: signHex(enrollment2.challenge, keys.secretKey),
     });
     await new Promise((resolve) => setTimeout(resolve, 12));
-    expect(service.authenticateAccessToken(claimed.session.accessToken)).toBeNull();
+    expect(accessService.authenticateAccessToken(claimed.session.accessToken)).toBeNull();
   });
 });

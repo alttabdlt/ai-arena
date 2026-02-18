@@ -62,6 +62,18 @@ async function main() {
     print(`- \`poolBudgets\`: ops=${latest.opsBudget}, pvp=${latest.pvpBudget}, rescue=${latest.rescueBudget}, insurance=${latest.insuranceBudget}`);
     print(`- \`poolLiquidity\`: reserve=${latest.reserveBalance}, arena=${latest.arenaBalance}`);
   }
+  if (report.economy?.audit) {
+    const audit = report.economy.audit;
+    const latestAudit = audit.latest && typeof audit.latest === 'object' ? audit.latest : null;
+    print(`- \`economyAuditOkRatio\`: ${asPct(Number(audit.okRatio || 0))}`);
+    if (latestAudit) {
+      print(`- \`economyAuditLatestOk\`: ${latestAudit.ok === true ? 'true' : 'false'}`);
+      print(`- \`economyAuditDrift\`: ${Number.isFinite(latestAudit.driftSinceBaseline) ? latestAudit.driftSinceBaseline : 'n/a'}`);
+      if (Array.isArray(latestAudit.failedChecks) && latestAudit.failedChecks.length > 0) {
+        print(`- \`economyAuditFailedChecks\`: ${listToInline(latestAudit.failedChecks)}`);
+      }
+    }
+  }
 
   if (Number.isFinite(report.failureCount)) {
     print(`- \`failureCount\`: ${report.failureCount}`);

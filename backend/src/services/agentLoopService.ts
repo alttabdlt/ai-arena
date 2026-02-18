@@ -25,11 +25,19 @@ import { agentCommandService, type AgentCommandView } from './agentCommandServic
 import { wheelOfFateService } from './wheelOfFateService';
 import { crewWarsService } from './crewWarsService';
 import {
+  appendEconomyLedger,
   creditPoolBudgets,
   debitPoolBudget,
   getOrCreateEconomyPool as getOrCreateEconomyPoolRecord,
   splitArenaFeeToBudgets,
 } from './economyAccountingService';
+import {
+  buildWarObservation,
+  executeRaid,
+  executeHeist,
+  executeDefend,
+  type WarState,
+} from './warMarketService';
 
 function safeTrim(s: unknown, maxLen: number): string {
   return String(s ?? '')
@@ -165,7 +173,7 @@ const DEFAULT_DESIGN_STEPS = SUGGESTED_STEPS;
 // ============================================
 
 export interface AgentAction {
-  type: 'buy_arena' | 'sell_arena' | 'claim_plot' | 'start_build' | 'do_work' | 'complete_build' | 'mine' | 'play_arena' | 'buy_skill' | 'transfer_arena' | 'rest'; // mine kept for backward compat but removed from prompt
+  type: 'buy_arena' | 'sell_arena' | 'claim_plot' | 'start_build' | 'do_work' | 'complete_build' | 'mine' | 'play_arena' | 'buy_skill' | 'transfer_arena' | 'raid' | 'heist' | 'defend' | 'rest'; // mine kept for backward compat but removed from prompt
   reasoning: string;
   details: Record<string, any>;
 }
@@ -289,6 +297,7 @@ interface WorldObservation {
     rescueBudget: number;
     insuranceBudget: number;
   } | null;
+  warState?: WarState | null;
 }
 
 // ============================================
@@ -343,6 +352,13 @@ export class AgentLoopService {
   private lastRescueTickByAgentId: Map<string, number> = new Map();
   private rescueDebtByAgentId: Map<string, number> = new Map();
   private rescueWindowByAgentId: Map<string, { windowStartTick: number; rescues: number }> = new Map();
+  private economyAuditBaseline:
+    | {
+        trackedArenaFloat: number;
+        capturedAtTick: number;
+        capturedAt: string;
+      }
+    | null = null;
   private nonRestStreakByAgentId: Map<
     string,
     { current: number; best: number; lastRewardedMilestone: number }
@@ -1463,6 +1479,55 @@ export class AgentLoopService {
         }
       }
 
+      // === REFINERY: INDUSTRIAL plot owners feed warBudget each tick ===
+      try {
+        const refineryAgents = await prisma.arenaAgent.findMany({
+          where: { isActive: true, ownedPlots: { some: { status: 'BUILT', zone: 'INDUSTRIAL' } } },
+          select: { id: true, name: true },
+        });
+        if (refineryAgents.length > 0) {
+          const pool = await prisma.economyPool.findFirst({
+            orderBy: { createdAt: 'desc' },
+            select: { id: true, opsBudget: true },
+          });
+          if (pool && pool.opsBudget > 0) {
+            let transferredTotal = 0;
+            await prisma.$transaction(async (tx) => {
+              let remainingOpsBudget = pool.opsBudget;
+              for (const refinAgent of refineryAgents) {
+                if (remainingOpsBudget <= 0) break;
+                const desired = Math.min(3, Math.max(1, Math.floor(remainingOpsBudget * 0.05)));
+                const transfer = Math.min(desired, remainingOpsBudget);
+                if (transfer <= 0) break;
+                await tx.economyPool.update({
+                  where: { id: pool.id },
+                  data: { opsBudget: { decrement: transfer }, warBudget: { increment: transfer } },
+                });
+                await appendEconomyLedger(tx, [
+                  {
+                    poolId: pool.id,
+                    source: 'POOL_OPS_BUDGET',
+                    destination: 'POOL_WAR_BUDGET',
+                    amount: transfer,
+                    type: EconomyLedgerType.MANUAL_ADJUSTMENT,
+                    tick: this.currentTick,
+                    agentId: refinAgent.id,
+                    metadata: { reason: 'refinery_war_feed', refineryAgentId: refinAgent.id },
+                  },
+                ]);
+                remainingOpsBudget -= transfer;
+                transferredTotal += transfer;
+              }
+            });
+            if (transferredTotal > 0) {
+              console.log(`[AgentLoop] REFINERY moved ${transferredTotal} $ARENA from opsBudget to warBudget`);
+            }
+          }
+        }
+      } catch (e: any) {
+        console.error(`[AgentLoop] REFINERY warBudget feed failed: ${e.message}`);
+      }
+
       // === YIELD: distribute for completed towns every 5th tick ===
       if (this.currentTick % 5 === 0) {
         try {
@@ -1479,26 +1544,20 @@ export class AgentLoopService {
         } catch {}
       }
 
-      // === AGENT TICKS: process all agents in parallel ===
-      const tickResults = await Promise.all(
-        agents.map(agent =>
-          this.processAgentTick(agent)
-            .catch(err => ({
-              tick: this.currentTick,
-              agentId: agent.id,
-              agentName: agent.name,
-              archetype: agent.archetype,
-              action: { type: 'rest' as const, reasoning: `Error: ${err.message}`, details: {} },
-              success: false,
-              narrative: `${agent.name} encountered an error: ${err.message}`,
-              cost: { model: '', inputTokens: 0, outputTokens: 0, costCents: 0, latencyMs: 0 } as AICost,
-              error: err.message,
-            }))
-        )
-      );
-
+      // === AGENT TICKS: execute sequentially for SQLite safety and deterministic economy ordering ===
       const results: AgentTickResult[] = [];
-      for (const result of tickResults) {
+      for (const agent of agents) {
+        const result = await this.processAgentTick(agent).catch((err) => ({
+          tick: this.currentTick,
+          agentId: agent.id,
+          agentName: agent.name,
+          archetype: agent.archetype,
+          action: { type: 'rest' as const, reasoning: `Error: ${err.message}`, details: {} },
+          success: false,
+          narrative: `${agent.name} encountered an error: ${err.message}`,
+          cost: { model: '', inputTokens: 0, outputTokens: 0, costCents: 0, latencyMs: 0 } as AICost,
+          error: err.message,
+        }));
         results.push(result);
         // Broadcast to listeners (e.g. Telegram)
         if (this.onTickResult) {
@@ -1790,6 +1849,15 @@ export class AgentLoopService {
           healthDelta: (refreshedAfterAction.health ?? 100) - preActionEconomy.health,
         }
       : { arenaDelta: 0, reserveDelta: 0, healthDelta: 0 };
+
+    // Postmortem: compare expected EV (from LLM options) to actual outcome
+    const warOptions = Array.isArray((action.details as any)?.warOptions) ? (action.details as any).warOptions : [];
+    const chosenOptionIndex = typeof (action.details as any)?.chosenOptionIndex === 'number' ? (action.details as any).chosenOptionIndex : 0;
+    const expectedEV = warOptions[chosenOptionIndex]?.ev ?? null;
+    const postmortem = expectedEV !== null
+      ? { expectedEV, actualDelta: economyDelta.arenaDelta, accuracy: Math.abs(economyDelta.arenaDelta - expectedEV) }
+      : null;
+
     const postActionObservation = refreshedAfterAction
       ? await this.observe(refreshedAfterAction)
       : observation;
@@ -1951,6 +2019,7 @@ export class AgentLoopService {
       tick: this.currentTick,
       retention,
       command: commandMetadata || undefined,
+      postmortem,
     });
 
     // 4. Log the event
@@ -2312,6 +2381,52 @@ export class AgentLoopService {
             amount,
             reason: safeTrim(params.reason || 'Operator override', 180),
           },
+        },
+      };
+    }
+
+    if (intent === 'raid') {
+      const targetAgentName = safeTrim(params.targetAgentName, 80);
+      if (!targetAgentName) {
+        return {
+          action: null,
+          reasonCode: 'INVALID_INTENT',
+          statusReason: 'raid requires params.targetAgentName',
+        };
+      }
+      return {
+        action: {
+          type: 'raid',
+          reasoning: `${reasonPrefix} Enforcing raid command.`,
+          details: { targetAgentName },
+        },
+      };
+    }
+
+    if (intent === 'heist') {
+      const targetAgentName = safeTrim(params.targetAgentName, 80);
+      if (!targetAgentName) {
+        return {
+          action: null,
+          reasonCode: 'INVALID_INTENT',
+          statusReason: 'heist requires params.targetAgentName',
+        };
+      }
+      return {
+        action: {
+          type: 'heist',
+          reasoning: `${reasonPrefix} Enforcing heist command.`,
+          details: { targetAgentName },
+        },
+      };
+    }
+
+    if (intent === 'defend') {
+      return {
+        action: {
+          type: 'defend',
+          reasoning: `${reasonPrefix} Enforcing defend command.`,
+          details: {},
         },
       };
     }
@@ -2766,6 +2881,11 @@ export class AgentLoopService {
         expectedActionType: string | null;
         compliance: 'FULL' | 'PARTIAL';
       };
+      postmortem?: {
+        expectedEV: number;
+        actualDelta: number;
+        accuracy: number;
+      } | null;
     },
   ): Record<string, unknown> {
     const chosenReasoning = safeTrim(chosenAction.reasoning, MAX_REASONING_PERSIST_CHARS);
@@ -2778,6 +2898,12 @@ export class AgentLoopService {
       null;
     const redirected = chosenAction.type !== executedAction.type || chosenReasoning !== executedReasoning;
     const redirectReason = redirected ? (this.extractOverrideReason(executedReasoning) || 'Execution redirected by world rules') : undefined;
+
+    // Extract war options from the chosen action details
+    const warOptions = Array.isArray((chosenDetails as any)?.warOptions) ? (chosenDetails as any).warOptions : [];
+    const warObjective = typeof (chosenDetails as any)?.warObjective === 'string' ? (chosenDetails as any).warObjective : null;
+    const fundingSource = typeof (chosenDetails as any)?.fundingSource === 'string' ? (chosenDetails as any).fundingSource : null;
+    const chosenOptionIndex = typeof (chosenDetails as any)?.chosenOptionIndex === 'number' ? (chosenDetails as any).chosenOptionIndex : 0;
 
     return {
       chosenAction: chosenAction.type,
@@ -2797,6 +2923,11 @@ export class AgentLoopService {
       tick: policy?.tick ?? this.currentTick,
       retention: policy?.retention || null,
       command: policy?.command || null,
+      postmortem: policy?.postmortem || null,
+      warOptions,
+      warObjective,
+      fundingSource,
+      chosenOptionIndex,
       chosenReasoning,
       executedReasoning,
       calculations: calculations ?? undefined,
@@ -2913,7 +3044,7 @@ export class AgentLoopService {
       }),
       prisma.arenaAgent.findMany({
         where: { isActive: true, id: { not: agent.id } },
-        select: { id: true, name: true, archetype: true, bankroll: true, reserveBalance: true, elo: true },
+        select: { id: true, name: true, archetype: true, bankroll: true, reserveBalance: true, elo: true, warDefendedUntilTick: true },
       }),
       prisma.townContribution.findUnique({
         where: { agentId_townId: { agentId: agent.id, townId: town.id } },
@@ -2953,12 +3084,13 @@ export class AgentLoopService {
         rescueBudget: economy.rescueBudget,
         insuranceBudget: economy.insuranceBudget,
       } : null,
+      warState: await buildWarObservation(agent.id, otherAgents, this.currentTick).catch(() => null),
     };
   }
 
   private resolveLlmCadenceDecision(
     agent: Pick<ArenaAgent, 'id' | 'riskTolerance' | 'maxWagerPercent' | 'health'>,
-    obs: Pick<WorldObservation, 'myBalance' | 'myReserve' | 'myPlots' | 'availablePlots'>,
+    obs: Pick<WorldObservation, 'myBalance' | 'myReserve' | 'myPlots' | 'availablePlots' | 'warState'>,
     userInstructions?: { text: string; chatId: string; fromUser: string }[],
     activeCommand?: AgentCommandView | null,
   ): {
@@ -2984,6 +3116,16 @@ export class AgentLoopService {
       claimed.length > 0 ||
       underConstruction.some((plot: any) => Number(plot?.apiCallsUsed || 0) >= 5);
     const leverageWindow = obs.myBalance >= 170 || obs.myReserve >= 150;
+
+    // RELAY bypass: CIVIC plots grant unconditional LLM access each tick
+    if (obs.warState?.myPlotRoles?.includes('RELAY')) {
+      return {
+        profile,
+        shouldUseLlm: true,
+        reasonCode: 'RELAY_BYPASS',
+        reason: 'RELAY plot (CIVIC) grants unconditional LLM access.',
+      };
+    }
 
     if (activeCommand) {
       return {
@@ -3209,6 +3351,13 @@ SKILLS / ACTIONS (choose exactly one each tick):
     - SCOUT_REPORT: partial, uncertain intel about a zone based on recent events
 - rest: only if there's truly nothing useful to do (details: thought)
 
+⚔️ WAR ACTIONS (require bankroll ≥ 50 to use; min safety floor):
+- raid: Steal from target bankroll. Cost: 20 $ARENA. 60% base success rate (-20% if target is defended). details: { targetAgentName }
+- heist: Higher-risk bankroll steal. Cost: 30 $ARENA. 40% success rate. Steal 10-20% of target bankroll. details: { targetAgentName }
+- defend: Fortify for 3 ticks. Cost: 15 $ARENA. Halves incoming raid payouts. No target needed. details: {}
+
+INTEL — other agents' defend state and plot roles are in warState. Use this to pick raid/heist targets wisely.
+
 ⚠️ SHOW YOUR WORK — every decision must include calculations:
 - Before spending: "I have X $ARENA. This costs Y. After this I'll have Z left. I need W more for my next planned action."
 - Before trading: "Current price is P. I need N $ARENA for [specific action]. Cost in reserve: N × P × 1.01 (fee) = R."
@@ -3217,7 +3366,14 @@ SKILLS / ACTIONS (choose exactly one each tick):
 
 RESPOND WITH JSON ONLY:
 {
-  "type": "<action>",
+  "objective": "<strategic goal this tick — 1 sentence>",
+  "options": [
+    { "type": "<action>", "target": "<agentName or null>", "ev": <expected value>, "risk": <0.0-1.0>, "confidence": <0.0-1.0>, "ttp": "<ticks to pay off>", "reasoning": "<why consider this>" },
+    { "type": "<action>", "ev": <number>, "risk": <number>, "confidence": <number>, "ttp": "<ticks>", "reasoning": "<..." }
+  ],
+  "chosen": <index into options array — 0-based>,
+  "fundingSource": "<e.g. 'opsBudget: 8 $ARENA' or 'bankroll: 20 $ARENA'>",
+  "type": "<chosen action>",
   "reasoning": "<your thinking — be in character, show personality, reference your journal, explain your strategy>",
   "calculations": {
     "currentBalance": <your $ARENA>,
@@ -3235,6 +3391,9 @@ RESPOND WITH JSON ONLY:
     // For play_arena: {"wager": <amount>}
     // For transfer_arena: {"targetAgentName": "<name>", "amount": <number>, "reason": "<why>"}
     // For buy_skill: {"skill": "MARKET_DEPTH|BLUEPRINT_INDEX|SCOUT_REPORT", "question": "<what to learn>", "whyNow": "<pending decision>", "expectedNextAction": "<next action>"}
+    // For raid: {"targetAgentName": "<name>"}
+    // For heist: {"targetAgentName": "<name>"}
+    // For defend: {}
     // For rest: {"thought": "<what you're thinking about>"}
   },
   "humanReply": "<optional — only if a human sent you a message. Short in-character response to them (1-3 sentences). Will be sent to them on Telegram.>"
@@ -3312,6 +3471,10 @@ ${instructionTexts}
 
       try {
         const parsed = JSON.parse(response.content);
+        const warOptions = Array.isArray(parsed.options) ? parsed.options : [];
+        const warObjective = typeof parsed.objective === 'string' ? parsed.objective : null;
+        const fundingSource = typeof parsed.fundingSource === 'string' ? parsed.fundingSource : null;
+        const chosenOptionIndex = typeof parsed.chosen === 'number' ? parsed.chosen : 0;
         action = {
           type: parsed.type || 'rest',
           reasoning: parsed.reasoning || 'No reasoning provided',
@@ -3319,6 +3482,11 @@ ${instructionTexts}
             ...(parsed.details || {}),
             // Preserve calculations in details for logging/display
             ...(parsed.calculations ? { calculations: parsed.calculations } : {}),
+            // Preserve war options for postmortem and frontend display
+            ...(warOptions.length > 0 ? { warOptions } : {}),
+            ...(warObjective ? { warObjective } : {}),
+            ...(fundingSource ? { fundingSource } : {}),
+            ...(warOptions.length > 0 ? { chosenOptionIndex } : {}),
           },
         };
         // Capture humanReply for Telegram responses
@@ -3406,6 +3574,24 @@ ${instructionTexts}
         }
         policyNotes.push(note);
       }
+    }
+
+    // ── War safety floor: block war actions if bankroll < 50 ──
+    const isWarAction = action.type === 'raid' || action.type === 'heist' || action.type === 'defend';
+    if (isWarAction && obs.myBalance < 50) {
+      const note: PolicyNote = {
+        tier: 'hard_safety',
+        code: 'WAR_BANKROLL_FLOOR',
+        message: `War action blocked: bankroll ${obs.myBalance} < 50 minimum. Build funds first.`,
+        applied: true,
+      };
+      action = {
+        type: 'rest',
+        reasoning: `[AUTO] War action blocked — insufficient bankroll (${obs.myBalance} < 50).`,
+        details: { thought: 'Need more funds before engaging in war actions.' },
+      };
+      softPolicyApplied = true;
+      policyNotes.push(note);
     }
 
     // ── Anti-stall: if agent would "rest" while the town has available plots and they own none, nudge claim. ──
@@ -3948,6 +4134,12 @@ What do you want to do?`;
           }
         case 'transfer_arena':
           return await this.executeTransferArena(agent, action, obs);
+        case 'raid':
+          return await this.executeRaidAction(agent, action, obs);
+        case 'heist':
+          return await this.executeHeistAction(agent, action, obs);
+        case 'defend':
+          return await this.executeDefendAction(agent, action, obs);
         case 'rest':
           if (obs.town) {
             const ucPlot = obs.myPlots.find((p: any) => p.status === 'UNDER_CONSTRUCTION');
@@ -5234,6 +5426,106 @@ Be creative, detailed, and in-character for the town's theme. Response should be
     };
   }
 
+  private async executeRaidAction(agent: ArenaAgent, action: AgentAction, obs: WorldObservation) {
+    const targetName = String(action.details.targetAgentName || '').trim();
+    if (!targetName) throw new Error('raid requires details.targetAgentName');
+    const target = obs.otherAgents.find((a: any) => a.name.toLowerCase() === targetName.toLowerCase());
+    if (!target) throw new Error(`Agent "${targetName}" not found for raid`);
+
+    const pool = await prisma.$transaction(async (tx) => {
+      return (await tx.economyPool.findFirst({ orderBy: { createdAt: 'desc' } }));
+    });
+    if (!pool) throw new Error('Economy pool not found');
+
+    const attackerHasForge = obs.warState?.myPlotRoles?.includes('FORGE') ?? false;
+    const result = await executeRaid({
+      attackerId: agent.id,
+      attackerName: agent.name,
+      targetId: target.id,
+      targetName: target.name,
+      currentTick: this.currentTick,
+      attackerHasForge,
+      poolId: pool.id,
+      townId: obs.town?.id ?? null,
+    });
+
+    if (obs.town) {
+      await townService.logEvent(
+        obs.town.id,
+        'CUSTOM' as any,
+        result.narrative,
+        `${agent.name} raided ${target.name} — stole ${result.stolen} $ARENA.`,
+        agent.id,
+        { kind: 'WAR_RAID', success: result.success, stolen: result.stolen, attackerId: agent.id, targetId: target.id },
+      );
+    }
+
+    return { success: result.success, narrative: result.narrative };
+  }
+
+  private async executeHeistAction(agent: ArenaAgent, action: AgentAction, obs: WorldObservation) {
+    const targetName = String(action.details.targetAgentName || '').trim();
+    if (!targetName) throw new Error('heist requires details.targetAgentName');
+    const target = obs.otherAgents.find((a: any) => a.name.toLowerCase() === targetName.toLowerCase());
+    if (!target) throw new Error(`Agent "${targetName}" not found for heist`);
+
+    const pool = await prisma.$transaction(async (tx) => {
+      return (await tx.economyPool.findFirst({ orderBy: { createdAt: 'desc' } }));
+    });
+    if (!pool) throw new Error('Economy pool not found');
+
+    const result = await executeHeist({
+      attackerId: agent.id,
+      attackerName: agent.name,
+      targetId: target.id,
+      targetName: target.name,
+      currentTick: this.currentTick,
+      poolId: pool.id,
+      townId: obs.town?.id ?? null,
+    });
+
+    if (obs.town) {
+      await townService.logEvent(
+        obs.town.id,
+        'CUSTOM' as any,
+        result.narrative,
+        `${agent.name} heisted ${target.name} — stole ${result.stolen} $ARENA.`,
+        agent.id,
+        { kind: 'WAR_HEIST', success: result.success, stolen: result.stolen, attackerId: agent.id, targetId: target.id },
+      );
+    }
+
+    return { success: result.success, narrative: result.narrative };
+  }
+
+  private async executeDefendAction(agent: ArenaAgent, _action: AgentAction, obs: WorldObservation) {
+    const pool = await prisma.$transaction(async (tx) => {
+      return (await tx.economyPool.findFirst({ orderBy: { createdAt: 'desc' } }));
+    });
+    if (!pool) throw new Error('Economy pool not found');
+
+    const result = await executeDefend({
+      agentId: agent.id,
+      agentName: agent.name,
+      currentTick: this.currentTick,
+      poolId: pool.id,
+      townId: obs.town?.id ?? null,
+    });
+
+    if (obs.town) {
+      await townService.logEvent(
+        obs.town.id,
+        'CUSTOM' as any,
+        result.narrative,
+        `${agent.name} activated defend for 3 ticks.`,
+        agent.id,
+        { kind: 'WAR_DEFEND', agentId: agent.id, defendedUntilTick: this.currentTick + 3 },
+      );
+    }
+
+    return { success: result.success, narrative: result.narrative };
+  }
+
   private pickTurboPokerAction(validActionsRaw: unknown[], firstMove: boolean): string {
     const valid = Array.isArray(validActionsRaw)
       ? validActionsRaw.map((a) => String(a || '').toLowerCase())
@@ -5660,6 +5952,9 @@ In ${input.townName}, the crew leans into the ${input.townTheme} atmosphere and 
         return 'TRADE';
       case 'play_arena': return 'ARENA_MATCH';
       case 'transfer_arena': return 'TRADE';
+      case 'raid': return 'CUSTOM';
+      case 'heist': return 'CUSTOM';
+      case 'defend': return 'CUSTOM';
       default: return 'CUSTOM';
     }
   }
@@ -5676,6 +5971,9 @@ In ${input.townName}, the crew leans into the ${input.townTheme} atmosphere and 
       case 'play_arena': return '🎮';
       case 'buy_skill': return '💳';
       case 'transfer_arena': return '💸';
+      case 'raid': return '⚔️';
+      case 'heist': return '🥷';
+      case 'defend': return '🛡️';
       case 'rest': return '💤';
       default: return '❓';
     }
@@ -5691,6 +5989,181 @@ In ${input.townName}, the crew leans into the ${input.townTheme} atmosphere and 
 
   getCurrentTick(): number {
     return this.currentTick;
+  }
+
+  async getEconomyAudit(options?: {
+    ledgerLookback?: number;
+  }): Promise<{
+    ok: boolean;
+    currentTick: number;
+    loopRunning: boolean;
+    sampledAt: string;
+    baseline: {
+      trackedArenaFloat: number;
+      capturedAtTick: number;
+      capturedAt: string;
+      driftSinceBaseline: number;
+    } | null;
+    snapshot: {
+      agentCount: number;
+      totalAgentBankroll: number;
+      totalAgentReserve: number;
+      poolId: string | null;
+      poolArenaBalance: number;
+      poolReserveBalance: number;
+      budgetTotals: {
+        opsBudget: number;
+        pvpBudget: number;
+        rescueBudget: number;
+        insuranceBudget: number;
+        warBudget: number;
+        sum: number;
+      };
+      trackedArenaFloat: number;
+    };
+    ledger: {
+      totalRows: number;
+      lookbackRows: number;
+      recentByType: Record<string, { count: number; amount: number }>;
+      latestEntryAt: string | null;
+    };
+    checks: Array<{ code: string; ok: boolean; message: string }>;
+  }> {
+    const ledgerLookbackRaw = Number.parseInt(String(options?.ledgerLookback ?? '250'), 10);
+    const ledgerLookback = Number.isFinite(ledgerLookbackRaw)
+      ? Math.max(25, Math.min(2000, Math.floor(ledgerLookbackRaw)))
+      : 250;
+
+    const [pool, agentAgg, ledgerTotalRows, recentLedgerRows] = await Promise.all([
+      prisma.economyPool.findFirst({
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          arenaBalance: true,
+          reserveBalance: true,
+          opsBudget: true,
+          pvpBudget: true,
+          rescueBudget: true,
+          insuranceBudget: true,
+          warBudget: true,
+        },
+      }),
+      prisma.arenaAgent.aggregate({
+        _sum: { bankroll: true, reserveBalance: true },
+        _count: { _all: true },
+      }),
+      prisma.economyLedger.count(),
+      prisma.economyLedger.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: ledgerLookback,
+        select: { type: true, amount: true, createdAt: true },
+      }),
+    ]);
+
+    const sampledAt = new Date().toISOString();
+    const agentCount = agentAgg._count._all || 0;
+    const totalAgentBankroll = Math.floor(agentAgg._sum.bankroll || 0);
+    const totalAgentReserve = Math.floor(agentAgg._sum.reserveBalance || 0);
+    const poolArenaBalance = Math.floor(pool?.arenaBalance || 0);
+    const poolReserveBalance = Math.floor(pool?.reserveBalance || 0);
+    const budgetTotals = {
+      opsBudget: Math.floor(pool?.opsBudget || 0),
+      pvpBudget: Math.floor(pool?.pvpBudget || 0),
+      rescueBudget: Math.floor(pool?.rescueBudget || 0),
+      insuranceBudget: Math.floor(pool?.insuranceBudget || 0),
+      warBudget: Math.floor(pool?.warBudget || 0),
+      sum: 0,
+    };
+    budgetTotals.sum =
+      budgetTotals.opsBudget
+      + budgetTotals.pvpBudget
+      + budgetTotals.rescueBudget
+      + budgetTotals.insuranceBudget
+      + budgetTotals.warBudget;
+
+    const trackedArenaFloat = totalAgentBankroll + poolArenaBalance + budgetTotals.sum;
+    if (!this.economyAuditBaseline) {
+      this.economyAuditBaseline = {
+        trackedArenaFloat,
+        capturedAtTick: this.currentTick,
+        capturedAt: sampledAt,
+      };
+    }
+    const baseline = this.economyAuditBaseline;
+    const driftSinceBaseline = baseline ? trackedArenaFloat - baseline.trackedArenaFloat : 0;
+
+    const recentByType = recentLedgerRows.reduce<Record<string, { count: number; amount: number }>>((acc, row) => {
+      const key = String(row.type);
+      const existing = acc[key] || { count: 0, amount: 0 };
+      existing.count += 1;
+      existing.amount += Math.floor(row.amount || 0);
+      acc[key] = existing;
+      return acc;
+    }, {});
+
+    const checks: Array<{ code: string; ok: boolean; message: string }> = [];
+    checks.push({
+      code: 'HAS_ECONOMY_POOL',
+      ok: !!pool,
+      message: pool ? `Using pool ${pool.id}` : 'No economy pool row found',
+    });
+
+    const negativeBudgets = Object.entries({
+      opsBudget: budgetTotals.opsBudget,
+      pvpBudget: budgetTotals.pvpBudget,
+      rescueBudget: budgetTotals.rescueBudget,
+      insuranceBudget: budgetTotals.insuranceBudget,
+      warBudget: budgetTotals.warBudget,
+    }).filter(([, value]) => value < 0);
+    checks.push({
+      code: 'NON_NEGATIVE_POOL_BUDGETS',
+      ok: negativeBudgets.length === 0,
+      message:
+        negativeBudgets.length === 0
+          ? 'All pool budgets are non-negative'
+          : `Negative budgets: ${negativeBudgets.map(([name, value]) => `${name}=${value}`).join(', ')}`,
+    });
+
+    checks.push({
+      code: 'TRACKED_ARENA_FLOAT_STABLE',
+      ok: driftSinceBaseline === 0,
+      message:
+        driftSinceBaseline === 0
+          ? `Tracked ARENA float stable since baseline (${baseline?.trackedArenaFloat ?? trackedArenaFloat})`
+          : `Tracked ARENA float drifted by ${driftSinceBaseline} since baseline`,
+    });
+
+    return {
+      ok: checks.every((check) => check.ok),
+      currentTick: this.currentTick,
+      loopRunning: this.running,
+      sampledAt,
+      baseline: baseline
+        ? {
+            trackedArenaFloat: baseline.trackedArenaFloat,
+            capturedAtTick: baseline.capturedAtTick,
+            capturedAt: baseline.capturedAt,
+            driftSinceBaseline,
+          }
+        : null,
+      snapshot: {
+        agentCount,
+        totalAgentBankroll,
+        totalAgentReserve,
+        poolId: pool?.id ?? null,
+        poolArenaBalance,
+        poolReserveBalance,
+        budgetTotals,
+        trackedArenaFloat,
+      },
+      ledger: {
+        totalRows: ledgerTotalRows,
+        lookbackRows: recentLedgerRows.length,
+        recentByType,
+        latestEntryAt: recentLedgerRows[0]?.createdAt?.toISOString?.() || null,
+      },
+      checks,
+    };
   }
 }
 

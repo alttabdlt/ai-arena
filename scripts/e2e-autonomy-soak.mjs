@@ -21,6 +21,14 @@ const MIN_UNIQUE_FAMILIES_PER_AGENT = Number(process.env.E2E_SOAK_MIN_UNIQUE_FAM
 const MIN_TOTAL_TICKS = Number(process.env.E2E_SOAK_MIN_TOTAL_TICKS || SOAK_AGENT_COUNT * 8);
 const MIN_LEDGER_ROWS = Number(process.env.E2E_SOAK_MIN_LEDGER_ROWS || 40);
 const MIN_CRITICAL_LEDGER_TYPES = Number(process.env.E2E_SOAK_MIN_CRITICAL_LEDGER_TYPES || 3);
+const MAX_AUDIT_DRIFT = Number(process.env.E2E_SOAK_MAX_AUDIT_DRIFT || Number.POSITIVE_INFINITY);
+const MIN_AUDIT_OK_RATIO = Number(process.env.E2E_SOAK_MIN_AUDIT_OK_RATIO || 1);
+const REQUIRED_AUDIT_CHECKS = String(
+  process.env.E2E_SOAK_REQUIRED_AUDIT_CHECKS || 'HAS_ECONOMY_POOL,NON_NEGATIVE_POOL_BUDGETS',
+)
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean);
 
 const ARTIFACT_DIR = process.env.E2E_ARTIFACT_DIR || path.resolve('artifacts/e2e-autonomy-soak');
 const USE_RESET_ENDPOINT = process.env.E2E_USE_RESET_ENDPOINT !== 'false';
@@ -35,6 +43,9 @@ const CRITICAL_LEDGER_TYPES = [
   'WORK_PAYOUT',
   'FIGHT_RAKE',
   'TRADE_FEE_SPLIT',
+  'WAR_RAID_COST',
+  'WAR_HEIST_COST',
+  'WAR_DEFEND_COST',
 ];
 
 function sleep(ms) {
@@ -56,6 +67,7 @@ function actionFamily(actionType) {
   if (['do_work', 'complete_build', 'mine'].includes(normalized)) return 'work';
   if (normalized === 'play_arena') return 'fight';
   if (['buy_arena', 'sell_arena'].includes(normalized)) return 'trade';
+  if (['raid', 'heist', 'defend'].includes(normalized)) return 'war';
   if (normalized === 'rest') return 'rest';
   return 'unknown';
 }
@@ -247,6 +259,10 @@ async function getEconomyStats() {
   return api('/test-utils/economy-stats', { headers });
 }
 
+async function getEconomyAudit() {
+  return api('/agent-loop/economy-audit?ledgerLookback=500');
+}
+
 function chooseDynamicFamily(phaseState, plans, roundIndex, agentIndex) {
   const missing = CORE_FAMILIES.filter((family) => !phaseState.familiesSeen.has(family));
   const missionAction = String(plans?.mission?.recommendedAction || '').toLowerCase();
@@ -334,6 +350,8 @@ async function main() {
   const startedAt = Date.now();
   let round = 0;
   const economySnapshots = [];
+  const economyAuditSnapshots = [];
+  let auditOkCount = 0;
   let previousEconomySnapshot = null;
 
   while (Date.now() - startedAt < SOAK_DURATION_MS) {
@@ -535,6 +553,61 @@ async function main() {
       });
     }
 
+    try {
+      const audit = await getEconomyAudit();
+      const checks = Array.isArray(audit?.checks) ? audit.checks : [];
+      const failedRequiredChecks = REQUIRED_AUDIT_CHECKS.filter((requiredCode) => {
+        const matching = checks.find((check) => String(check?.code || '') === requiredCode);
+        return !matching || matching.ok !== true;
+      });
+      const failedChecks = checks
+        .filter((check) => check && check.ok === false)
+        .map((check) => String(check.code || 'UNKNOWN_CHECK'));
+      const driftSinceBaseline = Number(audit?.baseline?.driftSinceBaseline ?? NaN);
+      const requiredChecksOk = failedRequiredChecks.length === 0;
+      const auditSnapshot = {
+        at: new Date().toISOString(),
+        round,
+        ok: requiredChecksOk,
+        rawOk: audit?.ok === true,
+        currentTick: Number(audit?.currentTick || 0),
+        driftSinceBaseline,
+        trackedArenaFloat: Number(audit?.snapshot?.trackedArenaFloat ?? NaN),
+        ledgerTotal: Number(audit?.ledger?.totalRows || 0),
+        failedRequiredChecks,
+        failedChecks,
+      };
+      economyAuditSnapshots.push(auditSnapshot);
+      if (auditSnapshot.ok) auditOkCount += 1;
+
+      if (!auditSnapshot.ok) {
+        failures.push({
+          type: 'ECONOMY_AUDIT_CHECK_FAILED',
+          message: failedRequiredChecks.join(', '),
+          round,
+        });
+      }
+      if (!Number.isFinite(driftSinceBaseline)) {
+        failures.push({
+          type: 'ECONOMY_AUDIT_DRIFT_NAN',
+          message: `driftSinceBaseline is non-finite (${String(driftSinceBaseline)})`,
+          round,
+        });
+      } else if (Number.isFinite(MAX_AUDIT_DRIFT) && Math.abs(driftSinceBaseline) > MAX_AUDIT_DRIFT) {
+        failures.push({
+          type: 'ECONOMY_AUDIT_DRIFT_EXCEEDED',
+          message: `|${driftSinceBaseline}| > ${MAX_AUDIT_DRIFT}`,
+          round,
+        });
+      }
+    } catch (error) {
+      failures.push({
+        type: 'ECONOMY_AUDIT_FETCH_FAILED',
+        message: String(error?.message || error),
+        round,
+      });
+    }
+
     if (round % 4 === 0) {
       const familyTotals = new Map();
       for (const entry of timeline.slice(-SOAK_AGENT_COUNT * 4)) {
@@ -570,6 +643,9 @@ async function main() {
   }
 
   const latestEconomySnapshot = economySnapshots.length > 0 ? economySnapshots[economySnapshots.length - 1] : null;
+  const latestEconomyAuditSnapshot =
+    economyAuditSnapshots.length > 0 ? economyAuditSnapshots[economyAuditSnapshots.length - 1] : null;
+  const auditOkRatio = economyAuditSnapshots.length > 0 ? (auditOkCount / economyAuditSnapshots.length) : 0;
   if (!latestEconomySnapshot) {
     failures.push({
       type: 'MISSING_ECONOMY_SNAPSHOTS',
@@ -591,6 +667,17 @@ async function main() {
         message: `critical types present ${criticalLedgerTypesPresent.length} < ${MIN_CRITICAL_LEDGER_TYPES} (${criticalLedgerTypesPresent.join(', ') || 'none'})`,
       });
     }
+  }
+  if (!latestEconomyAuditSnapshot) {
+    failures.push({
+      type: 'MISSING_ECONOMY_AUDIT_SNAPSHOTS',
+      message: 'No economy audit snapshot was captured during soak run.',
+    });
+  } else if (auditOkRatio < MIN_AUDIT_OK_RATIO) {
+    failures.push({
+      type: 'LOW_ECONOMY_AUDIT_OK_RATIO',
+      message: `audit ok ratio ${auditOkRatio.toFixed(3)} < ${MIN_AUDIT_OK_RATIO.toFixed(3)}`,
+    });
   }
 
   for (const row of reasoningCoverageRows) {
@@ -633,12 +720,20 @@ async function main() {
       MIN_TOTAL_TICKS,
       MIN_LEDGER_ROWS,
       MIN_CRITICAL_LEDGER_TYPES,
+      MIN_AUDIT_OK_RATIO,
+      MAX_AUDIT_DRIFT: Number.isFinite(MAX_AUDIT_DRIFT) ? MAX_AUDIT_DRIFT : null,
+      REQUIRED_AUDIT_CHECKS,
     },
     criticalLedgerTypes: CRITICAL_LEDGER_TYPES,
     reasoningCoverage: reasoningCoverageRows,
     economy: {
       latest: latestEconomySnapshot,
       snapshotTail: economySnapshots.slice(-80),
+      audit: {
+        latest: latestEconomyAuditSnapshot,
+        okRatio: auditOkRatio,
+        snapshotTail: economyAuditSnapshots.slice(-80),
+      },
     },
     perAgent: Array.from(agentStateMap.values()).map((state) => ({
       id: state.id,

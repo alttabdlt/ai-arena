@@ -177,6 +177,7 @@ interface Agent {
   lastNarrative?: string;
   lastTargetPlot?: number | null;
   lastTickAt?: string | null;
+  warDefendedUntilTick?: number | null;
 }
 
 interface AgentOutcomeEntry {
@@ -407,6 +408,49 @@ interface RuntimeFeedCard {
   id: string;
   line: string;
   severity: 'LOW' | 'MEDIUM' | 'HIGH' | string;
+}
+
+interface EconomyAuditCheck {
+  code: string;
+  ok: boolean;
+  message: string;
+}
+
+interface EconomyAuditSnapshot {
+  ok: boolean;
+  currentTick: number;
+  loopRunning: boolean;
+  sampledAt: string;
+  baseline: {
+    trackedArenaFloat: number;
+    capturedAtTick: number;
+    capturedAt: string;
+    driftSinceBaseline: number;
+  } | null;
+  snapshot: {
+    agentCount: number;
+    totalAgentBankroll: number;
+    totalAgentReserve: number;
+    poolId: string | null;
+    poolArenaBalance: number;
+    poolReserveBalance: number;
+    budgetTotals: {
+      opsBudget: number;
+      pvpBudget: number;
+      rescueBudget: number;
+      insuranceBudget: number;
+      warBudget: number;
+      sum: number;
+    };
+    trackedArenaFloat: number;
+  };
+  ledger: {
+    totalRows: number;
+    lookbackRows: number;
+    recentByType: Record<string, { count: number; amount: number }>;
+    latestEntryAt: string | null;
+  };
+  checks: EconomyAuditCheck[];
 }
 
 type ActivityItem =
@@ -4585,6 +4629,12 @@ function TownScene({
         const extraOccupants = Math.max(0, occupantCount - primaryOccupants.length);
         const { color, emissive } = zoneMaterial(p.zone, selected, ownerCrew?.colorHex);
         const name = p.buildingName?.trim() || (p.status === 'EMPTY' ? 'Available' : p.status.replace(/_/g, ' '));
+        const warRoleLabel = p.status === 'BUILT' ? (
+          p.zone === 'INDUSTRIAL' ? '🏭 REFINERY' :
+          p.zone === 'COMMERCIAL' ? '🏦 VAULT' :
+          p.zone === 'ENTERTAINMENT' ? '⚒️ FORGE' :
+          p.zone === 'CIVIC' ? '📡 RELAY' : null
+        ) : null;
 
         return (
           <group key={p.id}>
@@ -4628,6 +4678,13 @@ function TownScene({
               position={[wx, 3.6, wz]}
               color={selected ? '#e2e8f0' : ownerCrew?.colorHex || '#cbd5e1'}
             />
+            {selected && warRoleLabel && (
+              <BillboardLabel
+                text={warRoleLabel}
+                position={[wx, 3.15, wz]}
+                color="#fbbf24"
+              />
+            )}
             {hasBuildingSignal && runtimeBuilding && (
               <>
                 <BillboardLabel
@@ -4952,6 +5009,7 @@ export default function Town3D() {
   const [runtimeCrews, setRuntimeCrews] = useState<RuntimeCrewCard[]>([]);
   const [runtimeBuildings, setRuntimeBuildings] = useState<RuntimeBuildingCard[]>([]);
   const [runtimeFeed, setRuntimeFeed] = useState<RuntimeFeedCard[]>([]);
+  const [economyAudit, setEconomyAudit] = useState<EconomyAuditSnapshot | null>(null);
   const [runtimeTick, setRuntimeTick] = useState(0);
   const [runtimeLoopRunning, setRuntimeLoopRunning] = useState(false);
   const [runtimeLoading, setRuntimeLoading] = useState(true);
@@ -6583,11 +6641,12 @@ export default function Town3D() {
 
     const loadRuntime = async () => {
       try {
-        const [agentsRes, crewsRes, buildingsRes, feedRes] = await Promise.all([
+        const [agentsRes, crewsRes, buildingsRes, feedRes, auditRes] = await Promise.all([
           apiFetch<RuntimeAgentsResponse>('/runtime/agents').catch(() => ({})),
           apiFetch<RuntimeCrewsResponse>('/runtime/crews').catch(() => ({})),
           apiFetch<RuntimeBuildingsResponse>('/runtime/buildings').catch(() => ({})),
           apiFetch<RuntimeFeedResponse>('/runtime/feed?limit=30').catch(() => ({})),
+          apiFetch<EconomyAuditSnapshot>('/agent-loop/economy-audit?ledgerLookback=300').catch(() => null),
         ]);
 
         if (cancelled) return;
@@ -6596,6 +6655,7 @@ export default function Town3D() {
         if (Array.isArray(crewsRes.crews)) setRuntimeCrews(crewsRes.crews);
         if (Array.isArray(buildingsRes.buildings)) setRuntimeBuildings(buildingsRes.buildings);
         if (Array.isArray(feedRes.feed)) setRuntimeFeed(feedRes.feed);
+        if (auditRes && typeof auditRes === 'object') setEconomyAudit(auditRes);
         setRuntimeTick(Number.isFinite(Number(agentsRes.tick)) ? Number(agentsRes.tick) : 0);
         setRuntimeLoopRunning(Boolean(agentsRes.running));
       } finally {
@@ -7108,6 +7168,7 @@ export default function Town3D() {
               focusAgentId={focusedAgentId}
               agentById={agentById}
               latestThoughts={latestThoughts}
+              economyAudit={economyAudit}
               archetypeColors={ARCHETYPE_COLORS}
               archetypeGlyph={ARCHETYPE_GLYPH}
               timeAgo={timeAgo}

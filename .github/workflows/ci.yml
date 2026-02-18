@@ -74,7 +74,7 @@ jobs:
         run: npm ci
 
       - name: Run deterministic autonomy + economy suites
-        run: npx vitest run src/services/agentLoopService.test.ts src/services/__tests__/agent-autonomy-flow.integration.test.ts src/services/__tests__/economy-flow.integration.test.ts
+        run: npx vitest run src/services/agentLoopService.test.ts src/services/__tests__/agent-autonomy-flow.integration.test.ts src/services/__tests__/economy-flow.integration.test.ts src/services/__tests__/war-market.integration.test.ts src/services/__tests__/economy-invariants.integration.test.ts src/services/__tests__/economy-audit.integration.test.ts
 
   frontend-verify:
     name: Frontend Verify
@@ -251,6 +251,8 @@ jobs:
           E2E_SOAK_MIN_TOTAL_TICKS=150 \
           E2E_SOAK_MIN_LEDGER_ROWS=120 \
           E2E_SOAK_MIN_CRITICAL_LEDGER_TYPES=3 \
+          E2E_SOAK_REQUIRED_AUDIT_CHECKS=HAS_ECONOMY_POOL,NON_NEGATIVE_POOL_BUDGETS \
+          E2E_SOAK_MIN_AUDIT_OK_RATIO=1 \
           node scripts/e2e-autonomy-soak.mjs
 
       - name: Publish stress summary
